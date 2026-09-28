@@ -29,6 +29,8 @@
 -define(DEFAULT_FAILURE_THRESHOLD, 2).
 -define(DEFAULT_QUEUE_TIMEOUT_MS, 300000).
 -define(DEFAULT_CLUSTER_ATTEMPTS, 3).
+-define(RECEIPT_TABLE, ecai_inference_receipts_dets).
+-define(RECEIPT_FILE, "inference_receipts.dets").
 -define(ROLES, [learning, synthesis, audit, patch]).
 
 -record(state, {
@@ -38,7 +40,9 @@
     health_interval_ms = ?DEFAULT_HEALTH_INTERVAL_MS,
     health_timeout_ms = ?DEFAULT_HEALTH_TIMEOUT_MS,
     failure_threshold = ?DEFAULT_FAILURE_THRESHOLD,
-    last_probe_at = undefined
+    last_probe_at = undefined,
+    receipt_tab = undefined,
+    receipt_file = undefined
 }).
 
 start_link() -> start_link(#{}).
@@ -61,44 +65,57 @@ init(Opts) ->
         {error, Reason} ->
             {stop, Reason};
         {ok, Nodes} ->
-            State = #state{
-                nodes = Nodes,
-                health_interval_ms = opt(
-                    health_interval_ms,
-                    Opts,
-                    application:get_env(
-                        ecai,
-                        code_model_health_interval_ms,
-                        application:get_env(
-                            ecai, code_ollama_health_interval_ms, ?DEFAULT_HEALTH_INTERVAL_MS
-                        )
-                    )
-                ),
-                health_timeout_ms = opt(
-                    health_timeout_ms,
-                    Opts,
-                    application:get_env(
-                        ecai,
-                        code_model_health_timeout_ms,
-                        application:get_env(
-                            ecai, code_ollama_health_timeout_ms, ?DEFAULT_HEALTH_TIMEOUT_MS
-                        )
-                    )
-                ),
-                failure_threshold = opt(
-                    failure_threshold,
-                    Opts,
-                    application:get_env(
-                        ecai,
-                        code_model_failure_threshold,
-                        application:get_env(
-                            ecai, code_ollama_failure_threshold, ?DEFAULT_FAILURE_THRESHOLD
-                        )
-                    )
-                )
-            },
-            self() ! probe_all,
-            {ok, State}
+            case open_receipt_store(Opts) of
+                {error, ReceiptReason} ->
+                    {stop, {cannot_open_inference_receipts, ReceiptReason}};
+                {ok, ReceiptTab, ReceiptFile} ->
+                    State = #state{
+                        nodes = Nodes,
+                        health_interval_ms = opt(
+                            health_interval_ms,
+                            Opts,
+                            application:get_env(
+                                ecai,
+                                code_model_health_interval_ms,
+                                application:get_env(
+                                    ecai,
+                                    code_ollama_health_interval_ms,
+                                    ?DEFAULT_HEALTH_INTERVAL_MS
+                                )
+                            )
+                        ),
+                        health_timeout_ms = opt(
+                            health_timeout_ms,
+                            Opts,
+                            application:get_env(
+                                ecai,
+                                code_model_health_timeout_ms,
+                                application:get_env(
+                                    ecai,
+                                    code_ollama_health_timeout_ms,
+                                    ?DEFAULT_HEALTH_TIMEOUT_MS
+                                )
+                            )
+                        ),
+                        failure_threshold = opt(
+                            failure_threshold,
+                            Opts,
+                            application:get_env(
+                                ecai,
+                                code_model_failure_threshold,
+                                application:get_env(
+                                    ecai,
+                                    code_ollama_failure_threshold,
+                                    ?DEFAULT_FAILURE_THRESHOLD
+                                )
+                            )
+                        ),
+                        receipt_tab = ReceiptTab,
+                        receipt_file = ReceiptFile
+                    },
+                    self() ! probe_all,
+                    {ok, State}
+            end
     end.
 
 handle_call(status, _From, State) ->
@@ -132,6 +149,16 @@ handle_call({checkout, Role, Provider, Model, Exclude}, _From, State0) ->
             Leases = (State0#state.leases)#{LeaseRef => Id},
             {reply, {ok, Lease}, State0#state{nodes = Nodes, leases = Leases, seq = Seq}}
     end;
+handle_call({receipt_claim, RequestId, Meta}, _From, State) ->
+    {reply, receipt_claim(RequestId, Meta, State), State};
+handle_call({receipt_sent, RequestId, Meta}, _From, State) ->
+    {reply, receipt_sent(RequestId, Meta, State), State};
+handle_call({receipt_complete, RequestId, Value, ClientMeta}, _From, State) ->
+    {reply, receipt_complete(RequestId, Value, ClientMeta, State), State};
+handle_call({receipt_uncertain, RequestId, Reason}, _From, State) ->
+    {reply, receipt_uncertain(RequestId, Reason, State), State};
+handle_call({receipt_release, RequestId}, _From, State) ->
+    {reply, receipt_release(RequestId, State), State};
 handle_call(_Request, _From, State) ->
     {reply, {error, unsupported_call}, State}.
 
@@ -140,6 +167,8 @@ handle_cast(refresh, State) ->
     {noreply, State};
 handle_cast({checkin, LeaseRef, Outcome}, State) ->
     {noreply, checkin_lease(LeaseRef, Outcome, State)};
+handle_cast({release, LeaseRef}, State) ->
+    {noreply, release_lease(LeaseRef, State)};
 handle_cast({probe_result, Id, Result, DurationMs}, State) ->
     {noreply, apply_probe(Id, Result, DurationMs, State)};
 handle_cast(_Msg, State) ->
@@ -155,7 +184,12 @@ handle_info(probe_all, State0) ->
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(_Reason, _State) -> ok.
+terminate(_Reason, State) ->
+    case State#state.receipt_tab of
+        undefined -> ok;
+        Tab -> dets:close(Tab)
+    end,
+    ok.
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 run_request(Kind, Role, Prompt, Opts0) when is_atom(Role), is_map(Opts0) ->
@@ -209,39 +243,188 @@ request_attempt(Kind, Role, Prompt, Opts, Provider, Model, Attempts, Deadline, E
                 _ -> {error, {inference_cluster_failed, Role, lists:reverse([Error | Errors])}}
             end;
         {ok, Lease} ->
-            Started = erlang:monotonic_time(millisecond),
-            ClientOpts = client_opts(Lease, Opts),
-            Result =
-                case Kind of
-                    json -> ecai_ollama_client:generate_json_with_meta(Prompt, ClientOpts);
-                    text -> ecai_ollama_client:generate_text_with_meta(Prompt, ClientOpts)
-                end,
-            Duration = max(0, erlang:monotonic_time(millisecond) - Started),
-            LeaseRef = maps:get(ref, Lease),
-            NodeId = maps:get(node_id, Lease),
-            case Result of
-                {ok, Value, ClientMeta} ->
-                    gen_server:cast(?SERVER, {checkin, LeaseRef, #{ok => true, duration_ms => Duration}}),
-                    {ok, Value, enrich_meta(Role, Lease, ClientMeta)};
-                {error, Reason} ->
-                    gen_server:cast(?SERVER, {
-                        checkin,
-                        LeaseRef,
-                        #{ok => false, duration_ms => Duration, error => Reason}
-                    }),
-                    request_attempt(
-                        Kind,
-                        Role,
-                        Prompt,
-                        Opts,
-                        Provider,
-                        Model,
-                        Attempts - 1,
-                        Deadline,
-                        lists:usort([NodeId | Exclude]),
-                        [{NodeId, Reason} | Errors]
+            case maps:get(billing_sensitive, Lease, false) of
+                true ->
+                    request_billing_sensitive(
+                        Kind, Role, Prompt, Opts, Provider, Model, Attempts,
+                        Deadline, Exclude, Errors, Lease
+                    );
+                false ->
+                    request_standard(
+                        Kind, Role, Prompt, Opts, Provider, Model, Attempts,
+                        Deadline, Exclude, Errors, Lease
                     )
             end
+    end.
+
+request_standard(Kind, Role, Prompt, Opts, Provider, Model, Attempts,
+                 Deadline, Exclude, Errors, Lease) ->
+    Started = erlang:monotonic_time(millisecond),
+    Result = invoke_client(Kind, Prompt, client_opts(Lease, Opts)),
+    Duration = max(0, erlang:monotonic_time(millisecond) - Started),
+    LeaseRef = maps:get(ref, Lease),
+    NodeId = maps:get(node_id, Lease),
+    case Result of
+        {ok, Value, ClientMeta} ->
+            gen_server:cast(
+                ?SERVER,
+                {checkin, LeaseRef, #{ok => true, duration_ms => Duration}}
+            ),
+            {ok, Value, enrich_meta(Role, Lease, ClientMeta)};
+        {error, Reason} ->
+            gen_server:cast(
+                ?SERVER,
+                {checkin, LeaseRef, #{
+                    ok => false,
+                    duration_ms => Duration,
+                    error => Reason
+                }}
+            ),
+            request_attempt(
+                Kind,
+                Role,
+                Prompt,
+                Opts,
+                Provider,
+                Model,
+                Attempts - 1,
+                Deadline,
+                lists:usort([NodeId | Exclude]),
+                [{NodeId, Reason} | Errors]
+            )
+    end.
+
+request_billing_sensitive(Kind, Role, Prompt, Opts, Provider, Model, Attempts,
+                          Deadline, Exclude, Errors, Lease) ->
+    LeaseRef = maps:get(ref, Lease),
+    NodeId = maps:get(node_id, Lease),
+    RequestId = inference_request_id(Kind, Role, Prompt, Lease, Opts),
+    ReceiptMeta = receipt_meta(RequestId, Kind, Role, Prompt, Lease, Opts),
+    case gen_server:call(?SERVER, {receipt_claim, RequestId, ReceiptMeta}, infinity) of
+        {completed, Value, CachedClientMeta} ->
+            gen_server:cast(?SERVER, {release, LeaseRef}),
+            CacheMeta = CachedClientMeta#{
+                cache_hit => true,
+                inference_receipt_id => RequestId
+            },
+            {ok, Value, enrich_meta(Role, Lease, CacheMeta)};
+        {blocked, PublicReceipt} ->
+            gen_server:cast(?SERVER, {release, LeaseRef}),
+            {error, {
+                inference_uncertain,
+                Role,
+                NodeId,
+                RequestId,
+                maps:get(status, PublicReceipt, uncertain)
+            }};
+        {error, ReceiptReason} ->
+            gen_server:cast(?SERVER, {release, LeaseRef}),
+            {error, {inference_receipt_failed, RequestId, ReceiptReason}};
+        {ok, claimed} ->
+            case gen_server:call(
+                ?SERVER,
+                {receipt_sent, RequestId, ReceiptMeta},
+                infinity
+            ) of
+                ok ->
+                    Started = erlang:monotonic_time(millisecond),
+                    Result = invoke_client(Kind, Prompt, client_opts(Lease, Opts)),
+                    Duration = max(0, erlang:monotonic_time(millisecond) - Started),
+                    handle_billing_result(
+                        Result, Kind, Role, Prompt, Opts, Provider, Model,
+                        Attempts, Deadline, Exclude, Errors, Lease,
+                        RequestId, Duration
+                    );
+                {error, SentPersistReason} ->
+                    _ = gen_server:call(
+                        ?SERVER,
+                        {receipt_release, RequestId},
+                        infinity
+                    ),
+                    gen_server:cast(?SERVER, {release, LeaseRef}),
+                    {error, {
+                        inference_receipt_failed,
+                        RequestId,
+                        SentPersistReason
+                    }}
+            end
+    end.
+
+handle_billing_result({ok, Value, ClientMeta}, _Kind, Role, _Prompt, _Opts,
+                      _Provider, _Model, _Attempts, _Deadline, _Exclude, _Errors,
+                      Lease, RequestId, Duration) ->
+    PersistResult = gen_server:call(
+        ?SERVER,
+        {receipt_complete, RequestId, Value, ClientMeta},
+        infinity
+    ),
+    LeaseRef = maps:get(ref, Lease),
+    gen_server:cast(
+        ?SERVER,
+        {checkin, LeaseRef, #{ok => true, duration_ms => Duration}}
+    ),
+    Meta0 = enrich_meta(Role, Lease, ClientMeta#{
+        cache_hit => false,
+        inference_receipt_id => RequestId
+    }),
+    Meta =
+        case PersistResult of
+            ok -> Meta0;
+            {error, Reason} -> Meta0#{receipt_persist_error => receipt_error_tag(Reason)}
+        end,
+    {ok, Value, Meta};
+handle_billing_result({error, Reason}, Kind, Role, Prompt, Opts,
+                      Provider, Model, Attempts, Deadline, Exclude, Errors,
+                      Lease, RequestId, Duration) ->
+    LeaseRef = maps:get(ref, Lease),
+    NodeId = maps:get(node_id, Lease),
+    gen_server:cast(
+        ?SERVER,
+        {checkin, LeaseRef, #{
+            ok => false,
+            duration_ms => Duration,
+            error => Reason
+        }}
+    ),
+    case definitely_not_sent(Reason) of
+        true ->
+            _ = gen_server:call(?SERVER, {receipt_release, RequestId}, infinity),
+            request_attempt(
+                Kind,
+                Role,
+                Prompt,
+                Opts,
+                Provider,
+                Model,
+                Attempts - 1,
+                Deadline,
+                lists:usort([NodeId | Exclude]),
+                [{NodeId, Reason} | Errors]
+            );
+        false ->
+            _ = gen_server:call(
+                ?SERVER,
+                {receipt_uncertain, RequestId, Reason},
+                infinity
+            ),
+            {error, {
+                inference_uncertain,
+                Role,
+                NodeId,
+                RequestId,
+                receipt_error_tag(Reason)
+            }}
+    end.
+
+invoke_client(Kind, Prompt, ClientOpts) ->
+    try
+        case Kind of
+            json -> ecai_ollama_client:generate_json_with_meta(Prompt, ClientOpts);
+            text -> ecai_ollama_client:generate_text_with_meta(Prompt, ClientOpts)
+        end
+    catch
+        Class:Reason ->
+            {error, {inference_client_exception, Class, Reason}}
     end.
 
 checkout_wait(Role, Provider, Model, Exclude, Deadline) ->
@@ -345,6 +528,9 @@ normalize_node(Node0) when is_map(Node0) ->
     DefaultModel = node_default_model(Node0, Provider, Models),
     Digests = normalize_digest_map(maps:get(model_digests, Node0, #{})),
     ClientOpts = node_client_opts(Node0, Defaults, Provider),
+    BillingSensitive = billing_sensitive(
+        maps:get(billing_sensitive, Node0, default_billing_sensitive(Provider, Host))
+    ),
     #{
         id => Id,
         provider => Provider,
@@ -352,6 +538,7 @@ normalize_node(Node0) when is_map(Node0) ->
         port => Port,
         transport => maps:get(transport, Node0, maps:get(transport, Defaults)),
         proxy => maps:get(proxy, Node0, maps:get(proxy, Defaults)),
+        billing_sensitive => BillingSensitive,
         roles => Roles,
         max_inflight => MaxInflight,
         weight => Weight,
@@ -425,6 +612,12 @@ node_auth(Node, _Provider, _Default) when is_map_key(api_key_env, Node) ->
     #{type => bearer_env, env => maps:get(api_key_env, Node)};
 node_auth(Node, _Provider, _Default) when is_map_key(api_key_file, Node) ->
     #{type => bearer_file, path => maps:get(api_key_file, Node)};
+node_auth(Node, _Provider, _Default) when is_map_key(api_key_secret, Node) ->
+    #{
+        type => bearer_secret,
+        scope => node,
+        name => maps:get(api_key_secret, Node)
+    };
 node_auth(_Node, openai, undefined) ->
     #{type => bearer_env, env => "OPENAI_API_KEY"};
 node_auth(_Node, _Provider, Default) ->
@@ -436,6 +629,9 @@ validate_pool_auth(#{type := bearer_env, env := _}) -> ok;
 validate_pool_auth(#{type := bearer_file, path := _}) -> ok;
 validate_pool_auth({bearer_env, _}) -> ok;
 validate_pool_auth({bearer_file, _}) -> ok;
+validate_pool_auth(#{type := bearer_secret, scope := node, name := Name})
+        when is_binary(Name); is_list(Name); is_atom(Name) ->
+    ok;
 validate_pool_auth(#{type := bearer}) ->
     throw(direct_bearer_secret_not_allowed_in_pool_config);
 validate_pool_auth({bearer, _}) ->
@@ -575,6 +771,7 @@ lease_map(LeaseRef, Role, RequestedModel, Node) ->
         port => maps:get(port, Node),
         transport => maps:get(transport, Node, tcp),
         proxy => maps:get(proxy, Node, direct),
+        billing_sensitive => maps:get(billing_sensitive, Node, false),
         model => Model,
         model_digest => model_digest(Node, Model),
         model_revision => maps:get(created, ModelInfo, undefined),
@@ -586,6 +783,24 @@ model_digest(Node, Model) ->
     case maps:get(digest, Discovered, undefined) of
         undefined -> maps:get(Model, maps:get(configured_digests, Node, #{}), <<>>);
         Digest -> Digest
+    end.
+
+release_lease(LeaseRef, State0) ->
+    case maps:take(LeaseRef, State0#state.leases) of
+        error ->
+            State0;
+        {Id, Leases} ->
+            case maps:find(Id, State0#state.nodes) of
+                error ->
+                    State0#state{leases = Leases};
+                {ok, Node0} ->
+                    Inflight = max(0, maps:get(inflight, Node0, 0) - 1),
+                    Node = Node0#{inflight => Inflight},
+                    State0#state{
+                        nodes = (State0#state.nodes)#{Id => Node},
+                        leases = Leases
+                    }
+            end
     end.
 
 checkin_lease(LeaseRef, Outcome, State0) ->
@@ -723,6 +938,7 @@ status_map(State) ->
         down => length([N || N <- Nodes, maps:get(health, N) =:= down]),
         capacity => maps:from_list([{Role, role_capacity(Role, State#state.nodes)} || Role <- ?ROLES]),
         active_leases => maps:size(State#state.leases),
+        inference_receipts => receipt_status(State),
         last_probe_at => State#state.last_probe_at
     }.
 
@@ -732,6 +948,7 @@ public_node(Node) ->
         provider,
         host,
         port,
+        billing_sensitive,
         roles,
         max_inflight,
         weight,
@@ -763,6 +980,230 @@ role_capacity(Role, Nodes) ->
      || N <- maps:values(Nodes),
         maps:get(health, N, unknown) =/= down,
         lists:member(Role, maps:get(roles, N, []))
+    ]).
+
+open_receipt_store(Opts) ->
+    case ecai_code_paths:state_root(Opts) of
+        {error, _} = Error ->
+            Error;
+        {ok, Root} ->
+            File = ecai_code_paths:dets_file(Root, ?RECEIPT_FILE),
+            case dets:open_file(?RECEIPT_TABLE, [
+                {file, File},
+                {type, set},
+                {auto_save, 5000}
+            ]) of
+                {ok, ?RECEIPT_TABLE} ->
+                    {ok, ?RECEIPT_TABLE, File};
+                {error, Reason} ->
+                    {error, {receipt_store_open_failed, File, Reason}}
+            end
+    end.
+
+receipt_claim(RequestId, Meta, State) ->
+    Tab = State#state.receipt_tab,
+    Key = {inference_receipt, RequestId},
+    case dets:lookup(Tab, Key) of
+        [{Key, #{status := completed, value := Value} = Receipt}] ->
+            {completed, Value, maps:get(client_meta, Receipt, #{})};
+        [{Key, #{status := Status} = Receipt}]
+          when Status =:= sent; Status =:= uncertain ->
+            {blocked, public_receipt(Receipt)};
+        _ ->
+            Receipt = Meta#{
+                status => claimed,
+                claimed_at => now_iso8601()
+            },
+            case put_receipt(Tab, Key, Receipt) of
+                ok -> {ok, claimed};
+                {error, _} = Error -> Error
+            end
+    end.
+
+receipt_sent(RequestId, Meta, State) ->
+    Tab = State#state.receipt_tab,
+    Key = {inference_receipt, RequestId},
+    Existing = receipt_value(Tab, Key, #{}),
+    Receipt = (maps:merge(Existing, Meta))#{
+        status => sent,
+        sent_at => now_iso8601()
+    },
+    put_receipt(Tab, Key, Receipt).
+
+receipt_complete(RequestId, Value, ClientMeta, State) ->
+    Tab = State#state.receipt_tab,
+    Key = {inference_receipt, RequestId},
+    Existing = receipt_value(Tab, Key, #{}),
+    Receipt = Existing#{
+        status => completed,
+        value => Value,
+        client_meta => safe_client_meta(ClientMeta),
+        completed_at => now_iso8601()
+    },
+    put_receipt(Tab, Key, Receipt).
+
+receipt_uncertain(RequestId, Reason, State) ->
+    Tab = State#state.receipt_tab,
+    Key = {inference_receipt, RequestId},
+    Existing = receipt_value(Tab, Key, #{}),
+    Receipt = Existing#{
+        status => uncertain,
+        error => receipt_error_tag(Reason),
+        uncertain_at => now_iso8601()
+    },
+    put_receipt(Tab, Key, Receipt).
+
+receipt_release(RequestId, State) ->
+    Tab = State#state.receipt_tab,
+    Key = {inference_receipt, RequestId},
+    case dets:delete(Tab, Key) of
+        ok -> dets:sync(Tab);
+        {error, _} = Error -> Error
+    end.
+
+receipt_value(Tab, Key, Default) ->
+    case dets:lookup(Tab, Key) of
+        [{Key, Value}] when is_map(Value) -> Value;
+        _ -> Default
+    end.
+
+put_receipt(Tab, Key, Receipt) ->
+    case dets:insert(Tab, {Key, Receipt}) of
+        ok -> dets:sync(Tab);
+        {error, _} = Error -> Error
+    end.
+
+receipt_status(State) ->
+    case State#state.receipt_tab of
+        undefined ->
+            #{enabled => false};
+        Tab ->
+            Counts = dets:foldl(
+                fun
+                    ({{inference_receipt, _}, #{status := Status}}, Acc) ->
+                        Count = maps:get(Status, Acc, 0),
+                        Acc#{Status => Count + 1};
+                    (_, Acc) ->
+                        Acc
+                end,
+                #{},
+                Tab
+            ),
+            #{
+                enabled => true,
+                file => to_binary(State#state.receipt_file),
+                statuses => Counts
+            }
+    end.
+
+public_receipt(Receipt) ->
+    maps:without([value, client_meta], Receipt).
+
+safe_client_meta(Meta) when is_map(Meta) ->
+    maps:without([auth, headers, request_headers], Meta);
+safe_client_meta(_) ->
+    #{}.
+
+receipt_meta(RequestId, Kind, Role, Prompt0, Lease, Opts) ->
+    #{
+        request_id => RequestId,
+        schema => 1,
+        kind => Kind,
+        role => Role,
+        provider => maps:get(provider, Lease),
+        node_id => maps:get(node_id, Lease),
+        model => maps:get(model, Lease),
+        prompt_sha256 => sha256_hex(to_binary(Prompt0)),
+        options_sha256 => sha256_hex(
+            term_to_binary(output_options(Opts), [deterministic])
+        ),
+        created_at => now_iso8601()
+    }.
+
+inference_request_id(Kind, Role, Prompt0, Lease, Opts) ->
+    Prompt = to_binary(Prompt0),
+    Fingerprint = {
+        inference_receipt_v1,
+        Kind,
+        Role,
+        maps:get(provider, Lease),
+        maps:get(model, Lease),
+        Prompt,
+        output_options(Opts)
+    },
+    sha256_hex(term_to_binary(Fingerprint, [deterministic])).
+
+output_options(Opts) ->
+    maps:with(
+        [
+            temperature,
+            reasoning_effort,
+            max_output_tokens
+        ],
+        Opts
+    ).
+
+definitely_not_sent({ollama_request_failed, Reason}) ->
+    pre_send_transport_error(Reason);
+definitely_not_sent({openai_request_failed, Reason}) ->
+    pre_send_transport_error(Reason);
+definitely_not_sent({missing_auth_environment_variable, _}) ->
+    true;
+definitely_not_sent({empty_auth_environment_variable, _}) ->
+    true;
+definitely_not_sent({empty_auth_file, _}) ->
+    true;
+definitely_not_sent({cannot_read_auth_file, _, _}) ->
+    true;
+definitely_not_sent({auth_secret_not_found, _, _}) ->
+    true;
+definitely_not_sent({auth_secret_lookup_failed, _, _, _}) ->
+    true;
+definitely_not_sent({auth_secret_lookup_exception, _, _, _, _}) ->
+    true;
+definitely_not_sent({unsupported_auth_configuration, _}) ->
+    true;
+definitely_not_sent(empty_bearer_token) ->
+    true;
+definitely_not_sent(_) ->
+    false.
+
+pre_send_transport_error({gun_not_started, _}) -> true;
+pre_send_transport_error({gun_open_exit, _}) -> true;
+pre_send_transport_error({await_up_failed, _}) -> true;
+pre_send_transport_error({await_up_exit, _}) -> true;
+pre_send_transport_error(econnrefused) -> true;
+pre_send_transport_error(nxdomain) -> true;
+pre_send_transport_error(enetunreach) -> true;
+pre_send_transport_error(ehostunreach) -> true;
+pre_send_transport_error(_) -> false.
+
+receipt_error_tag(Reason) when is_atom(Reason) ->
+    Reason;
+receipt_error_tag({Tag, _}) when is_atom(Tag) ->
+    Tag;
+receipt_error_tag({Tag, _, _}) when is_atom(Tag) ->
+    Tag;
+receipt_error_tag({Tag, _, _, _}) when is_atom(Tag) ->
+    Tag;
+receipt_error_tag(_) ->
+    inference_error.
+
+default_billing_sensitive(openai, _Host) ->
+    true;
+default_billing_sensitive(ollama, Host) ->
+    string:lowercase(binary_to_list(to_binary(Host))) =:= "ollama.com";
+default_billing_sensitive(_, _) ->
+    false.
+
+billing_sensitive(true) -> true;
+billing_sensitive(false) -> false;
+billing_sensitive(Other) -> throw({invalid_billing_sensitive, Other}).
+
+sha256_hex(Bin) when is_binary(Bin) ->
+    iolist_to_binary([
+        io_lib:format("~2.16.0b", [B])
+     || <<B>> <= crypto:hash(sha256, Bin)
     ]).
 
 normalize_provider(ollama) -> ollama;

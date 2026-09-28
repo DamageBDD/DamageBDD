@@ -8,6 +8,9 @@
     log_file/2,
     patch_root/1,
     worktree_root/1,
+    integration_root/1,
+    integration_worktree_root/1,
+    integration_log_root/1,
     security_git_root/1
 ]).
 
@@ -40,13 +43,19 @@ ensure_layout(Root0) ->
         "wallets",
         filename:join(["git", "security"]),
         filename:join(["git", "security", "patches"]),
-        filename:join(["git", "security", "worktrees"])
+        filename:join(["git", "security", "worktrees"]),
+        filename:join(["git", "security", "integration"]),
+        filename:join(["git", "security", "integration", "worktrees"]),
+        filename:join(["logs", "integration"])
     ],
     Writable = [
         "dets",
         "logs",
         filename:join(["git", "security", "patches"]),
-        filename:join(["git", "security", "worktrees"])
+        filename:join(["git", "security", "worktrees"]),
+        filename:join(["git", "security", "integration"]),
+        filename:join(["git", "security", "integration", "worktrees"]),
+        filename:join(["logs", "integration"])
     ],
     case ensure_dirs(Root, Dirs) of
         ok -> ensure_writable_dirs(Root, Writable);
@@ -67,6 +76,15 @@ patch_root(Root) ->
 
 worktree_root(Root) ->
     filename:join([security_git_root(Root), "worktrees"]).
+
+integration_root(Root) ->
+    filename:join([security_git_root(Root), "integration"]).
+
+integration_worktree_root(Root) ->
+    filename:join([integration_root(Root), "worktrees"]).
+
+integration_log_root(Root) ->
+    filename:join([path_to_list(Root), "logs", "integration"]).
 
 resolve_default_state_root() ->
     case ensure_layout(?SYSTEM_STATE_ROOT) of

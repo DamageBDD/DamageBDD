@@ -12,8 +12,8 @@ for_vulnerability(App, Module, Finding) ->
     for_vulnerability(App, Module, Finding, #{}).
 
 for_vulnerability(App, Module, Finding, Opts) ->
-    case ecai_learning_store:get_analysis(App, Module) of
-        not_found -> {error, {analysis_not_found, App, Module}};
+    case effective_analysis(App, Module, Finding) of
+        {error, _} = Error -> Error;
         {ok, Analysis} ->
             Graph = case ecai_learning_store:get_graph(App) of
                 {ok, G} -> G;
@@ -45,6 +45,62 @@ for_vulnerability(App, Module, Finding, Opts) ->
                 analogous_repairs => Repairs
             }}
     end.
+
+
+effective_analysis(App, Module, Finding) ->
+    Stored = ecai_learning_store:get_analysis(App, Module),
+    case integration_source(Finding) of
+        not_found ->
+            case Stored of
+                {ok, Analysis} -> {ok, Analysis};
+                not_found -> {error, {analysis_not_found, App, Module}}
+            end;
+        {ok, SourcePath, Source} ->
+            Base = case Stored of
+                {ok, Analysis0} -> Analysis0;
+                not_found -> #{
+                    application => App,
+                    module => Module,
+                    remote_calls => [],
+                    local_calls => [],
+                    behaviours => [],
+                    security_boundaries => [],
+                    exports => [],
+                    functions => [],
+                    specs => [],
+                    types => [],
+                    records => [],
+                    includes => [],
+                    config_reads => [],
+                    config_writes => [],
+                    sends_messages => false,
+                    uses_nif => false,
+                    test_module => false
+                }
+            end,
+            Analysis1 = Base#{
+                application => App,
+                module => Module,
+                source_kind => integration_workrepo,
+                source_name => SourcePath,
+                source => Source,
+                source_sha256 => sha256_hex(Source)
+            },
+            AnalysisHash = sha256_hex(term_to_binary(maps:remove(source, Analysis1), [deterministic])),
+            {ok, Analysis1#{analysis_sha256 => AnalysisHash}}
+    end.
+
+integration_source(Finding) when is_map(Finding) ->
+    Context = mget(<<"integration_context">>, Finding, #{}),
+    case {mget(<<"target_source_path">>, Context, undefined),
+          mget(<<"target_source">>, Context, undefined)} of
+        {Path, Source} when is_binary(Path), is_binary(Source), byte_size(Source) > 0 ->
+            {ok, Path, Source};
+        {Path, Source} when is_list(Path), is_binary(Source), byte_size(Source) > 0 ->
+            {ok, unicode:characters_to_binary(Path), Source};
+        _ -> not_found
+    end;
+integration_source(_) -> not_found.
 
 finding_version(App, Module, Finding) ->
     case ecai_learning_store:get_analysis(App, Module) of

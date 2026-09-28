@@ -11,6 +11,11 @@
     analyses/1,
     put_graph/2,
     get_graph/1,
+    put_relations/2,
+    get_relations/1,
+    relation_keys/1,
+    put_relation_benchmark/2,
+    get_relation_benchmark/1,
     put_module_knowledge/3,
     get_module_knowledge/2,
     module_knowledge/1,
@@ -53,6 +58,20 @@ analyses(App) ->
 
 put_graph(App, Graph) -> gen_server:call(?SERVER, {put, {graph, App}, Graph}, infinity).
 get_graph(App) -> gen_server:call(?SERVER, {get, {graph, App}}).
+
+put_relations(Scope, Relations) when is_atom(Scope), is_list(Relations) ->
+    Deduped = ecai_relation:dedupe(Relations),
+    Keys = [ecai_relation:key(Relation) || Relation <- Deduped],
+    gen_server:call(?SERVER, {put_relations, Scope, Deduped, Keys}, infinity).
+get_relations(Scope) when is_atom(Scope) ->
+    gen_server:call(?SERVER, {get, {relations, Scope}}, infinity).
+relation_keys(Scope) when is_atom(Scope) ->
+    gen_server:call(?SERVER, {get, {relation_keys, Scope}}, infinity).
+
+put_relation_benchmark(Scope, Benchmark) when is_atom(Scope), is_map(Benchmark) ->
+    gen_server:call(?SERVER, {put, {relation_benchmark, Scope}, Benchmark}, infinity).
+get_relation_benchmark(Scope) when is_atom(Scope) ->
+    gen_server:call(?SERVER, {get, {relation_benchmark, Scope}}, infinity).
 
 put_module_knowledge(App, Module, Card) ->
     gen_server:call(?SERVER, {put, {module_knowledge, App, Module}, Card}, infinity).
@@ -110,6 +129,15 @@ handle_call(status, _From, State) ->
     Info = case dets:info(State#state.tab) of undefined -> []; I -> I end,
     {reply, #{state_root => State#state.state_root, file => State#state.file,
               event_seq => State#state.event_seq, table_info => Info}, State};
+handle_call({put_relations, Scope, Relations, Keys}, _From, State) ->
+    Reply = case dets:insert(State#state.tab, [
+        {{relations, Scope}, Relations},
+        {{relation_keys, Scope}, Keys}
+    ]) of
+        ok -> dets:sync(State#state.tab);
+        Error -> Error
+    end,
+    {reply, Reply, State};
 handle_call({put, Key, Value}, _From, State) ->
     Reply = persist_value(State#state.tab, Key, Value),
     {reply, Reply, State};
@@ -230,6 +258,17 @@ collect_events(Tab, Type, Id, Limit) ->
 collect_repairs(Tab, Filter) ->
     lists:reverse(dets:foldl(
         fun
+            ({{relation_keys, Scope}, Keys}, Acc) ->
+                Sets0 = maps:get(relation_sets, Acc, #{}),
+                Digest = relation_key_digest(Keys),
+                Acc#{relation_sets => Sets0#{Scope => #{
+                    count => length(Keys),
+                    key_digest_sha256 => Digest
+                }}};
+            ({{relation_benchmark, Scope}, Benchmark}, Acc) ->
+                Benchmarks0 = maps:get(relation_benchmarks, Acc, #{}),
+                ThinBenchmark = maps:without([recovered_keys, missing_keys], Benchmark),
+                Acc#{relation_benchmarks => Benchmarks0#{Scope => ThinBenchmark}};
             ({{repair, Fingerprint, Version}, Repair}, Acc) ->
                 case (Filter =:= all) orelse (Filter =:= Fingerprint) of
                     true -> [Repair#{fingerprint => Fingerprint, finding_version => Version} | Acc];
@@ -267,8 +306,13 @@ build_snapshot_data(Tab) ->
             (_, Acc) -> Acc
         end,
         #{analyses => [], module_knowledge => [], app_knowledge => #{}, graphs => #{},
-          repairs => [], runtime_checkpoints => #{}, global_knowledge => #{}},
+          repairs => [], runtime_checkpoints => #{}, global_knowledge => #{},
+          relation_sets => #{}, relation_benchmarks => #{}},
         Tab).
+
+relation_key_digest(Keys) ->
+    Sorted = lists:sort(Keys),
+    binary:encode_hex(crypto:hash(sha256, term_to_binary(Sorted, [deterministic]))).
 
 checkpoint_snapshot(Checkpoint) when is_map(Checkpoint) ->
     maps:without([queue, inflight_entries], Checkpoint);

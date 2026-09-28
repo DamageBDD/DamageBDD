@@ -13,6 +13,10 @@
     public_auth/1
 ]).
 
+-ifdef(TEST).
+-export([decode_json/1]).
+-endif.
+
 -define(DEFAULT_HOST, "localhost").
 -define(DEFAULT_PORT, 11434).
 -define(DEFAULT_MODEL, "qwen3-coder:30b").
@@ -115,22 +119,28 @@ normalize_provider("openai") -> openai;
 normalize_provider(Other) -> Other.
 
 ollama_probe(Opts) ->
-    case damage_gun:get(
-        maps:get(host, Opts),
-        maps:get(port, Opts),
-        "/api/tags",
-        [{<<"accept">>, <<"application/json">>}],
-        request_opts(Opts, maps:get(health_timeout, Opts, 5000))
-    ) of
-        {ok, #{status := Status, json := Json, body := RawBody}}
-          when Status >= 200, Status < 300 ->
-            decode_ollama_tags(Json, RawBody);
-        {ok, #{status := Status, json := Json, body := RawBody}} ->
-            {error, {ollama_http_status, Status, provider_error(Json, RawBody)}};
-        {ok, #{status := Status, body := RawBody}} ->
-            {error, {ollama_http_status, Status, RawBody}};
-        {error, Reason} ->
-            {error, {ollama_request_failed, Reason}}
+    case auth_headers(Opts) of
+        {error, _} = Error ->
+            Error;
+        {ok, AuthHeaders} ->
+            Headers = [{<<"accept">>, <<"application/json">>} | AuthHeaders],
+            case damage_gun:get(
+                maps:get(host, Opts),
+                maps:get(port, Opts),
+                "/api/tags",
+                Headers,
+                request_opts(Opts, maps:get(health_timeout, Opts, 5000))
+            ) of
+                {ok, #{status := Status, json := Json, body := RawBody}}
+                  when Status >= 200, Status < 300 ->
+                    decode_ollama_tags(Json, RawBody);
+                {ok, #{status := Status, json := Json, body := RawBody}} ->
+                    {error, {ollama_http_status, Status, provider_error(Json, RawBody)}};
+                {ok, #{status := Status, body := RawBody}} ->
+                    {error, {ollama_http_status, Status, RawBody}};
+                {error, Reason} ->
+                    {error, {ollama_request_failed, Reason}}
+            end
     end.
 
 openai_probe(Opts) ->
@@ -159,35 +169,45 @@ openai_probe(Opts) ->
     end.
 
 ollama_request(Prompt, JsonMode, Opts) ->
-    Base = #{
-        <<"model">> => to_binary(maps:get(model, Opts)),
-        <<"prompt">> => Prompt,
-        <<"stream">> => false,
-        <<"options">> => #{<<"temperature">> => maps:get(temperature, Opts, 0)}
-    },
-    BodyMap = case JsonMode of
-        true -> Base#{<<"format">> => <<"json">>};
-        false -> Base
-    end,
-    Body = jsx:encode(BodyMap),
-    Started = erlang:monotonic_time(millisecond),
-    case damage_gun:post(
-        maps:get(host, Opts),
-        maps:get(port, Opts),
-        "/api/generate",
-        [{<<"content-type">>, <<"application/json">>}],
-        Body,
-        request_opts(Opts, maps:get(timeout, Opts))
-    ) of
-        {ok, #{status := Status, json := Json, body := RawBody}}
-          when Status >= 200, Status < 300 ->
-            decode_ollama_response(JsonMode, Json, RawBody, elapsed_ms(Started));
-        {ok, #{status := Status, json := Json, body := RawBody}} ->
-            {error, {ollama_http_status, Status, provider_error(Json, RawBody)}};
-        {ok, #{status := Status, body := RawBody}} ->
-            {error, {ollama_http_status, Status, RawBody}};
-        {error, Reason} ->
-            {error, {ollama_request_failed, Reason}}
+    case auth_headers(Opts) of
+        {error, _} = Error ->
+            Error;
+        {ok, AuthHeaders} ->
+            Base = #{
+                <<"model">> => to_binary(maps:get(model, Opts)),
+                <<"prompt">> => Prompt,
+                <<"stream">> => false,
+                <<"options">> => #{<<"temperature">> => maps:get(temperature, Opts, 0)}
+            },
+            BodyMap = case JsonMode of
+                true -> Base#{<<"format">> => <<"json">>};
+                false -> Base
+            end,
+            Headers = [
+                {<<"content-type">>, <<"application/json">>},
+                {<<"accept">>, <<"application/json">>}
+                | AuthHeaders
+            ],
+            Body = jsx:encode(BodyMap),
+            Started = erlang:monotonic_time(millisecond),
+            case damage_gun:post(
+                maps:get(host, Opts),
+                maps:get(port, Opts),
+                "/api/generate",
+                Headers,
+                Body,
+                request_opts(Opts, maps:get(timeout, Opts))
+            ) of
+                {ok, #{status := Status, json := Json, body := RawBody}}
+                  when Status >= 200, Status < 300 ->
+                    decode_ollama_response(JsonMode, Json, RawBody, elapsed_ms(Started));
+                {ok, #{status := Status, json := Json, body := RawBody}} ->
+                    {error, {ollama_http_status, Status, provider_error(Json, RawBody)}};
+                {ok, #{status := Status, body := RawBody}} ->
+                    {error, {ollama_http_status, Status, RawBody}};
+                {error, Reason} ->
+                    {error, {ollama_request_failed, Reason}}
+            end
     end.
 
 openai_request(Prompt, JsonMode, Opts) ->
@@ -309,13 +329,67 @@ resolve_auth(#{type := bearer_file, path := Path0}) ->
             end;
         {error, Reason} -> {error, {cannot_read_auth_file, Path, Reason}}
     end;
+resolve_auth(#{type := bearer_secret, scope := node, name := Name}) ->
+    resolve_node_secret_auth(Name);
+resolve_auth(#{type := bearer_secret, scope := Scope}) ->
+    {error, {unsupported_auth_secret_scope, Scope}};
 resolve_auth(#{type := bearer, token := Token}) ->
     bearer_header(Token);
 resolve_auth({bearer_env, Env}) -> resolve_auth(#{type => bearer_env, env => Env});
 resolve_auth({bearer_file, Path}) -> resolve_auth(#{type => bearer_file, path => Path});
+resolve_auth({bearer_secret, node, Name}) ->
+    resolve_auth(#{type => bearer_secret, scope => node, name => Name});
 resolve_auth({bearer, Token}) -> resolve_auth(#{type => bearer, token => Token});
 resolve_auth(Other) -> {error, {unsupported_auth_configuration, public_auth(Other)}}.
 
+
+resolve_node_secret_auth(Name) ->
+    try secrets:retrieve_decrypt(node, Name) of
+        {ok, Token} ->
+            bearer_header(Token);
+        error ->
+            {error, {auth_secret_not_found, node, normalize_secret_ref(Name)}};
+        {error, Reason} ->
+            {error, {
+                auth_secret_lookup_failed,
+                node,
+                normalize_secret_ref(Name),
+                sanitize_secret_error(Reason)
+            }};
+        Other ->
+            {error, {
+                invalid_auth_secret_result,
+                node,
+                normalize_secret_ref(Name),
+                result_tag(Other)
+            }}
+    catch
+        Class:Reason ->
+            {error, {
+                auth_secret_lookup_exception,
+                node,
+                normalize_secret_ref(Name),
+                Class,
+                sanitize_secret_error(Reason)
+            }}
+    end.
+
+normalize_secret_ref(Name) when is_binary(Name) -> Name;
+normalize_secret_ref(Name) when is_atom(Name) -> atom_to_binary(Name, utf8);
+normalize_secret_ref(Name) when is_list(Name) -> unicode:characters_to_binary(Name);
+normalize_secret_ref(_) -> invalid_secret_name.
+
+sanitize_secret_error(Reason) when is_atom(Reason) -> Reason;
+sanitize_secret_error({Tag, _}) when is_atom(Tag) -> Tag;
+sanitize_secret_error({Tag, _, _}) when is_atom(Tag) -> Tag;
+sanitize_secret_error(_) -> secret_lookup_failed.
+
+result_tag(Term) when is_atom(Term) -> Term;
+result_tag(Term) when is_binary(Term) -> binary;
+result_tag(Term) when is_list(Term) -> list;
+result_tag(Term) when is_map(Term) -> map;
+result_tag(Term) when is_tuple(Term) -> {tuple, tuple_size(Term)};
+result_tag(_) -> other.
 bearer_header(Token0) ->
     Token = trim_binary(to_binary(Token0)),
     case Token of
@@ -348,9 +422,13 @@ optional_header(Name, DirectKey, EnvKey, Opts) ->
 public_auth(#{type := bearer, token := _}) -> #{type => bearer, token => redacted};
 public_auth(#{type := bearer_env} = Auth) -> maps:without([token], Auth);
 public_auth(#{type := bearer_file} = Auth) -> maps:without([token], Auth);
+public_auth(#{type := bearer_secret, scope := node, name := Name}) ->
+    #{type => bearer_secret, scope => node, name => normalize_secret_ref(Name)};
 public_auth({bearer, _}) -> #{type => bearer, token => redacted};
 public_auth({bearer_env, Env}) -> #{type => bearer_env, env => Env};
 public_auth({bearer_file, Path}) -> #{type => bearer_file, path => Path};
+public_auth({bearer_secret, node, Name}) ->
+    #{type => bearer_secret, scope => node, name => normalize_secret_ref(Name)};
 public_auth(none) -> none;
 public_auth(undefined) -> undefined;
 public_auth(Other) -> #{type => unknown, value => to_binary(io_lib:format("~p", [Other]))}.
@@ -486,13 +564,79 @@ decode_openai_models(Json, _RawBody) when is_map(Json) ->
 decode_openai_models(Json, RawBody) ->
     {error, {bad_openai_models_json, Json, RawBody}}.
 
-decode_json(Response) ->
+decode_json(Response0) when is_binary(Response0) ->
+    Response = normalize_json_response(Response0),
     try jsx:decode(Response, [return_maps]) of
-        Map when is_map(Map) -> {ok, Map};
-        Other -> {error, {response_not_json_object, Other}}
+        Map when is_map(Map) ->
+            {ok, Map};
+        Other ->
+            {error, {response_not_json_object, Other}}
     catch
-        Class:Reason -> {error, {invalid_json_response, Class, Reason, Response}}
+        Class:Reason ->
+            {error, {
+                invalid_json_response,
+                Class,
+                Reason,
+                bounded_error_response(Response0)
+            }}
+    end;
+decode_json(Response) ->
+    {error, {invalid_json_response_type, response_type(Response)}}.
+
+normalize_json_response(Response0) ->
+    Response = trim_binary(Response0),
+    case strip_outer_code_fence(Response) of
+        {ok, Inner} -> trim_binary(Inner);
+        no_fence -> Response
     end.
+
+strip_outer_code_fence(<<"```json", Rest/binary>>) ->
+    strip_code_fence_body(Rest);
+strip_outer_code_fence(<<"```JSON", Rest/binary>>) ->
+    strip_code_fence_body(Rest);
+strip_outer_code_fence(<<"```", Rest/binary>>) ->
+    strip_code_fence_body(Rest);
+strip_outer_code_fence(_) ->
+    no_fence.
+
+strip_code_fence_body(Rest0) ->
+    Rest = trim_leading_newline(trim_binary(Rest0)),
+    case byte_size(Rest) >= 3 of
+        false ->
+            no_fence;
+        true ->
+            PayloadSize = byte_size(Rest) - 3,
+            case Rest of
+                <<Payload:PayloadSize/binary, "```">> ->
+                    {ok, trim_binary(Payload)};
+                _ ->
+                    no_fence
+            end
+    end.
+
+trim_leading_newline(<<"\r\n", Rest/binary>>) -> Rest;
+trim_leading_newline(<<"\n", Rest/binary>>) -> Rest;
+trim_leading_newline(Bin) -> Bin.
+
+bounded_error_response(Response) when is_binary(Response) ->
+    Max = 4096,
+    case byte_size(Response) > Max of
+        true ->
+            <<Prefix:Max/binary, _/binary>> = Response,
+            <<Prefix/binary, "...<truncated>">>;
+        false ->
+            Response
+    end;
+bounded_error_response(Response) ->
+    Response.
+
+response_type(Value) when is_binary(Value) -> binary;
+response_type(Value) when is_list(Value) -> list;
+response_type(Value) when is_map(Value) -> map;
+response_type(Value) when is_tuple(Value) -> tuple;
+response_type(Value) when is_atom(Value) -> atom;
+response_type(Value) when is_number(Value) -> number;
+response_type(_) -> other.
 
 provider_error(Json, RawBody) when is_map(Json) ->
     case mget(<<"error">>, Json, undefined) of

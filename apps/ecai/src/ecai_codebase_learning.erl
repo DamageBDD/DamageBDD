@@ -10,6 +10,17 @@
     related/3,
     application/1,
     architecture/0,
+    refresh_relations/0,
+    relations/0,
+    relations/1,
+    relation_keys/0,
+    relation_keys/1,
+    relation_benchmark/0,
+    relation_benchmark/1,
+    run_relation_benchmark/0,
+    run_relation_benchmark/1,
+    integration_status/0,
+    integration_jobs/0,
     repairs/0,
     repairs/1,
     durability/0,
@@ -25,6 +36,8 @@ status() ->
         learner => safe_call(fun ecai_codebase_learner:status/0),
         store => safe_call(fun ecai_learning_store:status/0),
         patch_manager => safe_call(fun ecai_patch_manager:status/0),
+        integration => safe_call(fun ecai_patch_integration:status/0),
+        relations => safe_call(fun ecai_relation_learning:status/0),
         snapshot_path => snapshot_path()
     }.
 
@@ -54,6 +67,20 @@ application(App) when is_atom(App) ->
 architecture() ->
     ecai_learning_store:get_global_knowledge().
 
+refresh_relations() -> ecai_relation_learning:refresh_all().
+relations() -> ecai_relation_learning:relations().
+relations(Scope) -> ecai_relation_learning:relations(Scope).
+relation_keys() -> ecai_relation_learning:relation_keys().
+relation_keys(Scope) -> ecai_relation_learning:relation_keys(Scope).
+relation_benchmark() -> ecai_learning_store:get_relation_benchmark(all).
+relation_benchmark(Scope) -> ecai_learning_store:get_relation_benchmark(Scope).
+run_relation_benchmark() -> ecai_relation_learning:benchmark().
+run_relation_benchmark(Limit) when is_integer(Limit), Limit > 0 ->
+    ecai_relation_learning:benchmark(all, Limit).
+
+integration_status() -> ecai_patch_integration:status().
+integration_jobs() -> ecai_patch_integration:jobs().
+
 repairs() -> ecai_learning_store:repairs().
 repairs(Fingerprint) -> ecai_learning_store:repairs(Fingerprint).
 
@@ -61,7 +88,8 @@ durability() ->
     #{
         learner => checkpoint_summary(ecai_learning_store:get_checkpoint(codebase_learner)),
         patch_manager => checkpoint_summary(ecai_learning_store:get_checkpoint(patch_manager)),
-        store => safe_call(fun ecai_learning_store:status/0)
+        store => safe_call(fun ecai_learning_store:status/0),
+        integration => safe_call(fun ecai_patch_integration:status/0)
     }.
 
 events(Type, Id) -> ecai_learning_store:events(Type, Id).

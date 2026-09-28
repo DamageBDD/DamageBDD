@@ -48,4 +48,6 @@ init([]) ->
         type => worker,
         modules => [ecai_patch_manager]
     },
-    {ok, {{rest_for_one, 10, 10}, [Store, OllamaPool, PatchSup, Learner, PatchManager]}}.
+    Integration = ecai_patch_integration:child_spec(#{}),
+    {ok, {{rest_for_one, 10, 10},
+          [Store, OllamaPool, PatchSup, Learner, PatchManager, Integration]}}.

@@ -4,6 +4,13 @@
     scan_now/0,
     propose/3,
     propose/4,
+    propose_finding/3,
+    propose_finding/4,
+    integrate/0,
+    integrate/1,
+    integration_status/0,
+    integration_jobs/0,
+    integration_job/1,
     repairs/0,
     repairs/1
 ]).
@@ -25,6 +32,23 @@ propose(App, Module, Fingerprint0, Opts) when is_atom(App), is_atom(Module), is_
             end;
         Other -> {error, {cannot_load_findings, Other}}
     end.
+
+propose_finding(App, Module, Finding) ->
+    propose_finding(App, Module, Finding, #{}).
+
+propose_finding(App, Module, Finding, Opts)
+  when is_atom(App), is_atom(Module), is_map(Finding), is_map(Opts) ->
+    ecai_patch_sup:propose(App, Module, Finding, Opts).
+
+integrate() ->
+    ecai_patch_integration:run_now().
+
+integrate(Opts) when is_map(Opts) ->
+    ecai_patch_integration:run_now(Opts).
+
+integration_status() -> ecai_patch_integration:status().
+integration_jobs() -> ecai_patch_integration:jobs().
+integration_job(JobId) -> ecai_patch_integration:job(JobId).
 
 repairs() -> ecai_learning_store:repairs().
 repairs(Fingerprint) -> ecai_learning_store:repairs(Fingerprint).

@@ -114,10 +114,10 @@ findings(Module) when is_atom(Module) ->
     findings(ecai, Module).
 
 findings(App, Module) when is_atom(App), is_atom(Module) ->
-    server_call(App, {findings, Module}).
+    persisted_module_findings(App, Module).
 
 app_findings(App) when is_atom(App) ->
-    server_call(App, findings).
+    persisted_app_findings(App).
 
 child_spec(App) when is_atom(App) ->
     child_spec(#{app => App});
@@ -754,6 +754,56 @@ all_reports(Tab) ->
         [],
         Tab
     ).
+
+%% Findings are persisted in DETS as each module completes. Read that
+%% persisted state directly instead of routing read-only queries through the
+%% scanner gen_server. scan_module/2 can spend minutes waiting on inference;
+%% coupling reads to that mailbox makes callers hit gen_server's default
+%% timeout even though the requested data is already available.
+persisted_module_findings(App, Module) ->
+    case findings_table(App) of
+        {ok, Tab} ->
+            try load_module_report(Tab, Module) of
+                Report ->
+                    Report
+            catch
+                Class:Reason ->
+                    {error, {findings_read_failed, App, Module, Class, Reason}}
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+persisted_app_findings(App) ->
+    case findings_table(App) of
+        {ok, Tab} ->
+            try all_reports(Tab) of
+                Reports ->
+                    Reports
+            catch
+                Class:Reason ->
+                    {error, {findings_read_failed, App, Class, Reason}}
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+findings_table(App) ->
+    case allowed_app(App) of
+        false ->
+            {error, {unsupported_application, App}};
+        true ->
+            Tab = dets_tab_name(App),
+            try dets:info(Tab) of
+                undefined ->
+                    {error, {findings_store_not_open, App}};
+                _Info ->
+                    {ok, Tab}
+            catch
+                Class:Reason ->
+                    {error, {findings_store_unavailable, App, Class, Reason}}
+            end
+    end.
 
 write_aggregate_report(State) ->
     Reports0 = all_reports(State#state.dets_tab),

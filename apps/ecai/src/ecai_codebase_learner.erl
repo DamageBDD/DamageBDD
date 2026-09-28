@@ -514,6 +514,7 @@ finish_cycle(State0) ->
     end,
     case GlobalResult of
         ok ->
+            ok = refresh_relations(State0),
             State0#state{ready = true, last_completed_at = now_iso8601()};
         {error, Reason} ->
             State0#state{
@@ -521,6 +522,48 @@ finish_cycle(State0) ->
                 last_error = {finalization_failed, Reason},
                 last_completed_at = now_iso8601()
             }
+    end.
+
+refresh_relations(State) ->
+    case ecai_relation_learning:refresh_all() of
+        {ok, _Summary} ->
+            NeedBenchmark = (maps:size(State#state.changed_apps) > 0) orelse
+                            (ecai_learning_store:get_relation_benchmark(all) =:= not_found),
+            case NeedBenchmark of
+                true -> maybe_benchmark_relations();
+                false -> ok
+            end;
+        {error, Reason} ->
+            logger:error("ECAI relation refresh failed reason=~p", [Reason]),
+            ok
+    end.
+
+maybe_benchmark_relations() ->
+    Enabled = application:get_env(ecai, relation_benchmark_enabled, true),
+    case Enabled of
+        false -> ok;
+        true ->
+            Limit0 = application:get_env(ecai, relation_benchmark_holdout, 1000),
+            Limit = case Limit0 of
+                N when is_integer(N), N > 0 -> N;
+                _ -> 1000
+            end,
+            case ecai_relation_learning:benchmark(all, Limit) of
+                {ok, Result} ->
+                    logger:info(
+                        "ECAI relation benchmark sampled=~p recovered=~p recall=~p precision=~p",
+                        [
+                            maps:get(sampled, Result, 0),
+                            maps:get(recovered, Result, 0),
+                            maps:get(sample_recall, Result, 0.0),
+                            maps:get(precision, Result, 0.0)
+                        ]
+                    ),
+                    ok;
+                {error, Reason} ->
+                    logger:error("ECAI relation benchmark failed reason=~p", [Reason]),
+                    ok
+            end
     end.
 
 refresh_application(App, State) ->
