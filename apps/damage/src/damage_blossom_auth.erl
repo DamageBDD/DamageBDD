@@ -165,10 +165,11 @@ check_created_at(#{created_at := CreatedAt}) ->
     end.
 
 check_expiration(Tags) ->
+    Now = erlang:system_time(second),
     case tag_values(<<"expiration">>, Tags) of
         [Value] ->
             case parse_nonneg_int(Value) of
-                {ok, Expiration} when Expiration > erlang:system_time(second) -> ok;
+                {ok, Expiration} when Expiration > Now -> ok;
                 {ok, _} -> {error, authorization_expired};
                 error -> {error, invalid_expiration}
             end;

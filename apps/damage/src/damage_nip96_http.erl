@@ -361,7 +361,13 @@ handle_list(Req0, State) ->
 %% ------------------------------------------------------------------
 
 read_upload(Req0, MaxBytes) ->
-    case catch cowboy_req:parse_header(<<"content-type">>, Req0) of
+    ParsedContentType =
+        try cowboy_req:parse_header(<<"content-type">>, Req0) of
+            Value -> Value
+        catch
+            _:_ -> undefined
+        end,
+    case ParsedContentType of
         {<<"multipart">>, <<"form-data">>, _} ->
             Deadline = erlang:monotonic_time(millisecond) + upload_timeout_ms(),
             read_parts(Req0, MaxBytes, #{fields => #{}, parts => 0, field_bytes => 0}, Deadline);
@@ -477,7 +483,8 @@ stream_file_part(Req0, Limit, Deadline) ->
                         try
                             stream_file_part(Req0, Limit, 0, Hash0, Fd, Deadline)
                         catch
-                            Class:Reason -> {error, {upload_stream_failed, Class, Reason}, Req0}
+                            Class:CatchReason ->
+                                {error, {upload_stream_failed, Class, CatchReason}, Req0}
                         after
                             _ = file:close(Fd)
                         end,
@@ -581,9 +588,10 @@ validate_upload_fields(Fields) ->
 
 parse_expiration(<<>>) -> {ok, 0};
 parse_expiration(B) when is_binary(B) ->
+    Now = erlang:system_time(second),
     try binary_to_integer(B) of
         I when I =:= 0 -> {ok, 0};
-        I when I > erlang:system_time(second) -> {ok, I};
+        I when I > Now -> {ok, I};
         _ -> {error, invalid_expiration}
     catch
         _:_ -> {error, invalid_expiration}
@@ -615,8 +623,8 @@ normalize_content_type({Type, SubType, _Params}) ->
 normalize_content_type(B) when is_binary(B) ->
     Mime0 =
         case binary:split(B, <<";">>) of
-            [Mime, _] -> trim_binary(Mime);
-            [Mime] -> trim_binary(Mime)
+            [MimePart, _] -> trim_binary(MimePart);
+            [MimePart] -> trim_binary(MimePart)
         end,
     Mime = lower_ascii(Mime0),
     case valid_mime_type(Mime) of
@@ -833,13 +841,15 @@ declared_request_too_large(Req, MaxBytes) ->
     %% Multipart overhead is bounded loosely; the actual file part is still
     %% streamed with an exact MaxBytes cap below.
     case cowboy_req:header(<<"content-length">>, Req) of
-        undefined -> false;
+        undefined ->
+            false;
         B ->
             try binary_to_integer(B) of
-                N -> N > MaxBytes + 1048576;
-                _ -> false
+                N when N >= 0 ->
+                    N > MaxBytes + 1048576
             catch
-                _:_ -> false
+                error:badarg ->
+                    false
             end
     end.
 
