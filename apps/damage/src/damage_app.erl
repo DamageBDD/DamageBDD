@@ -65,8 +65,12 @@ get_trails() ->
             damage_swap_options_http,
             damage_dashboard,
             damage_nwc_http,
+            damage_nip96_http,
             damage_liquidity_http,
-            damage_node_admin_http
+            damage_node_admin_http,
+            %% Blossom has a root /:blob catch-all. Keep it last so all
+            %% existing DamageBDD routes take precedence.
+            damage_blossom_http
         ],
     Trails =
         [
