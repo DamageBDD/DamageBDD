@@ -53,6 +53,22 @@ init([]) ->
     PoolSpecs0 =
         [
             #{
+                id => nosternity_event_store,
+                start => {nosternity_event_store, start_link, []},
+                restart => permanent,
+                shutdown => 60000,
+                type => worker,
+                modules => [nosternity_event_store]
+            },
+            #{
+                id => nosternity_relay,
+                start => {nosternity_relay, start_link, []},
+                restart => permanent,
+                shutdown => 5000,
+                type => worker,
+                modules => [nosternity_relay]
+            },
+            #{
                 id => nosternity_nostr,
                 start => {damage_nostr, start_link, [nosternity_nostr_nsec]},
                 restart => transient,

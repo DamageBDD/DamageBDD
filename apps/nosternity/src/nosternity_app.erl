@@ -21,7 +21,7 @@ get_trails() ->
         ],
     Trails =
         [
-            {"/nostr", nostr_websocket, #{}},
+            {"/nostr", nosternity_websocket, #{}},
             {"/", cowboy_static, {priv_file, nosternity, "static/nosternity.html"}}
             | trails:trails(Handlers)
         ],

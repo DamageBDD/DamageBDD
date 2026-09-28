@@ -45,16 +45,16 @@ terminate(_Reason, _Req, _State) ->
 %%% Internal Functions %%%
 
 handle_event(Event, State) ->
-    case nostr_relay:publish_event(Event) of
+    case nosternity_relay:publish_event(Event) of
         ok ->
             {reply, {text, encode_json(["NOTICE", "Event received"])}, State};
-        error ->
-            {reply, {text, encode_json(["NOTICE", "Invalid event"])}, State}
+        {error, Reason} ->
+            {reply, {text, encode_json(["NOTICE", io_lib:format("Invalid event: ~p", [Reason])])}, State}
     end.
 
 handle_subscription(SubId, Filter, #state{subscriptions = Subs} = State) ->
     UpdatedSubs = Subs#{SubId => Filter},
-    Events = nostr_relay:get_events(Filter),
+    Events = nosternity_relay:get_events(Filter),
     Response = encode_json(["EVENTS", SubId, Events]),
     {reply, {text, Response}, State#state{subscriptions = UpdatedSubs}}.
 

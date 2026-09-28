@@ -1,0 +1,36 @@
+%% Merge these keys into the nosternity application environment.
+%% The feature is intentionally disabled until an operator opts in.
+{nosternity, [
+    {ae_event_store_enabled, false},
+
+    %% Existing deployed contract (recommended in production):
+    %% {ae_event_store_contract, "ct_..."},
+
+    %% Development/bootstrap only. If no contract is configured, deploy one
+    %% with the DamageBDD node keypair and retain the address for this runtime.
+    {ae_event_store_auto_deploy, false},
+    {ae_event_store_contract_file, "contracts/NostrEventStore.aes"},
+
+    %% NIP-10 text notes, NIP-25 reactions, NIP-23 long-form content.
+    %% Numeric kinds and aliases such as [posts, reactions, articles] are accepted.
+    {ae_event_store_kinds, [1, 7, 30023]},
+
+    %% 'all' or a list of 32-byte Nostr pubkeys encoded as 64 lower-case hex chars.
+    %% An allow-list is strongly recommended on a public relay because the node
+    %% account pays Aeternity transaction fees.
+    {ae_event_store_pubkeys, all},
+
+    {ae_event_store_max_event_bytes, 65536},
+    {ae_event_store_queue_max, 5000},
+    {ae_event_store_batch_size, 10},
+    {ae_event_store_flush_ms, 2000},
+    {ae_event_store_retry_ms, 5000},
+
+    %% Rebuild the relay's in-memory ETS view from the chain after restart.
+    {ae_event_store_rehydrate, true},
+    {ae_event_store_hydrate_page_size, 25},
+
+    %% true waits for a mined successful receipt before removing a batch.
+    %% Contract writes are idempotent, so retry after an unknown outcome is safe.
+    {ae_event_store_confirm_writes, true}
+]}.

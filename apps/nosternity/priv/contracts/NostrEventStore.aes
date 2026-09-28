@@ -1,0 +1,118 @@
+@compiler >= 6
+
+// Append-only, owner-written Nostr event archive.
+//
+// The relay performs Nostr ID/policy validation off-chain.  This contract is
+// deliberately transport-agnostic and only enforces uniqueness and indexing.
+// Writes are idempotent: an already stored event is skipped, which makes safe
+// retry of batches possible when transaction finality is temporarily unknown.
+contract NostrEventStore =
+
+  record nostr_event =
+    { id         : string
+    , pubkey     : string
+    , created_at : int
+    , kind       : int
+    , tags       : list(list(string))
+    , content    : string
+    , sig        : string
+    }
+
+  record state =
+    { owner          : address
+    , events         : map(string, nostr_event)
+    , event_ids      : map(int, string)
+    , event_count    : int
+    , kind_counts    : map(int, int)
+    , kind_event_ids : map(int, map(int, string))
+    }
+
+  entrypoint init() : state =
+    { owner          = Call.caller
+    , events         = {}
+    , event_ids      = {}
+    , event_count    = 0
+    , kind_counts    = {}
+    , kind_event_ids = {}
+    }
+
+  function require_owner() =
+    require(Call.caller == state.owner, "ONLY_OWNER")
+
+  function insert_event(e : nostr_event, s : state) : state * bool =
+    if(Map.member(e.id, s.events))
+      (s, false)
+    else
+      let seq = s.event_count
+      let kind_seq = s.kind_counts[e.kind = 0]
+      let kind_ids = s.kind_event_ids[e.kind = {}]
+      let next = s{ events[e.id] = e
+        , event_ids[seq] = e.id
+        , event_count = seq + 1
+        , kind_counts[e.kind] = kind_seq + 1
+        , kind_event_ids[e.kind] = kind_ids{[kind_seq] = e.id}
+        }
+      (next, true)
+
+  function insert_events(es : list(nostr_event), s : state, inserted : int) : state * int =
+    switch(es)
+      [] => (s, inserted)
+      e :: rest =>
+        let (next, was_inserted) = insert_event(e, s)
+        let n = if(was_inserted) inserted + 1 else inserted
+        insert_events(rest, next, n)
+
+  stateful entrypoint put_event(e : nostr_event) : bool =
+    require_owner()
+    require(e.id != "", "EMPTY_ID")
+    let (next, inserted) = insert_event(e, state)
+    put(next)
+    inserted
+
+  stateful entrypoint put_events(es : list(nostr_event)) : int =
+    require_owner()
+    let (next, inserted) = insert_events(es, state, 0)
+    put(next)
+    inserted
+
+  entrypoint exists(event_id : string) : bool =
+    Map.member(event_id, state.events)
+
+  entrypoint get_event(event_id : string) : option(nostr_event) =
+    Map.lookup(event_id, state.events)
+
+  entrypoint get_event_count() : int =
+    state.event_count
+
+  entrypoint get_event_id(index : int) : option(string) =
+    Map.lookup(index, state.event_ids)
+
+  entrypoint get_kind_count(kind : int) : int =
+    state.kind_counts[kind = 0]
+
+  entrypoint get_kind_event_id(kind : int, index : int) : option(string) =
+    switch(Map.lookup(kind, state.kind_event_ids))
+      None => None
+      Some(ids) => Map.lookup(index, ids)
+
+  function reverse_events(xs : list(nostr_event), acc : list(nostr_event)) : list(nostr_event) =
+    switch(xs)
+      [] => acc
+      x :: rest => reverse_events(rest, x :: acc)
+
+  function collect_events(index : int, remaining : int, acc : list(nostr_event)) : list(nostr_event) =
+    if(remaining == 0)
+      reverse_events(acc, [])
+    else
+      if(index >= state.event_count)
+        reverse_events(acc, [])
+      else
+        let event_id = state.event_ids[index]
+        let e = state.events[event_id]
+        collect_events(index + 1, remaining - 1, e :: acc)
+
+  entrypoint get_events(offset : int, limit : int) : list(nostr_event) =
+    require(offset >= 0, "BAD_OFFSET")
+    require(limit >= 0, "BAD_LIMIT")
+    require(limit =< 100, "LIMIT_TOO_HIGH")
+    collect_events(offset, limit, [])

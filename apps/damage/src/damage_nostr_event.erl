@@ -1,14 +1,15 @@
 %%--------------------------------------------------------------------
 %% damage_nostr_event
 %%
-%% Small Nostr event helpers used by damage_nsecbunker. Signing is delegated
-%% to the configured crypto backend; this module only normalizes and hashes.
+%% Shared Nostr event helpers used across DamageBDD applications. Signing stays
+%% delegated to callers; this module normalizes, hashes, and verifies events.
 %%--------------------------------------------------------------------
 -module(damage_nostr_event).
 
 -export([
     id/1,
     ensure_event_id/1,
+    verify/1,
     nip46_response_event/2,
     normalize_event/1,
     normalize_tags/1,
@@ -32,6 +33,87 @@ id(Event0) when is_map(Event0) ->
 ensure_event_id(Event0) ->
     Event = normalize_event(Event0),
     Event#{id => id(Event)}.
+
+%% Verify the two cryptographic invariants common to all Nostr events:
+%% the canonical event id and the BIP-340 Schnorr signature over that id.
+%% Returns the normalized event so callers do not need to normalize twice.
+verify(Event0) when is_map(Event0) ->
+    Event = normalize_event(Event0),
+    case {
+        maps:find(id, Event),
+        maps:find(pubkey, Event),
+        maps:find(created_at, Event),
+        maps:find(kind, Event),
+        maps:find(tags, Event),
+        maps:find(content, Event),
+        maps:find(sig, Event)
+    } of
+        {
+            {ok, EventId}, {ok, Pubkey}, {ok, CreatedAt}, {ok, Kind},
+            {ok, Tags}, {ok, Content}, {ok, Sig}
+        } when
+            is_binary(EventId), is_binary(Pubkey), is_integer(CreatedAt),
+            is_integer(Kind), is_list(Tags), is_binary(Content), is_binary(Sig)
+        ->
+            case {lower_hex_string(EventId, 64), lower_hex_string(Pubkey, 64),
+                  lower_hex_string(Sig, 128)} of
+                {true, true, true} ->
+                    try id(Event) of
+                        EventId -> verify_schnorr(Event, EventId, Pubkey, Sig);
+                        ExpectedId -> {error, {event_id_mismatch, EventId, ExpectedId}}
+                    catch
+                        _:_ -> {error, invalid_event}
+                    end;
+                _ ->
+                    {error, invalid_signature_fields}
+            end;
+        _ ->
+            {error, invalid_event}
+    end;
+verify(_) ->
+    {error, invalid_event}.
+
+lower_hex_string(Bin, Size) when is_binary(Bin), byte_size(Bin) =:= Size ->
+    lists:all(
+        fun(C) ->
+            (C >= $0 andalso C =< $9) orelse (C >= $a andalso C =< $f)
+        end,
+        binary_to_list(Bin)
+    );
+lower_hex_string(_, _) ->
+    false.
+
+verify_schnorr(Event, EventId, Pubkey, Sig) ->
+    try
+        HashBin = hex_to_binary(EventId),
+        PubkeyBin = hex_to_binary(Pubkey),
+        SigBin = hex_to_binary(Sig),
+        case {byte_size(HashBin), byte_size(PubkeyBin), byte_size(SigBin)} of
+            {32, 32, 64} ->
+                case nostrlib_schnorr:verify(HashBin, PubkeyBin, SigBin) of
+                    true -> {ok, Event};
+                    false -> {error, invalid_signature};
+                    Other -> {error, {unexpected_signature_result, Other}}
+                end;
+            _ ->
+                {error, invalid_signature_fields}
+        end
+    catch
+        _:_ -> {error, invalid_signature_fields}
+    end.
+
+hex_to_binary(Bin) when is_binary(Bin), byte_size(Bin) rem 2 =:= 0 ->
+    << <<(hex_byte(Hi, Lo))>> || <<Hi, Lo>> <= Bin >>;
+hex_to_binary(_) ->
+    error(bad_hex).
+
+hex_byte(Hi, Lo) ->
+    (hex_nibble(Hi) bsl 4) bor hex_nibble(Lo).
+
+hex_nibble(C) when C >= $0, C =< $9 -> C - $0;
+hex_nibble(C) when C >= $a, C =< $f -> 10 + C - $a;
+hex_nibble(C) when C >= $A, C =< $F -> 10 + C - $A;
+hex_nibble(_) -> error(bad_hex).
 
 nip46_response_event(ClientPubkey, Ciphertext) ->
     #{
