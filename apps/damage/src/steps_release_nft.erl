@@ -26,7 +26,7 @@
     option_value/1, release_answer/6]).
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
--export([oracle_announcement_result/2, checked_mint_inputs/6]).
+-export([oracle_announcement_result/2, checked_mint_inputs/7]).
 -endif.
 -define(DEFAULT_QUERY_TTL, 100).
 -define(DEFAULT_RESPONSE_TTL, 50000).
@@ -1746,12 +1746,14 @@ sale_listing_is_replaceable_test() ->
         sha256 => <<"0123456789abcdef">>
     },
     Sale = #{damage_amount => 100.0, damage_text => <<"100">>},
-    {30078, Content, Tags} = release_nostr_payload(Mint, Image, Sale),
+    {30078, Content, Tags} =
+        release_nostr_payload(Mint, Image, Sale, none),
     ?assertMatch({_, _}, binary:match(Content, <<"fresh spot-priced invoice">>)),
     ?assert(lists:member([<<"d">>, <<"build-release-nft:ct_test:42">>], Tags)),
     ?assertNot(lists:any(fun([<<"lightning">> | _]) -> true; (_) -> false end, Tags)),
     Sold = Sale#{status => sold},
-    {30078, SoldContent, SoldTags} = release_nostr_payload(Mint, Image, Sold),
+    {30078, SoldContent, SoldTags} =
+        release_nostr_payload(Mint, Image, none, Sold),
     ?assertMatch({_, _}, binary:match(SoldContent, <<"Sold">>)),
     ?assert(lists:member([<<"status">>, <<"sold">>], SoldTags)),
     ?assertNot(lists:member([<<"payment">>, <<"lightning">>], SoldTags)).
