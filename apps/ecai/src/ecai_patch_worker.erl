@@ -76,8 +76,9 @@ generate_attempt(Attempt, MaxAttempts, Fingerprint, Version,
 
 handle_proposal(Proposal, Attempt, MaxAttempts, Fingerprint, Version,
                 Context, Opts) ->
-    Patch = mget(<<"patch">>, Proposal, <<>>),
-            case ecai_patch_verifier:validate_patch(Patch) of
+    RawPatch = mget(<<"patch">>, Proposal, <<>>),
+    Patch = ecai_patch_verifier:normalize_patch(RawPatch),
+    case ecai_patch_verifier:validate_patch(Patch) of
                 {error, Reason} when Attempt < MaxAttempts ->
                     NextDiag =
                         diagnostic_json(#{patch_validation_error => Reason}),

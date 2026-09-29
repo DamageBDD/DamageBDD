@@ -6,6 +6,7 @@
     verify_patchset/1,
     verify_patchset/2,
     validate_patch/1,
+    normalize_patch/1,
     patch_paths/1,
     cleanup_stale/0,
     cleanup_stale/1
@@ -57,15 +58,36 @@ verify_patchset(PatchFiles0, Opts) when is_list(PatchFiles0), is_map(Opts) ->
         {error, _} = Error -> Error
     end.
 
-validate_patch(Patch) when is_binary(Patch) ->
+validate_patch(Patch0) when is_binary(Patch0) ->
+    Patch = normalize_patch(Patch0),
     case byte_size(Patch) of
         0 -> {error, empty_patch};
         _ ->
             case has_binary_patch(Patch) of
                 true -> {error, binary_patches_not_allowed};
-                false -> validate_paths(patch_paths(Patch))
+                false ->
+                    case binary:match(Patch, <<"diff --git ">>) of
+                        {0, _} -> validate_paths(patch_paths(Patch));
+                        _ -> {error, missing_git_diff_header}
+                    end
             end
     end.
+
+%% Canonicalize common model-output wrappers without changing diff semantics.
+%% The patch worker persists this normalized form, so verification and later
+%% integration see the same bytes. Hunk line counts are handled independently
+%% by git apply --recount below.
+normalize_patch(Patch0) when is_binary(Patch0) ->
+    Patch1 = strip_utf8_bom(Patch0),
+    Patch2 = binary:replace(Patch1, <<"\r\n">>, <<"\n">>, [global]),
+    Patch3 = binary:replace(Patch2, <<"\r">>, <<"\n">>, [global]),
+    Patch5 = strip_outer_markdown_fence(Patch3),
+    Patch6 = case binary:match(Patch5, <<"diff --git ">>) of
+        nomatch -> Patch5;
+        {Pos, _Len} -> binary:part(Patch5, Pos, byte_size(Patch5) - Pos)
+    end,
+    Patch7 = strip_trailing_markdown_fence(Patch6),
+    ensure_final_newline(Patch7).
 
 patch_paths(Patch) when is_binary(Patch) ->
     Lines = binary:split(Patch, <<"\n">>, [global]),
@@ -151,7 +173,7 @@ run_verification(RepoRoot, Worktree, BaseCommit, PatchFiles, _StateRoot, Opts) -
 apply_patchset(_Worktree, [], _Index, _Timeout, Steps) ->
     {applied, Steps, undefined};
 apply_patchset(Worktree, [PatchFile | Rest], Index, Timeout, Steps0) ->
-    Check = run("git", ["-C", Worktree, "apply", "--check", PatchFile],
+    Check = run("git", ["-C", Worktree, "apply", "--recount", "--check", PatchFile],
                 Worktree, Timeout),
     CheckStep = #{step => patch_apply_check, patch_index => Index,
                   patch_file => to_binary(PatchFile), result => Check},
@@ -161,7 +183,7 @@ apply_patchset(Worktree, [PatchFile | Rest], Index, Timeout, Steps0) ->
             %% A repair may already have been committed to the selected base.
             %% Treat an exact reverse-applicable patch as already present rather
             %% than as an integration conflict.
-            Reverse = run("git", ["-C", Worktree, "apply", "--reverse", "--check", PatchFile],
+            Reverse = run("git", ["-C", Worktree, "apply", "--recount", "--reverse", "--check", PatchFile],
                           Worktree, Timeout),
             ReverseStep = #{step => patch_reverse_check, patch_index => Index,
                             patch_file => to_binary(PatchFile), result => Reverse},
@@ -179,7 +201,7 @@ apply_patchset(Worktree, [PatchFile | Rest], Index, Timeout, Steps0) ->
                                       result => Check, reverse_check => Reverse}}
             end;
         true ->
-            Apply = run("git", ["-C", Worktree, "apply", PatchFile], Worktree, Timeout),
+            Apply = run("git", ["-C", Worktree, "apply", "--recount", PatchFile], Worktree, Timeout),
             ApplyStep = #{step => patch_apply, patch_index => Index,
                           patch_file => to_binary(PatchFile), result => Apply},
             Steps2 = Steps1 ++ [ApplyStep],
@@ -337,6 +359,53 @@ append_bounded(Acc, Data) ->
 
 step_ok(#{ok := true}) -> true;
 step_ok(_) -> false.
+
+strip_utf8_bom(<<239, 187, 191, Rest/binary>>) -> Rest;
+strip_utf8_bom(Bin) -> Bin.
+
+strip_outer_markdown_fence(Bin) ->
+    Lines0 = binary:split(Bin, <<"\n">>, [global]),
+    Lines1 = case Lines0 of
+        [First | Rest] ->
+            case fence_line(First) of
+                true -> Rest;
+                false -> Lines0
+            end;
+        [] -> []
+    end,
+    join_lines(strip_last_fence(Lines1)).
+
+strip_trailing_markdown_fence(Bin) ->
+    join_lines(strip_last_fence(binary:split(Bin, <<"\n">>, [global]))).
+
+strip_last_fence(Lines) ->
+    Rev0 = lists:dropwhile(fun(Line) -> trim_binary(Line) =:= <<>> end, lists:reverse(Lines)),
+    Rev1 = case Rev0 of
+        [Last | Rest] ->
+            case fence_line(Last) of
+                true -> Rest;
+                false -> Rev0
+            end;
+        [] -> []
+    end,
+    lists:reverse(Rev1).
+
+fence_line(Line0) ->
+    Line = trim_binary(Line0),
+    Line =:= <<"```">> orelse
+    Line =:= <<"```diff">> orelse
+    Line =:= <<"```patch">>.
+
+join_lines([]) -> <<>>;
+join_lines(Lines) -> iolist_to_binary(lists:join(<<"\n">>, Lines)).
+
+ensure_final_newline(<<>>) -> <<>>;
+ensure_final_newline(Bin) ->
+    case binary:last(Bin) of
+        $\n -> Bin;
+        _ -> <<Bin/binary, "\n">>
+    end.
+
 
 paths_from_line(<<"diff --git a/", Rest/binary>>) ->
     case binary:split(Rest, <<" b/">>, []) of
