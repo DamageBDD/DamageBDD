@@ -22,6 +22,7 @@
 -define(DEFAULT_LIST_LIMIT, 20).
 -define(MAX_LIST_LIMIT, 100).
 -define(READ_CHUNK_BYTES, 1048576).
+-define(LOG_DOMAIN, [damage, blossom]).
 
 trails() ->
     [
@@ -81,6 +82,7 @@ trails() ->
     ].
 
 init(Req0, State = #{action := upload}) ->
+    set_blossom_log_context(Req0),
     case cowboy_req:method(Req0) of
         <<"PUT">> -> handle_upload(Req0, State);
         <<"HEAD">> -> handle_upload_preflight(Req0, State);
@@ -88,12 +90,14 @@ init(Req0, State = #{action := upload}) ->
         _ -> {ok, reply_error(405, <<"Method not allowed">>, Req0), State}
     end;
 init(Req0, State = #{action := list}) ->
+    set_blossom_log_context(Req0),
     case cowboy_req:method(Req0) of
         <<"GET">> -> handle_list(Req0, State);
         <<"OPTIONS">> -> {ok, reply_options(Req0), State};
         _ -> {ok, reply_error(405, <<"Method not allowed">>, Req0), State}
     end;
 init(Req0, State = #{action := blob}) ->
+    set_blossom_log_context(Req0),
     case cowboy_req:method(Req0) of
         <<"GET">> -> handle_get(Req0, State);
         <<"HEAD">> -> handle_head(Req0, State);
@@ -101,6 +105,36 @@ init(Req0, State = #{action := blob}) ->
         <<"OPTIONS">> -> {ok, reply_options(Req0), State};
         _ -> {ok, reply_error(405, <<"Method not allowed">>, Req0), State}
     end.
+
+%% Keep all Blossom request/auth/storage logs on a dedicated OTP Logger
+%% domain. damage_blossom_auth runs in this same Cowboy request process, so
+%% any logging added there also inherits [damage, blossom]. Do not log the
+%% Authorization value: a BUD-11 token is a short-lived signed capability.
+set_blossom_log_context(Req) ->
+    Method = cowboy_req:method(Req),
+    Path = cowboy_req:path(Req),
+    Host = cowboy_req:host(Req),
+    HasAuthorization = cowboy_req:header(<<"authorization">>, Req) =/= undefined,
+    XSha256 = cowboy_req:header(<<"x-sha-256">>, Req),
+    ok = logger:update_process_metadata(#{
+        domain => ?LOG_DOMAIN,
+        blossom_method => Method,
+        blossom_path => Path,
+        blossom_host => Host
+    }),
+    ?LOG_DEBUG(
+        "Blossom request method=~p path=~p host=~p authorization_present=~p x_sha256=~p content_type=~p content_length=~p",
+        [
+            Method,
+            Path,
+            Host,
+            HasAuthorization,
+            XSha256,
+            cowboy_req:header(<<"content-type">>, Req),
+            cowboy_req:header(<<"content-length">>, Req)
+        ]
+    ),
+    ok.
 
 %% ------------------------------------------------------------------
 %% BUD-02 / BUD-06 upload
@@ -132,47 +166,84 @@ handle_upload_preflight(Req0, State) ->
 
 handle_upload(Req0, State) ->
     case put_upload_headers(Req0) of
-        {ok, Hash, DeclaredSize, ContentType} ->
+        {ok, HeaderHash, DeclaredSize, ContentType} ->
             case DeclaredSize =< max_upload_bytes() of
                 false ->
                     {ok, reply_error(413, <<"Blob exceeds server size limit">>, Req0), State};
                 true ->
-                    case damage_blossom_auth:verify(Req0, <<"upload">>, Hash) of
-                        {ok, #{pubkey := Pubkey}} ->
-                            case read_upload_body(Req0, DeclaredSize) of
-                                {ok, TempPath, Size, ActualHash, Req1} ->
-                                    try
-                                        case ActualHash =:= Hash of
-                                            true ->
-                                                store_upload(Hash, Pubkey, TempPath, Size, ContentType, Req1, State);
-                                            false ->
-                                                {ok, reply_error(409, <<"X-SHA-256 does not match request body">>, Req1), State}
-                                        end
-                                    after
-                                        _ = file:delete(TempPath)
-                                    end;
-                                {error, too_large, Req1} ->
-                                    {ok, reply_error(413, <<"Blob exceeds declared or server size limit">>, Req1), State};
-                                {error, upload_timeout, Req1} ->
-                                    {ok, reply_error(408, <<"Upload timed out">>, Req1), State};
-                                {error, Reason, Req1} ->
-                                    ?LOG_WARNING("Blossom body read failed: ~p", [Reason]),
-                                    {ok, reply_error(400, <<"Malformed upload body">>, Req1), State}
-                            end;
-                        {error, Reason} ->
-                            ?LOG_WARNING("Blossom upload auth failed: ~p", [Reason]),
-                            {ok, reply_auth_error(Req0), State}
-                    end
+                    handle_upload_authorized(Req0, State, HeaderHash, DeclaredSize, ContentType)
             end;
         {error, missing_length} ->
             {ok, reply_error(411, <<"Content-Length is required">>, Req0), State};
-        {error, missing_hash} ->
-            %% BUD-11 upload authorization requires x to match X-SHA-256.
-            {ok, reply_error(400, <<"X-SHA-256 is required for authenticated uploads">>, Req0), State};
         {error, unsupported_type} ->
             {ok, reply_error(415, <<"Unsupported media type">>, Req0), State};
         {error, _} ->
             {ok, reply_error(400, <<"Malformed Blossom upload headers">>, Req0), State}
+    end.
+
+handle_upload_authorized(Req0, State, undefined, DeclaredSize, ContentType) ->
+    %% BUD-02 makes X-SHA-256 optional for PUT /upload and Amethyst may omit
+    %% it. First validate the signed token without consuming the body, then
+    %% stream/hash the bounded body and re-validate the same token against the
+    %% computed hash before storing it. This keeps the upload hash-bound while
+    %% avoiding unauthenticated disk I/O.
+    case damage_blossom_auth:verify_deferred_hash(Req0, <<"upload">>) of
+        {ok, #{pubkey := Pubkey}} ->
+            case read_upload_body(Req0, DeclaredSize) of
+                {ok, TempPath, Size, ActualHash, Req1} ->
+                    try
+                        case damage_blossom_auth:verify(Req1, <<"upload">>, ActualHash) of
+                            {ok, #{pubkey := Pubkey}} ->
+                                store_upload(ActualHash, Pubkey, TempPath, Size, ContentType, Req1, State);
+                            {ok, _OtherAuth} ->
+                                {ok, reply_auth_error(Req1), State};
+                            {error, Reason} ->
+                                ?LOG_WARNING("Blossom upload hash-scope auth failed: ~p", [Reason]),
+                                {ok, reply_auth_error(Req1), State}
+                        end
+                    after
+                        _ = file:delete(TempPath)
+                    end;
+                {error, too_large, Req1} ->
+                    {ok, reply_error(413, <<"Blob exceeds declared or server size limit">>, Req1), State};
+                {error, upload_timeout, Req1} ->
+                    {ok, reply_error(408, <<"Upload timed out">>, Req1), State};
+                {error, Reason, Req1} ->
+                    ?LOG_WARNING("Blossom body read failed: ~p", [Reason]),
+                    {ok, reply_error(400, <<"Malformed upload body">>, Req1), State}
+            end;
+        {error, Reason} ->
+            ?LOG_WARNING("Blossom upload auth failed before body read: ~p", [Reason]),
+            {ok, reply_auth_error(Req0), State}
+    end;
+handle_upload_authorized(Req0, State, HeaderHash, DeclaredSize, ContentType) ->
+    %% When X-SHA-256 is supplied retain the strict early hash-scoped auth
+    %% path and verify the body actually matches the declared hash.
+    case damage_blossom_auth:verify(Req0, <<"upload">>, HeaderHash) of
+        {ok, #{pubkey := Pubkey}} ->
+            case read_upload_body(Req0, DeclaredSize) of
+                {ok, TempPath, Size, ActualHash, Req1} ->
+                    try
+                        case ActualHash =:= HeaderHash of
+                            true ->
+                                store_upload(HeaderHash, Pubkey, TempPath, Size, ContentType, Req1, State);
+                            false ->
+                                {ok, reply_error(409, <<"X-SHA-256 does not match request body">>, Req1), State}
+                        end
+                    after
+                        _ = file:delete(TempPath)
+                    end;
+                {error, too_large, Req1} ->
+                    {ok, reply_error(413, <<"Blob exceeds declared or server size limit">>, Req1), State};
+                {error, upload_timeout, Req1} ->
+                    {ok, reply_error(408, <<"Upload timed out">>, Req1), State};
+                {error, Reason, Req1} ->
+                    ?LOG_WARNING("Blossom body read failed: ~p", [Reason]),
+                    {ok, reply_error(400, <<"Malformed upload body">>, Req1), State}
+            end;
+        {error, Reason} ->
+            ?LOG_WARNING("Blossom upload auth failed: ~p", [Reason]),
+            {ok, reply_auth_error(Req0), State}
     end.
 
 preflight_headers(Req) ->
@@ -188,10 +259,26 @@ put_upload_headers(Req) ->
     Hash0 = cowboy_req:header(<<"x-sha-256">>, Req),
     Length0 = cowboy_req:header(<<"content-length">>, Req),
     CType0 = cowboy_req:header(<<"content-type">>, Req, <<"application/octet-stream">>),
-    case {Hash0, Length0} of
-        {undefined, _} -> {error, missing_hash};
-        {_, undefined} -> {error, missing_length};
-        _ -> parse_upload_headers(Hash0, Length0, CType0, false)
+    case Length0 of
+        undefined -> {error, missing_length};
+        _ -> parse_put_upload_headers(Hash0, Length0, CType0)
+    end.
+
+parse_put_upload_headers(Hash0, Length0, CType0) ->
+    HashResult =
+        case Hash0 of
+            undefined -> {ok, undefined};
+            _ -> parse_hash(Hash0)
+        end,
+    case {HashResult, parse_size(Length0), normalize_content_type(CType0)} of
+        {{ok, Hash}, {ok, Size}, {ok, ContentType}} ->
+            {ok, Hash, Size, ContentType};
+        {{error, _}, _, _} ->
+            {error, invalid_hash};
+        {_, {error, _}, _} ->
+            {error, invalid_length};
+        {_, _, {error, _}} ->
+            {error, unsupported_type}
     end.
 
 parse_upload_headers(Hash0, Length0, CType0, RequireType) ->

@@ -7,7 +7,7 @@
 %%%-------------------------------------------------------------------
 -module(damage_blossom_auth).
 
--export([verify/3, verify/4]).
+-export([verify/3, verify/4, verify_deferred_hash/2]).
 
 -spec verify(map(), binary() | list(), binary() | undefined) ->
     {ok, map()} | {error, term()}.
@@ -20,14 +20,24 @@ verify(Req, Action0, Hash0, Server0) ->
     Action = lower_ascii(to_bin(Action0)),
     Hash = normalize_hash(Hash0),
     Server = lower_ascii(to_bin(Server0)),
+    verify_request(Req, Action, Hash, Server, enforce_hash).
+
+-spec verify_deferred_hash(map(), binary() | list()) ->
+    {ok, map()} | {error, term()}.
+verify_deferred_hash(Req, Action0) ->
+    Action = lower_ascii(to_bin(Action0)),
+    Server = public_server_name(Req),
+    verify_request(Req, Action, undefined, Server, defer_hash).
+
+verify_request(Req, Action, Hash, Server, HashMode) ->
     case cowboy_req:header(<<"authorization">>, Req) of
         <<"Nostr ", Token/binary>> ->
-            verify_token(Token, Action, Hash, Server);
+            verify_token(Token, Action, Hash, Server, HashMode);
         _ ->
             {error, missing_authorization}
     end.
 
-verify_token(Token, Action, Hash, Server) ->
+verify_token(Token, Action, Hash, Server, HashMode) ->
     case decode_auth_event(Token) of
         {ok, Event0} ->
             case normalize_event(Event0) of
@@ -39,7 +49,7 @@ verify_token(Token, Action, Hash, Server) ->
                         fun() -> check_expiration(Tags) end,
                         fun() -> check_action(Action, Tags) end,
                         fun() -> check_server(Server, Tags) end,
-                        fun() -> check_hash_scope(Action, Hash, Tags) end,
+                        fun() -> check_hash_scope_mode(HashMode, Action, Hash, Tags) end,
                         fun() -> check_signature(Event) end
                     ],
                     case run_checks(Checks) of
@@ -80,20 +90,36 @@ decode_auth_event(_) ->
     {error, invalid_authorization_event}.
 
 decode_base64url(Token) ->
-    case binary:match(Token, <<"=">>) of
-        nomatch -> ok;
-        _ -> erlang:error(padded_base64url_not_allowed)
-    end,
+    %% BUD-11 specifies unpadded base64url. Amethyst 1.16+ deliberately
+    %% sends conventional padded Base64 for interoperability. The encoding
+    %% is only a transport wrapper; authenticity is provided by the signed
+    %% Nostr event, so accept both standard/Base64url and padded/unpadded.
     Std0 = binary:replace(Token, <<"-">>, <<"+">>, [global]),
-    Std = binary:replace(Std0, <<"_">>, <<"/">>, [global]),
+    Std1 = binary:replace(Std0, <<"_">>, <<"/">>, [global]),
+    Std = strip_base64_padding(Std1),
+    case binary:match(Std, <<"=">>) of
+        nomatch -> ok;
+        _ -> erlang:error(invalid_base64_padding)
+    end,
     Padded =
         case byte_size(Std) rem 4 of
             0 -> Std;
             2 -> <<Std/binary, "==">>;
             3 -> <<Std/binary, "=">>;
-            _ -> erlang:error(invalid_base64url)
+            _ -> erlang:error(invalid_base64)
         end,
     base64:decode(Padded).
+
+strip_base64_padding(Bin) when is_binary(Bin) ->
+    case byte_size(Bin) of
+        0 ->
+            Bin;
+        N ->
+            case binary:last(Bin) of
+                $= -> strip_base64_padding(binary:part(Bin, 0, N - 1));
+                _ -> Bin
+            end
+    end.
 
 normalize_event(M) when is_map(M) ->
     try
@@ -159,9 +185,17 @@ check_pubkey(#{pubkey := Pubkey}) ->
 
 check_created_at(#{created_at := CreatedAt}) ->
     Now = erlang:system_time(second),
-    case CreatedAt =< Now of
+    Skew = clock_skew_seconds(),
+    Delta = CreatedAt - Now,
+    case Delta =< Skew of
         true -> ok;
-        false -> {error, authorization_from_future}
+        false -> {error, {authorization_from_future, Delta, Skew}}
+    end.
+
+clock_skew_seconds() ->
+    case application:get_env(damage, blossom_auth_clock_skew_seconds, 5) of
+        N when is_integer(N), N >= 0, N =< 300 -> N;
+        _ -> 0
     end.
 
 check_expiration(Tags) ->
@@ -206,6 +240,14 @@ check_server(Server, Tags) ->
             end
     end.
 
+check_hash_scope_mode(defer_hash, _Action, _Hash, _Tags) ->
+    %% Used only as a pre-body admission check for PUT /upload when the
+    %% optional X-SHA-256 header is absent. The same token is verified again
+    %% against the computed body hash before anything is persisted.
+    ok;
+check_hash_scope_mode(enforce_hash, Action, Hash, Tags) ->
+    check_hash_scope(Action, Hash, Tags).
+
 check_hash_scope(Action, Hash, Tags) ->
     Xs = [lower_ascii(V) || V <- tag_values(<<"x">>, Tags)],
     case requires_hash(Action) of
@@ -237,12 +279,114 @@ requires_hash(<<"media">>) -> true;
 requires_hash(_) -> false.
 
 check_signature(Event) ->
-    try nostrlib:verify(Event) of
-        true -> ok;
-        _ -> {error, invalid_signature}
-    catch
-        _:_ -> {error, invalid_signature}
+    %% Do not use nostrlib:verify/1 here. Blossom auth uses an arbitrary
+    %% Nostr kind (24242), while some nostrlib revisions normalize/interpret
+    %% event kinds before verification. Verify the two NIP-01 properties
+    %% explicitly instead:
+    %%
+    %%   1. id == sha256([0,pubkey,created_at,kind,tags,content])
+    %%   2. sig is a valid BIP-340 signature of that 32-byte id.
+    %%
+    %% This also distinguishes a canonical event-id failure from an actual
+    %% Schnorr signature failure in the dedicated Blossom log.
+    SuppliedId = lower_ascii(maps:get(id, Event)),
+    ComputedId = canonical_event_id(Event),
+    case SuppliedId =:= ComputedId of
+        false ->
+            logger:warning(
+                "Blossom BUD-11 event id mismatch supplied=~s computed=~s pubkey=~s kind=~p",
+                [
+                    SuppliedId,
+                    ComputedId,
+                    maps:get(pubkey, Event),
+                    maps:get(kind, Event)
+                ]
+            ),
+            {error, invalid_event_id};
+        true ->
+            verify_schnorr_signature(Event)
     end.
+
+canonical_event_id(Event) ->
+    Serialized = jsx:encode([
+        0,
+        maps:get(pubkey, Event),
+        maps:get(created_at, Event),
+        maps:get(kind, Event),
+        maps:get(tags, Event, []),
+        maps:get(content, Event, <<>>)
+    ]),
+    lower_hex(crypto:hash(sha256, Serialized)).
+
+verify_schnorr_signature(Event) ->
+    IdHex = lower_ascii(maps:get(id, Event)),
+    PubkeyHex = lower_ascii(maps:get(pubkey, Event)),
+    SigHex = lower_ascii(maps:get(sig, Event)),
+    case {
+        decode_hex_exact(IdHex, 32),
+        decode_hex_exact(PubkeyHex, 32),
+        decode_hex_exact(SigHex, 64)
+    } of
+        {{ok, Id}, {ok, Pubkey}, {ok, Sig}} ->
+            try nostrlib_schnorr:verify(Id, Pubkey, Sig) of
+                true ->
+                    ok;
+                false ->
+                    logger:warning(
+                        "Blossom BUD-11 Schnorr verification failed event_id=~s pubkey=~s",
+                        [IdHex, PubkeyHex]
+                    ),
+                    {error, invalid_signature};
+                Other ->
+                    logger:warning(
+                        "Blossom BUD-11 Schnorr verifier returned ~p event_id=~s pubkey=~s",
+                        [Other, IdHex, PubkeyHex]
+                    ),
+                    {error, invalid_signature}
+            catch
+                Class:Reason ->
+                    logger:warning(
+                        "Blossom BUD-11 Schnorr verifier crashed class=~p reason=~p event_id=~s pubkey=~s",
+                        [Class, Reason, IdHex, PubkeyHex]
+                    ),
+                    {error, invalid_signature}
+            end;
+        _ ->
+            logger:warning(
+                "Blossom BUD-11 invalid signature field encoding "
+                "id_len=~p pubkey_len=~p sig_len=~p event_id=~s pubkey=~s",
+                [
+                    byte_size(IdHex),
+                    byte_size(PubkeyHex),
+                    byte_size(SigHex),
+                    IdHex,
+                    PubkeyHex
+                ]
+            ),
+            {error, invalid_signature_format}
+    end.
+
+decode_hex_exact(Hex, Bytes) when is_binary(Hex), byte_size(Hex) =:= Bytes * 2 ->
+    case re:run(Hex, <<"\\A[0-9a-fA-F]+\\z">>, [{capture, none}]) of
+        match ->
+            %% Use OTP's hex decoder directly. This avoids depending on
+            %% nostrlib:hex_to_binary/1 being exported by the exact nostrlib
+            %% revision bundled with DamageBDD.
+            try binary:decode_hex(Hex) of
+                Bin when is_binary(Bin), byte_size(Bin) =:= Bytes -> {ok, Bin};
+                _ -> error
+            catch
+                error:badarg -> error
+            end;
+        nomatch ->
+            error
+    end;
+decode_hex_exact(_, _) ->
+    error.
+
+lower_hex(Bin) when is_binary(Bin) ->
+    iolist_to_binary([io_lib:format("~2.16.0b", [Byte]) || <<Byte>> <= Bin]).
+
 
 tag_values(Name, Tags) ->
     [Value || [TagName, Value | _] <- Tags, TagName =:= Name].
@@ -259,22 +403,19 @@ run_checks([F | Rest]) ->
 %% ------------------------------------------------------------------
 
 public_server_name(Req) ->
-    Base =
-        case application:get_env(damage, blossom_public_base_url) of
-            {ok, V} -> to_bin(V);
-            undefined ->
-                case application:get_env(damage, nip96_public_base_url) of
-                    {ok, V} -> to_bin(V);
-                    undefined ->
-                        case application:get_env(damage, api_url) of
-                            {ok, V} -> to_bin(V);
-                            undefined -> <<(cowboy_req:scheme(Req))/binary, "://", (cowboy_req:host(Req))/binary>>
-                        end
-                end
-        end,
-    case uri_string:parse(binary_to_list(Base)) of
-        #{host := Host} -> lower_ascii(to_bin(Host));
-        _ -> lower_ascii(cowboy_req:host(Req))
+    case application:get_env(damage, blossom_public_base_url) of
+        {ok, Base0} ->
+            Base = to_bin(Base0),
+            case uri_string:parse(binary_to_list(Base)) of
+                #{host := Host} ->
+                    lower_ascii(to_bin(Host));
+                _ ->
+                    lower_ascii(cowboy_req:host(Req))
+            end;
+        undefined ->
+            %% Host is preserved by the trusted reverse proxy:
+            %% proxy_set_header Host $host;
+            lower_ascii(cowboy_req:host(Req))
     end.
 
 normalize_hash(undefined) -> undefined;
