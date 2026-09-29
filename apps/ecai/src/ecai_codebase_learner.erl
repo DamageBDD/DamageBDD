@@ -199,7 +199,12 @@ terminate(_Reason, State0) ->
     _ = checkpoint_state(State1),
     maps:foreach(fun(_Ref, Task) ->
         case maps:get(pid, Task, undefined) of
-            Pid when is_pid(Pid) -> catch exit(Pid, shutdown);
+            Pid when is_pid(Pid) ->
+                try exit(Pid, shutdown) of
+                    _ -> ok
+                catch
+                    _:_ -> ok
+                end;
             _ -> ok
         end
     end, State1#state.inflight),
@@ -466,10 +471,12 @@ module_card_current(App, Module, Analysis, Opts) ->
     end.
 
 inference_identity_current(Provider, Model, Digest) ->
-    case catch ecai_ollama_pool:inference_available(learning, Provider, Model, Digest) of
+    try ecai_ollama_pool:inference_available(learning, Provider, Model, Digest) of
         true -> true;
         false -> false;
         _ -> true
+    catch
+        _:_ -> true
     end.
 
 requested_provider(any) -> any;
@@ -649,11 +656,29 @@ resolve_parallelism(Opts) ->
     ),
     case Requested of
         auto ->
-            case catch ecai_ollama_pool:capacity(learning) of
-                N when is_integer(N), N > 0 -> N;
-                _ -> 1
-            end;
-        N when is_integer(N), N > 0 -> N;
+            Capacity =
+                try ecai_ollama_pool:capacity(learning) of
+                    N when is_integer(N), N > 0 -> N;
+                    _ -> 1
+                catch
+                    _:_ -> 1
+                end,
+            Reserve = resolve_capacity_reserve(Opts),
+            max(1, Capacity - Reserve);
+        N when is_integer(N), N > 0 ->
+            N;
+        _ ->
+            1
+    end.
+
+resolve_capacity_reserve(Opts) ->
+    Reserve0 = maps:get(
+        capacity_reserve,
+        Opts,
+        application:get_env(ecai, code_learning_capacity_reserve, 1)
+    ),
+    case Reserve0 of
+        N when is_integer(N), N >= 0 -> N;
         _ -> 1
     end.
 
