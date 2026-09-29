@@ -1,0 +1,42 @@
+%% Blossom security hardening defaults / suggested production settings.
+%% Add these entries inside the {damage, [...]} application configuration.
+
+{blossom_public_base_url, "https://media.damagebdd.com"},
+
+%% Request/body limits. Code also enforces an absolute 256 MiB hard ceiling.
+{blossom_max_bytes, 67108864},             %% 64 MiB upload cap
+{blossom_max_serve_bytes, 67108864},       %% cap per-request in-memory retrieval
+{blossom_upload_timeout_ms, 120000},       %% 2 minutes, clamped to 5s..5m
+
+%% BUD-11 acceptance window.
+{blossom_auth_clock_skew_seconds, 20},
+{blossom_auth_max_age_seconds, 300},       %% reject tokens older than 5 minutes
+{blossom_auth_max_ttl_seconds, 900},       %% reject tokens valid for >15 minutes
+
+%% Media allow-list. Active formats such as SVG/HTML are intentionally absent.
+{blossom_allowed_content_types, [
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+    "image/avif",
+    "image/heic",
+    "image/heif",
+    "video/mp4",
+    "video/quicktime",
+    "video/webm",
+    "audio/mpeg",
+    "audio/ogg",
+    "audio/wav",
+    "application/pdf"
+]},
+{blossom_allow_octet_stream, false},
+
+%% Per-node fixed-window rate limits.
+{blossom_upload_ip_requests_per_minute, 60},
+{blossom_upload_pubkey_requests_per_minute, 20},
+{blossom_delete_ip_requests_per_minute, 60},
+{blossom_delete_pubkey_requests_per_minute, 30},
+{blossom_download_ip_requests_per_minute, 600},
+{blossom_list_ip_requests_per_minute, 60},
+{blossom_rate_max_keys, 100000}

@@ -39,9 +39,10 @@ init(Opts) ->
         damage_ipfs_reconciler,
         damage_ipfs_health,
         damage_ipfs_peers,
-        %% Keep NIP-96 metadata last in this rest_for_one subtree: a metadata
-        %% failure must not restart the core IPFS client/fetch/pin services.
-        damage_nip96_store
+        %% Keep HTTP metadata/rate workers after the core IPFS services. A
+        %% failure here must not restart client/fetch/pin infrastructure.
+        damage_nip96_store,
+        damage_blossom_rate
     ],
     ServiceChildren = [
         #{
@@ -63,4 +64,5 @@ callbacks(damage_ipfs_client) -> [damage_ipfs_queue];
 callbacks(damage_ipfs_fetcher) -> [damage_ipfs_queue];
 callbacks(damage_ipfs_store) -> [damage_ipfs_store];
 callbacks(damage_nip96_store) -> [damage_nip96_store];
+callbacks(damage_blossom_rate) -> [damage_blossom_rate];
 callbacks(_) -> [damage_ipfs_loop].

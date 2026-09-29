@@ -7,6 +7,15 @@
 %%%-------------------------------------------------------------------
 -module(damage_blossom_auth).
 
+-define(MAX_AUTH_TOKEN_BYTES, 16384).
+-define(MAX_AUTH_JSON_BYTES, 12288).
+-define(MAX_EVENT_CONTENT_BYTES, 4096).
+-define(MAX_TAGS, 32).
+-define(MAX_TAG_ELEMENTS, 8).
+-define(MAX_TAG_VALUE_BYTES, 1024).
+-define(DEFAULT_AUTH_MAX_AGE_SECONDS, 300).
+-define(DEFAULT_AUTH_MAX_TTL_SECONDS, 900).
+
 -export([verify/3, verify/4, verify_deferred_hash/2]).
 
 -spec verify(map(), binary() | list(), binary() | undefined) ->
@@ -46,7 +55,7 @@ verify_token(Token, Action, Hash, Server, HashMode) ->
                         fun() -> check_kind(Event) end,
                         fun() -> check_pubkey(Event) end,
                         fun() -> check_created_at(Event) end,
-                        fun() -> check_expiration(Tags) end,
+                        fun() -> check_expiration(Event, Tags) end,
                         fun() -> check_action(Action, Tags) end,
                         fun() -> check_server(Server, Tags) end,
                         fun() -> check_hash_scope_mode(HashMode, Action, Hash, Tags) end,
@@ -76,16 +85,23 @@ verify_token(Token, Action, Hash, Server, HashMode) ->
 %% Event parsing
 %% ------------------------------------------------------------------
 
-decode_auth_event(Token) when is_binary(Token), byte_size(Token) =< 16384 ->
+decode_auth_event(Token) when is_binary(Token), byte_size(Token) =< ?MAX_AUTH_TOKEN_BYTES ->
     try
         Json = decode_base64url(Token),
-        case jsx:decode(Json, [return_maps]) of
-            M when is_map(M) -> {ok, M};
-            _ -> {error, invalid_authorization_event}
+        case byte_size(Json) =< ?MAX_AUTH_JSON_BYTES of
+            false ->
+                {error, authorization_event_too_large};
+            true ->
+                case jsx:decode(Json, [return_maps]) of
+                    M when is_map(M) -> {ok, M};
+                    _ -> {error, invalid_authorization_event}
+                end
         end
     catch
         _:_ -> {error, invalid_authorization_event}
     end;
+decode_auth_event(Token) when is_binary(Token) ->
+    {error, authorization_token_too_large};
 decode_auth_event(_) ->
     {error, invalid_authorization_event}.
 
@@ -123,14 +139,15 @@ strip_base64_padding(Bin) when is_binary(Bin) ->
 
 normalize_event(M) when is_map(M) ->
     try
-        Id = require_binary(<<"id">>, M),
-        Pubkey = require_binary(<<"pubkey">>, M),
-        Sig = require_binary(<<"sig">>, M),
+        Id = require_hex_binary(<<"id">>, M, 64),
+        Pubkey = require_hex_binary(<<"pubkey">>, M, 64),
+        Sig = require_hex_binary(<<"sig">>, M, 128),
         Content = maps:get(<<"content">>, M, <<>>),
         Kind = require_integer(<<"kind">>, M),
         CreatedAt = require_integer(<<"created_at">>, M),
         Tags = normalize_tags(maps:get(<<"tags">>, M, [])),
         true = is_binary(Content),
+        true = byte_size(Content) =< ?MAX_EVENT_CONTENT_BYTES,
         {ok,
             #{
                 id => Id,
@@ -148,20 +165,35 @@ normalize_event(M) when is_map(M) ->
 normalize_event(_) ->
     {error, invalid_authorization_event}.
 
-normalize_tags(Tags) when is_list(Tags) ->
+normalize_tags(Tags) when is_list(Tags), length(Tags) =< ?MAX_TAGS ->
     [normalize_tag(T) || T <- Tags];
 normalize_tags(_) ->
     erlang:error(invalid_tags).
 
-normalize_tag(T) when is_list(T), length(T) >= 2 ->
-    [to_bin(V) || V <- T];
+normalize_tag(T) when
+    is_list(T),
+    length(T) >= 2,
+    length(T) =< ?MAX_TAG_ELEMENTS
+->
+    [normalize_tag_value(V) || V <- T];
 normalize_tag(_) ->
     erlang:error(invalid_tag).
 
-require_binary(Key, M) ->
+normalize_tag_value(V) when is_binary(V), byte_size(V) =< ?MAX_TAG_VALUE_BYTES ->
+    V;
+normalize_tag_value(_) ->
+    erlang:error(invalid_tag_value).
+
+require_hex_binary(Key, M, Chars) ->
     case maps:get(Key, M, undefined) of
-        B when is_binary(B), byte_size(B) > 0 -> B;
-        _ -> erlang:error({invalid_field, Key})
+        B when is_binary(B), byte_size(B) =:= Chars ->
+            Lower = lower_ascii(B),
+            case re:run(Lower, <<"\\A[0-9a-f]+\\z">>, [{capture, none}]) of
+                match -> Lower;
+                nomatch -> erlang:error({invalid_field, Key})
+            end;
+        _ ->
+            erlang:error({invalid_field, Key})
     end.
 
 require_integer(Key, M) ->
@@ -186,26 +218,52 @@ check_pubkey(#{pubkey := Pubkey}) ->
 check_created_at(#{created_at := CreatedAt}) ->
     Now = erlang:system_time(second),
     Skew = clock_skew_seconds(),
+    MaxAge = auth_max_age_seconds(),
     Delta = CreatedAt - Now,
-    case Delta =< Skew of
-        true -> ok;
-        false -> {error, {authorization_from_future, Delta, Skew}}
+    Age = Now - CreatedAt,
+    if
+        Delta > Skew ->
+            {error, {authorization_from_future, Delta, Skew}};
+        Age > MaxAge ->
+            {error, {authorization_stale, Age, MaxAge}};
+        true ->
+            ok
     end.
 
 clock_skew_seconds() ->
-    case application:get_env(damage, blossom_auth_clock_skew_seconds, 5) of
-        N when is_integer(N), N >= 0, N =< 300 -> N;
-        _ -> 0
-    end.
+    configured_int(blossom_auth_clock_skew_seconds, 5, 0, 300).
 
-check_expiration(Tags) ->
+auth_max_age_seconds() ->
+    configured_int(
+        blossom_auth_max_age_seconds,
+        ?DEFAULT_AUTH_MAX_AGE_SECONDS,
+        1,
+        86400
+    ).
+
+auth_max_ttl_seconds() ->
+    configured_int(
+        blossom_auth_max_ttl_seconds,
+        ?DEFAULT_AUTH_MAX_TTL_SECONDS,
+        1,
+        86400
+    ).
+
+check_expiration(#{created_at := CreatedAt}, Tags) ->
     Now = erlang:system_time(second),
+    MaxTtl = auth_max_ttl_seconds(),
+    Skew = clock_skew_seconds(),
     case tag_values(<<"expiration">>, Tags) of
         [Value] ->
             case parse_nonneg_int(Value) of
-                {ok, Expiration} when Expiration > Now -> ok;
-                {ok, _} -> {error, authorization_expired};
-                error -> {error, invalid_expiration}
+                {ok, Expiration} when Expiration =< Now ->
+                    {error, authorization_expired};
+                {ok, Expiration} when Expiration > CreatedAt + MaxTtl + Skew ->
+                    {error, {authorization_ttl_too_long, Expiration - CreatedAt, MaxTtl}};
+                {ok, _Expiration} ->
+                    ok;
+                error ->
+                    {error, invalid_expiration}
             end;
         [] -> {error, missing_expiration};
         _ -> {error, duplicate_expiration}
@@ -240,38 +298,64 @@ check_server(Server, Tags) ->
             end
     end.
 
-check_hash_scope_mode(defer_hash, _Action, _Hash, _Tags) ->
-    %% Used only as a pre-body admission check for PUT /upload when the
-    %% optional X-SHA-256 header is absent. The same token is verified again
-    %% against the computed body hash before anything is persisted.
-    ok;
+check_hash_scope_mode(defer_hash, Action, _Hash, Tags) ->
+    %% For a PUT without X-SHA-256 we still require a syntactically valid
+    %% hash scope before accepting body bytes. The exact scope is checked
+    %% again against the computed SHA-256 after the bounded upload completes.
+    case requires_hash(Action) of
+        true -> validate_required_hash_tags(Tags);
+        false -> ok
+    end;
 check_hash_scope_mode(enforce_hash, Action, Hash, Tags) ->
     check_hash_scope(Action, Hash, Tags).
 
 check_hash_scope(Action, Hash, Tags) ->
-    Xs = [lower_ascii(V) || V <- tag_values(<<"x">>, Tags)],
-    case requires_hash(Action) of
-        true ->
-            case Hash of
-                undefined -> {error, missing_hash_scope};
-                _ ->
-                    case lists:any(fun(V) -> V =:= Hash end, Xs) of
-                        true -> ok;
-                        false -> {error, wrong_hash_scope}
+    Xs = normalized_hash_tags(Tags),
+    case validate_hash_tags(Xs) of
+        ok ->
+            case requires_hash(Action) of
+                true ->
+                    case Hash of
+                        undefined -> {error, missing_hash_scope};
+                        _ ->
+                            case lists:any(fun(V) -> V =:= Hash end, Xs) of
+                                true -> ok;
+                                false -> {error, wrong_hash_scope}
+                            end
+                    end;
+                false ->
+                    %% For GET tokens `x` is optional, but when supplied it still
+                    %% narrows the token. List tokens have no implied blob hash.
+                    case {Action, Hash, Xs} of
+                        {<<"get">>, H, [_ | _]} when is_binary(H) ->
+                            case lists:any(fun(V) -> V =:= H end, Xs) of
+                                true -> ok;
+                                false -> {error, wrong_hash_scope}
+                            end;
+                        _ -> ok
                     end
             end;
-        false ->
-            %% For GET tokens `x` is optional, but when supplied it still
-            %% narrows the token. List tokens have no implied blob hash.
-            case {Action, Hash, Xs} of
-                {<<"get">>, H, [_ | _]} when is_binary(H) ->
-                    case lists:any(fun(V) -> V =:= H end, Xs) of
-                        true -> ok;
-                        false -> {error, wrong_hash_scope}
-                    end;
-                _ -> ok
-            end
+        {error, _} = Error ->
+            Error
     end.
+
+validate_required_hash_tags(Tags) ->
+    Xs = normalized_hash_tags(Tags),
+    case Xs of
+        [] -> {error, missing_hash_scope};
+        _ -> validate_hash_tags(Xs)
+    end.
+
+normalized_hash_tags(Tags) ->
+    [lower_ascii(V) || V <- tag_values(<<"x">>, Tags)].
+
+validate_hash_tags(Xs) when length(Xs) =< 8 ->
+    case lists:all(fun valid_hex64/1, Xs) of
+        true -> ok;
+        false -> {error, invalid_hash_scope}
+    end;
+validate_hash_tags(_) ->
+    {error, too_many_hash_scopes}.
 
 requires_hash(<<"upload">>) -> true;
 requires_hash(<<"delete">>) -> true;
@@ -438,6 +522,13 @@ parse_nonneg_int(Bin) when is_binary(Bin) ->
         _:_ -> error
     end;
 parse_nonneg_int(_) -> error.
+
+configured_int(Key, Default, Min, Max) ->
+    case application:get_env(damage, Key, Default) of
+        I when is_integer(I), I >= Min, I =< Max -> I;
+        I when is_integer(I), I > Max -> Max;
+        _ -> Default
+    end.
 
 lower_ascii(B) ->
     << <<(lower_char(C))>> || <<C>> <= B >>.
