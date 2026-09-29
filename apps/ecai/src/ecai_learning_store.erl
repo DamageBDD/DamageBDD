@@ -237,8 +237,9 @@ event_summary(checkpoint, Value) when is_map(Value) ->
 event_summary(repair, Value) when is_map(Value) ->
     maps:with([
         status, stage, fingerprint, finding_version, application, module, attempt,
-        error, patch_sha256, patch_file, created_at, updated_at, completed_at,
-        persist_seq, persisted_at
+        retry_count, retryable, next_retry_at_ms, failure_class, last_error,
+        last_failed_at, worker_started_at, error, patch_sha256, patch_file,
+        created_at, updated_at, completed_at, persist_seq, persisted_at
     ], Value);
 event_summary(_Type, Value) -> Value.
 

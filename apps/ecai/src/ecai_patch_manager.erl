@@ -51,13 +51,29 @@ init(Opts) ->
 
 handle_call(status, _From, State) ->
     Repairs = safe_repairs(),
+    Counts = repair_counts(Repairs),
+    QueuedLive = status_count(queued, Counts),
+    RetryWait = status_count(retry_wait, Counts),
+    RunningPersisted = status_count(running, Counts),
+    Active = active_patch_workers(),
     {reply, #{
         cycles => State#state.cycles,
+        %% Historical counters are preserved for backwards compatibility.
         queued => State#state.queued,
+        queued_total => State#state.queued,
         retried => State#state.retried,
-        active => active_patch_workers(),
+        retried_total => State#state.retried,
+        %% Live queue/worker health is reported separately so a growing
+        %% persisted backlog cannot be confused with cumulative counters.
+        queued_live => QueuedLive,
+        retry_wait => RetryWait,
+        pending => QueuedLive + RetryWait,
+        active => Active,
+        running_persisted => RunningPersisted,
+        stale_running => stale_running_count(Repairs),
         max_concurrent => State#state.max_concurrent,
-        repair_statuses => repair_counts(Repairs),
+        repair_statuses => Counts,
+        failure_summary => failure_summary(Repairs, State#state.opts),
         last_run_at => State#state.last_run_at,
         last_retry_at => State#state.last_retry_at,
         last_error => State#state.last_error
@@ -221,8 +237,13 @@ queue_if_needed(App, Module, Finding, Opts, MaxConcurrent, Q, E) ->
 
 dispatch_persisted(Opts, MaxConcurrent) ->
     Repairs0 = safe_repairs(),
-    Repairs1 = migrate_legacy_retries(Repairs0, Opts),
-    Repairs = lists:sort(fun repair_order/2, Repairs1),
+    %% A persisted running state is only authoritative while its supervised
+    %% worker still exists. Reconcile orphaned records before considering any
+    %% repair for dispatch so they cannot inflate running counts forever or be
+    %% restarted without consuming retry budget.
+    Repairs1 = reconcile_stale_running(Repairs0, Opts),
+    Repairs2 = migrate_legacy_retries(Repairs1, Opts),
+    Repairs = lists:sort(fun repair_order/2, Repairs2),
     lists:foldl(
         fun(Repair, {Started, Errors}) ->
             case active_patch_workers() >= MaxConcurrent of
@@ -235,6 +256,68 @@ dispatch_persisted(Opts, MaxConcurrent) ->
         end,
         {0, []},
         Repairs).
+
+reconcile_stale_running(Repairs, Opts) ->
+    lists:map(
+        fun(Repair) ->
+            case stale_running(Repair) of
+                true ->
+                    reconcile_stale_running_repair(Repair, Opts);
+                false ->
+                    Repair
+            end
+        end,
+        Repairs).
+
+reconcile_stale_running_repair(Repair, Opts) ->
+    case {
+        maps:get(fingerprint, Repair, undefined),
+        maps:get(finding_version, Repair, undefined)
+    } of
+        {Fp, Version} when is_binary(Fp), is_binary(Version) ->
+            RetryCount = nonneg_int(maps:get(retry_count, Repair, 0), 0) + 1,
+            Limit = positive_int(ecai_patch_retry:retry_limit(Opts), 1),
+            NowMs = erlang:system_time(millisecond),
+            Now = now_iso8601(),
+            StartedAt = maps:get(worker_started_at, Repair, undefined),
+            OrphanError = {orphaned_worker, StartedAt},
+            Base = maps:without([worker_pid, completed_at], Repair),
+            Reconciled =
+                case RetryCount >= Limit of
+                    true ->
+                        Base#{
+                            status => failed,
+                            stage => terminal,
+                            retryable => false,
+                            retry_count => RetryCount,
+                            failure_class => orphaned_worker,
+                            error => {retry_exhausted, OrphanError},
+                            last_error => OrphanError,
+                            last_failed_at => Now,
+                            completed_at => Now,
+                            updated_at => Now
+                        };
+                    false ->
+                        Base#{
+                            status => retry_wait,
+                            stage => dispatch_wait,
+                            retryable => true,
+                            retry_count => RetryCount,
+                            failure_class => orphaned_worker,
+                            error => OrphanError,
+                            last_error => OrphanError,
+                            last_failed_at => Now,
+                            next_retry_at_ms =>
+                                ecai_patch_retry:next_retry_at_ms(
+                                    RetryCount, NowMs, Opts),
+                            updated_at => Now
+                        }
+                end,
+            _ = ecai_learning_store:put_repair(Fp, Version, Reconciled),
+            Reconciled;
+        _ ->
+            Repair
+    end.
 
 migrate_legacy_retries(Repairs, Opts) ->
     NowMs = erlang:system_time(millisecond),
@@ -322,8 +405,10 @@ dispatchable(Repair, Fp, Version, NowMs, Opts) ->
     RetryCount = maps:get(retry_count, Repair, 0),
     RetryAllowed = RetryCount < ecai_patch_retry:retry_limit(Opts),
     case Status of
-        running -> not worker_alive(Fp, Version);
-        <<"running">> -> not worker_alive(Fp, Version);
+        %% Running records are reconciled by reconcile_stale_running/2.
+        %% Never bypass retry accounting by dispatching one directly here.
+        running -> false;
+        <<"running">> -> false;
         failed ->
             RetryAllowed andalso
                 ecai_patch_retry:is_retryable(maps:get(error, Repair, undefined));
@@ -372,15 +457,21 @@ start_failure_record(Repair, Reason, Opts) ->
     NowMs = erlang:system_time(millisecond),
     Now = now_iso8601(),
     Limit = ecai_patch_retry:retry_limit(Opts),
-    case RetryCount > Limit of
+    %% RetryCount == Limit must be terminal. The previous `> Limit` check
+    %% persisted retry_wait at exactly the limit, but dispatchable/5 refused to
+    %% run it because RetryCount < Limit was already false, leaving a repair
+    %% stranded forever.
+    case RetryCount >= Limit of
         true ->
             (maps:without([worker_pid], Repair))#{
                 status => failed,
                 stage => terminal,
                 retryable => false,
                 retry_count => RetryCount,
+                failure_class => worker_start_failed,
                 error => {retry_exhausted, {worker_start_failed, Reason}},
                 last_error => {worker_start_failed, Reason},
+                last_failed_at => Now,
                 completed_at => Now,
                 updated_at => Now
             };
@@ -390,8 +481,10 @@ start_failure_record(Repair, Reason, Opts) ->
                 stage => dispatch_wait,
                 retryable => true,
                 retry_count => RetryCount,
+                failure_class => worker_start_failed,
                 error => {worker_start_failed, Reason},
                 last_error => {worker_start_failed, Reason},
+                last_failed_at => Now,
                 next_retry_at_ms =>
                     ecai_patch_retry:next_retry_at_ms(
                         RetryCount, NowMs, Opts),
@@ -449,6 +542,114 @@ repair_counts(Repairs) ->
         #{},
         Repairs).
 
+status_count(Status, Counts) ->
+    maps:get(Status, Counts, 0) + maps:get(atom_to_binary(Status, utf8), Counts, 0).
+
+stale_running_count(Repairs) ->
+    length([Repair || Repair <- Repairs, stale_running(Repair)]).
+
+stale_running(Repair) when is_map(Repair) ->
+    case {
+        is_running_status(maps:get(status, Repair, undefined)),
+        maps:get(fingerprint, Repair, undefined),
+        maps:get(finding_version, Repair, undefined)
+    } of
+        {true, Fp, Version} when is_binary(Fp), is_binary(Version) ->
+            not worker_alive(Fp, Version);
+        _ ->
+            false
+    end;
+stale_running(_) ->
+    false.
+
+is_running_status(running) -> true;
+is_running_status(<<"running">>) -> true;
+is_running_status(_) -> false.
+
+failure_summary(Repairs, Opts) ->
+    Limit = positive_int(ecai_patch_retry:retry_limit(Opts), 1),
+    lists:foldl(
+        fun(Repair, Acc0) ->
+            Status = maps:get(status, Repair, undefined),
+            case is_failure_status(Status) of
+                false ->
+                    Acc0;
+                true ->
+                    RetryCount = nonneg_int(maps:get(retry_count, Repair, 0), 0),
+                    Error = maps:get(
+                        last_error, Repair, maps:get(error, Repair, undefined)),
+                    Retryable =
+                        RetryCount < Limit andalso
+                        (maps:get(retryable, Repair, false) =:= true orelse
+                         safe_retryable(Error)),
+                    Class = repair_failure_class(Repair),
+                    Acc1 =
+                        case {is_failed_status(Status), is_retry_wait_status(Status), Retryable} of
+                            {true, _, true} ->
+                                maps:update_with(
+                                    retryable_failed, fun(N) -> N + 1 end, 1, Acc0);
+                            {true, _, false} ->
+                                maps:update_with(
+                                    failed_terminal, fun(N) -> N + 1 end, 1, Acc0);
+                            {false, true, _} ->
+                                maps:update_with(
+                                    retry_wait, fun(N) -> N + 1 end, 1, Acc0);
+                            _ ->
+                                Acc0
+                        end,
+                    ByClass0 = maps:get(by_class, Acc1, #{}),
+                    ByClass1 = maps:update_with(
+                        Class, fun(N) -> N + 1 end, 1, ByClass0),
+                    Acc1#{by_class => ByClass1}
+            end
+        end,
+        #{
+            failed_terminal => 0,
+            retryable_failed => 0,
+            retry_wait => 0,
+            by_class => #{}
+        },
+        Repairs).
+
+safe_retryable(Error) ->
+    try ecai_patch_retry:is_retryable(Error) of
+        true -> true;
+        _ -> false
+    catch
+        _:_ -> false
+    end.
+
+is_failure_status(failed) -> true;
+is_failure_status(<<"failed">>) -> true;
+is_failure_status(retry_wait) -> true;
+is_failure_status(<<"retry_wait">>) -> true;
+is_failure_status(_) -> false.
+
+is_failed_status(failed) -> true;
+is_failed_status(<<"failed">>) -> true;
+is_failed_status(_) -> false.
+
+is_retry_wait_status(retry_wait) -> true;
+is_retry_wait_status(<<"retry_wait">>) -> true;
+is_retry_wait_status(_) -> false.
+
+repair_failure_class(Repair) ->
+    case maps:get(failure_class, Repair, undefined) of
+        undefined ->
+            failure_class(
+                maps:get(last_error, Repair, maps:get(error, Repair, undefined)));
+        Class ->
+            Class
+    end.
+
+failure_class({retry_exhausted, Reason}) -> failure_class(Reason);
+failure_class({worker_start_failed, _}) -> worker_start_failed;
+failure_class({orphaned_worker, _}) -> orphaned_worker;
+failure_class({Class, _}) when is_atom(Class) -> Class;
+failure_class({Class, _, _}) when is_atom(Class) -> Class;
+failure_class(Class) when is_atom(Class) -> Class;
+failure_class(_) -> unknown.
+
 repair_order(A, B) ->
     repair_order_key(A) < repair_order_key(B).
 
@@ -505,6 +706,9 @@ mget(Key, Map, Default) when is_map(Map), is_binary(Key) ->
             catch error:badarg -> Default end
     end;
 mget(_Key, _Map, Default) -> Default.
+
+nonneg_int(V, _Default) when is_integer(V), V >= 0 -> V;
+nonneg_int(_, Default) -> Default.
 
 positive_int(V, _Default) when is_integer(V), V > 0 -> V;
 positive_int(_, Default) -> Default.
