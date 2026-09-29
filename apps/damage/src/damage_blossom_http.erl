@@ -629,19 +629,23 @@ serve_blob(Method, Hash, Req0, State) ->
     end.
 
 load_verified_blob(Hash, Cid, Object) ->
+    MaxServeBytes = max_serve_bytes(),
     case maps:get(size, Object, undefined) of
         RecordedSize when
             is_integer(RecordedSize),
             RecordedSize > 0,
-            RecordedSize =< max_serve_bytes()
+            RecordedSize =< MaxServeBytes
         ->
             case damage_ipfs:cat_binary(Cid, [{max_bytes, RecordedSize}]) of
                 {ok, Data} ->
                     case {byte_size(Data), lower_hex(crypto:hash(sha256, Data))} of
-                        {RecordedSize, Hash} -> {ok, Data};
-                        _ -> {error, integrity_mismatch}
+                        {RecordedSize, Hash} ->
+                            {ok, Data};
+                        _ ->
+                            {error, integrity_mismatch}
                     end;
-                {error, _} = Error -> Error
+                {error, _} = Error ->
+                    Error
             end;
         _ ->
             {error, invalid_recorded_size}
