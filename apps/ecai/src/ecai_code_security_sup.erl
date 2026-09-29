@@ -49,5 +49,6 @@ init([]) ->
         modules => [ecai_patch_manager]
     },
     Integration = ecai_patch_integration:child_spec(#{}),
+    Reconciler = ecai_patch_reconciler:child_spec(#{}),
     {ok, {{rest_for_one, 10, 10},
-          [Store, OllamaPool, PatchSup, Learner, PatchManager, Integration]}}.
+          [Store, OllamaPool, PatchSup, Learner, PatchManager, Integration, Reconciler]}}.

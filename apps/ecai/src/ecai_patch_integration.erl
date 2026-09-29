@@ -299,25 +299,40 @@ current_patchset(State, RunOpts) ->
     case resolve_base_commit(State#state.repo_root, RunOpts) of
         {error, _} = Error -> Error;
         {ok, BaseCommit} ->
-            Repairs = [R || R <- ecai_learning_store:repairs(), validated_repair(R)],
-            case repair_descriptors(Repairs, []) of
+            case safe_repairs() of
                 {error, _} = Error ->
                     Error;
-                {ok, Patches0} ->
-                    Patches = lists:sort(fun patch_before/2, Patches0),
-                    case Patches of
-                        [] -> {no_patches, BaseCommit};
-                        _ ->
-                            PatchIdentity = [
-                                {maps:get(fingerprint, P), maps:get(finding_version, P), maps:get(patch_sha256, P)}
-                             || P <- Patches
-                            ],
-                            PatchsetSha = sha256_hex(term_to_binary(PatchIdentity, [deterministic])),
-                            JobId = sha256_hex(term_to_binary({BaseCommit, PatchsetSha}, [deterministic])),
-                            {ok, #{job_id => JobId, base_commit => BaseCommit,
-                                   patchset_sha256 => PatchsetSha, patches => Patches}}
+                {ok, AllRepairs} ->
+                    Repairs = [R || R <- AllRepairs, validated_repair(R)],
+                    case repair_descriptors(Repairs, []) of
+                        {error, _} = Error ->
+                            Error;
+                        {ok, Patches0} ->
+                            Patches = lists:sort(fun patch_before/2, Patches0),
+                            case Patches of
+                                [] -> {no_patches, BaseCommit};
+                                _ ->
+                                    PatchIdentity = [
+                                        {maps:get(fingerprint, P), maps:get(finding_version, P), maps:get(patch_sha256, P)}
+                                     || P <- Patches
+                                    ],
+                                    PatchsetSha = sha256_hex(term_to_binary(PatchIdentity, [deterministic])),
+                                    JobId = sha256_hex(term_to_binary({BaseCommit, PatchsetSha}, [deterministic])),
+                                    {ok, #{job_id => JobId, base_commit => BaseCommit,
+                                           patchset_sha256 => PatchsetSha, patches => Patches}}
+                            end
                     end
             end
+    end.
+
+safe_repairs() ->
+    try ecai_learning_store:repairs() of
+        Repairs when is_list(Repairs) -> {ok, Repairs};
+        Other -> {error, {unexpected_repairs_response, Other}}
+    catch
+        exit:{noproc, _} -> {error, learning_store_unavailable};
+        exit:{timeout, _} -> {error, learning_store_timeout};
+        Class:Reason -> {error, {learning_store_failed, Class, Reason}}
     end.
 
 validated_repair(Repair) when is_map(Repair) ->
@@ -516,7 +531,7 @@ collect_git(Port, Acc, Timeout) ->
         {Port, {exit_status, 0}} -> {ok, Acc};
         {Port, {exit_status, Status}} -> {error, {exit_status, Status, Acc}}
     after Timeout ->
-        catch port_close(Port),
+        try port_close(Port) catch _:_:_ -> ok end,
         {error, timeout}
     end.
 

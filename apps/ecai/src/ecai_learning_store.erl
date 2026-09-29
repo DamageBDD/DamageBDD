@@ -42,6 +42,10 @@
 -define(TABLE, ecai_code_learning_dets).
 -define(DEFAULT_EVENT_LIMIT, 100).
 
+-ifdef(TEST).
+-export([collect_repairs/2, build_snapshot_data/1]).
+-endif.
+
 -record(state, {tab, state_root, file, event_seq = 0}).
 
 start_link() -> start_link(#{}).
@@ -258,22 +262,13 @@ collect_events(Tab, Type, Id, Limit) ->
 collect_repairs(Tab, Filter) ->
     lists:reverse(dets:foldl(
         fun
-            ({{relation_keys, Scope}, Keys}, Acc) ->
-                Sets0 = maps:get(relation_sets, Acc, #{}),
-                Digest = relation_key_digest(Keys),
-                Acc#{relation_sets => Sets0#{Scope => #{
-                    count => length(Keys),
-                    key_digest_sha256 => Digest
-                }}};
-            ({{relation_benchmark, Scope}, Benchmark}, Acc) ->
-                Benchmarks0 = maps:get(relation_benchmarks, Acc, #{}),
-                ThinBenchmark = maps:without([recovered_keys, missing_keys], Benchmark),
-                Acc#{relation_benchmarks => Benchmarks0#{Scope => ThinBenchmark}};
-            ({{repair, Fingerprint, Version}, Repair}, Acc) ->
+            ({{repair, Fingerprint, Version}, Repair}, Acc) when is_map(Repair) ->
                 case (Filter =:= all) orelse (Filter =:= Fingerprint) of
                     true -> [Repair#{fingerprint => Fingerprint, finding_version => Version} | Acc];
                     false -> Acc
                 end;
+            ({{repair, _Fingerprint, _Version}, _MalformedRepair}, Acc) ->
+                Acc;
             (_, Acc) -> Acc
         end,
         [], Tab)).
@@ -296,10 +291,23 @@ build_snapshot_data(Tab) ->
             ({{graph, App}, Graph}, Acc) ->
                 Graphs0 = maps:get(graphs, Acc, #{}),
                 Acc#{graphs => Graphs0#{App => ecai_code_graph:summary(Graph)}};
-            ({{repair, Fingerprint, Version}, Repair}, Acc) ->
+            ({{relation_keys, Scope}, Keys}, Acc) when is_list(Keys) ->
+                Sets0 = maps:get(relation_sets, Acc, #{}),
+                Digest = relation_key_digest(Keys),
+                Acc#{relation_sets => Sets0#{Scope => #{
+                    count => length(Keys),
+                    key_digest_sha256 => Digest
+                }}};
+            ({{relation_benchmark, Scope}, Benchmark}, Acc) when is_map(Benchmark) ->
+                Benchmarks0 = maps:get(relation_benchmarks, Acc, #{}),
+                ThinBenchmark = maps:without([recovered_keys, missing_keys], Benchmark),
+                Acc#{relation_benchmarks => Benchmarks0#{Scope => ThinBenchmark}};
+            ({{repair, Fingerprint, Version}, Repair}, Acc) when is_map(Repair) ->
                 Repairs0 = maps:get(repairs, Acc, []),
                 Thin = maps:without([patch, proposal, verifier_output, context], Repair),
                 Acc#{repairs => [Thin#{fingerprint => Fingerprint, finding_version => Version} | Repairs0]};
+            ({{repair, _Fingerprint, _Version}, _MalformedRepair}, Acc) ->
+                Acc;
             ({{checkpoint, Name}, Checkpoint}, Acc) ->
                 Runtime0 = maps:get(runtime_checkpoints, Acc, #{}),
                 Acc#{runtime_checkpoints => Runtime0#{Name => checkpoint_snapshot(Checkpoint)}};
