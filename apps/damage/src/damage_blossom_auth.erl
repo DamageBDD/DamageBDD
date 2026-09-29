@@ -14,7 +14,7 @@
 -define(MAX_TAG_ELEMENTS, 8).
 -define(MAX_TAG_VALUE_BYTES, 1024).
 -define(DEFAULT_AUTH_MAX_AGE_SECONDS, 300).
--define(DEFAULT_AUTH_MAX_TTL_SECONDS, 900).
+-define(DEFAULT_AUTH_MAX_TTL_SECONDS, 3600).
 
 -export([verify/3, verify/4, verify_deferred_hash/2]).
 
