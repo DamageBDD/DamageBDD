@@ -15,7 +15,11 @@
 -ifdef(TEST).
 -export([
     capture_integrity_snapshot/3,
-    compare_integrity_snapshots/2
+    compare_integrity_snapshots/2,
+    patchset_disposition/1,
+    candidate_neutral_validation_failure/1,
+    validation_failure_signature/3,
+    same_validation_failure/5
 ]).
 -endif.
 
@@ -41,10 +45,16 @@ cleanup_stale(Opts) ->
                         {error, _} = Error -> Error;
                         {ok, StateRoot} ->
                             WorkRoot = ecai_code_paths:worktree_root(StateRoot),
-                            Results = cleanup_stale_dirs(RepoRoot, WorkRoot, "repair-", Opts),
+                            RepairResults = cleanup_stale_dirs(
+                                RepoRoot, WorkRoot, "repair-", Opts),
+                            BaselineResults = cleanup_stale_dirs(
+                                RepoRoot, WorkRoot, "baseline-", Opts),
                             Prune = run("git", ["-C", RepoRoot, "worktree", "prune"],
                                         RepoRoot, command_timeout(Opts)),
-                            {ok, #{worktrees => Results, prune => Prune}}
+                            {ok, #{
+                                worktrees => RepairResults ++ BaselineResults,
+                                prune => Prune
+                            }}
                     end
             end
     end.
@@ -147,12 +157,13 @@ run_verification(RepoRoot, Worktree, BaseCommit, PatchFiles, _StateRoot, Opts) -
             Steps0 = [#{step => worktree_add, result => Add}],
             {Status, Steps1, Failure} = apply_patchset(Worktree, PatchFiles, 1,
                                                        command_timeout(Opts), Steps0),
+            PatchDisposition = patchset_disposition(Steps1),
             {FinalStatus, Steps, FinalFailure} = case Status of
                 failed ->
                     {failed, Steps1, Failure};
                 applied ->
                     verify_applied_worktree(
-                        Worktree, PatchFiles, Opts, Steps1
+                        Worktree, PatchFiles, Opts, Steps1, PatchDisposition
                     )
             end,
             FailureSources = case FinalStatus of
@@ -167,6 +178,8 @@ run_verification(RepoRoot, Worktree, BaseCommit, PatchFiles, _StateRoot, Opts) -
             end,
             Result = #{
                 status => FinalStatus,
+                patch_disposition => PatchDisposition,
+                validation_warnings => validation_warnings(Steps),
                 base_commit => BaseCommit,
                 patch_files => [to_binary(P) || P <- PatchFiles],
                 candidate_patch_file => maybe_binary(maps:get(candidate_patch_file, Opts, undefined)),
@@ -224,7 +237,7 @@ apply_patchset(Worktree, [PatchFile | Rest], Index, Timeout, Steps0) ->
             end
     end.
 
-verify_applied_worktree(Worktree, PatchFiles, Opts, Steps0) ->
+verify_applied_worktree(Worktree, PatchFiles, Opts, Steps0, PatchDisposition) ->
     Timeout = command_timeout(Opts),
     case capture_integrity_snapshot(Worktree, PatchFiles, Timeout) of
         {error, Failure} ->
@@ -243,7 +256,47 @@ verify_applied_worktree(Worktree, PatchFiles, Opts, Steps0) ->
                 [] ->
                     case run_validation_steps(Worktree, Opts, Steps1) of
                         {failed, Steps2, Failure} ->
-                            {failed, Steps2, Failure};
+                            case candidate_neutral_validation_failure(
+                                     PatchDisposition) of
+                                true ->
+                                    Warning = baseline_validation_warning(
+                                        Failure, PatchDisposition),
+                                    verify_final_integrity(
+                                        Worktree, PatchFiles, Before,
+                                        Timeout, Steps2 ++ [Warning]
+                                    );
+                                false ->
+                                    case differential_baseline_validation(
+                                             Worktree, Failure, Opts,
+                                             PatchDisposition) of
+                                        {neutral, Evidence} ->
+                                            CompareStep = #{
+                                                step => baseline_validation_compare,
+                                                result => Evidence#{
+                                                    ok => true,
+                                                    candidate_neutral => true
+                                                }
+                                            },
+                                            Warning = baseline_validation_warning(
+                                                Failure, PatchDisposition, Evidence),
+                                            verify_final_integrity(
+                                                Worktree, PatchFiles, Before, Timeout,
+                                                Steps2 ++ [CompareStep, Warning]
+                                            );
+                                        {regression, Evidence} ->
+                                            CompareStep = #{
+                                                step => baseline_validation_compare,
+                                                result => Evidence#{
+                                                    ok => false,
+                                                    candidate_neutral => false
+                                                }
+                                            },
+                                            {failed, Steps2 ++ [CompareStep],
+                                             attach_baseline_comparison(Failure, Evidence)};
+                                        not_applicable ->
+                                            {failed, Steps2, Failure}
+                                    end
+                            end;
                         {validated, Steps2, undefined} ->
                             verify_final_integrity(
                                 Worktree, PatchFiles, Before,
@@ -542,6 +595,224 @@ list_subtract(Left, Right) ->
         not maps:is_key(Item, RightSet)
     ].
 
+patchset_disposition(Steps) when is_list(Steps) ->
+    Applied = lists:any(
+        fun(Step) -> maps:get(step, Step, undefined) =:= patch_apply end,
+        Steps
+    ),
+    Present = lists:any(
+        fun(Step) -> maps:get(step, Step, undefined) =:= patch_already_present end,
+        Steps
+    ),
+    case {Applied, Present} of
+        {true, true} -> mixed;
+        {true, false} -> applied;
+        {false, true} -> already_present;
+        {false, false} -> unknown
+    end;
+patchset_disposition(_) ->
+    unknown.
+
+candidate_neutral_validation_failure(already_present) -> true;
+candidate_neutral_validation_failure(_) -> false.
+
+%% An applied repair can encounter a repository-wide validation failure that
+%% already exists at the pinned base commit.  Do not attribute that failure to
+%% the candidate unless a clean baseline succeeds or fails differently.  This
+%% comparison is deliberately conservative: only built-in validation phases are
+%% eligible, the same command is rerun in a second detached worktree at HEAD,
+%% and the stable failure signatures must match exactly.
+differential_baseline_validation(Worktree, Failure, Opts, PatchDisposition)
+  when PatchDisposition =:= applied; PatchDisposition =:= mixed ->
+    Phase = maps:get(phase, Failure, undefined),
+    case validation_phase_spec(Phase) of
+        undefined ->
+            not_applicable;
+        {Exe, Args} ->
+            CandidateResult = maps:get(result, Failure, #{}),
+            Timeout = command_timeout(Opts),
+            BaselineWorktree = baseline_worktree_path(Worktree),
+            Add = run(
+                "git",
+                ["-C", Worktree, "worktree", "add", "--detach",
+                 BaselineWorktree, "HEAD"],
+                Worktree, Timeout
+            ),
+            case step_ok(Add) of
+                false ->
+                    {regression, #{
+                        phase => Phase,
+                        reason => baseline_worktree_failed,
+                        worktree_add => compact_command_result(Add)
+                    }};
+                true ->
+                    BaselineResult = run(Exe, Args, BaselineWorktree, Timeout),
+                    Equivalent =
+                        (not step_ok(BaselineResult)) andalso
+                        same_validation_failure(
+                            Phase, CandidateResult, Worktree,
+                            BaselineResult, BaselineWorktree
+                        ),
+                    Cleanup = cleanup_worktree(
+                        Worktree, BaselineWorktree, Opts),
+                    Evidence = #{
+                        phase => Phase,
+                        equivalent_failure => Equivalent,
+                        candidate_signature => validation_failure_signature(
+                            Phase, CandidateResult, Worktree),
+                        baseline_signature => validation_failure_signature(
+                            Phase, BaselineResult, BaselineWorktree),
+                        baseline_result => compact_command_result(BaselineResult),
+                        worktree_add => compact_command_result(Add),
+                        cleanup => Cleanup
+                    },
+                    case Equivalent of
+                        true -> {neutral, Evidence};
+                        false -> {regression, Evidence}
+                    end
+            end
+    end;
+differential_baseline_validation(_Worktree, _Failure, _Opts, _Disposition) ->
+    not_applicable.
+
+validation_phase_spec(compile) -> {"rebar3", ["compile"]};
+validation_phase_spec(eunit) -> {"rebar3", ["eunit"]};
+validation_phase_spec(ct) -> {"rebar3", ["ct"]};
+validation_phase_spec(_) -> undefined.
+
+baseline_worktree_path(Worktree) ->
+    Root = filename:dirname(Worktree),
+    Id = integer_to_list(erlang:system_time(microsecond)) ++ "-" ++
+         integer_to_list(erlang:unique_integer([positive, monotonic])),
+    filename:join(Root, "baseline-" ++ Id).
+
+attach_baseline_comparison(Failure, Evidence) when is_map(Failure) ->
+    Failure#{baseline_comparison => Evidence};
+attach_baseline_comparison(Failure, Evidence) ->
+    #{failure => Failure, baseline_comparison => Evidence}.
+
+same_validation_failure(Phase, CandidateResult, CandidateCwd,
+                        BaselineResult, BaselineCwd) ->
+    validation_failure_signature(Phase, CandidateResult, CandidateCwd) =:=
+        validation_failure_signature(Phase, BaselineResult, BaselineCwd).
+
+validation_failure_signature(Phase, Result, Cwd) when is_map(Result) ->
+    Output = maps:get(output, Result, <<>>),
+    #{
+        phase => Phase,
+        exit_status => maps:get(exit_status, Result, undefined),
+        error => maps:get(error, Result, undefined),
+        args => maps:get(args, Result, []),
+        failure_paths => lists:sort(paths_from_output(Output)),
+        failure_markers => stable_failure_lines(Output, Cwd)
+    };
+validation_failure_signature(Phase, Result, _Cwd) ->
+    #{phase => Phase, result => Result}.
+
+stable_failure_lines(Output0, Cwd0) when is_binary(Output0) ->
+    Output1 = strip_ansi(Output0),
+    Cwd = to_binary(Cwd0),
+    Output = case Cwd of
+        <<>> -> Output1;
+        _ -> binary:replace(Output1, Cwd, <<"<worktree>">>, [global])
+    end,
+    Lines = [trim_binary(Line) || Line <- binary:split(Output, <<"\n">>, [global])],
+    Marked = [
+        truncate_binary(Line, 2048)
+     || Line <- Lines,
+        Line =/= <<>>,
+        stable_failure_line(Line)
+    ],
+    case Marked of
+        [] -> lists:sublist(lists:reverse([
+                  truncate_binary(Line, 2048)
+               || Line <- Lines, Line =/= <<>>
+              ]), 20);
+        _ -> lists:sublist(Marked, 80)
+    end;
+stable_failure_lines(_Output, _Cwd) ->
+    [].
+
+stable_failure_line(Line) ->
+    Lower = string:lowercase(binary_to_list(Line)),
+    lists:any(
+        fun(Marker) -> string:str(Lower, Marker) > 0 end,
+        [
+            "*failed*", "failed:", "error:", "exception",
+            "assert", "badmatch", "function_clause", "case_clause",
+            "test failed", "crash", "undef"
+        ]
+    ).
+
+strip_ansi(Bin) when is_binary(Bin) ->
+    Pattern = <<27, "\\[[0-9;]*[A-Za-z]">>,
+    case re:replace(
+             Bin, Pattern, <<>>,
+             [global, {return, binary}]) of
+        Result when is_binary(Result) -> Result;
+        _ -> Bin
+    end.
+
+compact_command_result(Result) when is_map(Result) ->
+    Output0 = maps:get(output, Result, <<>>),
+    Output = case Output0 of
+        Bin when is_binary(Bin) -> truncate_binary(Bin, 8192);
+        Other -> Other
+    end,
+    (maps:with([ok, exit_status, executable, args, error], Result))#{
+        output => Output
+    };
+compact_command_result(Result) -> Result.
+
+baseline_validation_warning(Failure, PatchDisposition) ->
+    baseline_validation_warning(Failure, PatchDisposition, undefined).
+
+baseline_validation_warning(Failure, PatchDisposition, Evidence) ->
+    Result0 = #{
+        ok => true,
+        candidate_neutral => true,
+        patch_disposition => PatchDisposition,
+        warning => compact_validation_failure(Failure)
+    },
+    Result = case Evidence of
+        undefined -> Result0;
+        _ -> Result0#{baseline_comparison => Evidence}
+    end,
+    #{
+        step => baseline_validation_warning,
+        result => Result
+    }.
+
+compact_validation_failure(Failure) when is_map(Failure) ->
+    Phase = maps:get(phase, Failure, undefined),
+    Result0 = maps:get(result, Failure, #{}),
+    Result = case Result0 of
+        R when is_map(R) ->
+            Output0 = maps:get(output, R, <<>>),
+            Output = case Output0 of
+                Bin when is_binary(Bin) -> truncate_binary(Bin, 8192);
+                Other -> Other
+            end,
+            (maps:with([ok, exit_status, executable, args], R))#{
+                output => Output
+            };
+        _ ->
+            Result0
+    end,
+    #{phase => Phase, result => Result};
+compact_validation_failure(Failure) ->
+    Failure.
+
+validation_warnings(Steps) when is_list(Steps) ->
+    [
+        maps:get(warning, Result)
+     || #{step := baseline_validation_warning, result := Result} <- Steps,
+        is_map(Result),
+        maps:is_key(warning, Result)
+    ];
+validation_warnings(_) ->
+    [].
+
 run_validation_steps(Worktree, Opts, Steps0) ->
     Timeout = command_timeout(Opts),
     Specs0 = [
@@ -784,19 +1055,25 @@ repo_root(Opts) ->
         Commit when is_list(Commit), Commit =/= [] ->
             canonical_or_legacy_repo_root(Commit, Opts);
         _ ->
-            case catch ecai_source_repository:current(Opts) of
+            try ecai_source_repository:current(Opts) of
                 {ok, #{root := Root}} ->
                     filename:absname(path_to_list(Root));
                 _ ->
+                    legacy_repo_root(Opts)
+            catch
+                _:_ ->
                     legacy_repo_root(Opts)
             end
     end.
 
 canonical_or_legacy_repo_root(Commit, Opts) ->
-    case catch ecai_source_repository:base_for_commit(Commit, Opts) of
+    try ecai_source_repository:base_for_commit(Commit, Opts) of
         {ok, #{root := Root}} ->
             filename:absname(path_to_list(Root));
         _ ->
+            legacy_repo_root(Opts)
+    catch
+        _:_ ->
             legacy_repo_root(Opts)
     end.
 
