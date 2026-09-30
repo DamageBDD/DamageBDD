@@ -77,6 +77,35 @@ button.cp-button-primary {
   font-weight: 800;
 }
 
+.cp-randomize-strip {
+  background: #09131d;
+  border: 1px solid #1d3448;
+  border-radius: 4px;
+  padding: 2px;
+}
+
+.cp-randomize-label {
+  color: #9edfff;
+  font-weight: 800;
+}
+
+button.cp-randomize-button {
+  min-height: 30px;
+  min-width: 42px;
+  padding: 2px 7px;
+}
+
+button.cp-randomize-button:hover {
+  border-color: #ff5fd7;
+  color: #ffffff;
+}
+
+button.cp-randomize-button:active {
+  background: #123145;
+  color: #75f7ff;
+  border-color: #4fe4ff;
+}
+
 entry.cp-entry {
   background: #081018;
   color: #e2faff;

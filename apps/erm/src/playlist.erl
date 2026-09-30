@@ -52,6 +52,8 @@
     rescan_all/0,
     add_files/1,
     add_files/2,
+    sources/0,
+    resolve_path/1,
     state_file/0
 ]).
 
@@ -117,6 +119,8 @@ update_cid(Id, Cid) -> gen_server:call(?MODULE, {update_cid, Id, Cid}).
 rescan_all() -> gen_server:call(?MODULE, rescan_all, infinity).
 add_files(Paths) -> gen_server:call(?MODULE, {add_files, Paths}, infinity).
 add_files(Dir, Recurse) -> gen_server:call(?MODULE, {add_dir, Dir, Recurse}, infinity).
+sources() -> gen_server:call(?MODULE, sources).
+resolve_path(Path) -> normalize_path(Path).
 
 state_file() ->
     case application:get_env(erm, playlist_state_file) of
@@ -233,13 +237,14 @@ handle_call({random_by, Key}, _From, S = #st{order = Order}) ->
     Tracks = tracks_for_order(Order),
     {reply, random_track_by(Key, Tracks), S};
 handle_call({load_default, Mode}, _From, S) ->
-    Dirs = default_dirs(),
-    Files = collect_dirs(Dirs, true),
-    {Count, S1} = rebuild(Files, Dirs, Mode, S),
+    RequestedDirs = uniq_keep_order(normalize_dirs(default_dirs())),
+    AvailableDirs = valid_source_dirs(RequestedDirs),
+    Files = collect_dirs(AvailableDirs, true),
+    {Count, S1} = rebuild(Files, RequestedDirs, Mode, S),
     S2 = persist(S1),
     ?LOG_INFO(
-        "Loaded default ERM media playlist mode=~p tracks=~p current=~p from=~p",
-        [Mode, Count, S2#st.cur, Dirs]
+        "Loaded default ERM media playlist mode=~p tracks=~p current=~p sources=~p available=~p",
+        [Mode, Count, S2#st.cur, RequestedDirs, AvailableDirs]
     ),
     {reply, {ok, Count}, S2};
 handle_call(toggle_like_current, _From, S = #st{cur = undefined}) ->
@@ -265,25 +270,65 @@ handle_call({update_cid, Id, Cid}, _From, S) ->
         [] ->
             {reply, error, S}
     end;
-handle_call(rescan_all, _From, S = #st{src_dirs = []}) ->
-    Dirs = default_dirs(),
-    Files = collect_dirs(Dirs, true),
-    {Count, S1} = rebuild(Files, Dirs, keep_order, S),
-    {reply, {ok, Count}, persist(S1)};
-handle_call(rescan_all, _From, S = #st{src_dirs = Dirs}) ->
-    Files = collect_dirs(Dirs, true),
-    {Count, S1} = rebuild(Files, Dirs, keep_order, S),
-    {reply, {ok, Count}, persist(S1)};
-handle_call({add_files, Paths0}, _From, S) ->
+handle_call(sources, _From, S = #st{src_dirs = Dirs}) ->
+    {reply, Dirs, S};
+handle_call(rescan_all, _From, S = #st{src_dirs = StoredDirs}) ->
+    RequestedDirs =
+        uniq_keep_order(
+            normalize_dirs(
+                case StoredDirs of
+                    [] -> default_dirs();
+                    _ -> StoredDirs
+                end
+            )
+        ),
+    AvailableDirs = valid_source_dirs(RequestedDirs),
+    MissingDirs = [Dir || Dir <- RequestedDirs, not lists:member(Dir, AvailableDirs)],
+    case {RequestedDirs, AvailableDirs} of
+        {[_ | _], []} ->
+            %% A removable/mounted library can disappear temporarily. Never
+            %% interpret that as "the library is empty" and wipe persisted
+            %% playlist state.
+            {reply, {error, {no_media_dirs_available, RequestedDirs}}, S};
+        _ ->
+            Scanned = collect_dirs(AvailableDirs, true),
+            %% Keep explicitly-added files/URIs and tracks belonging to a source
+            %% root that is temporarily unavailable. Only available roots are
+            %% authoritative for deletion during this rescan.
+            Preserved = existing_paths_outside_dirs(AvailableDirs),
+            Files = uniq_keep_order(Scanned ++ Preserved),
+            {Count, S1} = rebuild(Files, RequestedDirs, keep_order, S),
+            ?LOG_INFO(
+                "Rescanned ERM media sources available=~p missing=~p scanned=~p preserved=~p total=~p",
+                [AvailableDirs, MissingDirs, length(Scanned), length(Preserved), Count]
+            ),
+            {reply, {ok, Count}, persist(S1)}
+    end;
+handle_call({add_files, Paths0}, _From, S = #st{src_dirs = Dirs0}) ->
     Paths = normalize_paths(Paths0),
-    {Count, S1} = add_paths(Paths, S),
-    {reply, {ok, Count}, persist(S1)};
+    {Files, AddedDirs} = expand_media_sources(Paths, true),
+    {Count, S1} = add_paths(Files, S),
+    Dirs1 = uniq_keep_order(normalize_dirs(Dirs0 ++ AddedDirs)),
+    ?LOG_INFO(
+        "Added ERM media sources requested=~p dirs=~p files=~p",
+        [Paths, AddedDirs, Count]
+    ),
+    {reply, {ok, Count}, persist(S1#st{src_dirs = Dirs1})};
 handle_call({add_dir, Dir0, Recurse}, _From, S = #st{src_dirs = Dirs0}) ->
     Dir = normalize_path(Dir0),
-    Files = collect_dir(Dir, Recurse),
-    {Count, S1} = add_paths(Files, S),
-    Dirs1 = uniq_keep_order(Dirs0 ++ [Dir]),
-    {reply, {ok, Count}, persist(S1#st{src_dirs = Dirs1})};
+    case filelib:is_dir(Dir) of
+        false ->
+            {reply, {error, {not_directory, Dir}}, S};
+        true ->
+            Files = collect_dir(Dir, Recurse),
+            {Count, S1} = add_paths(Files, S),
+            Dirs1 = uniq_keep_order(normalize_dirs(Dirs0 ++ [Dir])),
+            ?LOG_INFO(
+                "Added ERM media directory dir=~s recurse=~p tracks=~p",
+                [Dir, Recurse, Count]
+            ),
+            {reply, {ok, Count}, persist(S1#st{src_dirs = Dirs1})}
+    end;
 handle_call(_Req, _From, S) ->
     {reply, error, S}.
 
@@ -362,9 +407,9 @@ index_of(Needle, [Needle | _], Idx) -> Idx;
 index_of(Needle, [_ | Rest], Idx) -> index_of(Needle, Rest, Idx + 1).
 
 nth_id(I, Order) ->
-    case catch lists:nth(I + 1, Order) of
-        Id when is_integer(Id) -> {ok, Id};
-        _ -> error
+    try lists:nth(I + 1, Order) of
+        Id when is_integer(Id) -> {ok, Id}
+    catch  _:_:_ -> error
     end.
 
 indexed_tracks(Order) ->
@@ -522,7 +567,7 @@ normalize_load_mode(random_latest) -> latest;
 normalize_load_mode(Mode) -> Mode.
 
 add_paths(Paths0, S = #st{order = Order0, cur = Cur0}) ->
-    Paths = [P || P <- uniq_keep_order([normalize_path(P0) || P0 <- Paths0]), is_media_file(P)],
+    Paths = [P || P <- uniq_keep_order([normalize_path(P0) || P0 <- Paths0]), is_media_ref(P)],
     ExistingByPath = tracks_by_path(),
     Ids = [insert_or_keep_track(P, ExistingByPath) || P <- Paths],
     Order1 = uniq_keep_order(Order0 ++ Ids),
@@ -534,7 +579,7 @@ add_paths(Paths0, S = #st{order = Order0, cur = Cur0}) ->
     {length(Ids), S#st{order = Order1, cur = Cur1}}.
 
 rebuild(Files0, Dirs, Mode, S = #st{order = OldOrder, cur = OldCur, previous = OldPrevious}) ->
-    Files = [P || P <- uniq_keep_order([normalize_path(P0) || P0 <- Files0]), is_media_file(P)],
+    Files = [P || P <- uniq_keep_order([normalize_path(P0) || P0 <- Files0]), is_media_ref(P)],
     ExistingByPath = tracks_by_path(),
     ets:delete_all_objects(?TAB),
     Ids0 = [insert_or_keep_track(P, ExistingByPath) || P <- Files],
@@ -764,7 +809,7 @@ restore_snapshot(Snapshot, S0) ->
                 order = Order,
                 cur = Cur,
                 previous = Previous,
-                src_dirs = maps:get(src_dirs, Snapshot, []),
+                src_dirs = normalize_dirs(maps:get(src_dirs, Snapshot, [])),
                 mode = maps:get(mode, Snapshot, keep_order)
             }};
         false ->
@@ -831,25 +876,91 @@ ensure_table() ->
     end.
 
 collect_dirs(Dirs, Recurse) ->
-    lists:append([collect_dir(D, Recurse) || D <- Dirs]).
+    lists:append([collect_dir(D, Recurse) || D <- uniq_keep_order(normalize_dirs(Dirs))]).
 
 collect_dir(Dir0, Recurse) ->
     Dir = normalize_path(Dir0),
     case filelib:is_dir(Dir) of
-        true -> collect_dir_1(Dir, Recurse);
-        false -> []
+        true ->
+            try media_scan:discover(Dir, Recurse) of
+                Files when is_list(Files) -> uniq_keep_order([normalize_path(P) || P <- Files])
+            catch
+                Class:Reason:Stacktrace ->
+                    ?LOG_WARNING(
+                        "Media discovery failed dir=~s recurse=~p: ~p:~p~n~p",
+                        [Dir, Recurse, Class, Reason, Stacktrace]
+                    ),
+                    []
+            end;
+        false ->
+            ?LOG_WARNING("Skipping missing media directory ~s", [Dir]),
+            []
     end.
 
-collect_dir_1(Dir, Recurse) ->
-    case file:list_dir(Dir) of
-        {ok, Names} ->
-            Paths = [filename:join(Dir, Name) || Name <- Names],
-            Files = [P || P <- Paths, filelib:is_file(P), is_media_file(P)],
-            Dirs = [P || P <- Paths, Recurse =:= true, filelib:is_dir(P)],
-            Files ++ lists:append([collect_dir_1(D, true) || D <- Dirs]);
-        {error, Reason} ->
-            ?LOG_DEBUG("Skipping media dir ~p: ~p", [Dir, Reason]),
-            []
+expand_media_sources(Paths, Recurse) ->
+    Result = lists:foldl(
+        fun(Path0, {FilesAcc, DirsAcc}) ->
+            Path = normalize_path(Path0),
+            case has_uri_scheme(Path) of
+                true ->
+                    {[Path | FilesAcc], DirsAcc};
+                false ->
+                    case filelib:is_dir(Path) of
+                        true ->
+                            Files = collect_dir(Path, Recurse),
+                            {lists:reverse(Files) ++ FilesAcc, [Path | DirsAcc]};
+                        false ->
+                            case filelib:is_file(Path) andalso is_media_file(Path) of
+                                true -> {[Path | FilesAcc], DirsAcc};
+                                false ->
+                                    ?LOG_WARNING("Ignoring missing or unsupported media source ~s", [Path]),
+                                    {FilesAcc, DirsAcc}
+                            end
+                    end
+            end
+        end,
+        {[], []},
+        Paths
+    ),
+    normalize_expanded_sources(Result).
+
+normalize_expanded_sources({FilesRev, DirsRev}) ->
+    {
+        uniq_keep_order(lists:reverse(FilesRev)),
+        uniq_keep_order(lists:reverse(DirsRev))
+    }.
+
+valid_source_dirs(Dirs0) ->
+    Dirs = uniq_keep_order(normalize_dirs(Dirs0)),
+    [Dir || Dir <- Dirs, filelib:is_dir(Dir)].
+
+existing_paths_outside_dirs(Dirs) ->
+    [
+        Path
+     || #track{path = Path} <- ets:tab2list(?TAB),
+        is_media_ref(Path),
+        path_still_available(Path),
+        not path_under_any_dir(Path, Dirs)
+    ].
+
+path_still_available(Path) ->
+    has_uri_scheme(Path) orelse filelib:is_file(Path).
+
+path_under_any_dir(Path, Dirs) ->
+    lists:any(fun(Dir) -> path_under_dir(Path, Dir) end, Dirs).
+
+path_under_dir(Path0, Dir0) ->
+    Path = normalize_path(Path0),
+    Dir = normalize_path(Dir0),
+    Prefix = ensure_trailing_separator(Dir),
+    Path =:= Dir orelse lists:prefix(Prefix, Path).
+
+ensure_trailing_separator([]) ->
+    [$/];
+ensure_trailing_separator(Dir) ->
+    case lists:last(Dir) of
+        $/ -> Dir;
+        _ -> Dir ++ "/"
     end.
 
 is_media_ref(Path0) ->
@@ -858,22 +969,21 @@ is_media_ref(Path0) ->
 
 is_media_file(Path0) ->
     Path = normalize_path(Path0),
-    Ext = string:lowercase(filename:extension(Path)),
-    lists:member(Ext, media_exts()).
+    case filelib:is_file(Path) of
+        false -> false;
+        true ->
+            try media_scan:is_media(Path) of
+                Result when is_boolean(Result) -> Result
+            catch
+                _:_ -> false
+            end
+    end.
 
 has_uri_scheme(Path) when is_list(Path) ->
     case string:find(Path, "://") of
         nomatch -> false;
         _ -> true
     end.
-
-media_exts() ->
-    [
-        ".mp3", ".flac", ".wav", ".ogg", ".oga", ".opus", ".m4a", ".aac", ".alac",
-        ".ape", ".wv", ".tta", ".spx", ".mp2", ".mpga", ".mka", ".caf", ".wma",
-        ".mp4", ".m4v", ".mkv", ".webm", ".avi", ".mov", ".wmv", ".flv", ".3gp",
-        ".3g2", ".mpeg", ".mpg", ".m2ts", ".mts", ".vob", ".ogv", ".ts"
-    ].
 
 default_dirs() ->
     case application:get_env(erm, media_dirs) of
@@ -911,12 +1021,23 @@ normalize_paths([]) -> [];
 normalize_paths([H | _] = Path) when is_integer(H) -> [normalize_path(Path)];
 normalize_paths(Paths) when is_list(Paths) -> [normalize_path(P) || P <- Paths].
 
-normalize_path(Bin) when is_binary(Bin) -> normalize_path(binary_to_list(Bin));
-normalize_path(Path) when is_list(Path) ->
+normalize_path(Path) ->
+    try media_scan:normalize_path(Path) of
+        Normalized -> Normalized
+    catch
+        _:_ ->
+            fallback_normalize_path(Path)
+    end.
+
+fallback_normalize_path(Bin) when is_binary(Bin) ->
+    fallback_normalize_path(unicode:characters_to_list(Bin));
+fallback_normalize_path(Path) when is_list(Path) ->
     case has_uri_scheme(Path) of
         true -> Path;
         false -> filename:absname(Path)
-    end.
+    end;
+fallback_normalize_path(Value) when is_atom(Value) ->
+    fallback_normalize_path(atom_to_list(Value)).
 
 uniq_keep_order(List) ->
     {_Seen, Out} = lists:foldl(

@@ -295,6 +295,18 @@ handle_info({gtkgs, rescan_button, click, _Data, _Args}, State) ->
             update_status("Playlist rescan complete")
     end,
     {noreply, State};
+handle_info({gtkgs, random_all_button, click, _Data, _Args}, State) ->
+    {noreply, randomize_playlist(track, State)};
+handle_info({gtkgs, random_album_button, click, _Data, _Args}, State) ->
+    {noreply, randomize_playlist(album, State)};
+handle_info({gtkgs, random_artist_button, click, _Data, _Args}, State) ->
+    {noreply, randomize_playlist(artist, State)};
+handle_info({gtkgs, random_genre_button, click, _Data, _Args}, State) ->
+    {noreply, randomize_playlist(genre, State)};
+handle_info({gtkgs, random_latest_button, click, _Data, _Args}, State) ->
+    {noreply, randomize_playlist(latest, State)};
+handle_info({gtkgs, random_directory_button, click, _Data, _Args}, State) ->
+    {noreply, randomize_playlist(directory, State)};
 handle_info({gtkgs, clear_button, click, _Data, _Args}, State) ->
     case safe_playlist(clear) of
         {error, Reason} ->
@@ -556,7 +568,7 @@ builtin_player_tree() ->
                                 ]},
                                 {button, play_button, [
                                     {label, "⏯"},
-                                    {min_height, 30},
+                                    {min_height, 32},
                                     {min_width, 50},
                                     {vexpand, false},
                                     {valign, center},
@@ -703,6 +715,65 @@ builtin_player_tree() ->
                                             {vexpand, false},
                                             {class, "cp-heading"}
                                         ]},
+                                        {frame, randomize_row,
+                                            [
+                                                {orient, horizontal},
+                                                {spacing, 3},
+                                                {height, 38},
+                                                {hexpand, true},
+                                                {vexpand, false},
+                                                {class, "cp-randomize-strip"}
+                                            ],
+                                            [
+                                                {label, randomize_label, [
+                                                    {text, "Mix"},
+                                                    {width_chars, 4},
+                                                    {valign, center},
+                                                    {class, "cp-randomize-label"}
+                                                ]},
+                                                {button, random_all_button, [
+                                                    {label, "All"},
+                                                    {tooltip, "Shuffle all remaining tracks"},
+                                                    {min_height, 32},
+                                                    {min_width, 44},
+                                                    {class, "cp-button cp-randomize-button"}
+                                                ]},
+                                                {button, random_album_button, [
+                                                    {label, "Album"},
+                                                    {tooltip, "Shuffle remaining playlist by album"},
+                                                    {min_height, 32},
+                                                    {min_width, 56},
+                                                    {class, "cp-button cp-randomize-button"}
+                                                ]},
+                                                {button, random_artist_button, [
+                                                    {label, "Artist"},
+                                                    {tooltip, "Shuffle remaining playlist by artist"},
+                                                    {min_height, 32},
+                                                    {min_width, 56},
+                                                    {class, "cp-button cp-randomize-button"}
+                                                ]},
+                                                {button, random_genre_button, [
+                                                    {label, "Genre"},
+                                                    {tooltip, "Shuffle remaining playlist by genre"},
+                                                    {min_height, 32},
+                                                    {min_width, 56},
+                                                    {class, "cp-button cp-randomize-button"}
+                                                ]},
+                                                {button, random_latest_button, [
+                                                    {label, "New"},
+                                                    {tooltip, "Prioritise newest remaining media"},
+                                                    {min_height, 32},
+                                                    {min_width, 48},
+                                                    {class, "cp-button cp-randomize-button"}
+                                                ]},
+                                                {button, random_directory_button, [
+                                                    {label, "Dir"},
+                                                    {tooltip, "Shuffle remaining playlist by directory"},
+                                                    {min_height, 32},
+                                                    {min_width, 44},
+                                                    {class, "cp-button cp-randomize-button"}
+                                                ]}
+                                            ]},
                                         {listbox, playlist_list, [
                                             {items, []},
                                             {hexpand, true},
@@ -1110,6 +1181,29 @@ builtin_theme_css() ->
         "  font-weight: 800;\n"
         "}\n"
         "\n"
+        ".cp-randomize-strip {\n"
+        "  background: #09131d;\n"
+        "  border: 1px solid #1d3448;\n"
+        "  border-radius: 4px;\n"
+        "  padding: 2px;\n"
+        "}\n"
+        "\n"
+        ".cp-randomize-label {\n"
+        "  color: #9edfff;\n"
+        "  font-weight: 800;\n"
+        "}\n"
+        "\n"
+        "button.cp-randomize-button {\n"
+        "  min-height: 30px;\n"
+        "  padding: 2px 7px;\n"
+        "}\n"
+        "\n"
+        "button.cp-randomize-button:active {\n"
+        "  background: #123145;\n"
+        "  color: #75f7ff;\n"
+        "  border-color: #4fe4ff;\n"
+        "}\n"
+        "\n"
         "entry.cp-entry,\n"
         "scrolledwindow.cp-list,\n"
         "scrolledwindow.cp-list > viewport,\n"
@@ -1153,6 +1247,123 @@ builtin_theme_css() ->
 %%%===================================================================
 %%% Media actions
 %%%===================================================================
+%% Reorder only the unplayed logical tail. If MPV currently has media loaded,
+%% replace its future queue in-place with playlist-clear + loadlist append so
+%% the current track, seek position and pause state are left untouched.
+randomize_playlist(Mode, State0) ->
+    case mpv_status(State0) of
+        {ok, Status, StatusState} ->
+            State1 = apply_playback_status(Status, StatusState),
+            LivePlayback = status_has_loaded_media(Status),
+            case randomize_logical_playlist(Mode) of
+                ok ->
+                    State2 =
+                        case LivePlayback of
+                            true -> sync_randomized_mpv_tail(Mode, State1);
+                            false ->
+                                update_status(
+                                    io_lib:format("Mixed playlist: ~ts", [
+                                        randomize_mode_label(Mode)
+                                    ])
+                                ),
+                                State1
+                        end,
+                    _ = refresh_playlist(State2),
+                    State2;
+                {error, Reason} ->
+                    update_status(
+                        io_lib:format("Could not randomize playlist (~ts): ~p", [
+                            randomize_mode_label(Mode), Reason
+                        ])
+                    ),
+                    State1
+            end;
+        {error, Reason, State1} ->
+            %% Do not mutate the persistent logical queue when MPV state is
+            %% uncertain; that could let live playback and playlist state drift.
+            update_status(io_lib:format("Randomize deferred; MPV status unavailable: ~p", [Reason])),
+            State1
+    end.
+
+randomize_logical_playlist(track) ->
+    normalize_playlist_mutation_reply(safe_playlist(shuffle));
+randomize_logical_playlist(Mode) ->
+    normalize_playlist_mutation_reply(safe_playlist(shuffle_by, [Mode])).
+
+normalize_playlist_mutation_reply(ok) -> ok;
+normalize_playlist_mutation_reply({ok, _Value}) -> ok;
+normalize_playlist_mutation_reply({error, _Reason} = Error) -> Error;
+normalize_playlist_mutation_reply(error) -> {error, playlist_error};
+normalize_playlist_mutation_reply(Other) -> {error, {unexpected_playlist_reply, Other}}.
+
+sync_randomized_mpv_tail(Mode, State) ->
+    case safe_playlist(progression) of
+        [_Current] ->
+            case call_mpv(replace_playlist_tail, [], State) of
+                {ok, _Reply, ReadyState} ->
+                    update_status(
+                        io_lib:format("Mixed future playlist: ~ts", [
+                            randomize_mode_label(Mode)
+                        ])
+                    ),
+                    ReadyState;
+                {error, Reason, FailedState} ->
+                    update_status(
+                        io_lib:format("Could not clear MPV future queue: ~p", [Reason])
+                    ),
+                    FailedState
+            end;
+        [_Current | Tail] ->
+            TailFile = randomized_tail_playlist_file(),
+            case write_selection_playlist(TailFile, Tail) of
+                ok ->
+                    TailBin = unicode:characters_to_binary(TailFile),
+                    case call_mpv(replace_playlist_tail, [TailBin], State) of
+                        {ok, _Reply, ReadyState} ->
+                            update_status(
+                                io_lib:format("Mixed future playlist: ~ts", [
+                                    randomize_mode_label(Mode)
+                                ])
+                            ),
+                            ReadyState;
+                        {error, Reason, FailedState} ->
+                            update_status(
+                                io_lib:format(
+                                    "Playlist randomized, but MPV queue sync failed: ~p",
+                                    [Reason]
+                                )
+                            ),
+                            FailedState
+                    end;
+                {error, Reason} ->
+                    update_status(
+                        io_lib:format("Playlist randomized, but queue file failed: ~p", [Reason])
+                    ),
+                    State
+            end;
+        [] ->
+            update_status("Playlist is empty"),
+            State;
+        {error, Reason} ->
+            update_status(io_lib:format("Could not read randomized progression: ~p", [Reason])),
+            State;
+        Other ->
+            update_status(io_lib:format("Unexpected randomized progression: ~p", [Other])),
+            State
+    end.
+
+randomized_tail_playlist_file() ->
+    Tmp = getenv_default("TMPDIR", "/tmp"),
+    filename:join(Tmp, "erm-randomized-tail.m3u8").
+
+randomize_mode_label(track) -> "all";
+randomize_mode_label(album) -> "album";
+randomize_mode_label(artist) -> "artist";
+randomize_mode_label(genre) -> "genre";
+randomize_mode_label(latest) -> "latest";
+randomize_mode_label(directory) -> "directory";
+randomize_mode_label(Mode) -> to_text(Mode).
+
 
 add_folder_from_entry(State) ->
     case ui_read(folder_entry, text) of
@@ -1162,12 +1373,24 @@ add_folder_from_entry(State) ->
                 [] ->
                     update_status("Enter a media folder path first");
                 _ ->
-                    case safe_playlist(add_files, [Path, true]) of
+                    Resolved =
+                        case safe_playlist(resolve_path, [Path]) of
+                            Value when is_list(Value); is_binary(Value) -> Value;
+                            _ -> Path
+                        end,
+                    _ = ui_config(folder_entry, [{text, Resolved}]),
+                    case safe_playlist(add_files, [Resolved, true]) of
+                        {ok, 0} ->
+                            update_status(io_lib:format("No media found under: ~ts", [Resolved]));
+                        {ok, Count} when is_integer(Count) ->
+                            _ = refresh_playlist(State),
+                            update_status(
+                                io_lib:format("Added ~B media files from ~ts", [Count, Resolved])
+                            );
                         {error, Reason} ->
                             update_status(io_lib:format("Could not add folder: ~p", [Reason]));
-                        _ ->
-                            _ = refresh_playlist(State),
-                            update_status(io_lib:format("Added folder: ~ts", [Path]))
+                        Other ->
+                            update_status(io_lib:format("Unexpected add-folder result: ~p", [Other]))
                     end
             end;
         Error ->

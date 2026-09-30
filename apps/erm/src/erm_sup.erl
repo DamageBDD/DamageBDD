@@ -552,15 +552,15 @@ legacy_worker_specs() ->
         WhisperSpecs.
 
 whisper_child_specs() ->
-    case application:get_env(erm, whisper_trigger, #{}) of
-        Opts0 when is_map(Opts0) ->
+    case whisper_trigger_srv:configuration() of
+        {ok, Opts0} ->
             Enabled = maps:get(enabled, Opts0, true),
             Opts = maps:remove(enabled, Opts0),
             whisper_child_specs(Enabled, Opts);
-        Invalid ->
+        {error, Reason} ->
             ?LOG_WARNING(
                 "Ignoring invalid erm whisper_trigger configuration: ~p",
-                [Invalid]
+                [Reason]
             ),
             []
     end.

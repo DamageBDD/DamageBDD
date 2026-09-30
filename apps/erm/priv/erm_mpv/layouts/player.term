@@ -107,7 +107,7 @@
                                 [
                                     {label, "⏮"},
                                     {tooltip, "Previous track"},
-                                    {min_height, 30},
+                                    {min_height, 32},
                                     {min_width, 40},
                                     {class, "cp-button cp-transport"}
                                 ]},
@@ -123,7 +123,7 @@
                                 [
                                     {label, "⏭"},
                                     {tooltip, "Next track"},
-                                    {min_height, 30},
+                                    {min_height, 32},
                                     {min_width, 40},
                                     {class, "cp-button cp-transport"}
                                 ]},
@@ -210,6 +210,72 @@
                                 [
                                     {label, playlist_heading,
                                         [{text, "Playlist"}, {class, "cp-heading"}, {align, start}, {height, 22}]},
+                                    {frame, randomize_row,
+                                        [
+                                            {orient, horizontal},
+                                            {spacing, 3},
+                                            {height, 38},
+                                            {hexpand, true},
+                                            {vexpand, false},
+                                            {class, "cp-randomize-strip"}
+                                        ],
+                                        [
+                                            {label, randomize_label,
+                                                [
+                                                    {text, "Mix"},
+                                                    {tooltip, "Randomize the unplayed playlist"},
+                                                    {width_chars, 4},
+                                                    {class, "cp-randomize-label"}
+                                                ]},
+                                            {button, random_all_button,
+                                                [
+                                                    {label, "All"},
+                                                    {tooltip, "Shuffle all remaining tracks"},
+                                                    {min_height, 32},
+                                                    {min_width, 44},
+                                                    {class, "cp-button cp-randomize-button"}
+                                                ]},
+                                            {button, random_album_button,
+                                                [
+                                                    {label, "Album"},
+                                                    {tooltip, "Shuffle remaining playlist by album"},
+                                                    {min_height, 32},
+                                                    {min_width, 56},
+                                                    {class, "cp-button cp-randomize-button"}
+                                                ]},
+                                            {button, random_artist_button,
+                                                [
+                                                    {label, "Artist"},
+                                                    {tooltip, "Shuffle remaining playlist by artist"},
+                                                    {min_height, 32},
+                                                    {min_width, 56},
+                                                    {class, "cp-button cp-randomize-button"}
+                                                ]},
+                                            {button, random_genre_button,
+                                                [
+                                                    {label, "Genre"},
+                                                    {tooltip, "Shuffle remaining playlist by genre"},
+                                                    {min_height, 32},
+                                                    {min_width, 56},
+                                                    {class, "cp-button cp-randomize-button"}
+                                                ]},
+                                            {button, random_latest_button,
+                                                [
+                                                    {label, "New"},
+                                                    {tooltip, "Prioritise newest remaining media"},
+                                                    {min_height, 32},
+                                                    {min_width, 48},
+                                                    {class, "cp-button cp-randomize-button"}
+                                                ]},
+                                            {button, random_directory_button,
+                                                [
+                                                    {label, "Dir"},
+                                                    {tooltip, "Shuffle remaining playlist by directory"},
+                                                    {min_height, 32},
+                                                    {min_width, 44},
+                                                    {class, "cp-button cp-randomize-button"}
+                                                ]}
+                                        ]},
                                     {listbox, playlist_list,
                                         [
                                             {items, []},

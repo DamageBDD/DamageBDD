@@ -6,6 +6,7 @@
     {utility_row, [{show, false}]},
     {body_row, [{show, true}, {hexpand, true}, {vexpand, true}]},
     {playlist_panel, [{show, true}, {hexpand, true}, {vexpand, true}]},
+    {randomize_row, [{show, true}, {height, 38}]},
     {side_panel, [{show, false}]},
     {status_strip, [{show, true}, {height, 22}]}
 ].

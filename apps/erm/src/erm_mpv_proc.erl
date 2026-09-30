@@ -613,6 +613,19 @@ direct_mpv_call(load_file, [File], Path) ->
     send_mpv_command(Path, [<<"loadfile">>, File, <<"replace">>]);
 direct_mpv_call(load_list, [File], Path) ->
     send_mpv_command(Path, [<<"loadlist">>, File, <<"replace">>]);
+direct_mpv_call(replace_playlist_tail, [], Path) ->
+    %% Keep the current entry and remove only future/past queue entries.
+    send_mpv_command(Path, [<<"playlist-clear">>]);
+direct_mpv_call(replace_playlist_tail, [File], Path) ->
+    %% Keep MPV's current entry playing at its existing time/pause state.
+    %% playlist-clear removes the surrounding queue while retaining the current
+    %% file; loadlist append then installs the newly randomized future tail.
+    case send_mpv_command(Path, [<<"playlist-clear">>]) of
+        {ok, _} ->
+            send_mpv_command(Path, [<<"loadlist">>, File, <<"append">>]);
+        {error, _Reason} = Error ->
+            Error
+    end;
 direct_mpv_call(toggle_pause, [], Path) ->
     send_mpv_command(Path, [<<"cycle">>, <<"pause">>]);
 direct_mpv_call(play, [], Path) ->
