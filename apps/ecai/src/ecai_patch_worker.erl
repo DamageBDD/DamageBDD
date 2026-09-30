@@ -11,7 +11,8 @@
     compact_verification_diagnostic/1,
     failure_class/1,
     source_snapshot_block_kind/1,
-    proposal_shape/1
+    proposal_shape/1,
+    clear_stale_attempt_payload/2
 ]).
 -endif.
 
@@ -253,20 +254,52 @@ structured_patch_candidates(Map, Depth) when is_map(Map) ->
         <<"changes">>,
         <<"files">>
     ],
-    lists:append([
+    Candidates = lists:append([
         structured_patch_candidates(
             mget(Key, Map, undefined),
             Depth + 1
         )
      || Key <- Keys,
         mget(Key, Map, undefined) =/= undefined
-    ]);
+    ]),
+    case Candidates of
+        [] ->
+            fallback_patch_candidates(Map, Depth);
+        _ ->
+            Candidates
+    end;
 structured_patch_candidates(List, Depth) when is_list(List) ->
     lists:append([
         structured_patch_candidates(Item, Depth + 1)
      || Item <- List
     ]);
 structured_patch_candidates(_Value, _Depth) ->
+    [].
+
+%% Some OpenAI-compatible providers add transport-specific wrapper objects
+%% around the requested JSON. Only fall back to arbitrary map traversal when
+%% the known patch keys produced no candidate, and only accept leaf binaries
+%% that already pass the normal patch validator. This keeps recovery bounded
+%% without stringifying arbitrary JSON maps into patch files.
+fallback_patch_candidates(_Value, Depth) when Depth > 4 ->
+    [];
+fallback_patch_candidates(Bin, _Depth) when is_binary(Bin) ->
+    Patch = ecai_patch_verifier:normalize_patch(Bin),
+    case ecai_patch_verifier:validate_patch(Patch) of
+        ok -> [Patch];
+        {error, _} -> []
+    end;
+fallback_patch_candidates(Map, Depth) when is_map(Map) ->
+    lists:append([
+        fallback_patch_candidates(Value, Depth + 1)
+     || Value <- maps:values(Map)
+    ]);
+fallback_patch_candidates(List, Depth) when is_list(List) ->
+    lists:append([
+        fallback_patch_candidates(Value, Depth + 1)
+     || Value <- List
+    ]);
+fallback_patch_candidates(_Value, _Depth) ->
     [].
 
 looks_like_patch(Bin) ->
@@ -923,7 +956,8 @@ persist_repair(Repair0, Opts) ->
         created_at, Existing,
         maps:get(created_at, Repair0, Now)),
     Merged0 = maps:merge(Existing, Repair0),
-    Merged1 = Merged0#{
+    MergedFresh = clear_stale_attempt_payload(Repair0, Merged0),
+    Merged1 = MergedFresh#{
         created_at => CreatedAt,
         updated_at => Now
     },
@@ -934,7 +968,7 @@ persist_repair(Repair0, Opts) ->
             true ->
                 (maps:without([worker_pid], MergedState))#{
                     completed_at =>
-                        maps:get(completed_at, Merged1, Now)
+                        maps:get(completed_at, Repair0, Now)
                 };
             false ->
                 case Status of
@@ -973,6 +1007,41 @@ clear_stale_failure_state(Status, Repair)
     );
 clear_stale_failure_state(_Status, Repair) ->
     Repair.
+
+%% Repair state is keyed by finding/version and therefore merged across
+%% attempts. A terminal failure produced before a new patch reaches the
+%% verifier must not inherit patch bytes or verifier output from an older
+%% attempt. Keep any payload explicitly supplied by the new record.
+clear_stale_attempt_payload(Repair0, Repair) ->
+    case maps:get(status, Repair0, undefined) of
+        failed ->
+            drop_absent_attempt_payload(Repair0, Repair);
+        <<"failed">> ->
+            drop_absent_attempt_payload(Repair0, Repair);
+        _ ->
+            Repair
+    end.
+
+drop_absent_attempt_payload(Repair0, Repair) ->
+    Keys = [
+        summary,
+        security_property,
+        tests_requested,
+        patch,
+        patch_sha256,
+        patch_file,
+        verifier_output
+    ],
+    lists:foldl(
+        fun(Key, Acc) ->
+            case maps:is_key(Key, Repair0) of
+                true -> Acc;
+                false -> maps:remove(Key, Acc)
+            end
+        end,
+        Repair,
+        Keys
+    ).
 
 terminal_status(validated) -> true;
 terminal_status(proposed) -> true;
