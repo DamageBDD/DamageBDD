@@ -9,6 +9,7 @@
 -export([
     normalize_proposal_patch/1,
     compact_verification_diagnostic/1,
+    failure_class/1,
     source_snapshot_block_kind/1
 ]).
 -endif.
@@ -93,7 +94,7 @@ generate_attempt(Attempt, MaxAttempts, Fingerprint, Version,
 
 handle_proposal(Proposal, Attempt, MaxAttempts, Fingerprint, Version,
                 Context, Opts) ->
-    RawPatch = mget(<<"patch">>, Proposal, <<>>),
+    RawPatch = proposal_patch_value(Proposal),
     case normalize_proposal_patch(RawPatch) of
         {error, Reason} when Attempt < MaxAttempts ->
             NextDiag =
@@ -147,6 +148,21 @@ handle_proposal(Proposal, Attempt, MaxAttempts, Fingerprint, Version,
             end
     end.
 
+proposal_patch_value(Proposal) when is_map(Proposal) ->
+    case mget(<<"patch">>, Proposal, undefined) of
+        undefined ->
+            Proposal;
+        <<>> ->
+            case structured_patch_candidate(Proposal) of
+                {ok, Candidate} -> Candidate;
+                error -> <<>>
+            end;
+        Value ->
+            Value
+    end;
+proposal_patch_value(Proposal) ->
+    Proposal.
+
 normalize_proposal_patch(Patch) when is_binary(Patch) ->
     normalize_patch_binary(Patch);
 normalize_proposal_patch([Patch]) when is_binary(Patch) ->
@@ -156,10 +172,75 @@ normalize_proposal_patch(Patches) when is_list(Patches), Patches =/= [] ->
         true ->
             normalize_patch_binary(join_patch_fragments(Patches));
         false ->
-            {error, {invalid_patch_type, patch_value_type(Patches)}}
+            normalize_structured_patch(Patches)
     end;
+normalize_proposal_patch(Patch) when is_map(Patch) ->
+    normalize_structured_patch(Patch);
 normalize_proposal_patch(Patch) ->
     {error, {invalid_patch_type, patch_value_type(Patch)}}.
+
+normalize_structured_patch(Value) ->
+    case structured_patch_candidate(Value) of
+        {ok, Candidate} ->
+            normalize_patch_binary(Candidate);
+        error ->
+            {error, {invalid_patch_type, patch_value_type(Value)}}
+    end.
+
+structured_patch_candidate(Value) ->
+    case structured_patch_candidates(Value, 0) of
+        [] ->
+            error;
+        Candidates ->
+            {ok, join_patch_candidates(Candidates)}
+    end.
+
+structured_patch_candidates(_Value, Depth) when Depth > 4 ->
+    [];
+structured_patch_candidates(Bin, _Depth) when is_binary(Bin) ->
+    case looks_like_patch(Bin) of
+        true -> [Bin];
+        false -> []
+    end;
+structured_patch_candidates(Map, Depth) when is_map(Map) ->
+    Keys = [
+        <<"patch">>,
+        <<"diff">>,
+        <<"git_diff">>,
+        <<"unified_diff">>,
+        <<"patch_text">>,
+        <<"content">>,
+        <<"text">>,
+        <<"result">>,
+        <<"data">>
+    ],
+    lists:append([
+        structured_patch_candidates(
+            mget(Key, Map, undefined),
+            Depth + 1
+        )
+     || Key <- Keys,
+        mget(Key, Map, undefined) =/= undefined
+    ]);
+structured_patch_candidates(List, Depth) when is_list(List) ->
+    lists:append([
+        structured_patch_candidates(Item, Depth + 1)
+     || Item <- List
+    ]);
+structured_patch_candidates(_Value, _Depth) ->
+    [].
+
+looks_like_patch(Bin) ->
+    binary:match(Bin, <<"diff --git ">>) =/= nomatch orelse
+    (
+        binary:match(Bin, <<"--- a/">>) =/= nomatch andalso
+        binary:match(Bin, <<"+++ b/">>) =/= nomatch
+    ).
+
+join_patch_candidates([Candidate]) ->
+    Candidate;
+join_patch_candidates(Candidates) ->
+    iolist_to_binary(lists:join(<<"\n">>, Candidates)).
 
 normalize_patch_binary(Patch0) ->
     Patch1 = ecai_patch_verifier:normalize_patch(Patch0),
@@ -296,6 +377,7 @@ verify_or_retry(Attempt, MaxAttempts, Fingerprint, Version, Context,
                 Repair#{
                     stage => terminal,
                     error => verification_failed,
+                    failure_class => verification_failed,
                     diagnostic =>
                         diagnostic_json(
                             compact_verification_diagnostic(
@@ -318,6 +400,7 @@ verify_or_retry(Attempt, MaxAttempts, Fingerprint, Version, Context,
                 Repair#{
                     stage => terminal,
                     error => {verification_error, Reason},
+                    failure_class => verification_failed,
                     diagnostic =>
                         diagnostic_json(#{verifier_error => Reason})
                 },
@@ -586,6 +669,7 @@ schedule_retry(Fingerprint, Version, Context, Attempt,
                 retryable => false,
                 retry_count => RetryCount,
                 error => {retry_exhausted, Error},
+                failure_class => retry_exhausted,
                 last_error => Error,
                 diagnostic => Diagnostic,
                 completed_at => Now,
@@ -606,6 +690,7 @@ schedule_retry(Fingerprint, Version, Context, Attempt,
                 retryable => true,
                 retry_count => RetryCount,
                 error => Error,
+                failure_class => failure_class(Error),
                 last_error => Error,
                 diagnostic => Diagnostic,
                 next_retry_at_ms =>
@@ -622,9 +707,22 @@ final_failure(Fingerprint, Version, Context, Attempt, Reason, Opts) ->
         status => failed,
         stage => terminal,
         retryable => false,
-        error => Reason
+        error => Reason,
+        last_error => Reason,
+        failure_class => failure_class(Reason)
     },
     persist_repair(Repair, Opts).
+
+failure_class({invalid_patch, _}) -> invalid_patch;
+failure_class(verification_failed) -> verification_failed;
+failure_class({verification_error, _}) -> verification_failed;
+failure_class({ollama_failed, _}) -> ollama_failed;
+failure_class({inference_failed, _}) -> inference_failed;
+failure_class({cannot_write_patch, _}) -> patch_write_failed;
+failure_class({retry_exhausted, _}) -> retry_exhausted;
+failure_class({source_snapshot_blocked, _}) -> source_snapshot_blocked;
+failure_class(source_snapshot_blocked) -> source_snapshot_blocked;
+failure_class(_) -> undefined.
 
 base_repair(Fingerprint, Version, Context, Attempt) ->
     #{
@@ -658,21 +756,22 @@ persist_repair(Repair0, Opts) ->
         updated_at => Now
     },
     Status = maps:get(status, Merged1, undefined),
+    MergedState = clear_stale_failure_state(Status, Merged1),
     Merged2 =
         case terminal_status(Status) of
             true ->
-                (maps:without([worker_pid], Merged1))#{
+                (maps:without([worker_pid], MergedState))#{
                     completed_at =>
                         maps:get(completed_at, Merged1, Now)
                 };
             false ->
                 case Status of
                     running ->
-                        maps:without([completed_at], Merged1);
+                        maps:without([completed_at], MergedState);
                     _ ->
                         maps:without(
                             [completed_at, worker_pid],
-                            Merged1)
+                            MergedState)
                 end
         end,
     case ecai_learning_store:put_repair(
@@ -685,6 +784,23 @@ persist_repair(Repair0, Opts) ->
         Other ->
             {error, {repair_store_failed, Other}}
     end.
+
+clear_stale_failure_state(Status, Repair)
+  when Status =:= validated;
+       Status =:= proposed;
+       Status =:= running ->
+    maps:without(
+        [
+            error,
+            last_error,
+            failure_class,
+            retryable,
+            next_retry_at_ms
+        ],
+        Repair
+    );
+clear_stale_failure_state(_Status, Repair) ->
+    Repair.
 
 terminal_status(validated) -> true;
 terminal_status(proposed) -> true;

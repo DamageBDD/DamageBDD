@@ -18,6 +18,7 @@ is_retryable({inference_failed, Reason}) -> is_retryable(Reason);
 is_retryable({inference_pool_exit, Reason}) -> is_retryable(Reason);
 is_retryable({inference_pool_exception, _Class, Reason}) -> is_retryable(Reason);
 is_retryable({ollama_failed, Reason}) -> is_retryable(Reason);
+is_retryable({ollama_request_failed, Reason}) -> is_retryable(Reason);
 is_retryable({await_response_failed, Reason}) -> is_retryable(Reason);
 is_retryable({await_body_failed, Reason}) -> is_retryable(Reason);
 is_retryable({request_failed, Reason}) -> is_retryable(Reason);
@@ -40,6 +41,8 @@ is_retryable(etimedout) -> true;
 is_retryable(econnrefused) -> true;
 is_retryable(closed) -> true;
 is_retryable(shutdown) -> true;
+is_retryable({Provider, Reason}) when is_binary(Provider) ->
+    is_retryable(Reason);
 is_retryable(Reasons) when is_list(Reasons) ->
     lists:any(fun is_retryable/1, Reasons);
 is_retryable(Term) when is_tuple(Term), tuple_size(Term) > 1,
@@ -95,3 +98,69 @@ due(_, _) -> false.
 
 positive_int(V, _Default) when is_integer(V), V > 0 -> V;
 positive_int(_, Default) -> Default.
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+provider_wrapped_ollama_timeout_is_retryable_test() ->
+    Error = {
+        <<"threadripper">>,
+        {ollama_request_failed, {await_response_failed, timeout}}
+    },
+    ?assert(is_retryable(Error)).
+
+all_node_inference_timeout_is_retryable_test() ->
+    Error = {
+        ollama_failed,
+        {
+            inference_cluster_failed,
+            patch,
+            [
+                {
+                    <<"threadripper">>,
+                    {ollama_request_failed,
+                     {await_response_failed, timeout}}
+                },
+                {
+                    <<"razorjack">>,
+                    {ollama_request_failed,
+                     {await_response_failed, timeout}}
+                },
+                {
+                    <<"doombox">>,
+                    {ollama_request_failed,
+                     {await_response_failed, timeout}}
+                }
+            ]
+        }
+    },
+    ?assert(is_retryable(Error)).
+
+permanent_provider_error_is_not_retryable_test() ->
+    Error = {
+        <<"threadripper">>,
+        {ollama_request_failed, invalid_model_response}
+    },
+    ?assertNot(is_retryable(Error)).
+
+mixed_cluster_with_transient_provider_is_retryable_test() ->
+    Error = {
+        inference_cluster_failed,
+        patch,
+        [
+            {
+                <<"threadripper">>,
+                {ollama_request_failed,
+                 {await_response_failed, timeout}}
+            },
+            {
+                <<"razorjack">>,
+                {ollama_request_failed, invalid_model_response}
+            }
+        ]
+    },
+    %% Cluster retries are intentionally "any transient leaf" because another
+    %% provider may succeed on the next bounded durable retry.
+    ?assert(is_retryable(Error)).
+
+-endif.

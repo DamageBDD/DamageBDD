@@ -937,6 +937,7 @@ store_scan_checkpoint(State) ->
         current => State#state.current,
         cycle => State#state.cycle,
         cycle_started_at => State#state.cycle_started_at,
+        canonical_commit => State#state.canonical_commit,
         last_completed_at => State#state.last_completed_at,
         last_error => State#state.last_error,
         next_run_at_ms => State#state.next_run_at_ms,
@@ -977,9 +978,33 @@ restore_scan_checkpoint(State0) ->
                 next_run_at_ms = maps:get(next_run_at_ms, Cp, undefined),
                 resume_count = maps:get(resume_count, Cp, 0) + 1
             },
-            case Phase of
-                scanning -> {State1, resume};
-                _ -> {State1#state{phase = idle}, idle}
+            case {Phase, State1#state.canonical_commit} of
+                {scanning, Commit}
+                  when is_binary(Commit), byte_size(Commit) > 0 ->
+                    {State1, resume};
+                {scanning, _MissingCommit} ->
+                    %% Checkpoints written before canonical source pinning (or
+                    %% otherwise incomplete checkpoints) cannot be resumed
+                    %% deterministically. Discard their queue and start a fresh
+                    %% cycle, which will pin ecai_source_repository:current/0
+                    %% before enumerating any modules.
+                    {
+                        State1#state{
+                            modules = [],
+                            queue = [],
+                            current = undefined,
+                            phase = idle,
+                            canonical_commit = undefined,
+                            next_run_at_ms = undefined,
+                            last_error = {
+                                checkpoint_restart_required,
+                                canonical_commit_missing
+                            }
+                        },
+                        fresh
+                    };
+                _ ->
+                    {State1#state{phase = idle}, idle}
             end
     end.
 

@@ -12,7 +12,10 @@
     recover_orphan_retry/1,
     orphan_preflight_batch/1,
     terminalize_exhausted_retry_wait/2,
-    analysis_matches_report_source/2
+    analysis_matches_report_source/2,
+    repair_order_key/1,
+    source_priority/1,
+    severity_priority/1
 ]).
 -endif.
 
@@ -94,7 +97,9 @@ handle_call(_Req, _From, State) ->
     {reply, {error, unsupported_call}, State}.
 
 handle_cast(scan_now, State) ->
-    self() ! retry_tick,
+    %% A manual scan already performs admission followed by prioritized
+    %% dispatch. Do not also enqueue retry_tick here: that would run a second
+    %% synchronous dispatch/preflight pass before or after the scan.
     self() ! scan,
     {noreply, State};
 handle_cast(_Msg, State) ->
@@ -121,7 +126,10 @@ handle_info(scan, State0) ->
             erlang:send_after(State1#state.interval_ms, self(), scan),
             {noreply, State1};
         true ->
-            {Queued, Errors} = lists:foldl(fun(App, {Q, E}) ->
+            %% Persist the complete candidate set before filling worker slots.
+            %% Otherwise report enumeration order can consume all available
+            %% workers before repair priority is considered.
+            {Queued, AdmissionErrors} = lists:foldl(fun(App, {Q, E}) ->
                 case safe_app_findings(App) of
                     {ok, Reports} ->
                         {Q1, E1} = process_reports(
@@ -132,6 +140,11 @@ handle_info(scan, State0) ->
                         {Q, [{App, Reason} | E]}
                 end
             end, {0, []}, ?APPS),
+            {_Started, DispatchErrors} =
+                dispatch_persisted(
+                    State0#state.opts,
+                    State0#state.max_concurrent),
+            Errors = DispatchErrors ++ AdmissionErrors,
             State1 = State0#state{
                 cycles = State0#state.cycles + 1,
                 queued = State0#state.queued + Queued,
@@ -238,6 +251,7 @@ process_findings(
                                     App,
                                     Module,
                                     Finding,
+                                    Analysis,
                                     Opts,
                                     MaxConcurrent,
                                     Q0,
@@ -294,14 +308,19 @@ analysis_matches_report_source(ReportSourceSha, Analysis)
 analysis_matches_report_source(_ReportSourceSha, _Analysis) ->
     false.
 
-queue_if_needed(App, Module, Finding, Opts, MaxConcurrent, Q, E) ->
+queue_if_needed(
+    App, Module, Finding, Analysis,
+    _Opts, _MaxConcurrent, Q, E
+) ->
     Fp = finding_fingerprint(Module, Finding),
     Version = ecai_code_context:finding_version(App, Module, Finding),
+    SourcePath = analysis_source_path(Analysis),
     case ecai_learning_store:get_repair(Fp, Version) of
-        {ok, Existing} ->
-            maybe_dispatch(
-                App, Module, Finding, Fp, Version, Existing,
-                Opts, MaxConcurrent, Q, E);
+        {ok, Existing0} ->
+            Existing = ensure_source_path(Existing0, SourcePath),
+            maybe_persist_enriched_repair(
+                Fp, Version, Existing0, Existing),
+            {Q, E};
         not_found ->
             Queued = #{
                 status => queued,
@@ -311,14 +330,35 @@ queue_if_needed(App, Module, Finding, Opts, MaxConcurrent, Q, E) ->
                 application => App,
                 module => Module,
                 finding => Finding,
+                source_path => SourcePath,
                 created_at => now_iso8601(),
                 updated_at => now_iso8601()
             },
-            ok = ecai_learning_store:put_repair(Fp, Version, Queued),
-            maybe_dispatch(
-                App, Module, Finding, Fp, Version, Queued,
-                Opts, MaxConcurrent, Q, E)
+            ok = ecai_learning_store:put_repair(
+                Fp, Version, Queued),
+            {Q + 1, E}
     end.
+
+ensure_source_path(Repair, undefined) ->
+    Repair;
+ensure_source_path(Repair, <<>>) ->
+    Repair;
+ensure_source_path(Repair, SourcePath) ->
+    case maps:get(source_path, Repair, undefined) of
+        undefined -> Repair#{source_path => SourcePath};
+        <<>> -> Repair#{source_path => SourcePath};
+        _ -> Repair
+    end.
+
+maybe_persist_enriched_repair(
+    _Fp, _Version, Repair, Repair
+) ->
+    ok;
+maybe_persist_enriched_repair(
+    Fp, Version, _Before, After
+) ->
+    ecai_learning_store:put_repair(Fp, Version, After).
+
 
 dispatch_persisted(Opts, MaxConcurrent) ->
     Repairs0 = safe_repairs(),
@@ -339,7 +379,7 @@ dispatch_persisted(Opts, MaxConcurrent) ->
             0 -> Repairs3;
             _ -> safe_repairs()
         end,
-    Repairs = lists:sort(fun repair_order/2, Repairs4),
+    Repairs = prioritize_repairs(Repairs4),
     lists:foldl(
         fun(Repair, {Started, Errors}) ->
             case active_patch_workers() >= MaxConcurrent of
@@ -444,7 +484,7 @@ preflight_orphan_retry_batch(Repairs, Opts) ->
                 is_orphan_retry_wait(Repair)
             ],
             Candidates = lists:sublist(
-                lists:sort(fun repair_order/2, Candidates0),
+                prioritize_repairs(Candidates0),
                 Batch
             ),
             lists:foldl(
@@ -1019,25 +1059,112 @@ failure_class({Class, _, _}) when is_atom(Class) -> Class;
 failure_class(Class) when is_atom(Class) -> Class;
 failure_class(_) -> unknown.
 
-repair_order(A, B) ->
-    repair_order_key(A) < repair_order_key(B).
+prioritize_repairs(Repairs) ->
+    Decorated = [
+        {repair_order_key(Repair), Repair}
+     || Repair <- Repairs
+    ],
+    [Repair || {_Key, Repair} <- lists:sort(Decorated)].
 
 repair_order_key(Repair) ->
+    SourcePath = repair_source_path(Repair),
     {
+        source_priority(SourcePath),
+        severity_priority(repair_severity(Repair)),
         status_priority(maps:get(status, Repair, undefined)),
         maps:get(next_retry_at_ms, Repair, 0),
         maps:get(created_at, Repair, <<>>),
         maps:get(fingerprint, Repair, <<>>)
     }.
 
+%% Production source is the primary dispatch class. Tests remain queued and
+%% repairable, but cannot monopolize workers while src/ findings are due.
+source_priority(Path0) ->
+    Path = to_binary(Path0),
+    case {
+        binary:match(Path, <<"/src/">>),
+        binary:match(Path, <<"/test/">>),
+        binary:match(Path, <<"/tests/">>)
+    } of
+        {{_, _}, _, _} -> 0;
+        {_, {_, _}, _} -> 2;
+        {_, _, {_, _}} -> 2;
+        _ -> 1
+    end.
+
+repair_source_path(Repair) ->
+    case maps:get(source_path, Repair, undefined) of
+        Path when is_binary(Path), byte_size(Path) > 0 ->
+            Path;
+        Path when is_list(Path), Path =/= [] ->
+            to_binary(Path);
+        _ ->
+            lookup_analysis_source_path(
+                maps:get(application, Repair, undefined),
+                maps:get(module, Repair, undefined))
+    end.
+
+lookup_analysis_source_path(App, Module)
+  when is_atom(App), is_atom(Module) ->
+    try ecai_learning_store:get_analysis(App, Module) of
+        {ok, Analysis} when is_map(Analysis) ->
+            analysis_source_path(Analysis);
+        _ ->
+            <<>>
+    catch
+        _:_ ->
+            <<>>
+    end;
+lookup_analysis_source_path(_, _) ->
+    <<>>.
+
+analysis_source_path(Analysis) when is_map(Analysis) ->
+    first_source_path([
+        maps:get(source_path, Analysis, undefined),
+        maps:get(source_name, Analysis, undefined),
+        maps:get(repo_path, Analysis, undefined)
+    ]);
+analysis_source_path(_) ->
+    <<>>.
+
+first_source_path([]) ->
+    <<>>;
+first_source_path([Path | _Rest])
+  when is_binary(Path), byte_size(Path) > 0 ->
+    Path;
+first_source_path([Path | _Rest])
+  when is_list(Path), Path =/= [] ->
+    to_binary(Path);
+first_source_path([_ | Rest]) ->
+    first_source_path(Rest).
+
+repair_severity(Repair) ->
+    Finding = maps:get(finding, Repair, #{}),
+    mget(<<"severity">>, Finding, <<"unknown">>).
+
+severity_priority(Severity0) ->
+    Severity = lower_binary(to_binary(Severity0)),
+    case Severity of
+        <<"critical">> -> 0;
+        <<"high">> -> 1;
+        <<"medium">> -> 2;
+        <<"low">> -> 3;
+        <<"info">> -> 4;
+        _ -> 5
+    end.
+
+lower_binary(Bin) when is_binary(Bin) ->
+    unicode:characters_to_binary(
+        string:lowercase(binary_to_list(Bin))).
+
 status_priority(retry_wait) -> 0;
 status_priority(<<"retry_wait">>) -> 0;
 status_priority(failed) -> 1;
 status_priority(<<"failed">>) -> 1;
-status_priority(running) -> 2;
-status_priority(<<"running">>) -> 2;
-status_priority(queued) -> 3;
-status_priority(<<"queued">>) -> 3;
+status_priority(queued) -> 2;
+status_priority(<<"queued">>) -> 2;
+status_priority(running) -> 3;
+status_priority(<<"running">>) -> 3;
 status_priority(_) -> 9.
 
 merge_errors(Previous, []) -> Previous;
@@ -1091,3 +1218,73 @@ to_binary(B) when is_binary(B) -> B;
 to_binary(L) when is_list(L) -> unicode:characters_to_binary(L);
 to_binary(A) when is_atom(A) -> atom_to_binary(A, utf8);
 to_binary(V) -> iolist_to_binary(io_lib:format("~p", [V])).
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+production_source_precedes_critical_test_test() ->
+    Src = priority_test_repair(
+        <<"apps/damage/src/a.erl">>,
+        <<"low">>,
+        queued,
+        <<"src">>
+    ),
+    Test = priority_test_repair(
+        <<"apps/damage/test/a_tests.erl">>,
+        <<"critical">>,
+        queued,
+        <<"test">>
+    ),
+    ?assert(repair_order_key(Src) < repair_order_key(Test)).
+
+severity_orders_within_source_class_test() ->
+    High = priority_test_repair(
+        <<"apps/ecai/src/high.erl">>,
+        <<"high">>,
+        queued,
+        <<"high">>
+    ),
+    Medium = priority_test_repair(
+        <<"apps/ecai/src/medium.erl">>,
+        <<"medium">>,
+        queued,
+        <<"medium">>
+    ),
+    ?assert(repair_order_key(High) < repair_order_key(Medium)).
+
+retry_precedes_new_queue_within_same_class_test() ->
+    Retry = priority_test_repair(
+        <<"apps/erm/src/a.erl">>,
+        <<"high">>,
+        retry_wait,
+        <<"retry">>
+    ),
+    Queued = priority_test_repair(
+        <<"apps/erm/src/b.erl">>,
+        <<"high">>,
+        queued,
+        <<"queued">>
+    ),
+    ?assert(repair_order_key(Retry) < repair_order_key(Queued)).
+
+unknown_source_sits_between_src_and_test_test() ->
+    ?assert(
+        source_priority(<<"apps/ecai/src/a.erl">>) <
+        source_priority(<<>>)
+    ),
+    ?assert(
+        source_priority(<<>>) <
+        source_priority(<<"apps/ecai/test/a_tests.erl">>)
+    ).
+
+priority_test_repair(SourcePath, Severity, Status, Fingerprint) ->
+    #{
+        source_path => SourcePath,
+        finding => #{<<"severity">> => Severity},
+        status => Status,
+        next_retry_at_ms => 0,
+        created_at => <<"2026-09-30T00:00:00Z">>,
+        fingerprint => Fingerprint
+    }.
+
+-endif.
