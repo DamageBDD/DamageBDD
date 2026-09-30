@@ -239,7 +239,22 @@ process_findings(
             false ->
                 {Q0, E0};
             true ->
-                case ecai_learning_store:get_analysis(App, Module) of
+                case ecai_finding_adjudicator:adjudicate(Finding) of
+                    {reject, Reason} ->
+                        logger:notice(
+                            "ECAI repair finding rejected by deterministic "
+                            "adjudication app=~p module=~p "
+                            "fingerprint=~p reason=~p",
+                            [
+                                App,
+                                Module,
+                                finding_fingerprint(Module, Finding),
+                                Reason
+                            ]
+                        ),
+                        {Q0, E0};
+                    accept ->
+                        case ecai_learning_store:get_analysis(App, Module) of
                     not_found ->
                         ecai_codebase_learner:module_changed(App, Module),
                         {Q0, E0};
@@ -278,6 +293,7 @@ process_findings(
                                 {Q0, E0}
                         end
                 end
+        end
         end,
     process_findings(
         App,

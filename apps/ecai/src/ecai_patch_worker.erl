@@ -96,6 +96,33 @@ generate_attempt(Attempt, MaxAttempts, Fingerprint, Version,
 handle_proposal(Proposal, Attempt, MaxAttempts, Fingerprint, Version,
                 Context, Opts) ->
     ProposalShape = proposal_shape(Proposal),
+    case proposal_model_error(Proposal) of
+        {ok, ModelError} when Attempt < MaxAttempts ->
+            NextDiag = model_error_diagnostic(ModelError, ProposalShape),
+            generate_attempt(
+                Attempt + 1, MaxAttempts, Fingerprint, Version,
+                Context, NextDiag, Opts);
+        {ok, ModelError} ->
+            final_failure(
+                Fingerprint, Version, Context, Attempt,
+                {model_response_error, ModelError},
+                #{
+                    diagnostic =>
+                        model_error_diagnostic(
+                            ModelError, ProposalShape),
+                    proposal_shape => ProposalShape
+                },
+                Opts);
+        none ->
+            handle_patch_proposal(
+                Proposal, ProposalShape, Attempt, MaxAttempts,
+                Fingerprint, Version, Context, Opts)
+    end.
+
+handle_patch_proposal(
+    Proposal, ProposalShape, Attempt, MaxAttempts,
+    Fingerprint, Version, Context, Opts
+) ->
     RawPatch = proposal_patch_value(Proposal),
     case normalize_proposal_patch(RawPatch) of
         {error, Reason} when Attempt < MaxAttempts ->
@@ -321,6 +348,32 @@ patch_value_type(Value) when is_integer(Value) -> integer;
 patch_value_type(Value) when is_float(Value) -> float;
 patch_value_type(Value) when is_binary(Value) -> binary;
 patch_value_type(_) -> other.
+
+proposal_model_error(Proposal) when is_map(Proposal) ->
+    case mget(<<"error">>, Proposal, undefined) of
+        Error when is_binary(Error), byte_size(Error) > 0 ->
+            {ok, truncate_model_error(Error)};
+        Error when is_list(Error), Error =/= [] ->
+            {ok, truncate_model_error(to_binary(Error))};
+        _ ->
+            none
+    end;
+proposal_model_error(_) ->
+    none.
+
+truncate_model_error(Error) when is_binary(Error), byte_size(Error) > 2048 ->
+    <<Prefix:2048/binary, _/binary>> = Error,
+    <<Prefix/binary, "\n...[truncated]">>;
+truncate_model_error(Error) ->
+    Error.
+
+model_error_diagnostic(ModelError, ProposalShape) ->
+    diagnostic_json(#{
+        model_response_error => ModelError,
+        proposal_shape => ProposalShape,
+        required_response =>
+            <<"Return the requested JSON object with patch as one JSON string containing a git unified diff beginning with 'diff --git '. Do not return an error object unless the request is impossible from the supplied source.">>
+    }).
 
 invalid_patch_diagnostic(Reason, ProposalShape) ->
     diagnostic_json(#{
@@ -832,6 +885,7 @@ final_failure(Fingerprint, Version, Context, Attempt,
     persist_repair(Repair, Opts).
 
 failure_class({invalid_patch, _}) -> invalid_patch;
+failure_class({model_response_error, _}) -> model_response_error;
 failure_class(verification_failed) -> verification_failed;
 failure_class({verification_error, _}) -> verification_failed;
 failure_class({ollama_failed, _}) -> ollama_failed;
