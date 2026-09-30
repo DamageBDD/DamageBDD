@@ -219,42 +219,48 @@ terminate(_Reason, State0) ->
 code_change(_Old, State, _Extra) -> {ok, State}.
 
 enqueue_module_change(App, Module, State0 = #state{phase = idle}) ->
-    Entry = {module, App, Module},
-    StateA = cancel_cycle_timer(State0),
-    State1 = StateA#state{
-        queue = [Entry],
-        inflight = #{},
-        phase = queued,
-        total = 1,
-        completed = 0,
-        cycle = StateA#state.cycle + 1,
-        changed_apps = #{},
-        last_started_at = now_iso8601(),
-        last_error = undefined,
-        refresh_requested = false,
-        ready = false
-    },
-    ok = checkpoint_and_publish(State1),
-    State2 = dispatch(State1),
-    ok = checkpoint_and_publish(State2),
-    {noreply, maybe_finalize(State2)};
-enqueue_module_change(App, Module, State0 = #state{phase = Phase})
-  when Phase =:= learning; Phase =:= queued ->
-    Entry = {module, App, Module},
-    case entry_pending(Entry, State0) of
-        true ->
-            {noreply, State0};
-        false ->
-            State1 = State0#state{
-                queue = State0#state.queue ++ [Entry],
-                total = State0#state.total + 1
+    case ecai_source_repository:current(State0#state.opts) of
+        {ok, #{commit := Commit}} ->
+            Entry = {canonical_module, App, Commit, Module},
+            StateA = cancel_cycle_timer(State0),
+            State1 = StateA#state{
+                queue = [Entry],
+                inflight = #{},
+                phase = queued,
+                total = 1,
+                completed = 0,
+                cycle = StateA#state.cycle + 1,
+                changed_apps = #{},
+                last_started_at = now_iso8601(),
+                last_error = undefined,
+                refresh_requested = false,
+                ready = false
             },
             ok = checkpoint_and_publish(State1),
             State2 = dispatch(State1),
             ok = checkpoint_and_publish(State2),
-            {noreply, State2}
+            {noreply, maybe_finalize(State2)};
+        {error, Reason} ->
+            State1 = State0#state{
+                refresh_requested = true,
+                ready = false,
+                last_error = {
+                    canonical_source_unavailable,
+                    App,
+                    Module,
+                    Reason
+                }
+            },
+            ok = checkpoint_and_publish(State1),
+            self() ! start_cycle,
+            {noreply, State1}
     end;
-enqueue_module_change(_App, _Module, State0 = #state{phase = finalizing}) ->
+enqueue_module_change(_App, _Module, State0 = #state{phase = Phase})
+  when Phase =:= learning; Phase =:= queued; Phase =:= finalizing ->
+    %% A full cycle is an immutable source generation. Never append a module
+    %% that would resolve ecai_source_repository:current/1 later and possibly
+    %% belong to a newer commit. Collapse any number of module notifications
+    %% into one canonical refresh after this generation finishes.
     State1 = State0#state{refresh_requested = true},
     ok = checkpoint_and_publish(State1),
     {noreply, State1}.
@@ -499,6 +505,33 @@ safe_learn_entry(Entry, Opts) ->
             {error, {learn_entry_exception, Class, Reason, Stack}}
     end.
 
+learn_entry({canonical_module, App, Commit, Module}, Opts) ->
+    case ecai_source_repository:module_source_at_commit(
+             App, Module, Commit, Opts) of
+        {ok, SourceMeta} ->
+            Path = path_to_list(maps:get(full_path, SourceMeta)),
+            case ecai_code_analyser:analyse_file(App, Path) of
+                {ok, Analysis0} ->
+                    Analysis = pin_canonical_analysis(
+                        Analysis0,
+                        Commit,
+                        maps:get(source_path, SourceMeta)
+                    ),
+                    learn_analysis(App, Analysis, Opts);
+                {error, _} = Error ->
+                    Error
+            end;
+        {error, CanonicalReason} ->
+            {error, {
+                canonical_module_source_unavailable,
+                App,
+                Module,
+                Commit,
+                CanonicalReason
+            }}
+    end;
+%% Legacy checkpoint compatibility. New targeted notifications are always
+%% pinned as {canonical_module, App, Commit, Module}.
 learn_entry({module, App, Module}, Opts) ->
     case ecai_source_repository:module_source(App, Module, Opts) of
         {ok, SourceMeta} ->

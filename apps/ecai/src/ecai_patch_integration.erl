@@ -135,7 +135,12 @@ code_change(_Old, State, _Extra) -> {ok, State}.
 handle_scan(_RunOpts, State = #state{current = Current}) when Current =/= undefined ->
     {noreply, State};
 handle_scan(RunOpts, State0) ->
-    StateA = maybe_resume_feedback(State0),
+    EffectiveOpts = maps:merge(State0#state.opts, RunOpts),
+    RepoRoot = repo_root(EffectiveOpts),
+    %% Refresh only while idle. A running integration job remains pinned to the
+    %% repository root/base commit it started with.
+    StateR = State0#state{repo_root = RepoRoot},
+    StateA = maybe_resume_feedback(StateR),
     case current_patchset(StateA, RunOpts) of
         {no_patches, _BaseCommit} ->
             State1 = StateA#state{cycles = StateA#state.cycles + 1,
@@ -296,7 +301,8 @@ update_feedback(Job, Feedback, State) ->
     State.
 
 current_patchset(State, RunOpts) ->
-    case resolve_base_commit(State#state.repo_root, RunOpts) of
+    EffectiveOpts = maps:merge(State#state.opts, RunOpts),
+    case resolve_base_commit(State#state.repo_root, EffectiveOpts) of
         {error, _} = Error -> Error;
         {ok, BaseCommit} ->
             case safe_repairs() of
