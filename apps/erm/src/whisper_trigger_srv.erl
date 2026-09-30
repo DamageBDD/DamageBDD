@@ -37,6 +37,7 @@
 %% `extra_args`, so the module is not coupled to one Arch workstation.
 
 -export([
+    configuration/0,
     start_link/0,
     start_link/1,
     stop/0,
@@ -108,11 +109,44 @@
 %%% API
 %%%===================================================================
 
-start_link() ->
-    start_link(#{}).
+%% sys.config: [{erm, [{whisper_trigger, [{enabled, true},
+%%                                      {trigger_phrases, ["bob"]}]}]}].
+%% Explicit start_link/1 options replace the application settings.
+configuration() ->
+    normalize_options(application:get_env(erm, whisper_trigger, [])).
 
-start_link(Opts) when is_map(Opts) ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, Opts, []).
+normalize_options(Opts) when is_map(Opts) ->
+    {ok, Opts};
+normalize_options(Opts) when is_list(Opts) ->
+    %% Standard proplist semantics: atom shorthand and first occurrence wins.
+    case lists:all(fun
+        (Key) when is_atom(Key) -> true;
+        ({Key, _}) when is_atom(Key) -> true;
+        (_) -> false
+    end, Opts) of
+        true -> {ok, proplists:to_map(Opts)};
+        false -> {error, {invalid_configuration, Opts}}
+    end;
+normalize_options(Opts) ->
+    {error, {invalid_configuration, Opts}}.
+
+start_link() ->
+    case configuration() of
+        {ok, Opts} -> start_link(Opts);
+        Error -> Error
+    end.
+
+start_link(Options) ->
+    case normalize_options(Options) of
+        {ok, Opts} ->
+            case maps:get(enabled, Opts, true) of
+                false -> ignore;
+                true -> gen_server:start_link({local, ?MODULE}, ?MODULE,
+                                              maps:remove(enabled, Opts), []);
+                Invalid -> {error, {invalid_option, enabled, Invalid}}
+            end;
+        Error -> Error
+    end.
 
 stop() ->
     gen_server:stop(?MODULE).
@@ -150,27 +184,41 @@ current_input_source() ->
 select_input_source(Source) ->
     call_if_started({select_input_source, Source}).
 
-configure(Options) when is_map(Options) ->
-    call_if_started({configure, Options});
 configure(Options) ->
-    {error, {invalid_configuration, Options}}.
+    case normalize_options(Options) of
+        {ok, Opts} -> call_if_started({configure, Opts});
+        Error -> Error
+    end.
 
 cleanup_existing() ->
     call_if_started(cleanup_existing).
 
 available() ->
-    available(#{}).
+    case availability() of
+        {ok, _} -> true;
+        {error, _} -> false
+    end.
 
-available(Opts) when is_map(Opts) ->
+available(Opts) ->
     case availability(Opts) of
         {ok, _Runtime} -> true;
         {error, _Reason} -> false
     end.
 
 availability() ->
-    availability(#{}).
+    case configuration() of
+        {ok, Opts} -> availability(Opts);
+        Error -> Error
+    end.
 
-availability(Opts) when is_map(Opts) ->
+%% Availability probes prerequisites; enabled controls service startup only.
+availability(Options) ->
+    case normalize_options(Options) of
+        {ok, Opts} -> availability_options(Opts);
+        Error -> Error
+    end.
+
+availability_options(Opts) ->
     try resolve_runtime(Opts) of
         {ok, Bin, Model} ->
             case configure_state(Opts, Bin, Model) of
@@ -257,7 +305,9 @@ handle_call(trigger_phrases, _From, State) ->
 handle_call({matches_trigger, Text0}, _From, State) ->
     Reply =
         try matching_phrase(Text0, State#state.trigger_phrases) of
-            Match -> Match
+            Match -> 
+                logger:info("whisper trigger phrases matched ~p", [Match]),
+                Match
         catch
             error:Reason -> {error, {invalid_text, Reason}}
         end,
@@ -274,7 +324,7 @@ handle_call({set_trigger_phrases, Phrases0}, _From, State) ->
                 trigger_phrases = Phrases,
                 last_trigger_ms = undefined,
                 last_trigger_at_ms = undefined,
-                %% Re-evaluate the current rolling transcript immediately
+                %% Allow the next rolling transcript redraw to be evaluated
                 %% against the newly configured phrases.
                 recent_output = #{}
             }};
@@ -873,7 +923,7 @@ handle_transcript(
         last_transcript_at_ms = erlang:system_time(millisecond),
         transcript_count = State#state.transcript_count + 1
     },
-    logger:debug("case-folded trigger check: text=~tp phrases=~tp", [Text, Phrases]),
+    %logger:debug("case-folded trigger check: text=~tp phrases=~tp", [Text, Phrases]),
     case matching_phrase(Text, Phrases) of
         nomatch ->
             State1;
@@ -904,7 +954,11 @@ matching_normalized_phrase(Text, [Phrase0 | Rest]) ->
         <<>> ->
             matching_normalized_phrase(Text, Rest);
         _ ->
-            case binary:match(Text, Phrase) of
+            %% Quote the normalized phrase so dots/hyphens are literal.
+            %% Unicode letters, marks, digits and underscores belong to words.
+            Pattern = <<"(?<![\\p{L}\\p{M}\\p{N}_])\\Q", Phrase/binary,
+                        "\\E(?![\\p{L}\\p{M}\\p{N}_])">>,
+            case re:run(Text, Pattern, [unicode, {capture, none}]) of
                 nomatch -> matching_normalized_phrase(Text, Rest);
                 _ -> {match, Phrase}
             end
@@ -1039,7 +1093,7 @@ normalize_text(Text) ->
     Folded = unicode:characters_to_binary(string:casefold(Bin)),
     Stripped = re:replace(
         Folded,
-        "[^\\p{L}\\p{N}\\-_. ]+",
+        "[^\\p{L}\\p{M}\\p{N}\\-_. ]+",
         " ",
         [global, unicode, {return, binary}]
     ),
@@ -1230,3 +1284,45 @@ close_port(Port) ->
     catch
         error:badarg -> ok
     end.
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+
+proplist_options_test() ->
+    ?assertEqual({ok, #{enabled => true, trigger_phrases => ["bob"]}},
+                 normalize_options([{enabled, true}, {trigger_phrases, ["bob"]}])),
+    ?assertEqual({ok, #{enabled => false}},
+                 normalize_options([{enabled, false}, {enabled, true}])),
+    ?assertEqual({ok, #{enabled => true}}, normalize_options([enabled])),
+    ?assertEqual({ok, #{enabled => false}}, normalize_options(#{enabled => false})),
+    ?assertMatch({error, {invalid_configuration, _}}, normalize_options([42])),
+    ?assertEqual(ignore, start_link([{enabled, false}])).
+
+trigger_boundaries_test_() ->
+    Phrases = normalize_phrases(["bob"]),
+    [?_assertEqual(Expected, matching_phrase(Text, Phrases)) ||
+        {Text, Expected} <- [
+            {"bob", {match, <<"bob">>}},
+            {"BOB", {match, <<"bob">>}},
+            {"Hey, Bob!", {match, <<"bob">>}},
+            {"Bob.", {match, <<"bob">>}},
+            {"Bobby", nomatch},
+            {"bobcat", nomatch},
+            {"microbob", nomatch},
+            {"bob42", nomatch},
+            {"bob_name", nomatch},
+            {"", nomatch}
+        ]].
+
+phrase_normalization_test() ->
+    ?assertEqual({match, <<"hey bob">>},
+                 matching_phrase("HEY,   Bob!", normalize_phrases(["Hey Bob"]))),
+    ?assertEqual(nomatch, matching_phrase("nodeX0", normalize_phrases(["node.0"]))),
+    ?assertEqual({match, <<"node.0">>},
+                 matching_phrase("NODE.0!", normalize_phrases(["node.0"]))),
+    ?assertEqual({match, <<"bob">>},
+                 matching_phrase([16#FF22,16#FF2F,16#FF22], normalize_phrases(["bob"]))),
+    ?assertEqual(nomatch,
+                 matching_phrase([$b,$o,$b,16#0301], normalize_phrases(["bob"]))),
+    ?assertEqual(nomatch, matching_phrase("bob", normalize_phrases([" "])) ).
+-endif.
