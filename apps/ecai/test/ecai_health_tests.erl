@@ -63,18 +63,33 @@ stale_running_test() ->
     ?assertEqual(stale_running, ecai_health:classify_patch_queue(I)).
 
 
-manager_only_queue_is_not_idle_test() ->
+manager_live_queue_is_not_idle_test() ->
     I = #{
         manager_active => 0,
         live_workers => 0,
         persisted_running => 0,
         manager_queued => 4,
+        manager_queued_total => 99,
         durable_queued => 0,
         learner_ready => true,
         patch_free_capacity => 1,
         manager_last_error => undefined
     },
     ?assertEqual(stalled, ecai_health:classify_patch_queue(I)).
+
+historical_manager_queue_does_not_block_idle_test() ->
+    I = #{
+        manager_active => 0,
+        live_workers => 0,
+        persisted_running => 0,
+        manager_queued => 0,
+        manager_queued_total => 99,
+        durable_queued => 0,
+        learner_ready => true,
+        patch_free_capacity => 3,
+        manager_last_error => learning_not_ready
+    },
+    ?assertEqual(idle, ecai_health:classify_patch_queue(I)).
 
 healthy_idle_overall_is_go_test() ->
     ?assertEqual(go, ecai_health:classify_overall(healthy_overall_fixture())).
@@ -115,3 +130,34 @@ healthy_overall_fixture() ->
         integration => #{diagnostic_state => waiting_for_validated_repairs},
         patch_queue => #{state => idle}
     }.
+
+
+patch_queue_uses_live_manager_queue_not_cumulative_test() ->
+    ManagerR = {ok, #{
+        active => 0,
+        queued => 7,
+        queued_total => 7,
+        queued_live => 0,
+        retry_wait => 0,
+        last_error => learning_not_ready
+    }},
+    LearnerR = {ok, #{ready => true}},
+    Inference = #{
+        roles => #{
+            patch => #{available => 3}
+        }
+    },
+    Repairs = #{
+        counts => #{},
+        failure_classes => #{}
+    },
+    Workers = #{
+        live_count => 0,
+        live_worker_ids => []
+    },
+    Queue = ecai_health:patch_queue_diagnostics(
+        ManagerR, LearnerR, Inference, Repairs, Workers),
+    ?assertEqual(0, maps:get(manager_queued, Queue)),
+    ?assertEqual(7, maps:get(manager_queued_total, Queue)),
+    ?assertEqual(0, maps:get(durable_queued, Queue)),
+    ?assertEqual(idle, maps:get(state, Queue)).

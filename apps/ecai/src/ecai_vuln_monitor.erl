@@ -66,6 +66,7 @@
     request_timeout_ms = ?DEFAULT_REQUEST_TIMEOUT_MS,
     connect_timeout_ms = ?DEFAULT_CONNECT_TIMEOUT_MS,
     rescan_unchanged = false,
+    canonical_commit = undefined,
     phase = idle,
     timer_ref = undefined,
     next_run_at_ms = undefined,
@@ -219,12 +220,14 @@ handle_call(status, _From, State) ->
         queued_modules => length(State#state.queue),
         module_count => length(State#state.modules),
         cycle_started_at => State#state.cycle_started_at,
+        canonical_commit => State#state.canonical_commit,
         last_completed_at => State#state.last_completed_at,
         last_error => State#state.last_error,
         state_root => State#state.state_root,
         report_file => State#state.report_file,
         dets_file => State#state.dets_file,
         rescan_unchanged => State#state.rescan_unchanged,
+        canonical_commit => State#state.canonical_commit,
         phase => State#state.phase,
         resume_count => State#state.resume_count,
         next_run_at_ms => State#state.next_run_at_ms
@@ -253,25 +256,47 @@ handle_cast(_Msg, State) ->
 
 handle_info(start_cycle, State0) ->
     StateA = cancel_scan_timer(State0),
-    case application_modules(StateA#state.app) of
-        {ok, Modules} ->
-            Now = now_iso8601(),
-            State1 = StateA#state{
-                modules = Modules,
-                queue = Modules,
-                current = undefined,
-                phase = scanning,
-                cycle = StateA#state.cycle + 1,
-                cycle_started_at = Now,
-                last_error = undefined
-            },
-            ok = store_scan_checkpoint(State1),
-            self() ! scan_next,
-            {noreply, State1};
+    case ecai_source_repository:current() of
         {error, Reason} ->
-            State1 = schedule_next_cycle(StateA#state{phase = idle, last_error = Reason}),
+            State1 = schedule_next_cycle(
+                StateA#state{
+                    phase = idle,
+                    canonical_commit = undefined,
+                    last_error = {canonical_source_unavailable, Reason}
+                }
+            ),
             _ = store_scan_checkpoint(State1),
-            {noreply, State1}
+            {noreply, State1};
+        {ok, #{commit := CanonicalCommit}} ->
+            case ecai_source_repository:application_modules_at_commit(
+                     StateA#state.app,
+                     CanonicalCommit) of
+                {ok, Modules} ->
+                    Now = now_iso8601(),
+                    State1 = StateA#state{
+                        modules = Modules,
+                        queue = Modules,
+                        current = undefined,
+                        canonical_commit = CanonicalCommit,
+                        phase = scanning,
+                        cycle = StateA#state.cycle + 1,
+                        cycle_started_at = Now,
+                        last_error = undefined
+                    },
+                    ok = store_scan_checkpoint(State1),
+                    self() ! scan_next,
+                    {noreply, State1};
+                {error, Reason} ->
+                    State1 = schedule_next_cycle(
+                        StateA#state{
+                            phase = idle,
+                            canonical_commit = undefined,
+                            last_error = Reason
+                        }
+                    ),
+                    _ = store_scan_checkpoint(State1),
+                    {noreply, State1}
+            end
     end;
 
 handle_info(scan_next, State = #state{queue = []}) ->
@@ -345,7 +370,10 @@ code_change(_OldVsn, State, _Extra) ->
 %%====================================================================
 
 scan_module(Module, State) ->
-    case module_source(Module) of
+    case authoritative_module_source(
+             State#state.app,
+             Module,
+             State#state.canonical_commit) of
         {ok, SourceKind, SourceName, SourceBin0} ->
             SourceBin = normalize_source(SourceBin0),
             Hash = sha256_hex(SourceBin),
@@ -386,19 +414,37 @@ scan_module(Module, State) ->
             Error
     end.
 
-application_modules(App) ->
-    case allowed_app(App) of
-        false ->
-            {error, {unsupported_application, App}};
+authoritative_module_source(App, Module, Commit)
+  when is_binary(Commit), byte_size(Commit) > 0 ->
+    case ecai_source_repository:module_source_at_commit(
+             App, Module, Commit) of
+        {ok, Meta} ->
+            {
+                ok,
+                canonical_git,
+                maps:get(source_path, Meta),
+                maps:get(source, Meta)
+            };
+        {error, CanonicalReason} ->
+            maybe_runtime_module_source(
+                App, Module, CanonicalReason)
+    end;
+authoritative_module_source(App, Module, _Commit) ->
+    maybe_runtime_module_source(
+        App, Module, canonical_commit_missing).
+
+maybe_runtime_module_source(App, Module, CanonicalReason) ->
+    case application:get_env(
+             ecai, code_source_allow_runtime_fallback, false) of
         true ->
-            case application:get_key(App, modules) of
-                {ok, Modules} when is_list(Modules) ->
-                    {ok, lists:sort(Modules)};
-                undefined ->
-                    {error, {application_not_loaded, App}};
-                Other ->
-                    {error, {cannot_read_application_modules, App, Other}}
-            end
+            module_source(Module);
+        false ->
+            {error, {
+                canonical_source_unavailable,
+                App,
+                Module,
+                CanonicalReason
+            }}
     end.
 
 module_source(Module) ->
@@ -924,6 +970,8 @@ restore_scan_checkpoint(State0) ->
                 phase = Phase,
                 cycle = maps:get(cycle, Cp, 0),
                 cycle_started_at = maps:get(cycle_started_at, Cp, undefined),
+                canonical_commit =
+                    maps:get(canonical_commit, Cp, undefined),
                 last_completed_at = maps:get(last_completed_at, Cp, undefined),
                 last_error = maps:get(last_error, Cp, undefined),
                 next_run_at_ms = maps:get(next_run_at_ms, Cp, undefined),

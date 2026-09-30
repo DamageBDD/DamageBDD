@@ -12,6 +12,13 @@
     cleanup_stale/1
 ]).
 
+-ifdef(TEST).
+-export([
+    capture_integrity_snapshot/3,
+    compare_integrity_snapshots/2
+]).
+-endif.
+
 -define(ALLOWED_PREFIXES, ["apps/damage/", "apps/ecai/", "apps/erm/"]).
 -define(MAX_OUTPUT_BYTES, 300000).
 -define(MAX_SOURCE_BYTES, 65536).
@@ -141,8 +148,12 @@ run_verification(RepoRoot, Worktree, BaseCommit, PatchFiles, _StateRoot, Opts) -
             {Status, Steps1, Failure} = apply_patchset(Worktree, PatchFiles, 1,
                                                        command_timeout(Opts), Steps0),
             {FinalStatus, Steps, FinalFailure} = case Status of
-                failed -> {failed, Steps1, Failure};
-                applied -> run_validation_steps(Worktree, Opts, Steps1)
+                failed ->
+                    {failed, Steps1, Failure};
+                applied ->
+                    verify_applied_worktree(
+                        Worktree, PatchFiles, Opts, Steps1
+                    )
             end,
             FailureSources = case FinalStatus of
                 failed -> capture_failure_sources(Worktree, FinalFailure, PatchFiles);
@@ -212,6 +223,324 @@ apply_patchset(Worktree, [PatchFile | Rest], Index, Timeout, Steps0) ->
                                       patch_file => to_binary(PatchFile), result => Apply}}
             end
     end.
+
+verify_applied_worktree(Worktree, PatchFiles, Opts, Steps0) ->
+    Timeout = command_timeout(Opts),
+    case capture_integrity_snapshot(Worktree, PatchFiles, Timeout) of
+        {error, Failure} ->
+            Step = #{
+                step => post_apply_integrity,
+                result => #{ok => false, failure => Failure}
+            },
+            {failed, Steps0 ++ [Step], Failure};
+        {ok, Before} ->
+            Step0 = #{
+                step => post_apply_integrity,
+                result => integrity_step_result(Before)
+            },
+            Steps1 = Steps0 ++ [Step0],
+            case maps:get(unexpected_paths, Before, []) of
+                [] ->
+                    case run_validation_steps(Worktree, Opts, Steps1) of
+                        {failed, Steps2, Failure} ->
+                            {failed, Steps2, Failure};
+                        {validated, Steps2, undefined} ->
+                            verify_final_integrity(
+                                Worktree, PatchFiles, Before,
+                                Timeout, Steps2
+                            )
+                    end;
+                Unexpected ->
+                    Failure = #{
+                        phase => repository_integrity,
+                        stage => post_apply,
+                        reason => patchset_changed_unexpected_paths,
+                        unexpected_paths => Unexpected,
+                        allowed_paths => maps:get(
+                            allowed_paths, Before, []
+                        ),
+                        actual_paths => maps:get(
+                            actual_paths, Before, []
+                        )
+                    },
+                    Step1 = #{
+                        step => repository_integrity,
+                        result => #{
+                            ok => false,
+                            failure => Failure
+                        }
+                    },
+                    {failed, Steps1 ++ [Step1], Failure}
+            end
+    end.
+
+verify_final_integrity(
+    Worktree, PatchFiles, Before, Timeout, Steps0
+) ->
+    DiffCheck = run(
+        "git",
+        ["-C", Worktree, "diff", "--check"],
+        Worktree,
+        Timeout
+    ),
+    DiffStep = #{step => final_diff_check, result => DiffCheck},
+    Steps1 = Steps0 ++ [DiffStep],
+    case step_ok(DiffCheck) of
+        false ->
+            {failed, Steps1, #{
+                phase => final_diff_check,
+                result => DiffCheck
+            }};
+        true ->
+            case capture_integrity_snapshot(
+                Worktree, PatchFiles, Timeout
+            ) of
+                {error, Failure} ->
+                    Step = #{
+                        step => post_validation_integrity,
+                        result => #{
+                            ok => false,
+                            failure => Failure
+                        }
+                    },
+                    {failed, Steps1 ++ [Step], Failure};
+                {ok, After} ->
+                    case compare_integrity_snapshots(Before, After) of
+                        ok ->
+                            Step = #{
+                                step => post_validation_integrity,
+                                result => integrity_step_result(After)
+                            },
+                            {validated, Steps1 ++ [Step], undefined};
+                        {error, Failure} ->
+                            Step = #{
+                                step => post_validation_integrity,
+                                result => #{
+                                    ok => false,
+                                    failure => Failure,
+                                    snapshot =>
+                                        integrity_step_result(After)
+                                }
+                            },
+                            {failed, Steps1 ++ [Step], Failure}
+                    end
+            end
+    end.
+
+capture_integrity_snapshot(Worktree, PatchFiles, Timeout)
+  when is_list(PatchFiles), is_integer(Timeout), Timeout > 0 ->
+    Allowed = lists:usort([
+        to_binary(Path)
+     || Path <- patchset_paths(PatchFiles)
+    ]),
+    case worktree_changed_paths(Worktree, Timeout) of
+        {error, _} = Error ->
+            Error;
+        {ok, Actual} ->
+            Unexpected = list_subtract(Actual, Allowed),
+            case path_states(Worktree, Actual) of
+                {error, Reason} ->
+                    {error, #{
+                        phase => repository_integrity,
+                        stage => inspect_paths,
+                        reason => Reason,
+                        actual_paths => Actual
+                    }};
+                {ok, States} ->
+                    Fingerprint = sha256_hex(
+                        term_to_binary(
+                            {Actual, States},
+                            [deterministic]
+                        )
+                    ),
+                    {ok, #{
+                        allowed_paths => Allowed,
+                        actual_paths => Actual,
+                        unexpected_paths => Unexpected,
+                        path_states => States,
+                        fingerprint => Fingerprint
+                    }}
+            end
+    end.
+
+compare_integrity_snapshots(Before, After)
+  when is_map(Before), is_map(After) ->
+    Unexpected = maps:get(unexpected_paths, After, []),
+    BeforeStates = maps:get(path_states, Before, #{}),
+    AfterStates = maps:get(path_states, After, #{}),
+    Delta = integrity_delta(BeforeStates, AfterStates),
+    BeforeFingerprint = maps:get(
+        fingerprint, Before, undefined
+    ),
+    AfterFingerprint = maps:get(
+        fingerprint, After, undefined
+    ),
+    case {
+        Unexpected,
+        BeforeFingerprint =:= AfterFingerprint
+    } of
+        {[], true} ->
+            ok;
+        _ ->
+            {error, #{
+                phase => repository_integrity,
+                stage => post_validation,
+                reason => repository_mutated_during_validation,
+                unexpected_paths => Unexpected,
+                allowed_paths => maps:get(
+                    allowed_paths, After, []
+                ),
+                before_paths => maps:get(
+                    actual_paths, Before, []
+                ),
+                after_paths => maps:get(
+                    actual_paths, After, []
+                ),
+                added_paths => maps:get(
+                    added_paths, Delta, []
+                ),
+                removed_paths => maps:get(
+                    removed_paths, Delta, []
+                ),
+                modified_paths => maps:get(
+                    modified_paths, Delta, []
+                ),
+                before_fingerprint => BeforeFingerprint,
+                after_fingerprint => AfterFingerprint
+            }}
+    end.
+
+integrity_step_result(Snapshot) ->
+    (maps:without([path_states], Snapshot))#{
+        ok => maps:get(unexpected_paths, Snapshot, []) =:= []
+    }.
+
+worktree_changed_paths(Worktree, Timeout) ->
+    Tracked = run(
+        "git",
+        [
+            "-C", Worktree,
+            "diff", "--name-only", "-z", "HEAD", "--"
+        ],
+        Worktree,
+        Timeout
+    ),
+    case step_ok(Tracked) of
+        false ->
+            {error, #{
+                phase => repository_integrity,
+                stage => tracked_paths,
+                reason => cannot_list_tracked_changes,
+                result => Tracked
+            }};
+        true ->
+            Untracked = run(
+                "git",
+                [
+                    "-C", Worktree,
+                    "ls-files", "--others",
+                    "--exclude-standard", "-z", "--"
+                ],
+                Worktree,
+                Timeout
+            ),
+            case step_ok(Untracked) of
+                false ->
+                    {error, #{
+                        phase => repository_integrity,
+                        stage => untracked_paths,
+                        reason => cannot_list_untracked_changes,
+                        result => Untracked
+                    }};
+                true ->
+                    TrackedPaths = nul_paths(
+                        maps:get(output, Tracked, <<>>)
+                    ),
+                    UntrackedPaths = nul_paths(
+                        maps:get(output, Untracked, <<>>)
+                    ),
+                    {ok, lists:usort(
+                        TrackedPaths ++ UntrackedPaths
+                    )}
+            end
+    end.
+
+nul_paths(<<>>) -> [];
+nul_paths(Bin) when is_binary(Bin) ->
+    [
+        Path
+     || Path <- binary:split(Bin, <<0>>, [global]),
+        Path =/= <<>>
+    ].
+
+path_states(Worktree, Paths) ->
+    path_states(Worktree, Paths, #{}).
+
+path_states(_Worktree, [], Acc) ->
+    {ok, Acc};
+path_states(Worktree, [Path | Rest], Acc0) ->
+    RelPath = path_to_list(Path),
+    FullPath = filename:join(Worktree, RelPath),
+    case file:read_file(FullPath) of
+        {ok, Bytes} ->
+            State = #{
+                state => present,
+                sha256 => sha256_hex(Bytes),
+                size => byte_size(Bytes)
+            },
+            path_states(
+                Worktree, Rest, Acc0#{Path => State}
+            );
+        {error, enoent} ->
+            path_states(
+                Worktree, Rest,
+                Acc0#{Path => #{state => deleted}}
+            );
+        {error, eisdir} ->
+            path_states(
+                Worktree, Rest,
+                Acc0#{Path => #{state => directory}}
+            );
+        {error, Reason} ->
+            {error, {
+                cannot_hash_changed_path,
+                Path,
+                Reason
+            }}
+    end.
+
+integrity_delta(BeforeStates, AfterStates) ->
+    BeforeKeys = lists:usort(maps:keys(BeforeStates)),
+    AfterKeys = lists:usort(maps:keys(AfterStates)),
+    Common = [
+        Path
+     || Path <- BeforeKeys,
+        maps:is_key(Path, AfterStates)
+    ],
+    #{
+        added_paths => list_subtract(
+            AfterKeys, BeforeKeys
+        ),
+        removed_paths => list_subtract(
+            BeforeKeys, AfterKeys
+        ),
+        modified_paths => [
+            Path
+         || Path <- Common,
+            maps:get(Path, BeforeStates) =/=
+                maps:get(Path, AfterStates)
+        ]
+    }.
+
+list_subtract(Left, Right) ->
+    RightSet = maps:from_list([
+        {Item, true} || Item <- Right
+    ]),
+    [
+        Item
+     || Item <- Left,
+        not maps:is_key(Item, RightSet)
+    ].
 
 run_validation_steps(Worktree, Opts, Steps0) ->
     Timeout = command_timeout(Opts),
@@ -345,7 +674,10 @@ collect_port(Port, Acc0, Timeout, ExeName, Args) ->
             #{ok => false, executable => to_binary(ExeName), args => list_binaries(Args),
               exit_status => Status, output => Acc0}
     after Timeout ->
-        catch port_close(Port),
+        try port_close(Port)
+        catch
+            _:_ -> ok
+        end,
         #{ok => false, executable => to_binary(ExeName), args => list_binaries(Args),
           error => timeout, output => Acc0}
     end.
@@ -446,8 +778,34 @@ repo_available(Root) ->
     filelib:is_file(filename:join(Root, ".git")).
 
 repo_root(Opts) ->
-    filename:absname(path_to_list(maps:get(repo_root, Opts,
-        application:get_env(ecai, code_repo_root, ".")))).
+    case maps:get(base_commit, Opts, undefined) of
+        Commit when is_binary(Commit), byte_size(Commit) > 0 ->
+            canonical_or_legacy_repo_root(Commit, Opts);
+        Commit when is_list(Commit), Commit =/= [] ->
+            canonical_or_legacy_repo_root(Commit, Opts);
+        _ ->
+            case catch ecai_source_repository:current(Opts) of
+                {ok, #{root := Root}} ->
+                    filename:absname(path_to_list(Root));
+                _ ->
+                    legacy_repo_root(Opts)
+            end
+    end.
+
+canonical_or_legacy_repo_root(Commit, Opts) ->
+    case catch ecai_source_repository:base_for_commit(Commit, Opts) of
+        {ok, #{root := Root}} ->
+            filename:absname(path_to_list(Root));
+        _ ->
+            legacy_repo_root(Opts)
+    end.
+
+legacy_repo_root(Opts) ->
+    filename:absname(path_to_list(maps:get(
+        repo_root,
+        Opts,
+        application:get_env(ecai, code_repo_root, ".")
+    ))).
 
 command_timeout(Opts) ->
     maps:get(command_timeout_ms, Opts,
@@ -478,6 +836,12 @@ trim_binary(Bin) when is_binary(Bin) ->
 
 maybe_binary(undefined) -> undefined;
 maybe_binary(Value) -> to_binary(Value).
+
+sha256_hex(Bin) when is_binary(Bin) ->
+    iolist_to_binary(
+        [io_lib:format("~2.16.0b", [Byte]) ||
+         <<Byte>> <= crypto:hash(sha256, Bin)]
+    ).
 
 now_iso8601() ->
     to_binary(calendar:system_time_to_rfc3339(

@@ -303,7 +303,11 @@ current_patchset(State, RunOpts) ->
                 {error, _} = Error ->
                     Error;
                 {ok, AllRepairs} ->
-                    Repairs = [R || R <- AllRepairs, validated_repair(R)],
+                    Repairs = [
+                        R
+                     || R <- AllRepairs,
+                        validated_repair_for_base(R, BaseCommit)
+                    ],
                     case repair_descriptors(Repairs, []) of
                         {error, _} = Error ->
                             Error;
@@ -340,6 +344,19 @@ validated_repair(Repair) when is_map(Repair) ->
     PatchFile = get_any(patch_file, Repair, undefined),
     status_is_validated(Status) andalso PatchFile =/= undefined;
 validated_repair(_) -> false.
+
+validated_repair_for_base(Repair, BaseCommit) ->
+    validated_repair(Repair) andalso
+        repair_base_commit(Repair) =:= BaseCommit.
+
+repair_base_commit(Repair) ->
+    case get_any(base_commit, Repair, undefined) of
+        undefined ->
+            Verification = get_any(verifier_output, Repair, #{}),
+            to_binary(get_any(base_commit, Verification, <<>>));
+        Commit ->
+            to_binary(Commit)
+    end.
 
 status_is_validated(validated) -> true;
 status_is_validated(<<"validated">>) -> true;
@@ -507,13 +524,35 @@ integration_severity(compile) -> <<"high">>;
 integration_severity(_) -> <<"medium">>.
 
 resolve_base_commit(RepoRoot, Opts) ->
-    Base0 = maps:get(base_commit, Opts,
-        application:get_env(ecai, code_integration_base_commit, "HEAD")),
+    Base0 = integration_base(Opts),
     Base = path_to_list(Base0),
-    Result = run_git(RepoRoot, ["rev-parse", "--verify", "--end-of-options", Base ++ "^{commit}"], 30000),
+    Result = run_git(
+        RepoRoot,
+        ["rev-parse", "--verify", "--end-of-options",
+         Base ++ "^{commit}"],
+        30000
+    ),
     case Result of
         {ok, Output} -> {ok, trim_binary(Output)};
-        {error, Reason} -> {error, {cannot_resolve_integration_base, Base0, Reason}}
+        {error, Reason} ->
+            {error, {cannot_resolve_integration_base, Base0, Reason}}
+    end.
+
+integration_base(Opts) ->
+    case maps:get(base_commit, Opts, undefined) of
+        undefined ->
+            case application:get_env(ecai, code_integration_base_commit) of
+                {ok, Value} when Value =/= "HEAD",
+                                 Value =/= <<"HEAD">> ->
+                    Value;
+                _ ->
+                    case catch ecai_source_repository:current(Opts) of
+                        {ok, #{commit := Commit}} -> Commit;
+                        _ -> "HEAD"
+                    end
+            end;
+        Value ->
+            Value
     end.
 
 run_git(RepoRoot, Args, Timeout) ->
@@ -590,8 +629,16 @@ current_summary(Current) when is_map(Current) -> maps:without([pid, mon, ref], C
 schedule_next(Delay) -> erlang:send_after(Delay, self(), scan), ok.
 
 repo_root(Opts) ->
-    filename:absname(path_to_list(maps:get(repo_root, Opts,
-        application:get_env(ecai, code_repo_root, ".")))).
+    case catch ecai_source_repository:current(Opts) of
+        {ok, #{root := Root}} ->
+            filename:absname(path_to_list(Root));
+        _ ->
+            filename:absname(path_to_list(maps:get(
+                repo_root,
+                Opts,
+                application:get_env(ecai, code_repo_root, ".")
+            )))
+    end.
 
 value_or_empty({ok, Value}) -> Value;
 value_or_empty(not_found) -> #{}.

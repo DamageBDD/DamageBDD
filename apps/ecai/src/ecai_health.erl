@@ -12,7 +12,8 @@
 -ifdef(TEST).
 -export([
     classify_patch_queue/1,
-    classify_overall/1
+    classify_overall/1,
+    patch_queue_diagnostics/5
 ]).
 -endif.
 
@@ -344,7 +345,23 @@ patch_queue_diagnostics(ManagerR, LearnerR, Inference, Repairs, Workers) ->
     Counts = maps:get(counts, Repairs, #{}),
 
     Active = int_value(maps:get(active, Manager, 0)),
-    ManagerQueued = int_value(maps:get(queued, Manager, 0)),
+    %% `queued` / `queued_total` are historical cumulative counters in the
+    %% patch manager. Queue health must use `queued_live`; otherwise a node can
+    %% remain permanently blocked_manager after all durable work is drained.
+    ManagerQueued = int_value(
+        maps:get(
+            queued_live,
+            Manager,
+            status_count(queued, Counts)
+        )
+    ),
+    ManagerQueuedTotal = int_value(
+        maps:get(
+            queued_total,
+            Manager,
+            maps:get(queued, Manager, 0)
+        )
+    ),
     Running = status_count(running, Counts),
     Queued = status_count(queued, Counts),
     RetryWait = status_count(retry_wait, Counts),
@@ -362,6 +379,7 @@ patch_queue_diagnostics(ManagerR, LearnerR, Inference, Repairs, Workers) ->
         live_workers => Live,
         persisted_running => Running,
         manager_queued => ManagerQueued,
+        manager_queued_total => ManagerQueuedTotal,
         durable_queued => DurableQueued,
         retry_wait => RetryWait,
         learner_ready => LearnerReady,
@@ -388,8 +406,8 @@ classify_patch_queue(I) ->
     Live = maps:get(live_workers, I, 0),
     Running = maps:get(persisted_running, I, 0),
     DurablePending = maps:get(durable_queued, I, 0),
-    ManagerPending = maps:get(manager_queued, I, 0),
-    Pending = max(DurablePending, ManagerPending),
+    ManagerLivePending = maps:get(manager_queued, I, 0),
+    Pending = max(DurablePending, ManagerLivePending),
     LearnerReady = maps:get(learner_ready, I, false),
     PatchFree = maps:get(patch_free_capacity, I, 0),
     LastError = maps:get(manager_last_error, I, undefined),
@@ -547,6 +565,8 @@ probe_snapshot() ->
         queue_state => maps:get(state, PQ, unknown),
         manager_active => maps:get(manager_active, PQ, 0),
         manager_queued => maps:get(manager_queued, PQ, 0),
+        manager_queued_total =>
+            maps:get(manager_queued_total, PQ, 0),
         durable_queued => maps:get(durable_queued, PQ, 0),
         persisted_running => maps:get(persisted_running, PQ, 0),
         retry_wait => maps:get(retry_wait, PQ, 0),

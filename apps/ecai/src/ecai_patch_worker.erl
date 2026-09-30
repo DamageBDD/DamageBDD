@@ -5,24 +5,41 @@
 -export([init/1, handle_continue/2, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
+-ifdef(TEST).
+-export([
+    normalize_proposal_patch/1,
+    compact_verification_diagnostic/1,
+    source_snapshot_block_kind/1
+]).
+-endif.
+
 start_link(Args) -> gen_server:start_link(?MODULE, Args, []).
 
 run(#{app := App, module := Module, finding := Finding} = Args) ->
     Opts = maps:get(opts, Args, #{}),
+    ContextOpts = maps:get(context, Opts, #{}),
     case ecai_code_context:for_vulnerability(
-             App, Module, Finding, maps:get(context, Opts, #{})) of
+             App, Module, Finding, ContextOpts) of
         {error, _} = Error ->
             Error;
-        {ok, Context} ->
+        {ok, Context0} ->
             Fingerprint = finding_fingerprint(Module, Finding),
-            Version = maps:get(finding_version, Context),
-            MaxAttempts = maps:get(max_attempts, Opts,
-                application:get_env(ecai, code_patch_max_attempts, 3)),
-            {Attempt0, Diagnostic0} =
-                resume_position(maps:get(resume_repair, Opts, #{})),
-            generate_attempt(
-                Attempt0, MaxAttempts, Fingerprint, Version,
-                Context, Diagnostic0, Opts)
+            Version = maps:get(finding_version, Context0),
+            SnapshotOpts = source_snapshot_opts(Opts),
+            case ecai_git_snapshot:pin_context(Context0, SnapshotOpts) of
+                {error, SnapshotError} ->
+                    Context = snapshot_error_context(Context0, SnapshotError),
+                    source_snapshot_retry(
+                        Fingerprint, Version, Context, SnapshotError, Opts);
+                {ok, Context} ->
+                    MaxAttempts = maps:get(max_attempts, Opts,
+                        application:get_env(ecai, code_patch_max_attempts, 3)),
+                    {Attempt0, Diagnostic0} =
+                        resume_position(maps:get(resume_repair, Opts, #{})),
+                    generate_attempt(
+                        Attempt0, MaxAttempts, Fingerprint, Version,
+                        Context, Diagnostic0, Opts)
+            end
     end.
 
 init(Args) -> {ok, Args, {continue, run}}.
@@ -77,7 +94,18 @@ generate_attempt(Attempt, MaxAttempts, Fingerprint, Version,
 handle_proposal(Proposal, Attempt, MaxAttempts, Fingerprint, Version,
                 Context, Opts) ->
     RawPatch = mget(<<"patch">>, Proposal, <<>>),
-    Patch = ecai_patch_verifier:normalize_patch(RawPatch),
+    case normalize_proposal_patch(RawPatch) of
+        {error, Reason} when Attempt < MaxAttempts ->
+            NextDiag =
+                diagnostic_json(#{patch_validation_error => Reason}),
+            generate_attempt(
+                Attempt + 1, MaxAttempts, Fingerprint, Version,
+                Context, NextDiag, Opts);
+        {error, Reason} ->
+            final_failure(
+                Fingerprint, Version, Context, Attempt,
+                {invalid_patch, Reason}, Opts);
+        {ok, Patch} ->
     case ecai_patch_verifier:validate_patch(Patch) of
                 {error, Reason} when Attempt < MaxAttempts ->
                     NextDiag =
@@ -116,7 +144,90 @@ handle_proposal(Proposal, Attempt, MaxAttempts, Fingerprint, Version,
                                         Proposal, Patch, PatchFile, Opts)
                             end
                     end
-            end.
+            end
+    end.
+
+normalize_proposal_patch(Patch) when is_binary(Patch) ->
+    normalize_patch_binary(Patch);
+normalize_proposal_patch([Patch]) when is_binary(Patch) ->
+    normalize_patch_binary(Patch);
+normalize_proposal_patch(Patches) when is_list(Patches), Patches =/= [] ->
+    case lists:all(fun is_binary/1, Patches) of
+        true ->
+            normalize_patch_binary(join_patch_fragments(Patches));
+        false ->
+            {error, {invalid_patch_type, patch_value_type(Patches)}}
+    end;
+normalize_proposal_patch(Patch) ->
+    {error, {invalid_patch_type, patch_value_type(Patch)}}.
+
+normalize_patch_binary(Patch0) ->
+    Patch1 = ecai_patch_verifier:normalize_patch(Patch0),
+    {ok, maybe_add_single_file_git_header(Patch1)}.
+
+join_patch_fragments(Fragments) ->
+    HasEmbeddedNewline =
+        lists:any(
+            fun(Fragment) ->
+                binary:match(Fragment, <<"\n">>) =/= nomatch
+            end,
+            Fragments
+        ),
+    case HasEmbeddedNewline of
+        true ->
+            iolist_to_binary(Fragments);
+        false ->
+            iolist_to_binary(lists:join(<<"\n">>, Fragments))
+    end.
+
+maybe_add_single_file_git_header(Patch) ->
+    case binary:match(Patch, <<"diff --git ">>) of
+        {0, _} ->
+            Patch;
+        nomatch ->
+            case single_file_unified_paths(Patch) of
+                {ok, OldPath, NewPath} ->
+                    Header = <<
+                        "diff --git a/", OldPath/binary,
+                        " b/", NewPath/binary, "\n"
+                    >>,
+                    <<Header/binary, Patch/binary>>;
+                error ->
+                    Patch
+            end;
+        _ ->
+            Patch
+    end.
+
+single_file_unified_paths(Patch) ->
+    Lines = binary:split(Patch, <<"\n">>, [global]),
+    OldPaths = [
+        clean_unified_path(Rest)
+     || <<"--- a/", Rest/binary>> <- Lines
+    ],
+    NewPaths = [
+        clean_unified_path(Rest)
+     || <<"+++ b/", Rest/binary>> <- Lines
+    ],
+    case {OldPaths, NewPaths} of
+        {[OldPath], [NewPath]}
+          when byte_size(OldPath) > 0, byte_size(NewPath) > 0 ->
+            {ok, OldPath, NewPath};
+        _ ->
+            error
+    end.
+
+clean_unified_path(Path) ->
+    hd(binary:split(Path, <<"\t">>, [])).
+
+patch_value_type(Value) when is_list(Value) -> list;
+patch_value_type(Value) when is_map(Value) -> map;
+patch_value_type(Value) when is_tuple(Value) -> tuple;
+patch_value_type(Value) when is_atom(Value) -> atom;
+patch_value_type(Value) when is_integer(Value) -> integer;
+patch_value_type(Value) when is_float(Value) -> float;
+patch_value_type(Value) when is_binary(Value) -> binary;
+patch_value_type(_) -> other.
 
 patch_inference_opts(Opts) ->
     AppOpts =
@@ -157,7 +268,12 @@ log_inference_selection(_) ->
 
 verify_or_retry(Attempt, MaxAttempts, Fingerprint, Version, Context,
                 Proposal, Patch, PatchFile, Opts) ->
-    VerifyOpts = maps:merge(Opts, maps:get(verifier, Opts, #{})),
+    VerifyOpts0 = maps:merge(Opts, maps:get(verifier, Opts, #{})),
+    VerifyOpts =
+        case maps:get(base_commit, Context, undefined) of
+            undefined -> VerifyOpts0;
+            BaseCommit -> VerifyOpts0#{base_commit => BaseCommit}
+        end,
     case ecai_patch_verifier:verify(PatchFile, VerifyOpts) of
         {ok, #{status := validated} = Verification} ->
             Repair = repair_record(
@@ -165,7 +281,9 @@ verify_or_retry(Attempt, MaxAttempts, Fingerprint, Version, Context,
                 Proposal, Patch, PatchFile, Attempt, Verification),
             persist_repair(Repair#{stage => terminal}, Opts);
         {ok, Verification} when Attempt < MaxAttempts ->
-            Diagnostic = diagnostic_json(Verification),
+            Diagnostic =
+                diagnostic_json(
+                    compact_verification_diagnostic(Verification)),
             checkpoint_and_generate(
                 Attempt + 1, MaxAttempts, Fingerprint, Version,
                 Context, Proposal, Patch, PatchFile,
@@ -178,7 +296,10 @@ verify_or_retry(Attempt, MaxAttempts, Fingerprint, Version, Context,
                 Repair#{
                     stage => terminal,
                     error => verification_failed,
-                    diagnostic => diagnostic_json(Verification)
+                    diagnostic =>
+                        diagnostic_json(
+                            compact_verification_diagnostic(
+                                Verification))
                 },
                 Opts);
         {error, Reason} when Attempt < MaxAttempts ->
@@ -203,6 +324,96 @@ verify_or_retry(Attempt, MaxAttempts, Fingerprint, Version, Context,
                 Opts)
     end.
 
+compact_verification_diagnostic(Verification)
+  when is_map(Verification) ->
+    Steps = maps:get(steps, Verification, []),
+    FailedStep = first_failed_step(Steps),
+    Base = maps:with(
+        [
+            status,
+            base_commit,
+            patch_file,
+            worktree
+        ],
+        Verification
+    ),
+    case FailedStep of
+        undefined ->
+            Base;
+        Step ->
+            Base#{
+                failing_step => compact_step(Step)
+            }
+    end;
+compact_verification_diagnostic(Verification) ->
+    #{verification => Verification}.
+
+first_failed_step([]) ->
+    undefined;
+first_failed_step([Step | Rest]) when is_map(Step) ->
+    case step_failed(Step) of
+        true -> Step;
+        false -> first_failed_step(Rest)
+    end;
+first_failed_step([_ | Rest]) ->
+    first_failed_step(Rest).
+
+step_failed(Step) ->
+    case maps:get(result, Step, undefined) of
+        #{ok := true} ->
+            false;
+        #{ok := false} ->
+            true;
+        Result when is_map(Result) ->
+            maps:get(exit_status, Result, 0) =/= 0;
+        _ ->
+            case maps:get(status, Step, undefined) of
+                failed -> true;
+                <<"failed">> -> true;
+                _ -> false
+            end
+    end.
+
+compact_step(Step) ->
+    Result = maps:get(result, Step, undefined),
+    StepBase = maps:with(
+        [step, patch_index, patch_file, command],
+        Step
+    ),
+    case Result of
+        ResultMap when is_map(ResultMap) ->
+            StepBase#{
+                result => compact_command_result(ResultMap)
+            };
+        undefined ->
+            StepBase;
+        _ ->
+            StepBase#{result => Result}
+    end.
+
+compact_command_result(Result) ->
+    Result0 = maps:with(
+        [
+            ok,
+            exit_status,
+            output,
+            stderr,
+            stdout,
+            command
+        ],
+        Result
+    ),
+    maps:map(
+        fun(_Key, Value) -> truncate_diagnostic_value(Value) end,
+        Result0
+    ).
+
+truncate_diagnostic_value(Value) when is_binary(Value), byte_size(Value) > 8192 ->
+    <<Prefix:8192/binary, _/binary>> = Value,
+    <<Prefix/binary, "\n...[truncated]">>;
+truncate_diagnostic_value(Value) ->
+    Value.
+
 checkpoint_and_generate(NextAttempt, MaxAttempts,
                         Fingerprint, Version, Context,
                         Proposal, Patch, PatchFile,
@@ -224,6 +435,136 @@ checkpoint_and_generate(NextAttempt, MaxAttempts,
                 Context, Diagnostic, Opts);
         {error, _} = Error ->
             Error
+    end.
+
+source_snapshot_opts(Opts) ->
+    ContextOpts = maps:get(context, Opts, #{}),
+    VerifyOpts = maps:merge(Opts, maps:get(verifier, Opts, #{})),
+    SnapshotKeys = maps:with(
+        [repo_root, base_commit, command_timeout_ms],
+        VerifyOpts
+    ),
+    maps:merge(ContextOpts, SnapshotKeys).
+
+snapshot_error_context(Context, Error) when is_map(Error) ->
+    Meta = maps:with([base_commit, source_path], Error),
+    maps:merge(Context, Meta);
+snapshot_error_context(Context, _Error) ->
+    Context.
+
+source_snapshot_retry(Fingerprint, Version, Context, Error, Opts) ->
+    case source_snapshot_block_kind(Error) of
+        true ->
+            source_snapshot_block(
+                Fingerprint, Version, Context, Error, Opts);
+        false ->
+            source_snapshot_retry_wait(
+                Fingerprint, Version, Context, Error, Opts)
+    end.
+
+source_snapshot_block(Fingerprint, Version, Context, Error, Opts) ->
+    Existing = current_repair(Fingerprint, Version),
+    Now = now_iso8601(),
+    Attempt = maps:get(attempt, Existing, 1),
+    Base = maps:merge(
+        Existing,
+        base_repair(Fingerprint, Version, Context, Attempt)
+    ),
+    Blocked0 = maps:without(
+        [
+            completed_at,
+            worker_pid,
+            worker_started_at,
+            next_retry_at_ms
+        ],
+        Base
+    ),
+    Blocked = Blocked0#{
+        status => blocked,
+        stage => source_snapshot_blocked,
+        retryable => false,
+        failure_class => source_snapshot_blocked,
+        blocked_base_commit =>
+            snapshot_value(base_commit, Error),
+        blocked_source_path =>
+            snapshot_value(source_path, Error),
+        blocked_source_sha256 =>
+            snapshot_value(learned_sha256, Error),
+        error => {source_snapshot_blocked, Error},
+        last_error => {source_snapshot_blocked, Error},
+        diagnostic => diagnostic_json(Error),
+        updated_at => Now
+    },
+    logger:warning(
+        "ECAI patch source snapshot structurally blocked "
+        "fingerprint=~p version=~p reason=~p",
+        [Fingerprint, Version, Error]
+    ),
+    persist_repair(Blocked, Opts).
+
+source_snapshot_retry_wait(
+    Fingerprint, Version, Context, Error, Opts
+) ->
+    Existing = current_repair(Fingerprint, Version),
+    NowMs = erlang:system_time(millisecond),
+    Now = now_iso8601(),
+    RetryMs = source_snapshot_retry_ms(Opts),
+    Attempt = maps:get(attempt, Existing, 1),
+    Base = maps:merge(
+        Existing,
+        base_repair(Fingerprint, Version, Context, Attempt)
+    ),
+    Retry0 = maps:without(
+        [completed_at, worker_pid, worker_started_at],
+        Base
+    ),
+    Retry = Retry0#{
+        status => retry_wait,
+        stage => source_snapshot_wait,
+        retryable => true,
+        failure_class => source_snapshot_blocked,
+        error => {source_snapshot_blocked, Error},
+        last_error => {source_snapshot_blocked, Error},
+        diagnostic => diagnostic_json(Error),
+        next_retry_at_ms => NowMs + RetryMs,
+        updated_at => Now
+    },
+    logger:warning(
+        "ECAI patch source snapshot temporarily blocked "
+        "fingerprint=~p version=~p reason=~p retry_ms=~p",
+        [Fingerprint, Version, Error, RetryMs]
+    ),
+    persist_repair(Retry, Opts).
+
+source_snapshot_block_kind(Error) when is_map(Error) ->
+    lists:member(
+        maps:get(kind, Error, undefined),
+        [
+            source_not_in_base_commit,
+            source_base_mismatch,
+            source_outside_repository,
+            source_name_missing
+        ]
+    );
+source_snapshot_block_kind(_) ->
+    false.
+
+snapshot_value(Key, Error) when is_map(Error) ->
+    maps:get(Key, Error, undefined);
+snapshot_value(_Key, _Error) ->
+    undefined.
+
+source_snapshot_retry_ms(Opts) ->
+    Value = maps:get(
+        source_snapshot_retry_ms,
+        Opts,
+        application:get_env(
+            ecai, code_patch_source_snapshot_retry_ms, 60000
+        )
+    ),
+    case Value of
+        N when is_integer(N), N >= 1000 -> N;
+        _ -> 60000
     end.
 
 schedule_retry(Fingerprint, Version, Context, Attempt,
@@ -297,6 +638,8 @@ base_repair(Fingerprint, Version, Context, Attempt) ->
                 source_sha256,
                 maps:get(analysis, Context, #{}),
                 <<>>),
+        base_commit => maps:get(base_commit, Context, undefined),
+        source_path => maps:get(source_path, Context, undefined),
         attempt => Attempt,
         created_at => now_iso8601()
     }.
@@ -376,6 +719,8 @@ repair_record(Status, Fingerprint, Version, Context, Proposal, Patch,
                 source_sha256,
                 maps:get(analysis, Context, #{}),
                 <<>>),
+        base_commit => maps:get(base_commit, Context, undefined),
+        source_path => maps:get(source_path, Context, undefined),
         summary => mget(<<"summary">>, Proposal, <<>>),
         security_property =>
             mget(<<"security_property">>, Proposal, <<>>),
@@ -424,8 +769,14 @@ patch_prompt(Context, Diagnostic, Attempt) ->
         <<"The patch may modify repository source/test files only; the learned context itself is never a patch target.\n">>,
         <<"Patch paths MUST remain under apps/damage/, apps/ecai/, or apps/erm/.\n">>,
         <<"Do not modify generated files, dependencies, .git, release state, credentials, keys, wallets, or unrelated modules.\n">>,
+        <<"Build every hunk against the exact SOURCE bytes in CODEBASE_CONTEXT_JSON. Never invent surrounding context, line content, function names, includes, or exports that are not present in SOURCE.\n">>,
+        <<"Every modified file MUST have diff --git, ---, +++, and valid @@ hunk headers. Use normal git diff syntax, not a prose approximation of a diff.\n">>,
+        <<"When PREVIOUS_ATTEMPT_DIAGNOSTIC reports patch_apply_check or compilation failure, regenerate the complete patch from the original SOURCE and the diagnostic; do not edit or stack a diff on top of the previous diff.\n">>,
+        <<"Prefer one source file plus the smallest focused test change. Do not refactor unrelated code.\n">>,
         <<"Prefer the smallest fix that preserves documented invariants. Add or update focused tests when practical.\n">>,
         <<"Never merely suppress a warning or weaken a test to make verification pass.\n\n">>,
+        <<"TARGET_SOURCE_PATH: ">>, to_binary(maps:get(source_path, Context, <<"unknown">>)), <<"\n">>,
+        <<"BASE_COMMIT: ">>, to_binary(maps:get(base_commit, Context, <<"unknown">>)), <<"\n">>,
         <<"ATTEMPT: ">>, integer_to_binary(Attempt), <<"\n">>,
         <<"CODEBASE_CONTEXT_JSON:\n">>, ContextJson, <<"\n\n">>,
         case Diagnostic of

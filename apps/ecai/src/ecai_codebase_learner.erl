@@ -18,6 +18,12 @@
     code_change/3
 ]).
 
+-ifdef(TEST).
+-export([
+    module_analysis_learning_eligible/2
+]).
+-endif.
+
 -define(SERVER, ?MODULE).
 -define(APPS, [damage, ecai, erm]).
 -define(DEFAULT_INTERVAL, 300000).
@@ -386,31 +392,104 @@ status_map(State) ->
     }.
 
 build_queue(Apps, Opts) ->
-    RepoRoot = filename:absname(path_to_list(maps:get(
-        repo_root,
-        Opts,
-        application:get_env(ecai, code_repo_root, ".")
-    ))),
+    case ecai_source_repository:refresh(Opts) of
+        {ok, #{commit := Commit, root := Root0}} ->
+            Root = path_to_list(Root0),
+            build_canonical_queue(Apps, Commit, Root);
+        {error, Reason} ->
+            case runtime_fallback_enabled(Opts) of
+                true ->
+                    {Queue, Errors} = build_runtime_fallback(Apps),
+                    {
+                        Queue,
+                        [{source_repository_fallback, Reason} | Errors]
+                    };
+                false ->
+                    {[], [{source_repository_unavailable, Reason}]}
+            end
+    end.
+
+build_canonical_queue(Apps, Commit, Root) ->
     lists:foldl(
         fun(App, {Queue, Errors}) ->
-            case ecai_code_analyser:repo_source_files(App, RepoRoot) of
+            case ecai_code_analyser:repo_source_files(App, Root) of
                 {ok, Files} ->
-                    {Queue ++ [{file, App, Path} || Path <- Files], Errors};
-                {error, RepoReason} ->
-                    case ecai_code_analyser:application_modules(App) of
-                        {ok, Modules} ->
-                            {
-                                Queue ++ [{module, App, M} || M <- Modules],
-                                [{App, {repo_fallback, RepoReason}} | Errors]
-                            };
-                        {error, RuntimeReason} ->
-                            {Queue, [{App, {RepoReason, RuntimeReason}} | Errors]}
-                    end
+                    {Entries, PathErrors} =
+                        canonical_entries(App, Commit, Root, Files),
+                    {
+                        Queue ++ Entries,
+                        PathErrors ++ Errors
+                    };
+                {error, Reason} ->
+                    {
+                        Queue,
+                        [{App, {canonical_repo_scan_failed, Reason}} | Errors]
+                    }
             end
         end,
         {[], []},
         Apps
     ).
+
+canonical_entries(App, Commit, Root, Files) ->
+    lists:foldl(
+        fun(Path, {Entries, Errors}) ->
+            case repo_relative_path(Root, Path) of
+                {ok, RelPath} ->
+                    {
+                        Entries ++ [{
+                            canonical_file,
+                            App,
+                            Commit,
+                            to_binary(RelPath)
+                        }],
+                        Errors
+                    };
+                {error, Reason} ->
+                    {
+                        Entries,
+                        [{App, {canonical_path_error, Path, Reason}} | Errors]
+                    }
+            end
+        end,
+        {[], []},
+        Files
+    ).
+
+build_runtime_fallback(Apps) ->
+    lists:foldl(
+        fun(App, {Queue, Errors}) ->
+            case ecai_code_analyser:application_modules(App) of
+                {ok, Modules} ->
+                    {
+                        Queue ++ [{module, App, M} || M <- Modules],
+                        Errors
+                    };
+                {error, Reason} ->
+                    {Queue, [{App, Reason} | Errors]}
+            end
+        end,
+        {[], []},
+        Apps
+    ).
+
+runtime_fallback_enabled(Opts) ->
+    maps:get(
+        allow_runtime_source_fallback,
+        Opts,
+        application:get_env(
+            ecai, code_source_allow_runtime_fallback, false)
+    ) =:= true.
+
+repo_relative_path(Root0, Path0) ->
+    Root = filename:split(filename:absname(path_to_list(Root0))),
+    Path = filename:split(filename:absname(path_to_list(Path0))),
+    case lists:prefix(Root, Path) andalso length(Path) > length(Root) of
+        true ->
+            {ok, filename:join(lists:nthtail(length(Root), Path))};
+        false ->
+            {error, source_outside_canonical_base}
+    end.
 
 safe_learn_entry(Entry, Opts) ->
     try learn_entry(Entry, Opts) of
@@ -421,15 +500,158 @@ safe_learn_entry(Entry, Opts) ->
     end.
 
 learn_entry({module, App, Module}, Opts) ->
-    case ecai_code_analyser:analyse_module(App, Module) of
-        {ok, Analysis} -> learn_analysis(App, Analysis, Opts);
-        {error, _} = Error -> Error
+    case ecai_source_repository:module_source(App, Module, Opts) of
+        {ok, SourceMeta} ->
+            Path = path_to_list(maps:get(full_path, SourceMeta)),
+            case ecai_code_analyser:analyse_file(App, Path) of
+                {ok, Analysis0} ->
+                    Analysis = pin_canonical_analysis(
+                        Analysis0,
+                        maps:get(commit, SourceMeta),
+                        maps:get(source_path, SourceMeta)
+                    ),
+                    learn_analysis(App, Analysis, Opts);
+                {error, _} = Error ->
+                    Error
+            end;
+        {error, CanonicalReason} ->
+            case runtime_fallback_enabled(Opts) of
+                true ->
+                    learn_runtime_module(App, Module, Opts);
+                false ->
+                    {error, {
+                        canonical_module_source_unavailable,
+                        App,
+                        Module,
+                        CanonicalReason
+                    }}
+            end
     end;
+learn_entry(
+    {canonical_file, App, Commit, RelPath0},
+    Opts
+) ->
+    RelPath = path_to_list(RelPath0),
+    case ecai_source_repository:base_for_commit(Commit, Opts) of
+        {error, _} = Error ->
+            Error;
+        {ok, #{root := Root0}} ->
+            Root = path_to_list(Root0),
+            Path = filename:join(Root, RelPath),
+            case ecai_code_analyser:analyse_file(App, Path) of
+                {ok, Analysis0} ->
+                    Analysis = pin_canonical_analysis(
+                        Analysis0, Commit, RelPath),
+                    learn_analysis(App, Analysis, Opts);
+                {error, _} = Error ->
+                    Error
+            end
+    end;
+%% Legacy checkpoint compatibility. New full cycles never enqueue raw file
+%% paths, but an older durable checkpoint may still contain one.
 learn_entry({file, App, Path}, Opts) ->
     case ecai_code_analyser:analyse_file(App, Path) of
-        {ok, Analysis} -> learn_analysis(App, Analysis, Opts);
-        {error, _} = Error -> Error
+        {ok, Analysis} ->
+            case module_analysis_learning_eligible(Analysis, Opts) of
+                ok -> learn_analysis(App, Analysis, Opts);
+                {skip, _Reason} -> {ok, App, maps:get(module, Analysis), unchanged};
+                {error, _} = Error -> Error
+            end;
+        {error, _} = Error ->
+            Error
     end.
+
+learn_runtime_module(App, Module, Opts) ->
+    case ecai_code_analyser:analyse_module(App, Module) of
+        {ok, Analysis} ->
+            case module_analysis_learning_eligible(Analysis, Opts) of
+                ok ->
+                    learn_analysis(App, Analysis, Opts);
+                {skip, Reason} ->
+                    logger:notice(
+                        "ECAI runtime fallback skipped non-clean source "
+                        "app=~p module=~p reason=~p",
+                        [App, Module, Reason]
+                    ),
+                    {ok, App, Module, unchanged};
+                {error, _} = Error ->
+                    Error
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+pin_canonical_analysis(Analysis, Commit0, RelPath0) ->
+    Commit = to_binary(Commit0),
+    RelPath = to_binary(RelPath0),
+    Analysis#{
+        source_name => RelPath,
+        repo_path => RelPath,
+        base_commit => Commit,
+        source_origin => canonical_repository
+    }.
+
+module_analysis_learning_eligible(
+    #{source_origin := canonical_repository},
+    _Opts
+) ->
+    ok;
+module_analysis_learning_eligible(Analysis, Opts)
+  when is_map(Analysis), is_map(Opts) ->
+    case maps:get(source_kind, Analysis, undefined) of
+        source_file ->
+            module_source_file_eligible(Analysis, Opts);
+        repo_source ->
+            module_source_file_eligible(Analysis, Opts);
+        %% Preserve runtime/BEAM fallback learning where there is no source
+        %% pathname to compare against the repository. Such analyses remain
+        %% unsuitable for patch admission unless later snapshot checks pass.
+        _ ->
+            ok
+    end.
+
+module_source_file_eligible(Analysis, Opts) ->
+    SourceName = maps:get(source_name, Analysis, undefined),
+    case SourceName of
+        undefined ->
+            {error, source_name_missing};
+        <<>> ->
+            {error, source_name_missing};
+        _ ->
+            RepoRoot = learning_repo_root(Opts),
+            SourcePath = path_to_list(SourceName),
+            case ecai_git_worktree:filter_learning_files(
+                     RepoRoot, [SourcePath], Opts) of
+                {ok, [_], []} ->
+                    ok;
+                {ok, [], [Skipped | _]} ->
+                    {skip, Skipped};
+                {ok, [], []} ->
+                    {skip, #{
+                        path => to_binary(SourcePath),
+                        reason => not_eligible
+                    }};
+                {ok, Included, Skipped} ->
+                    {error, {
+                        unexpected_targeted_filter_result,
+                        Included,
+                        Skipped
+                    }};
+                {error, _} = Error ->
+                    Error
+            end
+    end.
+
+learning_repo_root(Opts) ->
+    filename:absname(
+        path_to_list(
+            maps:get(
+                repo_root,
+                Opts,
+                application:get_env(ecai, code_repo_root, ".")
+            )
+        )
+    ).
 
 learn_analysis(App, Analysis, Opts) ->
     Module = maps:get(module, Analysis),
