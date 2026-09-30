@@ -314,15 +314,15 @@ queue_if_needed(
 ) ->
     Fp = finding_fingerprint(Module, Finding),
     Version = ecai_code_context:finding_version(App, Module, Finding),
-    SourcePath = analysis_source_path(Analysis),
+    Provenance = analysis_repair_provenance(Analysis),
     case ecai_learning_store:get_repair(Fp, Version) of
         {ok, Existing0} ->
-            Existing = ensure_source_path(Existing0, SourcePath),
+            Existing = ensure_repair_provenance(Existing0, Provenance),
             maybe_persist_enriched_repair(
                 Fp, Version, Existing0, Existing),
             {Q, E};
         not_found ->
-            Queued = #{
+            Queued0 = #{
                 status => queued,
                 stage => queued,
                 fingerprint => Fp,
@@ -330,25 +330,48 @@ queue_if_needed(
                 application => App,
                 module => Module,
                 finding => Finding,
-                source_path => SourcePath,
                 created_at => now_iso8601(),
                 updated_at => now_iso8601()
             },
+            Queued = maps:merge(Queued0, Provenance),
             ok = ecai_learning_store:put_repair(
                 Fp, Version, Queued),
             {Q + 1, E}
     end.
 
-ensure_source_path(Repair, undefined) ->
-    Repair;
-ensure_source_path(Repair, <<>>) ->
-    Repair;
-ensure_source_path(Repair, SourcePath) ->
-    case maps:get(source_path, Repair, undefined) of
-        undefined -> Repair#{source_path => SourcePath};
-        <<>> -> Repair#{source_path => SourcePath};
-        _ -> Repair
-    end.
+analysis_repair_provenance(Analysis) when is_map(Analysis) ->
+    Provenance0 = #{},
+    Provenance1 = maybe_put_provenance(
+        base_commit, maps:get(base_commit, Analysis, undefined), Provenance0),
+    Provenance2 = maybe_put_provenance(
+        source_sha256, maps:get(source_sha256, Analysis, undefined), Provenance1),
+    maybe_put_provenance(
+        source_path, analysis_source_path(Analysis), Provenance2);
+analysis_repair_provenance(_) ->
+    #{}.
+
+maybe_put_provenance(_Key, undefined, Provenance) ->
+    Provenance;
+maybe_put_provenance(_Key, <<>>, Provenance) ->
+    Provenance;
+maybe_put_provenance(_Key, [], Provenance) ->
+    Provenance;
+maybe_put_provenance(Key, Value, Provenance) ->
+    Provenance#{Key => Value}.
+
+ensure_repair_provenance(Repair, Provenance) ->
+    maps:fold(
+        fun(Key, Value, Acc) ->
+            case maps:get(Key, Acc, undefined) of
+                undefined -> Acc#{Key => Value};
+                <<>> -> Acc#{Key => Value};
+                [] -> Acc#{Key => Value};
+                _ -> Acc
+            end
+        end,
+        Repair,
+        Provenance
+    ).
 
 maybe_persist_enriched_repair(
     _Fp, _Version, Repair, Repair
@@ -1276,6 +1299,46 @@ unknown_source_sits_between_src_and_test_test() ->
         source_priority(<<>>) <
         source_priority(<<"apps/ecai/test/a_tests.erl">>)
     ).
+
+analysis_repair_provenance_test() ->
+    Analysis = #{
+        base_commit => <<"0123456789abcdef">>,
+        source_sha256 => <<"source-sha">>,
+        source_path => <<"apps/ecai/src/ecai_patch_retry.erl">>
+    },
+    ?assertEqual(
+        #{
+            base_commit => <<"0123456789abcdef">>,
+            source_sha256 => <<"source-sha">>,
+            source_path => <<"apps/ecai/src/ecai_patch_retry.erl">>
+        },
+        analysis_repair_provenance(Analysis)
+    ).
+
+ensure_repair_provenance_fills_missing_fields_test() ->
+    Repair = #{status => queued, source_path => <<>>},
+    Provenance = #{
+        base_commit => <<"base-a">>,
+        source_sha256 => <<"sha-a">>,
+        source_path => <<"apps/ecai/src/a.erl">>
+    },
+    Enriched = ensure_repair_provenance(Repair, Provenance),
+    ?assertEqual(<<"base-a">>, maps:get(base_commit, Enriched)),
+    ?assertEqual(<<"sha-a">>, maps:get(source_sha256, Enriched)),
+    ?assertEqual(<<"apps/ecai/src/a.erl">>, maps:get(source_path, Enriched)).
+
+ensure_repair_provenance_preserves_existing_generation_test() ->
+    Repair = #{
+        base_commit => <<"base-original">>,
+        source_sha256 => <<"sha-original">>,
+        source_path => <<"apps/ecai/src/original.erl">>
+    },
+    Provenance = #{
+        base_commit => <<"base-new">>,
+        source_sha256 => <<"sha-new">>,
+        source_path => <<"apps/ecai/src/new.erl">>
+    },
+    ?assertEqual(Repair, ensure_repair_provenance(Repair, Provenance)).
 
 priority_test_repair(SourcePath, Severity, Status, Fingerprint) ->
     #{
