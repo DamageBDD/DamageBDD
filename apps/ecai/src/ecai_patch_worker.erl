@@ -10,7 +10,8 @@
     normalize_proposal_patch/1,
     compact_verification_diagnostic/1,
     failure_class/1,
-    source_snapshot_block_kind/1
+    source_snapshot_block_kind/1,
+    proposal_shape/1
 ]).
 -endif.
 
@@ -94,30 +95,36 @@ generate_attempt(Attempt, MaxAttempts, Fingerprint, Version,
 
 handle_proposal(Proposal, Attempt, MaxAttempts, Fingerprint, Version,
                 Context, Opts) ->
+    ProposalShape = proposal_shape(Proposal),
     RawPatch = proposal_patch_value(Proposal),
     case normalize_proposal_patch(RawPatch) of
         {error, Reason} when Attempt < MaxAttempts ->
             NextDiag =
-                diagnostic_json(#{patch_validation_error => Reason}),
+                invalid_patch_diagnostic(Reason, ProposalShape),
             generate_attempt(
                 Attempt + 1, MaxAttempts, Fingerprint, Version,
                 Context, NextDiag, Opts);
         {error, Reason} ->
             final_failure(
                 Fingerprint, Version, Context, Attempt,
-                {invalid_patch, Reason}, Opts);
+                {invalid_patch, Reason},
+                invalid_patch_failure_state(Reason, ProposalShape),
+                Opts);
         {ok, Patch} ->
-    case ecai_patch_verifier:validate_patch(Patch) of
+            case ecai_patch_verifier:validate_patch(Patch) of
                 {error, Reason} when Attempt < MaxAttempts ->
                     NextDiag =
-                        diagnostic_json(#{patch_validation_error => Reason}),
+                        invalid_patch_diagnostic(Reason, ProposalShape),
                     generate_attempt(
                         Attempt + 1, MaxAttempts, Fingerprint, Version,
                         Context, NextDiag, Opts);
                 {error, Reason} ->
                     final_failure(
                         Fingerprint, Version, Context, Attempt,
-                        {invalid_patch, Reason}, Opts);
+                        {invalid_patch, Reason},
+                        invalid_patch_failure_state(
+                            Reason, ProposalShape),
+                        Opts);
                 ok ->
                     case write_patch(
                              Fingerprint, Version, Patch, Opts) of
@@ -212,7 +219,12 @@ structured_patch_candidates(Map, Depth) when is_map(Map) ->
         <<"content">>,
         <<"text">>,
         <<"result">>,
-        <<"data">>
+        <<"data">>,
+        <<"output">>,
+        <<"response">>,
+        <<"patches">>,
+        <<"changes">>,
+        <<"files">>
     ],
     lists:append([
         structured_patch_candidates(
@@ -309,6 +321,105 @@ patch_value_type(Value) when is_integer(Value) -> integer;
 patch_value_type(Value) when is_float(Value) -> float;
 patch_value_type(Value) when is_binary(Value) -> binary;
 patch_value_type(_) -> other.
+
+invalid_patch_diagnostic(Reason, ProposalShape) ->
+    diagnostic_json(#{
+        patch_validation_error => Reason,
+        proposal_shape => ProposalShape,
+        expected_patch =>
+            <<"Return patch as one JSON string containing a git unified diff beginning with 'diff --git '.">>
+    }).
+
+invalid_patch_failure_state(Reason, ProposalShape) ->
+    #{
+        diagnostic => invalid_patch_diagnostic(Reason, ProposalShape),
+        proposal_shape => ProposalShape
+    }.
+
+proposal_shape(Value) ->
+    Entries0 = proposal_shape_entries(Value, 0, []),
+    Entries = lists:sublist(Entries0, 32),
+    #{
+        response_type => patch_value_type(Value),
+        response_keys => proposal_top_keys(Value),
+        nested_paths => Entries,
+        patch_candidate_found =>
+            structured_patch_candidate(Value) =/= error,
+        diff_binary_found => contains_patch_binary(Value, 0)
+    }.
+
+proposal_top_keys(Map) when is_map(Map) ->
+    Keys = lists:sort([shape_key(Key) || Key <- maps:keys(Map)]),
+    lists:sublist(Keys, 16);
+proposal_top_keys(_) ->
+    [].
+
+proposal_shape_entries(_Value, Depth, _Path) when Depth >= 4 ->
+    [];
+proposal_shape_entries(Map, Depth, Path) when is_map(Map) ->
+    Pairs0 = [
+        {shape_key(Key), Val}
+     || {Key, Val} <- maps:to_list(Map)
+    ],
+    Pairs = lists:sublist(lists:sort(Pairs0), 8),
+    lists:append([
+        begin
+            NextPath = Path ++ [Key],
+            [
+                #{path => NextPath, type => patch_value_type(Val)}
+                | proposal_shape_entries(
+                    Val, Depth + 1, NextPath)
+            ]
+        end
+     || {Key, Val} <- Pairs
+    ]);
+proposal_shape_entries(List, Depth, Path) when is_list(List) ->
+    Prefix = lists:sublist(List, 8),
+    Indexed = lists:zip(lists:seq(1, length(Prefix)), Prefix),
+    lists:append([
+        begin
+            NextPath = Path ++ [Index],
+            [
+                #{path => NextPath, type => patch_value_type(Val)}
+                | proposal_shape_entries(
+                    Val, Depth + 1, NextPath)
+            ]
+        end
+     || {Index, Val} <- Indexed
+    ]);
+proposal_shape_entries(_Value, _Depth, _Path) ->
+    [].
+
+shape_key(Key) when is_binary(Key) ->
+    Key;
+shape_key(Key) when is_atom(Key) ->
+    atom_to_binary(Key, utf8);
+shape_key(Key) when is_list(Key) ->
+    unicode:characters_to_binary(Key);
+shape_key(Key) ->
+    to_binary(Key).
+
+contains_patch_binary(_Value, Depth) when Depth > 4 ->
+    false;
+contains_patch_binary(Bin, _Depth) when is_binary(Bin) ->
+    looks_like_patch(Bin);
+contains_patch_binary(Map, Depth) when is_map(Map) ->
+    Values = lists:sublist(maps:values(Map), 32),
+    lists:any(
+        fun(Value) ->
+            contains_patch_binary(Value, Depth + 1)
+        end,
+        Values
+    );
+contains_patch_binary(List, Depth) when is_list(List) ->
+    lists:any(
+        fun(Value) ->
+            contains_patch_binary(Value, Depth + 1)
+        end,
+        lists:sublist(List, 32)
+    );
+contains_patch_binary(_Value, _Depth) ->
+    false.
 
 patch_inference_opts(Opts) ->
     AppOpts =
@@ -702,7 +813,13 @@ schedule_retry(Fingerprint, Version, Context, Attempt,
     end.
 
 final_failure(Fingerprint, Version, Context, Attempt, Reason, Opts) ->
-    Repair = (base_repair(
+    final_failure(
+        Fingerprint, Version, Context, Attempt,
+        Reason, #{}, Opts).
+
+final_failure(Fingerprint, Version, Context, Attempt,
+              Reason, ExtraState, Opts) ->
+    Repair0 = (base_repair(
         Fingerprint, Version, Context, Attempt))#{
         status => failed,
         stage => terminal,
@@ -711,6 +828,7 @@ final_failure(Fingerprint, Version, Context, Attempt, Reason, Opts) ->
         last_error => Reason,
         failure_class => failure_class(Reason)
     },
+    Repair = maps:merge(Repair0, ExtraState),
     persist_repair(Repair, Opts).
 
 failure_class({invalid_patch, _}) -> invalid_patch;
