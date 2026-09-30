@@ -31,6 +31,8 @@
 -define(DEFAULT_RECONNECT_MS, 5000).
 -define(DEFAULT_MAX_RECONNECT_MS, 60000).
 -define(DEFAULT_HEALTHCHECK_MS, 30000).
+-define(DEFAULT_MIN_CONNECTED_RELAYS, 2).
+-define(DEFAULT_CIRCUIT_OPEN_MS, 900000).
 -define(MAX_NWC_RELAYS, 5).
 -define(INFO_KIND, 13194).
 -define(REQUEST_KIND, 23194).
@@ -67,8 +69,14 @@
     %% Kept for hot-upgrade compatibility with older state records. Do not use
     %% this as a terminal state.
     retry_count = 0,
-    max_retries = 10,
-    stopped = false
+    max_retries = 8,
+    stopped = false,
+
+    %% Per-relay retry/circuit state. Url => #{attempt, circuit_until_ms, disabled, last_reason}.
+    relay_failures = #{},
+    min_connected_relays = ?DEFAULT_MIN_CONNECTED_RELAYS,
+    circuit_open_ms = ?DEFAULT_CIRCUIT_OPEN_MS,
+    health_status = starting
 }).
 %% damage_nwc_listener.erl / damage_nwc_wallet listener state
 
@@ -112,12 +120,10 @@ sanitize_nwc_relays(Relays0) ->
          || R <- Relays1,
             maps:is_key(canonical_url(maps:get(url, R)), Allowed)
         ],
-    Relays3 =
-        case Relays2 of
-            [] -> [#{url => canonical_url(U), proxy => direct} || U <- nwc_relay_allowlist()];
-            _ -> Relays2
-        end,
-    take_unique_relays(?MAX_NWC_RELAYS, Relays3).
+    %% Never silently replace an explicitly configured relay set with the
+    %% whole allowlist. An invalid/empty configuration must remain empty so it
+    %% can be diagnosed instead of creating surprise outbound connections.
+    take_unique_relays(?MAX_NWC_RELAYS, Relays2).
 
 canonical_url(Url0) ->
     Url1 = damage_utils:to_bin(Url0),
@@ -148,6 +154,7 @@ take_unique_relays(Max, [#{url := Url} = R | Rest], Seen, Acc) ->
 
 init(Opts0) ->
     process_flag(trap_exit, true),
+    logger:update_process_metadata(#{domain => [damage, nwc]}),
 
     Opts =
         case Opts0 of
@@ -163,6 +170,15 @@ init(Opts0) ->
     ReconnectMs = proplists:get_value(reconnect_ms, Opts, ?DEFAULT_RECONNECT_MS),
     MaxReconnectMs = proplists:get_value(max_reconnect_ms, Opts, ?DEFAULT_MAX_RECONNECT_MS),
     HealthcheckMs = proplists:get_value(healthcheck_ms, Opts, ?DEFAULT_HEALTHCHECK_MS),
+    MinConnectedRelays = proplists:get_value(
+        min_connected_relays, Opts, app_env_int(nwc_min_connected_relays, ?DEFAULT_MIN_CONNECTED_RELAYS)
+    ),
+    MaxRetries = proplists:get_value(
+        max_retries, Opts, app_env_int(nwc_relay_max_retries, 8)
+    ),
+    CircuitOpenMs = proplists:get_value(
+        circuit_open_ms, Opts, app_env_int(nwc_relay_circuit_open_ms, ?DEFAULT_CIRCUIT_OPEN_MS)
+    ),
     CryptoHandler = proplists:get_value(crypto_handler, Opts, damage_nostr),
     ServicePubKey = resolve_service_pubkey(CryptoHandler),
 
@@ -172,9 +188,21 @@ init(Opts0) ->
         max_reconnect_ms = MaxReconnectMs,
         healthcheck_ms = HealthcheckMs,
         crypto_handler = CryptoHandler,
-        service_pubkey = ServicePubKey
+        service_pubkey = ServicePubKey,
+        min_connected_relays = max(0, MinConnectedRelays),
+        max_retries = max(1, MaxRetries),
+        circuit_open_ms = max(1000, CircuitOpenMs)
     },
 
+    case Relays of
+        [] ->
+            ?LOG_ERROR(
+                "NWC listener has no valid configured relays; listener remains idle until relays are added",
+                []
+            );
+        _ ->
+            ok
+    end,
     {ok, State0, {continue, connect}}.
 
 get_state() ->
@@ -219,7 +247,9 @@ handle_cast(restart, State) ->
                 stream_ref = undefined,
                 sub_id = undefined,
                 conns = #{},
-                seen = #{}
+                seen = #{},
+                relay_failures = #{},
+                health_status = starting
             })
         )};
 handle_cast(publish_info, State) ->
@@ -231,26 +261,21 @@ handle_info(connect, State0) ->
     {noreply, maybe_connect(State)};
 handle_info(healthcheck, State0) ->
     State1 = ensure_healthcheck(State0#state{health_timer = undefined}),
-    Missing = missing_relay_count(State1),
-    case Missing of
-        0 ->
-            {noreply, maybe_connect(State1)};
-        _ ->
-            ?LOG_WARNING("NWC listener healthcheck missing_relays=~p connected=~p", [
-                Missing, map_size(State1#state.conns)
-            ]),
-            {noreply, maybe_connect(State1)}
-    end;
+    State2 = log_health_transition(State1),
+    {noreply, maybe_connect(State2)};
 handle_info({gun_response, ConnPid, StreamRef, _Fin, Status, Headers}, State) ->
     case conn_known(ConnPid, StreamRef, State) of
         true ->
-            ?LOG_WARNING(
+            ?LOG_DEBUG(
                 "NWC relay HTTP response before WS upgrade conn=~p stream=~p status=~p headers_count=~p",
                 [
                     ConnPid, StreamRef, Status, safe_len(Headers)
                 ]
             ),
-            {noreply, schedule_reconnect(drop_conn(ConnPid, State))};
+            State1 = record_conn_failure(
+                ConnPid, {websocket_upgrade_rejected, StreamRef, Status}, State
+            ),
+            {noreply, maybe_schedule_reconnect(State1)};
         false ->
             ?LOG_DEBUG("Ignoring gun_response from unknown conn=~p stream=~p status=~p", [
                 ConnPid, StreamRef, Status
@@ -260,11 +285,12 @@ handle_info({gun_response, ConnPid, StreamRef, _Fin, Status, Headers}, State) ->
 handle_info({gun_data, ConnPid, StreamRef, _Fin, Data}, State) ->
     case conn_known(ConnPid, StreamRef, State) of
         true ->
-            ?LOG_WARNING(
+            ?LOG_DEBUG(
                 "NWC relay HTTP body before/without WS upgrade conn=~p stream=~p bytes=~p",
                 [ConnPid, StreamRef, bin_len(Data)]
             ),
-            {noreply, schedule_reconnect(drop_conn(ConnPid, State))};
+            State1 = record_conn_failure(ConnPid, {unexpected_http_body, StreamRef}, State),
+            {noreply, maybe_schedule_reconnect(State1)};
         false ->
             ?LOG_DEBUG("Ignoring gun_data from unknown conn=~p stream=~p bytes=~p", [
                 ConnPid, StreamRef, bin_len(Data)
@@ -274,10 +300,11 @@ handle_info({gun_data, ConnPid, StreamRef, _Fin, Data}, State) ->
 handle_info({gun_error, ConnPid, StreamRef, Reason}, State) ->
     case conn_known(ConnPid, StreamRef, State) of
         true ->
-            ?LOG_WARNING("NWC relay gun_error conn=~p stream=~p reason=~p", [
+            ?LOG_DEBUG("NWC relay gun_error conn=~p stream=~p reason=~p", [
                 ConnPid, StreamRef, Reason
             ]),
-            {noreply, schedule_reconnect(drop_conn(ConnPid, State))};
+            State1 = record_conn_failure(ConnPid, {gun_error, Reason}, State),
+            {noreply, maybe_schedule_reconnect(State1)};
         false ->
             ?LOG_DEBUG("Ignoring gun_error from unknown relay conn=~p stream=~p reason=~p", [
                 ConnPid, StreamRef, Reason
@@ -287,8 +314,9 @@ handle_info({gun_error, ConnPid, StreamRef, Reason}, State) ->
 handle_info({gun_error, ConnPid, Reason}, State) ->
     case conn_known_pid(ConnPid, State) of
         true ->
-            ?LOG_WARNING("NWC relay gun_error conn=~p reason=~p", [ConnPid, Reason]),
-            {noreply, schedule_reconnect(drop_conn(ConnPid, State))};
+            ?LOG_DEBUG("NWC relay gun_error conn=~p reason=~p", [ConnPid, Reason]),
+            State1 = record_conn_failure(ConnPid, {gun_error, Reason}, State),
+            {noreply, maybe_schedule_reconnect(State1)};
         false ->
             ?LOG_DEBUG("Ignoring gun_error from unknown relay conn=~p reason=~p", [
                 ConnPid, Reason
@@ -306,11 +334,14 @@ handle_info({gun_ws, ConnPid, StreamRef, {text, Msg}}, State) ->
 handle_info({gun_down, ConnPid, Protocol, Reason, KilledStreams}, State) ->
     case conn_known_pid(ConnPid, State) of
         true ->
-            ?LOG_WARNING(
+            ?LOG_DEBUG(
                 "NWC relay connection down conn=~p protocol=~p reason=~p killed_streams=~p",
                 [ConnPid, Protocol, Reason, safe_len(KilledStreams)]
             ),
-            {noreply, schedule_reconnect(drop_conn(ConnPid, State))};
+            State1 = record_conn_failure(
+                ConnPid, {gun_down, Protocol, Reason, KilledStreams}, State
+            ),
+            {noreply, maybe_schedule_reconnect(State1)};
         false ->
             ?LOG_DEBUG("Ignoring gun_down from unknown relay conn=~p reason=~p", [
                 ConnPid, Reason
@@ -320,11 +351,14 @@ handle_info({gun_down, ConnPid, Protocol, Reason, KilledStreams}, State) ->
 handle_info({gun_down, ConnPid, Protocol, Reason, KilledStreams, Unprocessed}, State) ->
     case conn_known_pid(ConnPid, State) of
         true ->
-            ?LOG_WARNING(
+            ?LOG_DEBUG(
                 "NWC relay connection down conn=~p protocol=~p reason=~p killed_streams=~p unprocessed=~p",
                 [ConnPid, Protocol, Reason, safe_len(KilledStreams), safe_len(Unprocessed)]
             ),
-            {noreply, schedule_reconnect(drop_conn(ConnPid, State))};
+            State1 = record_conn_failure(
+                ConnPid, {gun_down, Protocol, Reason, KilledStreams, Unprocessed}, State
+            ),
+            {noreply, maybe_schedule_reconnect(State1)};
         false ->
             ?LOG_DEBUG("Ignoring gun_down from unknown relay conn=~p reason=~p", [
                 ConnPid, Reason
@@ -334,9 +368,9 @@ handle_info({gun_down, ConnPid, Protocol, Reason, KilledStreams, Unprocessed}, S
 handle_info({'EXIT', ConnPid, Reason}, State) ->
     case conn_known_pid(ConnPid, State) of
         true ->
-            State1 = drop_conn(ConnPid, State),
-            ?LOG_WARNING("NWC relay process exited conn=~p reason=~p", [ConnPid, Reason]),
-            {noreply, schedule_reconnect(State1)};
+            ?LOG_DEBUG("NWC relay process exited conn=~p reason=~p", [ConnPid, Reason]),
+            State1 = record_conn_failure(ConnPid, {connection_exit, Reason}, State),
+            {noreply, maybe_schedule_reconnect(State1)};
         false ->
             ?LOG_DEBUG("Ignoring unrelated EXIT from ~p reason=~p", [ConnPid, Reason]),
             {noreply, State}
@@ -355,7 +389,12 @@ code_change(_OldVsn, State, _Extra) ->
 relays(Opts) ->
     case proplists:get_value(relays, Opts, undefined) of
         undefined ->
-            sanitize_nwc_relays(damage_nostr:configured_relays());
+            Configured =
+                case application:get_env(damage, nwc_relays) of
+                    {ok, Rs} when is_list(Rs) -> Rs;
+                    _ -> damage_nostr:configured_relays()
+                end,
+            sanitize_nwc_relays(Configured);
         Relays when is_list(Relays) ->
             sanitize_nwc_relays(Relays)
     end.
@@ -373,13 +412,15 @@ resolve_service_pubkey(CryptoHandler) ->
             end
     end.
 
-maybe_connect(State0 = #state{relays = Relays0, conns = _Conns0}) ->
+maybe_connect(State0 = #state{relays = Relays0}) ->
     State = ensure_service_pubkey(State0#state{stopped = false}),
     Relays = sanitize_nwc_relays(Relays0),
     State1 = lists:foldl(fun ensure_relay_connected/2, State#state{relays = Relays}, Relays),
-    case missing_relay_count(State1) of
-        0 -> cancel_reconnect_timer(State1#state{reconnect_attempt = 0});
-        _ -> schedule_reconnect(State1)
+    State2 = log_health_transition(State1),
+    case {Relays, has_retryable_missing_relays(State2)} of
+        {[], _} -> cancel_reconnect_timer(State2#state{reconnect_attempt = 0});
+        {_, false} -> cancel_reconnect_timer(State2#state{reconnect_attempt = 0});
+        {_, true} -> schedule_reconnect(State2)
     end.
 
 restart() ->
@@ -392,10 +433,6 @@ open_ws(Relay0) ->
             link(ConnPid),
             {ok, ConnPid, StreamRef};
         {error, Reason} ->
-            ?LOG_WARNING("NWC listener websocket open failed relay=~p reason=~p", [
-                relay_summary(Relay),
-                Reason
-            ]),
             {error, Reason}
     end.
 
@@ -461,9 +498,9 @@ schedule_reconnect(
 ) ->
     DelayMs = backoff_ms(BaseMs, MaxMs, Attempt),
     Timer = erlang:send_after(DelayMs, self(), connect),
-    ?LOG_WARNING(
+    ?LOG_DEBUG(
         "NWC listener reconnect scheduled delay_ms=~p attempt=~p missing_relays=~p connected=~p", [
-            DelayMs, Attempt + 1, missing_relay_count(State), map_size(State#state.conns)
+            DelayMs, Attempt + 1, missing_relay_count(State), connected_relay_count(State)
         ]
     ),
     State#state{
@@ -837,6 +874,16 @@ nwc_relays(Conn) ->
 
 ensure_relay_connected(Relay, State = #state{conns = Conns}) ->
     Url = maps:get(url, Relay),
+    case relay_retry_action(Url, State) of
+        disabled ->
+            State;
+        wait ->
+            State;
+        try_connect ->
+            ensure_relay_connected_now(Relay, Url, Conns, State)
+    end.
+
+ensure_relay_connected_now(Relay, Url, Conns, State) ->
     case maps:get(Url, Conns, undefined) of
         #{conn_pid := Pid, subscribed := true} when is_pid(Pid) ->
             case is_process_alive(Pid) of
@@ -857,7 +904,8 @@ ensure_relay_connected(Relay, State = #state{conns = Conns}) ->
                         stream_ref => StreamRef,
                         subscribed => false
                     },
-                    State1 = State#state{
+                    StateOk = clear_relay_failure(Url, State),
+                    State1 = StateOk#state{
                         conns = maps:put(Url, Entry, Conns),
 
                         %% keep legacy fields populated for old send_response path
@@ -879,8 +927,7 @@ ensure_relay_connected(Relay, State = #state{conns = Conns}) ->
                     State2 = subscribe_requests_for(ConnPid, StreamRef, State1),
                     publish_info_event_to_conn(ConnPid, StreamRef, State2);
                 {error, Reason} ->
-                    ?LOG_WARNING("NWC listener failed relay=~p reason=~p", [Relay, Reason]),
-                    State
+                    record_relay_failure(Relay, Reason, State)
             end
     end.
 subscribe_requests_for(_ConnPid, _StreamRef, #state{service_pubkey = undefined} = State) ->
@@ -990,7 +1037,10 @@ summarize_state(
         max_retries = MaxRetries,
         reconnect_attempt = Attempt,
         reconnect_timer = ReconnectTimer,
-        health_timer = HealthTimer
+        health_timer = HealthTimer,
+        min_connected_relays = MinConnected,
+        relay_failures = RelayFailures,
+        health_status = HealthStatus
     } = State
 ) ->
     #{
@@ -1003,8 +1053,11 @@ summarize_state(
         reconnect_attempt => Attempt,
         reconnect_timer_active => is_reference(ReconnectTimer),
         health_timer_active => is_reference(HealthTimer),
+        health_status => HealthStatus,
+        min_connected_relays => MinConnected,
+        relay_failures => RelayFailures,
         missing_relay_count => missing_relay_count(State),
-        connected_count => map_size(Conns),
+        connected_count => connected_relay_count(State),
         connected_relays =>
             [
                 #{
@@ -1047,6 +1100,197 @@ missing_relay_count(#state{relays = Relays, conns = Conns}) ->
      || Url <- maps:keys(Wanted),
         not maps:is_key(Url, Have)
     ]).
+
+relay_for_conn(ConnPid, #state{conns = Conns}) ->
+    case [Relay || {_Url, #{conn_pid := Pid, relay := Relay}} <- maps:to_list(Conns), Pid =:= ConnPid] of
+        [Relay | _] -> {ok, Relay};
+        [] -> error
+    end.
+
+record_conn_failure(ConnPid, Reason, State0) ->
+    Relay = relay_for_conn(ConnPid, State0),
+    State1 = drop_conn(ConnPid, State0),
+    case Relay of
+        {ok, RelaySpec} -> record_relay_failure(RelaySpec, Reason, State1);
+        error -> State1
+    end.
+
+maybe_schedule_reconnect(State) ->
+    case has_retryable_missing_relays(State) of
+        true -> schedule_reconnect(State);
+        false -> cancel_reconnect_timer(State)
+    end.
+
+connected_relay_count(#state{conns = Conns}) ->
+    length([
+        ok
+     || {_Url, #{subscribed := true, conn_pid := Pid}} <- maps:to_list(Conns),
+        is_pid(Pid),
+        is_process_alive(Pid)
+    ]).
+
+required_connected_relays(#state{relays = Relays, min_connected_relays = Min}) ->
+    min(length(sanitize_nwc_relays(Relays)), max(0, Min)).
+
+relay_health(State) ->
+    Required = required_connected_relays(State),
+    Connected = connected_relay_count(State),
+    case Required of
+        0 -> no_relays;
+        _ when Connected >= Required -> healthy;
+        _ -> degraded
+    end.
+
+log_health_transition(State = #state{health_status = Old}) ->
+    New = relay_health(State),
+    case {Old, New} of
+        {New, New} ->
+            State;
+        {_, healthy} ->
+            ?LOG_INFO(
+                "NWC listener relay health recovered connected=~p required=~p missing_relays=~p",
+                [connected_relay_count(State), required_connected_relays(State), missing_relay_count(State)]
+            ),
+            State#state{health_status = healthy};
+        {_, degraded} ->
+            ?LOG_WARNING(
+                "NWC listener relay health degraded connected=~p required=~p missing_relays=~p",
+                [connected_relay_count(State), required_connected_relays(State), missing_relay_count(State)]
+            ),
+            State#state{health_status = degraded};
+        {_, no_relays} ->
+            State#state{health_status = no_relays}
+    end.
+
+relay_retry_action(Url, #state{relay_failures = Failures}) ->
+    Now = erlang:monotonic_time(millisecond),
+    case maps:get(Url, Failures, #{}) of
+        #{disabled := true} -> disabled;
+        #{circuit_until_ms := Until} when is_integer(Until), Until > Now -> wait;
+        _ -> try_connect
+    end.
+
+record_relay_failure(Relay, Reason, State = #state{
+    relay_failures = Failures0,
+    max_retries = MaxRetries,
+    circuit_open_ms = CircuitOpenMs
+}) ->
+    Url = maps:get(url, Relay),
+    Prev = maps:get(Url, Failures0, #{}),
+    case classify_relay_failure(Reason) of
+        permanent ->
+            case maps:get(disabled, Prev, false) of
+                true -> ok;
+                false ->
+                    ?LOG_ERROR(
+                        "NWC relay disabled after unrecoverable failure relay=~p reason=~p",
+                        [relay_summary(Relay), compact_term(Reason)]
+                    )
+            end,
+            Failures = maps:put(
+                Url,
+                Prev#{disabled => true, last_reason => compact_term(Reason)},
+                Failures0
+            ),
+            State#state{relay_failures = Failures};
+        retryable ->
+            Attempt = maps:get(attempt, Prev, 0) + 1,
+            Now = erlang:monotonic_time(millisecond),
+            case Attempt >= MaxRetries of
+                true ->
+                    Until = Now + CircuitOpenMs,
+                    ?LOG_WARNING(
+                        "NWC relay circuit opened relay=~p failures=~p cooldown_ms=~p reason=~p",
+                        [relay_summary(Relay), Attempt, CircuitOpenMs, compact_term(Reason)]
+                    ),
+                    Failures = maps:put(
+                        Url,
+                        Prev#{
+                            attempt => Attempt,
+                            circuit_until_ms => Until,
+                            disabled => false,
+                            last_reason => compact_term(Reason)
+                        },
+                        Failures0
+                    ),
+                    State#state{relay_failures = Failures};
+                false ->
+                    ?LOG_DEBUG(
+                        "NWC relay connect failed relay=~p attempt=~p reason=~p",
+                        [relay_summary(Relay), Attempt, compact_term(Reason)]
+                    ),
+                    Failures = maps:put(
+                        Url,
+                        Prev#{
+                            attempt => Attempt,
+                            circuit_until_ms => 0,
+                            disabled => false,
+                            last_reason => compact_term(Reason)
+                        },
+                        Failures0
+                    ),
+                    State#state{relay_failures = Failures}
+            end
+    end.
+
+clear_relay_failure(Url, State = #state{relay_failures = Failures0}) ->
+    case maps:take(Url, Failures0) of
+        {Prev, Failures} ->
+            ?LOG_INFO(
+                "NWC relay recovered relay=~p previous_failures=~p",
+                [Url, maps:get(attempt, Prev, 0)]
+            ),
+            State#state{relay_failures = Failures};
+        error ->
+            State
+    end.
+
+has_retryable_missing_relays(State = #state{relays = Relays, conns = Conns}) ->
+    lists:any(
+        fun(Relay) ->
+            Url = maps:get(url, Relay),
+            Connected =
+                case maps:get(Url, Conns, undefined) of
+                    #{subscribed := true, conn_pid := Pid} when is_pid(Pid) -> is_process_alive(Pid);
+                    _ -> false
+                end,
+            (not Connected) andalso relay_retry_action(Url, State) =/= disabled
+        end,
+        sanitize_nwc_relays(Relays)
+    ).
+
+classify_relay_failure({connect_failed, Reason}) -> classify_relay_failure(Reason);
+classify_relay_failure({await_up_failed, Reason}) -> classify_relay_failure(Reason);
+classify_relay_failure({await_up_exit, Reason}) -> classify_relay_failure(Reason);
+classify_relay_failure({gun_error, Reason}) -> classify_relay_failure(Reason);
+classify_relay_failure({connection_exit, Reason}) -> classify_relay_failure(Reason);
+classify_relay_failure(timeout) -> retryable;
+classify_relay_failure(closed) -> retryable;
+classify_relay_failure(econnrefused) -> retryable;
+classify_relay_failure(econnreset) -> retryable;
+classify_relay_failure(enetunreach) -> retryable;
+classify_relay_failure(ehostunreach) -> retryable;
+classify_relay_failure({websocket_upgrade_rejected, _, 429}) -> retryable;
+classify_relay_failure({websocket_upgrade_rejected, _, Status}) when Status >= 500 -> retryable;
+classify_relay_failure({upgrade_failed, Status, _}) when Status =:= 429 -> retryable;
+classify_relay_failure({upgrade_failed, Status, _}) when Status >= 500 -> retryable;
+classify_relay_failure({websocket_upgrade_rejected, _, Status}) when Status >= 400, Status < 500 -> permanent;
+classify_relay_failure({upgrade_failed, Status, _}) when Status >= 400, Status < 500 -> permanent;
+classify_relay_failure({invalid_ws_protocol, _}) -> permanent;
+classify_relay_failure({unsupported_scheme, _}) -> permanent;
+classify_relay_failure({bad_relay_url, _}) -> permanent;
+classify_relay_failure(_) -> retryable.
+
+app_env_int(Key, Default) ->
+    case application:get_env(damage, Key) of
+        {ok, V} when is_integer(V) -> V;
+        {ok, V} when is_binary(V) ->
+            try binary_to_integer(V) catch _:_ -> Default end;
+        {ok, V} when is_list(V) ->
+            try list_to_integer(V) catch _:_ -> Default end;
+        _ -> Default
+    end.
+
 conn_known_pid(ConnPid, #state{conn_pid = ConnPid}) when is_pid(ConnPid) ->
     true;
 conn_known_pid(ConnPid, #state{conns = Conns}) when is_pid(ConnPid) ->

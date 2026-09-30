@@ -17,7 +17,7 @@
 
 -define(PING_MS, 25000).
 -define(RECONNECT_MIN_MS, 500).
--define(RECONNECT_MAX_MS, 30000).
+-define(RECONNECT_MAX_MS, 300000).
 
 -record(state, {
     relay = <<>> :: binary(),
@@ -38,7 +38,9 @@
 
     ping_tref = undefined :: reference() | undefined,
     reconnect_tref = undefined :: reference() | undefined,
-    backoff_ms = ?RECONNECT_MIN_MS :: non_neg_integer()
+    backoff_ms = ?RECONNECT_MIN_MS :: non_neg_integer(),
+    disabled = false :: boolean(),
+    last_error = undefined :: term()
 }).
 
 %% ---------------------------
@@ -60,6 +62,7 @@ publish(Pid, Event) ->
 
 init(#{relay := Relay0}) ->
     process_flag(trap_exit, true),
+    logger:update_process_metadata(#{domain => [damage, nostr, relay]}),
     Relay = damage_nostr:normalize_relay(Relay0),
     Url = maps:get(url, Relay),
     {Host, Port, Path, Tls} = damage_nostr:parse_ws_url(Url),
@@ -181,7 +184,7 @@ handle_info({'EXIT', Pid, Reason}, S0) ->
     %% Connection process died
     case S0#state.conn_pid of
         Pid ->
-            ?LOG_WARNING("Relay connection died relay=~p reason=~p", [S0#state.relay, Reason]),
+            ?LOG_DEBUG("Relay connection died relay=~p reason=~p", [S0#state.relay, Reason]),
             {noreply, on_disconnect(S0)};
         _ ->
             {noreply, S0}
@@ -192,7 +195,9 @@ handle_info({gun_upgrade, ConnPid, StreamRef, [<<"websocket">>], _}, S0) ->
         conn_pid = ConnPid,
         stream_ref = StreamRef,
         connected = true,
-        backoff_ms = ?RECONNECT_MIN_MS
+        backoff_ms = ?RECONNECT_MIN_MS,
+        disabled = false,
+        last_error = undefined
     },
     {noreply, schedule_ping(S1)};
 handle_info({gun_ws, ConnPid, StreamRef, {pong, _Data}}, S0) when
@@ -343,6 +348,8 @@ publish_sync(Pid, Event, TimeoutMs) ->
 %% Connection management
 %% ---------------------------
 
+ensure_connected(S0 = #state{disabled = true}) ->
+    S0;
 ensure_connected(S0 = #state{connected = true}) ->
     S0;
 ensure_connected(S0 = #state{reconnect_tref = TRef}) when is_reference(TRef) ->
@@ -353,15 +360,24 @@ ensure_connected(S0) ->
         {ok, S1} ->
             S1;
         {error, Reason} ->
-            ?LOG_WARNING(
-                "Relay connect failed relay=~p reason=~p state=~p",
-                [
-                    log_utils:summarize(S0#state.relay),
-                    log_utils:summarize(Reason),
-                    log_utils:summarize(S0, #{depth => 3})
-                ]
-            ),
-            schedule_reconnect(S0)
+            case classify_relay_failure(Reason) of
+                permanent ->
+                    ?LOG_ERROR(
+                        "Relay disabled after unrecoverable connect failure relay=~p reason=~p",
+                        [log_utils:summarize(S0#state.relay), log_utils:summarize(Reason)]
+                    ),
+                    S0#state{disabled = true, last_error = Reason};
+                retryable ->
+                    ?LOG_DEBUG(
+                        "Relay connect failed; retry scheduled relay=~p reason=~p backoff_ms=~p",
+                        [
+                            log_utils:summarize(S0#state.relay),
+                            log_utils:summarize(Reason),
+                            S0#state.backoff_ms
+                        ]
+                    ),
+                    schedule_reconnect(S0#state{last_error = Reason})
+            end
     end.
 
 connect(S0 = #state{relay = Relay}) ->
@@ -372,7 +388,9 @@ connect(S0 = #state{relay = Relay}) ->
                 conn_pid = ConnPid,
                 stream_ref = StreamRef,
                 connected = true,
-                backoff_ms = ?RECONNECT_MIN_MS
+                backoff_ms = ?RECONNECT_MIN_MS,
+                disabled = false,
+                last_error = undefined
             }};
         {error, Reason} ->
             {error, Reason}
@@ -414,6 +432,26 @@ schedule_reconnect(S0 = #state{backoff_ms = Backoff}) ->
     TRef = erlang:send_after(Wait, self(), reconnect),
     Next = min(?RECONNECT_MAX_MS, max(?RECONNECT_MIN_MS, Backoff * 2)),
     S0#state{reconnect_tref = TRef, backoff_ms = Next}.
+
+classify_relay_failure({connect_failed, Reason}) -> classify_relay_failure(Reason);
+classify_relay_failure({await_up_failed, Reason}) -> classify_relay_failure(Reason);
+classify_relay_failure({await_up_exit, Reason}) -> classify_relay_failure(Reason);
+classify_relay_failure(timeout) -> retryable;
+classify_relay_failure(closed) -> retryable;
+classify_relay_failure(econnrefused) -> retryable;
+classify_relay_failure(econnreset) -> retryable;
+classify_relay_failure(enetunreach) -> retryable;
+classify_relay_failure(ehostunreach) -> retryable;
+classify_relay_failure({websocket_upgrade_rejected, _, 429}) -> retryable;
+classify_relay_failure({websocket_upgrade_rejected, _, Status}) when Status >= 500 -> retryable;
+classify_relay_failure({upgrade_failed, Status, _}) when Status =:= 429 -> retryable;
+classify_relay_failure({upgrade_failed, Status, _}) when Status >= 500 -> retryable;
+classify_relay_failure({websocket_upgrade_rejected, _, Status}) when Status >= 400, Status < 500 -> permanent;
+classify_relay_failure({upgrade_failed, Status, _}) when Status >= 400, Status < 500 -> permanent;
+classify_relay_failure({invalid_ws_protocol, _}) -> permanent;
+classify_relay_failure({unsupported_scheme, _}) -> permanent;
+classify_relay_failure({bad_relay_url, _}) -> permanent;
+classify_relay_failure(_) -> retryable.
 
 ws_send_json(#state{conn_pid = ConnPid, stream_ref = StreamRef}, Term) ->
     %?LOG_DEBUG("nostr_relay_worker ws_send_json ~p", [Term]),

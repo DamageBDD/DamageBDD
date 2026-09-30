@@ -155,6 +155,7 @@ call(Request, Timeout) ->
 %%====================================================================
 
 init([]) ->
+    logger:update_process_metadata(#{domain => [damage, nsecbunker]}),
     Config = config(),
     StartedAt = erlang:system_time(second),
     RetryMs = bootstrap_retry_min_ms(Config),

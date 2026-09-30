@@ -95,7 +95,9 @@ trails() ->
         )
     ].
 
-init(Req, Opts) -> {cowboy_rest, Req, Opts}.
+init(Req, Opts) ->
+    logger:update_process_metadata(#{domain => [damage, nwc]}),
+    {cowboy_rest, Req, Opts}.
 
 allowed_methods(Req, State) -> {[<<"POST">>], Req, State}.
 
@@ -432,9 +434,13 @@ log_mint_not_usable(Owner, ClientPubHex, Mode, Reason) ->
     ).
 
 mint_relays(Json) ->
-    DefaultRelays = nostr_pool:default_relays(#{}),
+    DefaultRelays =
+        case application:get_env(damage, nwc_relays) of
+            {ok, Rs} when is_list(Rs), Rs =/= [] -> Rs;
+            _ -> []
+        end,
     case maps:get(<<"relays">>, Json, undefined) of
-        Rs when is_list(Rs), Rs =/= [] -> Rs;
+        Rs0 when is_list(Rs0), Rs0 =/= [] -> Rs0;
         _ ->
             case maps:get(<<"relay">>, Json, undefined) of
                 R when is_binary(R); is_list(R) -> [R];
@@ -484,12 +490,9 @@ sanitize_nwc_relays(Relays0) ->
          || R <- Relays1,
             maps:is_key(canonical_url(maps:get(url, R)), Allowed)
         ],
-    Relays3 =
-        case Relays2 of
-            [] -> [#{url => canonical_url(U), proxy => direct} || U <- nwc_relay_allowlist()];
-            _ -> Relays2
-        end,
-    take_unique_relays(5, Relays3).
+    %% Do not silently expand to the entire allowlist. The mint endpoint and
+    %% listener must use the same explicitly configured NWC relay vector.
+    take_unique_relays(5, Relays2).
 
 nwc_relay_allowlist() ->
     [

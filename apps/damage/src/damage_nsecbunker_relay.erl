@@ -43,6 +43,9 @@
 -define(DEFAULT_CONNECT_TIMEOUT_MS, 15000).
 -define(DEFAULT_PUBLISH_TIMEOUT_MS, 15000).
 -define(DEFAULT_RECONNECT_MS, 5000).
+-define(DEFAULT_MAX_RECONNECT_MS, 300000).
+-define(DEFAULT_MAX_RETRIES, 8).
+-define(DEFAULT_CIRCUIT_OPEN_MS, 900000).
 -define(SUBSCRIBE_RETRY_MS, 500).
 -define(MAX_SUBSCRIBE_ATTEMPTS, 20).
 -define(MAX_SEEN_IDS, 2000).
@@ -58,6 +61,11 @@
     %% newest first; public event ids only, no content or secrets
     recent_inbound_event_ids = [] :: [binary()],
     reconnect_ms = ?DEFAULT_RECONNECT_MS :: pos_integer(),
+    max_reconnect_ms = ?DEFAULT_MAX_RECONNECT_MS :: pos_integer(),
+    max_retries = ?DEFAULT_MAX_RETRIES :: pos_integer(),
+    circuit_open_ms = ?DEFAULT_CIRCUIT_OPEN_MS :: pos_integer(),
+    %% RelayUrl => #{attempt, timer, disabled, last_reason}.
+    retry_state = #{} :: map(),
     stats = #{} :: map()
 }).
 
@@ -114,7 +122,15 @@ call(Request) ->
 
 init([]) ->
     process_flag(trap_exit, true),
-    {ok, #st{relays = configured_relays(), stats = empty_stats()}}.
+    logger:update_process_metadata(#{domain => [damage, nsecbunker, relay]}),
+    {ok, #st{
+        relays = configured_relays(),
+        reconnect_ms = config_int(relay_reconnect_ms, ?DEFAULT_RECONNECT_MS),
+        max_reconnect_ms = config_int(relay_max_reconnect_ms, ?DEFAULT_MAX_RECONNECT_MS),
+        max_retries = config_int(relay_max_retries, ?DEFAULT_MAX_RETRIES),
+        circuit_open_ms = config_int(relay_circuit_open_ms, ?DEFAULT_CIRCUIT_OPEN_MS),
+        stats = empty_stats()
+    }}.
 
 handle_call(
     status,
@@ -187,11 +203,12 @@ handle_cast(_Msg, St) ->
 handle_info({relay_opened, Worker, Relay, Filter, {ok, ConnPid, StreamRef}}, St0) ->
     case maps:is_key(Worker, St0#st.connectors) andalso Filter =:= St0#st.filter of
         true ->
-            Conn = #{relay => Relay, relay_url => relay_url(Relay),
+            RelayUrl = relay_url(Relay),
+            Conn = #{relay => Relay, relay_url => RelayUrl,
                 stream_ref => StreamRef, sub_id => make_sub_id(), filter => Filter,
                 owner => Worker, subscribed => false, subscribe_attempts => 0,
                 opened_at => erlang:system_time(second)},
-            St1 = St0#st{conns = (St0#st.conns)#{ConnPid => Conn}},
+            St1 = clear_retry_state(RelayUrl, St0#st{conns = (St0#st.conns)#{ConnPid => Conn}}),
             schedule_subscription_attempt(ConnPid, 0),
             {noreply, St1};
         false ->
@@ -208,10 +225,10 @@ handle_info({'DOWN', Ref, process, Worker, Reason}, St0) ->
                     false -> true
                 end
             end, St0#st.conns),
-            ?LOG_WARNING("nsecbunker relay worker down relay=~p reason=~p", [RelayUrl, Reason]),
+            ?LOG_DEBUG("nsecbunker relay worker down relay=~p reason=~p", [RelayUrl, Reason]),
             St1 = St0#st{conns = Conns, connectors = maps:remove(Worker, St0#st.connectors)},
-            schedule_reconnect(RelayUrl, St1),
-            {noreply, St1};
+            St2 = schedule_reconnect(RelayUrl, Reason, St1),
+            {noreply, St2};
         _ -> {noreply, St0}
     end;
 handle_info({'EXIT', _Worker, _Reason}, St) ->
@@ -275,10 +292,12 @@ handle_info({gun_error, ConnPid, StreamRef, Reason}, St0) ->
     handle_conn_down(ConnPid, {gun_error, StreamRef, Reason}, St0);
 handle_info({gun_error, ConnPid, Reason}, St0) ->
     handle_conn_down(ConnPid, {gun_error, Reason}, St0);
-handle_info({reconnect, RelayUrl}, St0 = #st{filter = undefined}) ->
+handle_info({reconnect, RelayUrl}, St00 = #st{filter = undefined}) ->
+    St0 = clear_retry_timer(RelayUrl, St00),
     ?LOG_DEBUG("nsecbunker relay reconnect ignored without active filter relay=~p", [RelayUrl]),
     {noreply, St0};
-handle_info({reconnect, RelayUrl}, St0 = #st{filter = Filter}) ->
+handle_info({reconnect, RelayUrl}, St00 = #st{filter = Filter}) ->
+    St0 = clear_retry_timer(RelayUrl, St00),
     Relay = find_relay(RelayUrl, St0#st.relays),
     case Relay of
         undefined ->
@@ -288,11 +307,7 @@ handle_info({reconnect, RelayUrl}, St0 = #st{filter = Filter}) ->
                 {ok, St1} ->
                     {noreply, St1};
                 {{error, Reason}, St1} ->
-                    ?LOG_WARNING("nsecbunker relay reconnect failed relay=~p reason=~p", [
-                        RelayUrl, Reason
-                    ]),
-                    schedule_reconnect(RelayUrl, St1),
-                    {noreply, St1}
+                    {noreply, schedule_reconnect(RelayUrl, Reason, St1)}
             end
     end;
 handle_info(Other, St) ->
@@ -319,8 +334,8 @@ subscribe_all(Relays, Filter, St0) ->
                 {ok, St1} ->
                     {[{RelayUrl, ok} | Acc], St1};
                 {{error, Reason}, St1} ->
-                    schedule_reconnect(RelayUrl, St1),
-                    {[{RelayUrl, {error, compact_error(Reason)}} | Acc], St1}
+                    St2 = schedule_reconnect(RelayUrl, Reason, St1),
+                    {[{RelayUrl, {error, compact_error(Reason)}} | Acc], St2}
             end
         end,
         {[], St0},
@@ -344,6 +359,7 @@ connect_and_subscribe(Relay, Filter, St0) ->
     end.
 
 connection_worker(Parent, Relay, Filter, Timeout) ->
+    logger:update_process_metadata(#{domain => [damage, nsecbunker, relay]}),
     %% Keep Gun ownership here: a short-lived opener would close the socket
     %% on exit or leave subsequent gun_ws messages in the wrong mailbox.
     case damage_nostr:open_relay_ws(Relay, #{connect_timeout => Timeout}) of
@@ -503,19 +519,132 @@ handle_relay_frame(_ConnPid, _Conn, SubId, RelayUrl, Msg, St0) ->
 handle_conn_down(ConnPid, Reason, St0) ->
     case maps:take(ConnPid, St0#st.conns) of
         {#{relay_url := RelayUrl} = Conn, Conns1} ->
-            ?LOG_WARNING("nsecbunker relay connection down relay=~p reason=~p", [RelayUrl, Reason]),
+            ?LOG_DEBUG("nsecbunker relay connection down relay=~p reason=~p", [RelayUrl, Reason]),
             safe_close_gun(ConnPid),
-            kill_worker(maps:get(owner, Conn, undefined)),
-            %% The owner's DOWN notification schedules the reconnect.
-            St1 = inc_stat(connection_downs, St0#st{conns = Conns1}),
-            {noreply, St1};
+            Owner = maps:get(owner, Conn, undefined),
+            kill_worker(Owner),
+            %% Remove the worker before its DOWN arrives so the original Gun/HTTP
+            %% reason below is what drives retry classification.
+            Connectors1 = maps:remove(Owner, St0#st.connectors),
+            St1 = inc_stat(
+                connection_downs,
+                St0#st{conns = Conns1, connectors = Connectors1}
+            ),
+            {noreply, schedule_reconnect(RelayUrl, Reason, St1)};
         error ->
             {noreply, St0}
     end.
 
-schedule_reconnect(RelayUrl, #st{reconnect_ms = Ms}) ->
-    erlang:send_after(Ms, self(), {reconnect, RelayUrl}),
-    ok.
+schedule_reconnect(RelayUrl, Reason, St0 = #st{retry_state = Retry0}) ->
+    Prev = maps:get(RelayUrl, Retry0, #{}),
+    case maps:get(timer, Prev, undefined) of
+        Timer when is_reference(Timer) ->
+            St0;
+        _ ->
+            case classify_relay_failure(Reason) of
+                permanent ->
+                    case maps:get(disabled, Prev, false) of
+                        true -> ok;
+                        false ->
+                            ?LOG_ERROR(
+                                "nsecbunker relay disabled after unrecoverable failure relay=~p reason=~p",
+                                [RelayUrl, compact_error(Reason)]
+                            )
+                    end,
+                    Retry = maps:put(
+                        RelayUrl,
+                        Prev#{disabled => true, timer => undefined, last_reason => compact_error(Reason)},
+                        Retry0
+                    ),
+                    St0#st{retry_state = Retry};
+                retryable ->
+                    Attempt = maps:get(attempt, Prev, 0) + 1,
+                    {Delay, LogLevel} = retry_delay(Attempt, St0),
+                    log_retry(LogLevel, RelayUrl, Attempt, Delay, Reason),
+                    Timer = erlang:send_after(Delay, self(), {reconnect, RelayUrl}),
+                    Retry = maps:put(
+                        RelayUrl,
+                        Prev#{
+                            attempt => Attempt,
+                            timer => Timer,
+                            disabled => false,
+                            last_reason => compact_error(Reason)
+                        },
+                        Retry0
+                    ),
+                    St0#st{retry_state = Retry}
+            end
+    end.
+
+retry_delay(Attempt, #st{
+    max_retries = MaxRetries,
+    circuit_open_ms = CircuitOpenMs
+}) when Attempt >= MaxRetries ->
+    {CircuitOpenMs, warning};
+retry_delay(Attempt, #st{reconnect_ms = Base, max_reconnect_ms = Max}) ->
+    Exponent = min(max(Attempt - 1, 0), 8),
+    Raw = min(Max, Base bsl Exponent),
+    JitterMax = max(1, Raw div 5),
+    Jitter = rand:uniform(JitterMax) - 1,
+    {min(Max, Raw + Jitter), debug}.
+
+log_retry(warning, RelayUrl, Attempt, Delay, Reason) ->
+    ?LOG_WARNING(
+        "nsecbunker relay circuit open relay=~p failures=~p cooldown_ms=~p reason=~p",
+        [RelayUrl, Attempt, Delay, compact_error(Reason)]
+    );
+log_retry(debug, RelayUrl, Attempt, Delay, Reason) ->
+    ?LOG_DEBUG(
+        "nsecbunker relay retry scheduled relay=~p attempt=~p delay_ms=~p reason=~p",
+        [RelayUrl, Attempt, Delay, compact_error(Reason)]
+    ).
+
+clear_retry_timer(RelayUrl, St0 = #st{retry_state = Retry0}) ->
+    case maps:get(RelayUrl, Retry0, undefined) of
+        undefined -> St0;
+        Prev ->
+            St0#st{retry_state = maps:put(RelayUrl, Prev#{timer => undefined}, Retry0)}
+    end.
+
+clear_retry_state(RelayUrl, St0 = #st{retry_state = Retry0}) ->
+    case maps:take(RelayUrl, Retry0) of
+        {Prev, Retry} ->
+            ?LOG_INFO(
+                "nsecbunker relay recovered relay=~p previous_failures=~p",
+                [RelayUrl, maps:get(attempt, Prev, 0)]
+            ),
+            St0#st{retry_state = Retry};
+        error ->
+            St0
+    end.
+
+classify_relay_failure({connect_failed, Reason}) -> classify_relay_failure(Reason);
+classify_relay_failure({connection_down, Reason}) -> classify_relay_failure(Reason);
+classify_relay_failure({await_up_failed, Reason}) -> classify_relay_failure(Reason);
+classify_relay_failure({await_up_exit, Reason}) -> classify_relay_failure(Reason);
+classify_relay_failure({gun_error, _StreamRef, Reason}) -> classify_relay_failure(Reason);
+classify_relay_failure({gun_error, Reason}) -> classify_relay_failure(Reason);
+classify_relay_failure({gun_down, _Protocol, Reason, _}) -> classify_relay_failure(Reason);
+classify_relay_failure({gun_down, _Protocol, Reason, _, _}) -> classify_relay_failure(Reason);
+classify_relay_failure(timeout) -> retryable;
+classify_relay_failure(normal) -> retryable;
+classify_relay_failure(killed) -> retryable;
+classify_relay_failure(closed) -> retryable;
+classify_relay_failure(econnrefused) -> retryable;
+classify_relay_failure(econnreset) -> retryable;
+classify_relay_failure(enetunreach) -> retryable;
+classify_relay_failure(ehostunreach) -> retryable;
+classify_relay_failure({websocket_upgrade_rejected, _, 429}) -> retryable;
+classify_relay_failure({websocket_upgrade_rejected, _, Status}) when Status >= 500 -> retryable;
+classify_relay_failure({upgrade_failed, Status, _}) when Status =:= 429 -> retryable;
+classify_relay_failure({upgrade_failed, Status, _}) when Status >= 500 -> retryable;
+classify_relay_failure({websocket_upgrade_rejected, _, Status}) when Status >= 400, Status < 500 -> permanent;
+classify_relay_failure({upgrade_failed, Status, _}) when Status >= 400, Status < 500 -> permanent;
+classify_relay_failure({invalid_ws_protocol, _}) -> permanent;
+classify_relay_failure({unsupported_scheme, _}) -> permanent;
+classify_relay_failure({bad_relay_url, _}) -> permanent;
+classify_relay_failure(_) -> retryable.
+
 
 %% IMPORTANT: do not call damage_nostr_relay_client:inbound_event/1 inline
 %% from this gen_server. That call may publish a response through this same
