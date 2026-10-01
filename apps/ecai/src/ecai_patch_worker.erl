@@ -21,7 +21,8 @@
     compact_patch_context/1,
     prompt_target_source/2,
     prompt_provenance/3,
-    patch_prompt/4
+    patch_prompt/4,
+    should_retry_invalid_patch/4
 ]).
 -endif.
 
@@ -143,33 +144,16 @@ handle_patch_proposal(
 ) ->
     RawPatch = proposal_patch_value(Proposal),
     case normalize_proposal_patch(RawPatch) of
-        {error, Reason} when Attempt < MaxAttempts ->
-            NextDiag =
-                invalid_patch_diagnostic(Reason, ProposalShape),
-            generate_attempt(
-                Attempt + 1, MaxAttempts, Fingerprint, Version,
-                Context, NextDiag, Opts);
         {error, Reason} ->
-            final_failure(
-                Fingerprint, Version, Context, Attempt,
-                {invalid_patch, Reason},
-                invalid_patch_failure_state(Reason, ProposalShape),
-                Opts);
+            invalid_patch_or_retry(
+                Reason, ProposalShape, Attempt, MaxAttempts,
+                Fingerprint, Version, Context, Opts);
         {ok, Patch} ->
             case ecai_patch_verifier:validate_patch(Patch) of
-                {error, Reason} when Attempt < MaxAttempts ->
-                    NextDiag =
-                        invalid_patch_diagnostic(Reason, ProposalShape),
-                    generate_attempt(
-                        Attempt + 1, MaxAttempts, Fingerprint, Version,
-                        Context, NextDiag, Opts);
                 {error, Reason} ->
-                    final_failure(
-                        Fingerprint, Version, Context, Attempt,
-                        {invalid_patch, Reason},
-                        invalid_patch_failure_state(
-                            Reason, ProposalShape),
-                        Opts);
+                    invalid_patch_or_retry(
+                        Reason, ProposalShape, Attempt, MaxAttempts,
+                        Fingerprint, Version, Context, Opts);
                 ok ->
                     case write_patch(
                              Fingerprint, Version, Patch, Opts) of
@@ -439,6 +423,52 @@ model_error_diagnostic(ModelError, ProposalShape, Opts) ->
             })
     end.
 
+invalid_patch_or_retry(
+    Reason, ProposalShape, Attempt, MaxAttempts,
+    Fingerprint, Version, Context, Opts
+) ->
+    case should_retry_invalid_patch(
+             Attempt, MaxAttempts, Reason, Opts) of
+        true ->
+            NextDiag = invalid_patch_diagnostic(Reason, ProposalShape),
+            generate_attempt(
+                Attempt + 1, MaxAttempts, Fingerprint, Version,
+                Context, NextDiag, Opts);
+        false ->
+            final_failure(
+                Fingerprint, Version, Context, Attempt,
+                {invalid_patch, Reason},
+                invalid_patch_failure_state(Reason, ProposalShape),
+                Opts)
+    end.
+
+should_retry_invalid_patch(Attempt, MaxAttempts, _Reason, _Opts)
+  when Attempt < MaxAttempts ->
+    true;
+should_retry_invalid_patch(Attempt, MaxAttempts, Reason, Opts) ->
+    structural_patch_error(Reason) andalso
+        Attempt < format_retry_limit(MaxAttempts, Opts).
+
+format_retry_limit(MaxAttempts, Opts) ->
+    Extra0 = maps:get(
+        format_extra_attempts,
+        Opts,
+        application:get_env(ecai, code_patch_format_extra_attempts, 1)),
+    Extra = case Extra0 of
+        N when is_integer(N), N >= 0 -> erlang:min(N, 2);
+        _ -> 1
+    end,
+    MaxAttempts + Extra.
+
+structural_patch_error(missing_git_diff_header) -> true;
+structural_patch_error(no_patch_paths) -> true;
+structural_patch_error({missing_patch_file_headers, _}) -> true;
+structural_patch_error({invalid_patch_index, _}) -> true;
+structural_patch_error({missing_patch_hunk, _}) -> true;
+structural_patch_error({invalid_patch_hunk_header, _}) -> true;
+structural_patch_error({patch_hunk_without_changes, _}) -> true;
+structural_patch_error(_) -> false.
+
 invalid_patch_diagnostic(Reason, ProposalShape) ->
     diagnostic_json(#{
         patch_validation_error => Reason,
@@ -446,6 +476,9 @@ invalid_patch_diagnostic(Reason, ProposalShape) ->
         expected_patch =>
             <<"Return ONLY JSON with keys summary, security_property, tests, patch. "
               "patch MUST be one JSON string containing a git unified diff whose first bytes are 'diff --git '. "
+              "Every diff section MUST include matching ---/+++ file headers, at least one syntactically valid @@ hunk header, and at least one +/- changed line. "
+              "If an index line is present, both object IDs MUST contain only hexadecimal characters. "
+              "Regenerate the complete diff from the supplied SOURCE; do not return a header-only diff. "
               "Do not return details/risks analysis objects, JSON Patch operations, prose, or markdown fences.">>
     }).
 

@@ -84,11 +84,137 @@ validate_patch(Patch0) when is_binary(Patch0) ->
                 true -> {error, binary_patches_not_allowed};
                 false ->
                     case binary:match(Patch, <<"diff --git ">>) of
-                        {0, _} -> validate_paths(patch_paths(Patch));
+                        {0, _} ->
+                            case validate_paths(patch_paths(Patch)) of
+                                ok -> validate_patch_structure(Patch);
+                                {error, _} = Error -> Error
+                            end;
                         _ -> {error, missing_git_diff_header}
                     end
             end
     end.
+
+validate_patch_structure(Patch) ->
+    Lines = binary:split(Patch, <<"\n">>, [global]),
+    case patch_diff_sections(Lines, [], []) of
+        [] -> {error, missing_git_diff_header};
+        Sections -> validate_diff_sections(Sections, 1)
+    end.
+
+patch_diff_sections([], [], Acc) ->
+    lists:reverse(Acc);
+patch_diff_sections([], Current, Acc) ->
+    lists:reverse([lists:reverse(Current) | Acc]);
+patch_diff_sections(
+    [Line = <<"diff --git ", _/binary>> | Rest], [], Acc
+) ->
+    patch_diff_sections(Rest, [Line], Acc);
+patch_diff_sections(
+    [Line = <<"diff --git ", _/binary>> | Rest], Current, Acc
+) ->
+    patch_diff_sections(
+        Rest,
+        [Line],
+        [lists:reverse(Current) | Acc]
+    );
+patch_diff_sections([Line | Rest], Current, Acc) ->
+    patch_diff_sections(Rest, [Line | Current], Acc).
+
+validate_diff_sections([], _Index) ->
+    ok;
+validate_diff_sections([Lines | Rest], Index) ->
+    case validate_diff_section(Lines, Index) of
+        ok -> validate_diff_sections(Rest, Index + 1);
+        {error, _} = Error -> Error
+    end.
+
+validate_diff_section(Lines, Index) ->
+    case has_file_header_pair(Lines) of
+        false ->
+            {error, {missing_patch_file_headers, Index}};
+        true ->
+            case validate_index_lines(Lines, Index) of
+                ok -> validate_hunks(Lines, Index);
+                {error, _} = Error -> Error
+            end
+    end.
+
+has_file_header_pair(Lines) ->
+    HasOld = lists:any(fun is_old_file_header/1, Lines),
+    HasNew = lists:any(fun is_new_file_header/1, Lines),
+    HasOld andalso HasNew.
+
+is_old_file_header(<<"--- a/", _/binary>>) -> true;
+is_old_file_header(<<"--- /dev/null", _/binary>>) -> true;
+is_old_file_header(_) -> false.
+
+is_new_file_header(<<"+++ b/", _/binary>>) -> true;
+is_new_file_header(<<"+++ /dev/null", _/binary>>) -> true;
+is_new_file_header(_) -> false.
+
+validate_index_lines(Lines, Index) ->
+    IndexLines = [Line || Line <- Lines, is_index_line(Line)],
+    case lists:all(fun valid_index_line/1, IndexLines) of
+        true -> ok;
+        false -> {error, {invalid_patch_index, Index}}
+    end.
+
+is_index_line(<<"index ", _/binary>>) -> true;
+is_index_line(_) -> false.
+
+valid_index_line(<<"index ", Rest/binary>>) ->
+    Token = hd(binary:split(Rest, <<" ">>, [])),
+    case binary:split(Token, <<"..">>, []) of
+        [Old, New] -> valid_hex_object_id(Old) andalso valid_hex_object_id(New);
+        _ -> false
+    end;
+valid_index_line(_) ->
+    true.
+
+valid_hex_object_id(Bin) when is_binary(Bin), byte_size(Bin) > 0 ->
+    lists:all(fun is_hex_char/1, binary_to_list(Bin));
+valid_hex_object_id(_) ->
+    false.
+
+is_hex_char(C) when C >= $0, C =< $9 -> true;
+is_hex_char(C) when C >= $a, C =< $f -> true;
+is_hex_char(C) when C >= $A, C =< $F -> true;
+is_hex_char(_) -> false.
+
+validate_hunks(Lines, Index) ->
+    HunkHeaders = [Line || Line <- Lines, is_hunk_header(Line)],
+    case HunkHeaders of
+        [] ->
+            {error, {missing_patch_hunk, Index}};
+        _ ->
+            case lists:all(fun valid_hunk_header/1, HunkHeaders) of
+                false ->
+                    {error, {invalid_patch_hunk_header, Index}};
+                true ->
+                    case lists:any(fun is_change_line/1, Lines) of
+                        true -> ok;
+                        false -> {error, {patch_hunk_without_changes, Index}}
+                    end
+            end
+    end.
+
+is_hunk_header(<<"@@ ", _/binary>>) -> true;
+is_hunk_header(_) -> false.
+
+valid_hunk_header(Line) ->
+    case re:run(
+             Line,
+             <<"^@@ -[0-9]+(,[0-9]+)? [+][0-9]+(,[0-9]+)? @@( .*)?$">>,
+             [{capture, none}]) of
+        match -> true;
+        nomatch -> false
+    end.
+
+is_change_line(<<"+++", _/binary>>) -> false;
+is_change_line(<<"---", _/binary>>) -> false;
+is_change_line(<<"+", _/binary>>) -> true;
+is_change_line(<<"-", _/binary>>) -> true;
+is_change_line(_) -> false.
 
 %% Canonicalize common model-output wrappers without changing diff semantics.
 %% The patch worker persists this normalized form, so verification and later
