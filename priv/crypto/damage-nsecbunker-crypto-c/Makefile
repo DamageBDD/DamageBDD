@@ -17,7 +17,7 @@ smoke: $(BIN)
 	printf '%s\n' '{"op":"health"}' | ./$(BIN)
 
 clean:
-	rm -f $(BIN) *.o /tmp/damage-nsecbunker-c-test.vault
+	rm -f $(BIN) *.o
 
 install: $(BIN)
 	install -m 0755 $(BIN) /opt/damage/bin/$(BIN)

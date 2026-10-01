@@ -231,11 +231,16 @@ safe_decode(Line0) ->
         {ok, Line} ->
             case ecai_chunker:validate_utf8(Line) of
                 ok ->
-                    try simdjson:decode(Line) of
+                    %% JSX is a declared ECAI dependency. The removed native
+                    %% decoder used to raise undef here, which the catch-all
+                    %% silently treated as malformed input for every record.
+                    try jsx:decode(Line, [return_maps, strict]) of
                         M when is_map(M) -> M;
                         _ -> skip
                     catch
-                        _:_ -> skip
+                        %% Invalid JSON is skippable; missing code and other
+                        %% operational failures must abort the load visibly.
+                        error:badarg -> skip
                     end;
                 {error, _Reason} ->
                     skip

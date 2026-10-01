@@ -64,7 +64,9 @@ malformed_and_invalid_utf8_lines_are_skipped_test() ->
             )
         ),
         Bytes = <<
-            "{not-json}\n",
+            "{not-json}\n"
+            "{\"name\":\"trailing comma\",}\n"
+            "{'name':'single quotes'}\n",
             16#C3,
             16#28,
             "\n",
@@ -79,6 +81,42 @@ malformed_and_invalid_utf8_lines_are_skipped_test() ->
             ?assertEqual(1, maps:get(docs, ecai_search:size(Ctx)))
         after
             ok = ecai_search:wipe(Ctx)
+        end
+    end).
+
+non_object_json_is_skipped_but_valid_records_are_loaded_test() ->
+    with_tmp(fun(Dir) ->
+        SourcePath = filename:join(Dir, "non-objects.jsonl"),
+        Valid = jsx:encode(normalized_record(
+            301, <<"Article">>, <<"Physics is indexed">>, <<"Q301">>, 1, 1)),
+        ok = file:write_file(SourcePath,
+            <<"[]\n42\nnull\n\"string\"\n", Valid/binary, "\n">>),
+        Ctx = ecai_search:new(),
+        try
+            ok = ecai_wikipedia_loader:load(SourcePath, loader_opts(Ctx, Dir)),
+            ?assertEqual(1, maps:get(docs, ecai_search:size(Ctx)))
+        after
+            ok = ecai_search:wipe(Ctx)
+        end
+    end).
+
+decoder_failure_is_not_silently_skipped_test() ->
+    with_tmp(fun(Dir) ->
+        SourcePath = filename:join(Dir, "decoder-failure.jsonl"),
+        ok = file:write_file(SourcePath, <<"{\"name\":\"Article\"}\n">>),
+        %% This is a dependency failure, NOT malformed JSON. It must not be
+        %% turned into a successful zero-document import.
+        ok = meck:new(jsx, []),
+        try
+            ok = meck:expect(jsx, decode, fun(_, [return_maps, strict]) ->
+                meck:exception(error, undef)
+            end),
+            ?assertError(undef, ecai_wikipedia_loader:load(
+                SourcePath, loader_opts(unused_before_decode, Dir))),
+            ?assertEqual(1, meck:num_calls(jsx, decode, 2)),
+            ?assert(meck:validate(jsx))
+        after
+            ok = meck:unload(jsx)
         end
     end).
 
