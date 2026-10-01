@@ -168,7 +168,9 @@ normalize_mnemonic(Input) ->
     catch _:_ -> reject(invalid_mnemonic) end,
     %% English-only. NFKD is applied before splitting; do not autocorrect words
     %% or silently append a checksum word to a mistyped recovery phrase.
-    case string:lexemes(Bin, " \t\r\n") of
+    %% CRLF is one grapheme cluster. Separate CR/LF entries alone do not split
+    %% Windows line endings; keep lone CR and LF valid separators as well.
+    case string:lexemes(Bin, [$\s, $\t, $\r, $\n, "\r\n"]) of
         [] -> reject(empty_mnemonic);
         Words -> iolist_to_binary(lists:join(<<" ">>, Words))
     end.

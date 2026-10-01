@@ -1,5 +1,10 @@
 -module(damage_ae).
 
+%% Explicit test visibility; the production API is unchanged.
+-ifdef(TEST).
+-export([safe_node_keypair/0]).
+-endif.
+
 -author("Steven Joseph <steven@stevenjoseph.in>").
 
 -copyright("Steven Joseph <steven@stevenjoseph.in>").

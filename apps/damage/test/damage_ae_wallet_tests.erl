@@ -12,6 +12,7 @@ wallet_test_() ->
       fun generated_wallets_are_distinct_and_restorable/0,
       fun generated_key_can_sign/0,
       fun accepts_documented_input_shapes/0,
+      fun accepts_crlf_word_separators/0,
       fun rejects_invalid_mnemonics/0,
       fun rejects_valid_but_unrelated_phrase/0,
       fun rejects_forged_signing_seed/0,
@@ -115,13 +116,31 @@ generated_key_can_sign() ->
 
 accepts_documented_input_shapes() ->
     M = zero_mnemonic(),
-    Expected = secrets:keypair_from_mnemonic(M),
+    Expected = damage_ae_wallet:from_mnemonic(M),
+    ?assert(is_map(Expected)),
     Words = binary:split(M, <<" ">>, [global]),
-    ?assertEqual(Expected, secrets:keypair_from_mnemonic(binary_to_list(M))),
-    ?assertEqual(Expected, secrets:keypair_from_mnemonic(Words)),
-    ?assertEqual(Expected, secrets:keypair_from_mnemonic([binary_to_list(W) || W <- Words])),
     Messy = iolist_to_binary([<<" \n\t">>, lists:join(<<"  \t">>, Words), <<"\r\n">>]),
-    ?assertEqual(Expected, secrets:keypair_from_mnemonic(Messy)).
+    Inputs = [M, binary_to_list(M), Words,
+              [binary_to_list(W) || W <- Words], Messy],
+    lists:foreach(fun(Input) ->
+        ?assertEqual(Expected, damage_ae_wallet:from_mnemonic(Input)),
+        ?assertEqual(Expected, secrets:keypair_from_mnemonic(Input))
+    end, Inputs).
+
+accepts_crlf_word_separators() ->
+    M = zero_mnemonic(),
+    Expected = damage_ae_wallet:from_mnemonic(M),
+    ?assert(is_map(Expected)),
+    Words = binary:split(M, <<" ">>, [global]),
+    lists:foreach(fun(Separator) ->
+        Input = iolist_to_binary([
+            <<"\r\n">>, lists:join(Separator, Words), <<"\r\n">>
+        ]),
+        ?assertEqual(Expected, damage_ae_wallet:from_mnemonic(Input)),
+        ?assertEqual(Expected, secrets:keypair_from_mnemonic(Input))
+    end, [<<" ">>, <<"\t">>, <<"\r">>, <<"\n">>, <<"\r\n">>, <<" \r\n\t">>]),
+    ?assertEqual({error, empty_mnemonic}, damage_ae_wallet:from_mnemonic(<<"\r\n \t\r\n">>)),
+    ?assertEqual({error, empty_mnemonic}, secrets:keypair_from_mnemonic(<<"\r\n \t\r\n">>)).
 
 rejects_invalid_mnemonics() ->
     ?assertEqual({error, empty_mnemonic}, secrets:keypair_from_mnemonic(<<" \t\n">>)),
@@ -131,8 +150,11 @@ rejects_invalid_mnemonics() ->
     Unknown = <<"notaword abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about">>,
     ?assertEqual({error, unknown_mnemonic_word}, secrets:keypair_from_mnemonic(Unknown)),
     lists:foreach(fun(Input) ->
+        ?assertEqual({error, invalid_mnemonic}, damage_ae_wallet:from_mnemonic(Input)),
         ?assertEqual({error, invalid_mnemonic}, secrets:keypair_from_mnemonic(Input))
-    end, [undefined, #{}, 42, <<255>>, [<<"abandon">>, invalid], binary:copy(<<"x">>, 513)]).
+    end, [undefined, #{}, 42, <<255>>, <<16#C3>>, [16#D800],
+          [<<"abandon">>, invalid], [<<"abandon">> | invalid],
+          [binary:copy(<<"x">>, 33)], binary:copy(<<"x">>, 513)]).
 
 rejects_valid_but_unrelated_phrase() ->
     [First, Second | _] = fixtures(),

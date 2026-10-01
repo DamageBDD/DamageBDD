@@ -25,6 +25,8 @@
 %% Focused test visibility. Production builds keep these helpers private.
 -ifdef(TEST).
 -export([
+    effective_context/2,
+    execute_bdd/4,
     normalize_execution_json_context/1,
     execution_context_from_request/2,
     stream_final_body/2
@@ -1035,11 +1037,14 @@ node_secrets_unavailable_response(Reason) ->
 %% preparation/proof fields are never accepted from the request body.
 -spec effective_context(map(), map()) -> map().
 effective_context(Context0, State0) ->
-    ClientContext = maps:without(internal_context_keys(), Context0),
+    SecretKeys = auth_transport_secret_keys(),
+    %% Remove reserved transport credentials from BOTH inputs. Removing them
+    %% only from authenticated State would leave client-supplied values behind.
+    ClientContext = maps:without(internal_context_keys() ++ SecretKeys, Context0),
 
     %% Authentication proves who the caller is, but bearer/session credentials
     %% are transport secrets and must never become BDD step/report context.
-    State = maps:without(auth_transport_secret_keys(), State0),
+    State = maps:without(SecretKeys, State0),
 
     Ctx1 = maps:merge(ClientContext, State),
     damage_context:prepare_run_context(Ctx1).

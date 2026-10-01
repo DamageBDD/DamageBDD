@@ -218,7 +218,7 @@ has_tag(Event, TagName) ->
     Tags = maps:get(tags, Event, []),
     lists:any(
         fun
-            ([TagName | _]) -> true;
+            ([Name | _]) -> Name =:= TagName;
             (_) -> false
         end,
         Tags

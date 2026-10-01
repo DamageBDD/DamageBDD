@@ -533,7 +533,10 @@ decrypt_cached_payload(Password, EncData) ->
 make_keypair() -> damage_ae_wallet:generate().
 
 -spec keypair_from_mnemonic(binary() | list()) -> map() | {error, atom()}.
-keypair_from_mnemonic(Mnemonic) -> damage_ae_wallet:from_mnemonic(Mnemonic).
+keypair_from_mnemonic(Mnemonic) ->
+    %% Preserve word-list boundaries and keep validation inside the wallet's
+    %% bounded, redacted error boundary. Do not flatten arbitrary chardata here.
+    damage_ae_wallet:from_mnemonic(Mnemonic).
 
 keypair(Path, NodePassword) ->
     case read_keypair(Path, NodePassword) of
@@ -748,22 +751,22 @@ decrypt(#{public_key := _AeAccount, private_key := PrivateKey}, Base64EncodedCip
     %% Account/reset tokens are externally supplied. Treat both base64 and ETF
     %% decoding as untrusted input and accept only the expected legacy envelope
     %% shape before attempting AES-GCM decryption.
-    try base64:decode(Base64EncodedCipherTuple) of
-        Term when is_binary(Term) ->
-            case binary_to_term(Term, [safe]) of
-                {IV, CipherText, Tag} = Envelope when
-                    is_binary(IV),
-                    byte_size(IV) =:= 16,
-                    is_binary(CipherText),
-                    is_binary(Tag),
-                    byte_size(Tag) =:= 16
-                ->
-                    decrypt_secret(Envelope, PrivateKey);
-                _ ->
-                    error
-            end;
-        _ ->
-            error
+    %% Keep decoding AND decryption inside the protected try expressions.
+    %% Exceptions in a try-of clause body bypass that try's catch section.
+    try
+        Term = base64:decode(Base64EncodedCipherTuple),
+        case binary_to_term(Term, [safe]) of
+            {IV, CipherText, Tag} = Envelope when
+                is_binary(IV),
+                byte_size(IV) =:= 16,
+                is_binary(CipherText),
+                is_binary(Tag),
+                byte_size(Tag) =:= 16
+            ->
+                decrypt_secret(Envelope, PrivateKey);
+            _ ->
+                error
+        end
     catch
         _:_ -> error
     end;

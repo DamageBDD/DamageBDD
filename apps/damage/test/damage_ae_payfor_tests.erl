@@ -1,6 +1,6 @@
 %% Staged PayingFor orchestration against the current TEST-only callback seams.
-%% No live node, signing operation, secrets lookup or process-dictionary backend
-%% injection is used. Actual builder/cryptography integration needs separate tests.
+%% No live node, transaction signing, real secrets lookup or backend injection
+%% is used. Disposable keypairs are coherent; builder integration is separate.
 -module(damage_ae_payfor_tests).
 -include_lib("eunit/include/eunit.hrl").
 -define(AE, damage_ae).
@@ -9,10 +9,7 @@
 -define(SECRET, <<"PAYFOR-SECRET-SENTINEL-NEVER-LOG-OR-RETURN">>).
 
 signing_keypair_normalizes_and_strips_fields_test() ->
-    PublicBytes = <<1:256>>,
-    Public = aeser_api_encoder:encode(account_pubkey, PublicBytes),
-    %% Shape fixture only; never used for cryptographic signing.
-    Private = <<0:256, PublicBytes/binary>>,
+    #{public_key := Public, private_key := Private} = test_keypair(),
     lists:foreach(fun(Address) ->
         Result = ?AE:tracked_keypair(#{public_key => Address, private_key => Private,
                                       mnemonic => ?SECRET}),
@@ -160,6 +157,45 @@ probe_lock(Account) ->
         true -> global:del_lock(Id, [node()]), true;
         false -> false
     end.
+
+%% Public deterministic test data only. Never fund this identity. Do not
+%% manufacture an unrelated NaCl public-key suffix merely to pass shape checks.
+test_keypair() ->
+    Seed = binary:copy(<<7>>, 32),
+    #{public := Public, secret := Private} = enacl:sign_seed_keypair(Seed),
+    #{public_key => aeser_api_encoder:encode(account_pubkey, Public),
+      private_key => Private}.
+
+safe_node_keypair_uses_current_lookup_and_strips_metadata_test() ->
+    KeyPair = test_keypair(),
+    Public = maps:get(public_key, KeyPair),
+    ok = meck:new(secrets, []),
+    try
+        ok = meck:expect(secrets, node_keypair, fun() ->
+            KeyPair#{public_key := binary_to_list(Public), mnemonic => ?SECRET}
+        end),
+        ?assertEqual({ok, KeyPair}, ?AE:safe_node_keypair()),
+        ?assertEqual(1, meck:num_calls(secrets, node_keypair, 0)),
+        ?assert(meck:validate(secrets))
+    after
+        ok = meck:unload(secrets)
+    end.
+
+safe_node_keypair_lookup_exceptions_are_redacted_test_() ->
+    [?_test(begin
+        ok = meck:new(secrets, []),
+        try
+            ok = meck:expect(secrets, node_keypair, fun() ->
+                meck:exception(Class, {private_key, ?SECRET})
+            end),
+            Reply = ?AE:safe_node_keypair(),
+            ?assertEqual({error, node_keypair_unavailable}, Reply),
+            assert_no_secret(Reply),
+            ?assert(meck:validate(secrets))
+        after
+            ok = meck:unload(secrets)
+        end
+    end) || Class <- [error, throw, exit]].
 
 raise_fixture(error) -> erlang:error({badmatch, ?SECRET});
 raise_fixture(throw) -> throw({secret_payload, ?SECRET});
