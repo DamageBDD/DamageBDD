@@ -20,7 +20,8 @@
     circular_distance/2
 ]).
 
--define(P, (1 bsl 255) - 19).
+%% Macros are token substitutions; protect the whole value in rem expressions.
+-define(P, ((1 bsl 255) - 19)).
 
 -type delta() :: #{
     dx := non_neg_integer(),
