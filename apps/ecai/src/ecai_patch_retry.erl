@@ -47,13 +47,31 @@ is_retryable(Reasons) when is_list(Reasons) ->
     lists:any(fun is_retryable/1, Reasons);
 is_retryable(Term) when is_tuple(Term), tuple_size(Term) > 1,
                         element(1, Term) =:= ollama_cluster_failed ->
-    lists:any(fun is_retryable/1, tl(tuple_to_list(Term)));
+    cluster_has_retryable(tl(tuple_to_list(Term)));
 is_retryable({inference_cluster_failed, _Role, Errors}) ->
-    is_retryable(Errors);
+    cluster_has_retryable(Errors);
 is_retryable(Term) when is_tuple(Term), tuple_size(Term) > 1,
                         element(1, Term) =:= inference_cluster_failed ->
-    lists:any(fun is_retryable/1, tl(tuple_to_list(Term)));
+    cluster_has_retryable(tl(tuple_to_list(Term)));
 is_retryable(_) -> false.
+
+%% Cluster entries may be tagged reasons or {NodeOrProvider, Reason} pairs.
+%% Classify the complete term first: {no_eligible_ollama_node, []}, for
+%% example, is retryable because of its tag, not because of its payload.
+%% After removing a node label, use the normal reason classifier. Do not
+%% recursively reinterpret error metadata as additional cluster entries.
+cluster_has_retryable(Terms) when is_list(Terms) ->
+    lists:any(fun cluster_has_retryable/1, Terms);
+cluster_has_retryable(Term) ->
+    case is_retryable(Term) of
+        true -> true;
+        false ->
+            case Term of
+                {Node, Reason} when is_atom(Node); is_binary(Node) ->
+                    is_retryable(Reason);
+                _ -> false
+            end
+    end.
 
 backoff_ms(RetryCount0, Opts) ->
     RetryCount = max(1, RetryCount0),
