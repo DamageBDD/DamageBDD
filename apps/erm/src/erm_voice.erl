@@ -81,6 +81,8 @@ handle_cast({transcript, Text, Phrases}, S) ->
     try erm_voice_boundary:feed(Text, Phrases, now_ms(), S#st.boundary, S#st.opts) of
         B -> {noreply, S#st{boundary = B}}
     catch _:_ -> {noreply, S#st{boundary = erm_voice_boundary:cancel(S#st.boundary)}} end;
+handle_cast(reset_boundary, S) ->
+    {noreply, S#st{boundary = erm_voice_boundary:new()}};
 handle_cast(reset, S) ->
     {noreply, (cancel_plan(S))#st{boundary = erm_voice_boundary:new()}};
 handle_cast(_, S) -> {noreply, S}.
@@ -149,6 +151,7 @@ clear_job(S = #st{job = #{pid := Pid, monitor := Mon, timer := Timer}}) ->
     S#st{job = undefined}.
 record_result(Result, S) ->
     logger:notice("voice command result: ~tp", [Result]),
+    erm_tts:notify(Result, S#st.last_command),
     S#st{last_result = Result, completed = S#st.completed + 1}.
 safe_command(Text0, Opts) ->
     try unicode:characters_to_binary(Text0) of

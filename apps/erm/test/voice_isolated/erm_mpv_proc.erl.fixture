@@ -1,0 +1,15 @@
+%% Test double. Loaded only by run.sh in an isolated Erlang VM.
+-module(erm_mpv_proc).
+-export([command/3]).
+command(F, Args, _) ->
+    Owner = persistent_term:get(voice_test_owner),
+    Owner ! {mpv, F, Args},
+    case {F, persistent_term:get(voice_test_mode, normal)} of
+        {status, blocked} -> receive release -> {ok, #{idle_active => true}} end;
+        {status, idle} -> {ok, #{idle_active => true}};
+        {status, unavailable} -> {error, unavailable};
+        {status, playing} -> {ok, #{idle_active => false, path => <<"/actual.flac">>}};
+        {status, _} -> {ok, #{idle_active => true}};
+        {load_list, _} -> [File] = Args, Owner ! {m3u, file:read_file(File)}, ok;
+        _ -> ok
+    end.

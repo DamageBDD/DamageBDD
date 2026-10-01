@@ -58,7 +58,7 @@ init([]) ->
             MediaSpecs = media_specs(),
             LegacySpecs = legacy_specs(),
             OptionalSpecs = [optional_services_child_spec()],
-            Children = MediaSpecs ++ whisper_child_specs() ++ LegacySpecs ++ OptionalSpecs,
+            Children = MediaSpecs ++ erm_tts:child_specs() ++ whisper_child_specs() ++ LegacySpecs ++ OptionalSpecs,
 
             ?LOG_DEBUG("erm core child specifications: ~p", [Children]),
             {ok, {SupFlags, Children}}

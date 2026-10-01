@@ -1,0 +1,55 @@
+-module(erm_voice_integration_tests).
+-include_lib("eunit/include/eunit.hrl").
+-include("erm_playlist.hrl").
+
+setup(Mode) ->
+    persistent_term:put(voice_test_owner, self()),
+    persistent_term:put(voice_test_mode, Mode).
+
+priority_stop_during_action_test() ->
+    setup(blocked),
+    {ok, Pid} = erm_voice:start_link(#{}),
+    try
+        ok = erm_voice:command("play"),
+        receive {mpv, status, []} -> ok after 1000 -> error(no_action_started) end,
+        ok = erm_voice:command("stop"),
+        receive {mpv, stop, []} -> ok after 1000 -> error(stop_blocked) end,
+        receive {mpv, play, []} -> error(cancelled_worker_resumed) after 50 -> ok end
+    after gen_server:stop(Pid) end.
+
+idle_does_not_report_selected_track_test() ->
+    setup(idle),
+    persistent_term:put(voice_test_tracks, [{0, #track{id = 1, path = "/old.flac"}}]),
+    ?assertEqual({error, nothing_playing},
+                 erm_voice_media:execute(#{action => now_playing}, #{})).
+
+unavailable_player_error_preserved_test() ->
+    setup(unavailable),
+    ?assertEqual({error, unavailable},
+                 erm_voice_media:execute(#{action => now_playing}, #{})).
+
+stale_playlist_path_rejected_test() ->
+    setup(playing),
+    persistent_term:put(voice_test_tracks, [{0, #track{id = 1, path = "/old.flac"}}]),
+    ?assertEqual({error, playback_not_in_playlist},
+                 erm_voice_media:execute(#{action => now_playing}, #{})).
+
+missing_later_track_skipped_test() ->
+    setup(normal),
+    Dir = os:getenv("VOICE_TEST_TMP"),
+    First = filename:join(Dir, "First.flac"),
+    Last = filename:join(Dir, "Last.flac"),
+    ok = file:write_file(First, <<>>), ok = file:write_file(Last, <<>>),
+    persistent_term:put(voice_test_tracks,
+        [{0, #track{id = 1, path = First}},
+         {1, #track{id = 2, path = filename:join(Dir, "missing.flac")}},
+         {2, #track{id = 3, path = Last}}]),
+    ?assertMatch({ok, #{playing := _}},
+                 erm_voice_media:execute(#{action => play_song, query => <<"First">>}, #{})),
+    receive
+        {m3u, {ok, Body}} ->
+            ?assertNotEqual(nomatch, binary:match(Body, <<"First.flac">>)),
+            ?assertNotEqual(nomatch, binary:match(Body, <<"Last.flac">>)),
+            ?assertEqual(nomatch, binary:match(Body, <<"missing.flac">>))
+    after 1000 -> error(no_playlist_loaded)
+    end.

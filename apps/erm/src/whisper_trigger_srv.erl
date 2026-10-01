@@ -306,9 +306,7 @@ handle_call(trigger_phrases, _From, State) ->
 handle_call({matches_trigger, Text0}, _From, State) ->
     Reply =
         try matching_phrase(Text0, State#state.trigger_phrases) of
-            Match -> 
-                logger:info("whisper trigger phrases matched ~p", [Match]),
-                Match
+            Match -> Match
         catch
             error:Reason -> {error, {invalid_text, Reason}}
         end,
@@ -404,10 +402,14 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info({Port, {data, Data}}, State0 = #state{port = Port, buffer = Buffer0}) ->
-    Buffer1 = <<Buffer0/binary, Data/binary>>,
-    {Records, Buffer2} = split_records(Buffer1),
-    State1 = lists:foldl(fun process_output_record/2, State0, Records),
-    {noreply, State1#state{buffer = Buffer2}};
+    case erm_tts:suppressed() of
+        true -> {noreply, State0#state{buffer = <<>>, recent_output = #{}}};
+        false ->
+            Buffer1 = <<Buffer0/binary, Data/binary>>,
+            {Records, Buffer2} = split_records(Buffer1),
+            State1 = lists:foldl(fun process_output_record/2, State0, Records),
+            {noreply, State1#state{buffer = Buffer2}}
+    end;
 handle_info({Port, {exit_status, Status}}, State = #state{port = Port}) ->
     _ = erm_voice:reset(),
     logger:error("whisper-stream exited with status ~p", [Status]),
@@ -1335,4 +1337,11 @@ phrase_normalization_test() ->
     ?assertEqual(nomatch,
                  matching_phrase([$b,$o,$b,16#0301], normalize_phrases(["bob"]))),
     ?assertEqual(nomatch, matching_phrase("bob", normalize_phrases([" "])) ).
+tts_suppression_test() ->
+    persistent_term:put({erm_tts,suppress_until},erlang:monotonic_time(millisecond)+1000),
+    try
+        S=#state{port=fake_port,buffer = <<"partial">>,recent_output=#{<<"old">>=>1}},
+        {noreply,N}=handle_info({fake_port,{data,<<"bob play\n">>}},S),
+        ?assertEqual(<<>>,N#state.buffer),?assertEqual(#{},N#state.recent_output)
+    after persistent_term:erase({erm_tts,suppress_until}) end.
 -endif.
