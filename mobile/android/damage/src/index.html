@@ -11,121 +11,367 @@
 <body>
   <div class="app-shell">
     <header class="topbar">
-      <div class="brand">
-        <div class="brand-mark" aria-hidden="true">D</div>
-        <div class="brand-copy">
-          <h1>DamageBDD</h1>
-          <p>Behaviour verification from your phone</p>
-        </div>
-      </div>
-      <span id="authPill" class="pill">Signed out</span>
+      <button class="brand brand-button" type="button" data-nav-target="home" aria-label="Open wallet overview">
+        <span class="brand-mark" aria-hidden="true">D</span>
+        <span class="brand-copy">
+          <span class="brand-title">DamageBDD</span>
+          <span class="brand-subtitle">Behaviour verification</span>
+        </span>
+      </button>
+
+      <button id="accountButton" class="account-chip" type="button" data-nav-target="wallet">
+        <span id="accountDot" class="account-dot" aria-hidden="true"></span>
+        <span id="authPill">Connect</span>
+      </button>
     </header>
 
-    <main class="content-stack">
-      <section class="card" aria-labelledby="nodeHeading">
-        <div class="card-header">
-          <div>
-            <h2 id="nodeHeading">Damage node</h2>
-            <p>Select the server used for authentication and execution.</p>
+    <main id="appMain" class="app-main">
+      <section id="view-home" class="app-view is-active" data-view="home" aria-labelledby="homeHeading">
+        <section class="hero-card">
+          <div class="hero-copy">
+            <span class="eyebrow">Wallet overview</span>
+            <h1 id="homeHeading">Your DamageBDD wallet</h1>
+            <p id="homeSubtitle">Connect an account or an AE wallet to see Lightning, AE, and DAMAGE balances.</p>
           </div>
-          <span id="nodePill" class="pill">Unchecked</span>
-        </div>
-        <div class="card-body form-grid">
-          <label class="field" for="serverUrl">
-            <span>Server URL</span>
-            <input id="serverUrl" type="url" inputmode="url" autocomplete="url"
-                   spellcheck="false" placeholder="https://run.dev.damagebdd.com">
-          </label>
-          <div class="button-row">
-            <button id="checkNodeButton" class="btn btn-secondary" type="button">Check node</button>
+          <div class="hero-actions">
+            <button id="primaryConnectButton" class="btn btn-primary" type="button" data-nav-target="wallet">Connect wallet</button>
+            <button id="refreshBalancesButton" class="btn btn-secondary" type="button" disabled>Refresh</button>
           </div>
-          <div id="nodeStatus" class="status" role="status" aria-live="polite" hidden></div>
-        </div>
+        </section>
+
+        <section class="balance-section" aria-labelledby="balanceHeading">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow">Available funds</span>
+              <h2 id="balanceHeading">Balances</h2>
+            </div>
+            <span id="balancePill" class="pill">Not connected</span>
+          </div>
+
+          <div class="balance-grid">
+            <article class="balance-card balance-lightning">
+              <div class="balance-card-head">
+                <span class="asset-icon" aria-hidden="true">⚡</span>
+                <div>
+                  <h3>Lightning</h3>
+                  <p>NWC ledger</p>
+                </div>
+              </div>
+              <div id="lightningBalance" class="balance-value">—</div>
+              <div id="lightningDetail" class="balance-detail">Connect to view</div>
+            </article>
+
+            <article class="balance-card balance-ae">
+              <div class="balance-card-head">
+                <span class="asset-icon asset-icon-letter" aria-hidden="true">Æ</span>
+                <div>
+                  <h3>AE</h3>
+                  <p>Aeternity</p>
+                </div>
+              </div>
+              <div id="aeBalance" class="balance-value">—</div>
+              <div id="aeDetail" class="balance-detail">Connect to view</div>
+            </article>
+
+            <article class="balance-card balance-damage">
+              <div class="balance-card-head">
+                <span class="asset-icon asset-icon-letter" aria-hidden="true">D</span>
+                <div>
+                  <h3>DAMAGE</h3>
+                  <p>Execution token</p>
+                </div>
+              </div>
+              <div id="damageBalance" class="balance-value">—</div>
+              <div id="damageDetail" class="balance-detail">Connect to view</div>
+            </article>
+          </div>
+
+          <p id="balanceUpdated" class="balance-updated" aria-live="polite">Balances have not been loaded.</p>
+          <div id="balanceStatus" class="status" role="status" aria-live="polite" hidden></div>
+        </section>
+
+        <section class="card quick-card" aria-labelledby="quickHeading">
+          <div class="card-header">
+            <div>
+              <h2 id="quickHeading">Quick actions</h2>
+              <p>Move directly to the task you need.</p>
+            </div>
+          </div>
+          <div class="card-body quick-actions">
+            <button class="quick-action" type="button" data-nav-target="run">
+              <span class="quick-icon" aria-hidden="true">▶</span>
+              <span>
+                <strong>Run a feature</strong>
+                <small>Execute Gherkin on the selected node</small>
+              </span>
+            </button>
+            <button class="quick-action" type="button" data-nav-target="wallet">
+              <span class="quick-icon" aria-hidden="true">↗</span>
+              <span>
+                <strong>Wallet &amp; NWC</strong>
+                <small>Connect, inspect sessions, or create a Lightning connection</small>
+              </span>
+            </button>
+          </div>
+        </section>
       </section>
 
-      <section class="card" aria-labelledby="authHeading">
-        <div class="card-header">
-          <div>
-            <h2 id="authHeading">Account</h2>
-            <p>Authenticate with the DamageBDD account API.</p>
+      <section id="view-run" class="app-view" data-view="run" aria-labelledby="featureHeading" hidden>
+        <section class="card">
+          <div class="card-header">
+            <div>
+              <span class="eyebrow">Execution</span>
+              <h2 id="featureHeading">Run a feature</h2>
+              <p>Submit one non-streaming Gherkin execution to the selected DamageBDD node.</p>
+            </div>
+            <span id="runPill" class="pill">Ready</span>
           </div>
-        </div>
-        <div class="card-body">
-          <form id="loginForm" class="form-grid">
-            <label class="field" for="username">
-              <span>Email / username</span>
-              <input id="username" name="username" type="email" inputmode="email"
-                     autocomplete="username" required>
+          <div class="card-body form-grid">
+            <label class="field" for="featureText">
+              <span>Gherkin</span>
+              <textarea id="featureText" class="feature-editor mono" rows="15"
+                        autocapitalize="off" autocomplete="off" spellcheck="false"></textarea>
             </label>
-            <label class="field" for="password">
-              <span>Password</span>
-              <input id="password" name="password" type="password"
-                     autocomplete="current-password" required>
+
+            <div class="form-row compact-row">
+              <label class="field" for="concurrency">
+                <span>Concurrency</span>
+                <input id="concurrency" type="number" min="1" max="1000" value="1">
+              </label>
+              <div class="field action-field">
+                <span>Template</span>
+                <button id="resetFeatureButton" class="btn btn-secondary" type="button">Reset sample</button>
+              </div>
+            </div>
+
+            <div class="button-row">
+              <button id="executeButton" class="btn btn-primary" type="button" disabled>Execute feature</button>
+              <button class="btn btn-ghost" type="button" data-nav-target="wallet">Account</button>
+            </div>
+            <p class="help">An authenticated account is required. The first mobile client uses non-streaming execution.</p>
+            <div id="runStatus" class="status" role="status" aria-live="polite" hidden></div>
+          </div>
+        </section>
+
+        <section id="resultCard" class="card" aria-labelledby="resultHeading" hidden>
+          <div class="card-header">
+            <div>
+              <h2 id="resultHeading">Run result</h2>
+              <p id="resultSummary">Latest response from the node.</p>
+            </div>
+            <a id="reportLink" class="btn btn-secondary" href="#" target="_blank" rel="noreferrer" hidden>Open report</a>
+          </div>
+          <div class="card-body result-stack">
+            <dl id="resultMeta" class="result-meta"></dl>
+            <pre id="resultOutput" class="output"></pre>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-wallet" class="app-view" data-view="wallet" aria-labelledby="walletHeading" hidden>
+        <section id="connectCard" class="card">
+          <div class="card-header">
+            <div>
+              <span class="eyebrow">Secure session</span>
+              <h2 id="walletHeading">Connect to DamageBDD</h2>
+              <p>Use your account credentials or prove ownership of an AE address with a signed message.</p>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="segmented" role="tablist" aria-label="Connection method">
+              <button id="emailTab" class="segment is-active" type="button" role="tab"
+                      aria-selected="true" aria-controls="emailConnectPanel" data-connect-method="email">Account</button>
+              <button id="walletTab" class="segment" type="button" role="tab"
+                      aria-selected="false" aria-controls="walletConnectPanel" data-connect-method="wallet">AE wallet</button>
+            </div>
+
+            <div id="emailConnectPanel" class="connect-panel" role="tabpanel" aria-labelledby="emailTab">
+              <form id="loginForm" class="form-grid">
+                <label class="field" for="username">
+                  <span>Email / username</span>
+                  <input id="username" name="username" type="email" inputmode="email"
+                         autocomplete="username" required>
+                </label>
+                <label class="field" for="password">
+                  <span>Password</span>
+                  <input id="password" name="password" type="password"
+                         autocomplete="current-password" required>
+                </label>
+                <div class="button-row">
+                  <button id="loginButton" class="btn btn-primary" type="submit">Connect account</button>
+                </div>
+              </form>
+            </div>
+
+            <div id="walletConnectPanel" class="connect-panel" role="tabpanel" aria-labelledby="walletTab" hidden>
+              <form id="walletConnectForm" class="form-grid">
+                <label class="field" for="walletAddress">
+                  <span>AE address</span>
+                  <input id="walletAddress" type="text" inputmode="text" autocomplete="off"
+                         autocapitalize="off" spellcheck="false" placeholder="ak_…" required>
+                </label>
+
+                <label class="field" for="walletChallenge">
+                  <span>Message to sign</span>
+                  <textarea id="walletChallenge" class="challenge mono" rows="7" readonly></textarea>
+                </label>
+                <div class="button-row">
+                  <button id="regenerateChallengeButton" class="btn btn-secondary" type="button">New message</button>
+                  <button id="copyChallengeButton" class="btn btn-secondary" type="button">Copy message</button>
+                </div>
+
+                <label class="field" for="walletSignature">
+                  <span>Wallet signature</span>
+                  <textarea id="walletSignature" class="mono" rows="4" autocomplete="off"
+                            autocapitalize="off" spellcheck="false"
+                            placeholder="Paste the signature returned by your wallet" required></textarea>
+                </label>
+                <div class="button-row">
+                  <button id="walletConnectButton" class="btn btn-primary" type="submit">Verify &amp; connect</button>
+                  <button id="pasteSignatureButton" class="btn btn-ghost" type="button">Paste signature</button>
+                </div>
+                <p class="help">Sign the exact message above. DamageBDD receives the public address, message, and signature—never your private key.</p>
+              </form>
+            </div>
+
+            <div id="authStatus" class="status" role="status" aria-live="polite" hidden></div>
+          </div>
+        </section>
+
+        <section id="sessionCard" class="card" hidden>
+          <div class="card-header">
+            <div>
+              <span class="eyebrow">Connected account</span>
+              <h2>Wallet session</h2>
+              <p id="sessionMethod">Authenticated with DamageBDD.</p>
+            </div>
+            <span id="walletSessionPill" class="pill" data-tone="success">Connected</span>
+          </div>
+          <div class="card-body session-stack">
+            <div class="address-panel">
+              <div>
+                <div class="field-label">AE account</div>
+                <div id="accountAddress" class="account-address mono"></div>
+              </div>
+              <button id="copyAddressButton" class="icon-button" type="button" aria-label="Copy account address">Copy</button>
+            </div>
+            <div class="button-row">
+              <button id="walletRefreshButton" class="btn btn-secondary" type="button">Refresh balances</button>
+              <button id="logoutButton" class="btn btn-danger" type="button">Disconnect</button>
+            </div>
+          </div>
+        </section>
+
+        <section id="nwcCard" class="card" hidden>
+          <div class="card-header">
+            <div>
+              <span class="eyebrow">Lightning</span>
+              <h2>NWC connections</h2>
+              <p>Create and inspect Nostr Wallet Connect sessions backed by your DamageBDD Lightning ledger.</p>
+            </div>
+            <button id="toggleNwcFormButton" class="btn btn-secondary" type="button">New connection</button>
+          </div>
+          <div class="card-body nwc-stack">
+            <form id="nwcForm" class="nwc-form form-grid" hidden>
+              <div class="form-row">
+                <label class="field" for="maxSingleSat">
+                  <span>Max per payment (sats)</span>
+                  <input id="maxSingleSat" type="number" min="1" step="1" value="10000">
+                </label>
+                <label class="field" for="maxTotalSat">
+                  <span>Total allowance (sats)</span>
+                  <input id="maxTotalSat" type="number" min="1" step="1" value="100000">
+                </label>
+              </div>
+              <label class="field" for="expiresHeight">
+                <span>Expiry block height</span>
+                <input id="expiresHeight" type="number" min="0" step="1" value="0">
+              </label>
+              <div class="button-row">
+                <button id="createNwcButton" class="btn btn-primary" type="submit">Create NWC connection</button>
+                <button id="cancelNwcButton" class="btn btn-ghost" type="button">Cancel</button>
+              </div>
+            </form>
+
+            <div id="nwcResult" class="nwc-result" hidden>
+              <div class="field-label">New connection URI</div>
+              <textarea id="nwcUri" class="mono" rows="5" readonly></textarea>
+              <div class="button-row">
+                <button id="copyNwcButton" class="btn btn-secondary" type="button">Copy URI</button>
+                <a id="openNwcButton" class="btn btn-primary" href="#">Open wallet app</a>
+              </div>
+              <p class="help">The URI contains a secret. It is kept only in this screen and is not written to persistent storage.</p>
+            </div>
+
+            <div class="section-heading compact-heading">
+              <div>
+                <h3>Active and previous sessions</h3>
+                <p id="nwcSummary">No session data loaded.</p>
+              </div>
+              <button id="refreshNwcButton" class="icon-button" type="button">Refresh</button>
+            </div>
+            <div id="nwcSessions" class="nwc-sessions"></div>
+            <div id="nwcStatus" class="status" role="status" aria-live="polite" hidden></div>
+          </div>
+        </section>
+      </section>
+
+      <section id="view-settings" class="app-view" data-view="settings" aria-labelledby="nodeHeading" hidden>
+        <section class="card">
+          <div class="card-header">
+            <div>
+              <span class="eyebrow">Network</span>
+              <h2 id="nodeHeading">DamageBDD node</h2>
+              <p>Select the server used for authentication, balances, wallet sessions, and execution.</p>
+            </div>
+            <span id="nodePill" class="pill">Unchecked</span>
+          </div>
+          <div class="card-body form-grid">
+            <label class="field" for="serverUrl">
+              <span>Server URL</span>
+              <input id="serverUrl" type="url" inputmode="url" autocomplete="url"
+                     spellcheck="false" placeholder="https://run.dev.damagebdd.com">
             </label>
             <div class="button-row">
-              <button id="loginButton" class="btn btn-primary" type="submit">Sign in</button>
+              <button id="checkNodeButton" class="btn btn-primary" type="button">Check node</button>
             </div>
-          </form>
+            <div id="nodeStatus" class="status" role="status" aria-live="polite" hidden></div>
+          </div>
+        </section>
 
-          <div id="sessionPanel" class="session-panel" hidden>
+        <section class="card">
+          <div class="card-header">
             <div>
-              <div class="field-label">Authenticated address</div>
-              <div id="accountAddress" class="account-address mono"></div>
-            </div>
-            <button id="logoutButton" class="btn btn-danger" type="button">Sign out</button>
-          </div>
-          <div id="authStatus" class="status" role="status" aria-live="polite" hidden></div>
-        </div>
-      </section>
-
-      <section class="card" aria-labelledby="featureHeading">
-        <div class="card-header">
-          <div>
-            <h2 id="featureHeading">Feature</h2>
-            <p>Run a Gherkin feature with a single non-streaming request.</p>
-          </div>
-          <span id="runPill" class="pill">Ready</span>
-        </div>
-        <div class="card-body form-grid">
-          <label class="field" for="featureText">
-            <span>Gherkin</span>
-            <textarea id="featureText" class="feature-editor mono" rows="15"
-                      autocapitalize="off" autocomplete="off" spellcheck="false"></textarea>
-          </label>
-
-          <div class="form-row compact-row">
-            <label class="field" for="concurrency">
-              <span>Concurrency</span>
-              <input id="concurrency" type="number" min="1" max="1000" value="1">
-            </label>
-            <div class="field action-field">
-              <span>Template</span>
-              <button id="resetFeatureButton" class="btn btn-secondary" type="button">Reset sample</button>
+              <span class="eyebrow">Security</span>
+              <h2>Session storage</h2>
+              <p>This development client keeps the bearer token only for the current WebView session.</p>
             </div>
           </div>
-
-          <div class="button-row">
-            <button id="executeButton" class="btn btn-primary" type="button" disabled>Execute feature</button>
+          <div class="card-body">
+            <p class="help">Passwords and wallet signatures are not stored. Before enabling long-lived sessions, move the access token behind Android Keystore through a native Capacitor plugin.</p>
           </div>
-          <p class="help">A signed-in account is required. Streaming is disabled in this first mobile shell.</p>
-          <div id="runStatus" class="status" role="status" aria-live="polite" hidden></div>
-        </div>
-      </section>
-
-      <section id="resultCard" class="card" aria-labelledby="resultHeading" hidden>
-        <div class="card-header">
-          <div>
-            <h2 id="resultHeading">Run result</h2>
-            <p id="resultSummary">Latest response from the node.</p>
-          </div>
-          <a id="reportLink" class="btn btn-secondary" href="#" target="_blank" rel="noreferrer" hidden>Open report</a>
-        </div>
-        <div class="card-body result-stack">
-          <dl id="resultMeta" class="result-meta"></dl>
-          <pre id="resultOutput" class="output"></pre>
-        </div>
+        </section>
       </section>
     </main>
+
+    <nav class="bottom-nav" aria-label="Primary navigation">
+      <button class="nav-item is-active" type="button" data-nav-target="home" aria-current="page">
+        <span class="nav-icon" aria-hidden="true">⌂</span>
+        <span>Home</span>
+      </button>
+      <button class="nav-item" type="button" data-nav-target="run">
+        <span class="nav-icon" aria-hidden="true">▶</span>
+        <span>Run</span>
+      </button>
+      <button class="nav-item" type="button" data-nav-target="wallet">
+        <span class="nav-icon" aria-hidden="true">▣</span>
+        <span>Wallet</span>
+      </button>
+      <button class="nav-item" type="button" data-nav-target="settings">
+        <span class="nav-icon" aria-hidden="true">⚙</span>
+        <span>Settings</span>
+      </button>
+    </nav>
   </div>
 
   <script type="module" src="./app.js"></script>
