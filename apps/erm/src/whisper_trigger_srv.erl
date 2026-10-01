@@ -285,6 +285,7 @@ handle_call(start_listening, _From, State0) ->
         {error, Reason} -> {reply, {error, Reason}, State0#state{last_error = Reason}}
     end;
 handle_call(stop_listening, _From, State = #state{port = Port}) when is_port(Port) ->
+    _ = erm_voice:reset(),
     State1 = close_stream(State),
     logger:info("whisper trigger listening stopped"),
     {reply, ok, State1};
@@ -317,6 +318,7 @@ handle_call({set_trigger_phrases, Phrases0}, _From, State) ->
         {ok, []} ->
             {reply, {error, no_trigger_phrases}, State};
         {ok, Phrases} ->
+            _ = erm_voice:reset(),
             Opts1 = maps:put(trigger_phrases, Phrases, State#state.opts),
             logger:info("whisper trigger phrases changed to ~p", [Phrases]),
             {reply, {ok, Phrases}, State#state{
@@ -407,6 +409,7 @@ handle_info({Port, {data, Data}}, State0 = #state{port = Port, buffer = Buffer0}
     State1 = lists:foldl(fun process_output_record/2, State0, Records),
     {noreply, State1#state{buffer = Buffer2}};
 handle_info({Port, {exit_status, Status}}, State = #state{port = Port}) ->
+    _ = erm_voice:reset(),
     logger:error("whisper-stream exited with status ~p", [Status]),
     Reason = {whisper_exit, Status},
     {noreply, State#state{
@@ -418,6 +421,7 @@ handle_info({Port, {exit_status, Status}}, State = #state{port = Port}) ->
         last_error = Reason
     }};
 handle_info({'EXIT', Port, Reason}, State = #state{port = Port}) ->
+    _ = erm_voice:reset(),
     logger:error("whisper-stream port exited: ~p", [Reason]),
     PortReason = {whisper_port_exit, Reason},
     {noreply, State#state{
@@ -432,6 +436,7 @@ handle_info(_Info, State) ->
     {noreply, State}.
 
 terminate(_Reason, State) ->
+    _ = erm_voice:reset(),
     _ = close_stream(State),
     ok.
 
@@ -462,7 +467,11 @@ configure_state(Opts, Bin, Model) ->
         maps:get(output_dedupe_ms, Opts, ?DEFAULT_OUTPUT_DEDUPE_MS)
     ),
     Capture = capture_option(maps:get(capture, Opts, -1)),
-    RuntimeOpts = maps:put(capture, Capture, Opts),
+    VoiceEnabled = case erm_voice:options(maps:get(voice, Opts, [])) of
+        {ok, VoiceOpts} -> maps:get(enabled, VoiceOpts, true);
+        {error, _} -> false
+    end,
+    RuntimeOpts = Opts#{capture => Capture, voice_enabled => VoiceEnabled},
     Host = normalize_text(maps:get(hostname, Opts, hostname())),
     Phrases0 = maps:get(trigger_phrases, Opts, [Host]),
     Phrases = normalize_phrases(Phrases0),
@@ -498,6 +507,7 @@ open_stream(
         trigger_phrases = Phrases
     }
 ) ->
+    _ = erm_voice:reset(),
     Bin = arg(Bin0),
     Model = arg(Model0),
     Args = stream_args(Opts, Model),
@@ -809,6 +819,9 @@ path(Value) ->
 
 process_output_record(Record0, State0) ->
     Record = string:trim(strip_ansi(unicode:characters_to_binary(Record0))),
+    %% Voice sees every redraw before logging dedupe, so stale rolling output
+    %% cannot look like silence and re-arm an already executed command.
+    _ = maybe_voice_record(Record, State0),
     case deduplicate_output_record(Record, State0) of
         {skip, State1} ->
             State1;
@@ -818,6 +831,13 @@ process_output_record(Record0, State0) ->
                 last_output = Record,
                 last_output_at_ms = erlang:system_time(millisecond)
             })
+    end.
+
+maybe_voice_record(_Record, #state{opts = #{voice_enabled := false}}) -> ok;
+maybe_voice_record(Record, #state{trigger_phrases = Phrases}) ->
+    case transcript_text(Record) of
+        {ok, Text} -> erm_voice:transcript(Text, Phrases);
+        ignore -> ok
     end.
 
 deduplicate_output_record(<<>>, State) ->
@@ -944,24 +964,14 @@ handle_transcript(
     end.
 
 matching_phrase(Text0, Phrases) ->
-    matching_normalized_phrase(normalize_text(Text0), Phrases).
-
-matching_normalized_phrase(_Text, []) ->
-    nomatch;
-matching_normalized_phrase(Text, [Phrase0 | Rest]) ->
-    Phrase = normalize_text(Phrase0),
-    case Phrase of
-        <<>> ->
-            matching_normalized_phrase(Text, Rest);
-        _ ->
-            %% Quote the normalized phrase so dots/hyphens are literal.
-            %% Unicode letters, marks, digits and underscores belong to words.
-            Pattern = <<"(?<![\\p{L}\\p{M}\\p{N}_])\\Q", Phrase/binary,
-                        "\\E(?![\\p{L}\\p{M}\\p{N}_])">>,
-            case re:run(Text, Pattern, [unicode, {capture, none}]) of
-                nomatch -> matching_normalized_phrase(Text, Rest);
-                _ -> {match, Phrase}
-            end
+    Ordered = lists:sort(fun(A, B) -> byte_size(A) > byte_size(B) end,
+                         normalize_phrases(Phrases)),
+    matching_addressed_phrase(Text0, Ordered).
+matching_addressed_phrase(_Text, []) -> nomatch;
+matching_addressed_phrase(Text, [Phrase | Rest]) ->
+    case erm_voice_boundary:wake(Text, [Phrase]) of
+        {wake, _Command} -> {match, Phrase};
+        nomatch -> matching_addressed_phrase(Text, Rest)
     end.
 
 debounce_elapsed(undefined, _Now, _DebounceMs) ->

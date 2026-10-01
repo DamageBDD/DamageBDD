@@ -58,7 +58,7 @@ init([]) ->
             MediaSpecs = media_specs(),
             LegacySpecs = legacy_specs(),
             OptionalSpecs = [optional_services_child_spec()],
-            Children = MediaSpecs ++ LegacySpecs ++ OptionalSpecs,
+            Children = MediaSpecs ++ whisper_child_specs() ++ LegacySpecs ++ OptionalSpecs,
 
             ?LOG_DEBUG("erm core child specifications: ~p", [Children]),
             {ok, {SupFlags, Children}}
@@ -522,7 +522,6 @@ init_wx() ->
     end.
 
 legacy_worker_specs() ->
-    WhisperSpecs = whisper_child_specs(),
     [
         #{
             id => hlwm_events,
@@ -548,8 +547,7 @@ legacy_worker_specs() ->
             type => worker,
             modules => [erm_dpms]
         }
-    ] ++
-        WhisperSpecs.
+    ].
 
 whisper_child_specs() ->
     case whisper_trigger_srv:configuration() of
@@ -572,7 +570,7 @@ whisper_child_specs(true, Opts) ->
     case whisper_trigger_srv:availability(Opts) of
         {ok, Runtime} ->
             ?LOG_INFO("Whisper trigger available: ~p", [Runtime]),
-            [
+            voice_child_specs(Opts) ++ [
                 #{
                     id => whisper_trigger_srv,
                     start => {whisper_trigger_srv, start_link, [Opts]},
@@ -589,6 +587,22 @@ whisper_child_specs(true, Opts) ->
 whisper_child_specs(Invalid, _Opts) ->
     ?LOG_WARNING("Ignoring invalid whisper_trigger enabled value: ~p", [Invalid]),
     [].
+%% Voice and Whisper have no wx dependency. Start the router first so the
+%% first stream record can never race its registered process.
+voice_child_specs(WhisperOpts) ->
+    case erm_voice:options(maps:get(voice, WhisperOpts, [])) of
+        {ok, VoiceOpts} ->
+            case maps:get(enabled, VoiceOpts, true) of
+                false -> [];
+                true -> [#{id => erm_voice, start => {erm_voice, start_link, [VoiceOpts]},
+                           restart => permanent, shutdown => 5000, type => worker,
+                           modules => [erm_voice]}]
+            end;
+        {error, Reason} ->
+            ?LOG_WARNING("Voice actions disabled: ~p", [Reason]),
+            []
+    end.
+
 pool_specs(Pools) when is_list(Pools) ->
     [pool_spec(Pool) || Pool <- Pools].
 
