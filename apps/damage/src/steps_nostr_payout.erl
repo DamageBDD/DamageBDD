@@ -1139,6 +1139,6 @@ deploy_contract(AeAccount) ->
             #{"contract_id" := ContractId} = damage_ae:contract_deploy(
                 contract_path(damage, "contracts/nostr_zap_registry.aes"), [AeAccount]
             ),
-            ?LOG_DEBUG("nostr_zap_registry ~p ~p", [Keypair, ContractId]),
+            ?LOG_DEBUG("nostr_zap_registry account=~p contract=~p", [AeAccount, ContractId]),
             account_registry:register_contract(Keypair, "nostr_zap_registry", ContractId)
     end.

@@ -1,0 +1,57 @@
+contract NostrZapRegistry =
+  record zap = { event_id : string,
+                 sats     : int,
+                 ts       : int }
+
+  record state =
+    { owner      : address,
+      limits     : map(string, int),               // npub -> max sats
+      spent      : map(string, int),               // npub -> total sats recorded
+      by_event   : map(string, map(string, int)),  // npub -> (event_id -> sats)
+      last_ts    : map(string, int)                // npub -> last zap timestamp
+    }
+
+  entrypoint init(owner' : address) =
+    { owner = owner',
+      limits = {},
+      spent = {},
+      by_event = {},
+      last_ts = {} }
+
+  function only_owner() =
+    require(Call.caller == state.owner, "ONLY_OWNER")
+
+  stateful entrypoint set_limit(npub : string, sats : int) =
+    only_owner()
+    require(sats >= 0, "BAD_LIMIT")
+    put(state{ limits[npub] = sats })
+
+  entrypoint get_limit(npub : string) : int =
+    Map.lookup_default(npub, state.limits, 0)
+
+  entrypoint get_spent(npub : string) : int =
+    Map.lookup_default(npub, state.spent, 0)
+
+  entrypoint get_event_spent(npub : string, event_id : string) : int =
+    let m = Map.lookup_default(npub, state.by_event, {})
+    Map.lookup_default(event_id, m, 0)
+
+  stateful entrypoint record_zap(npub : string, event_id : string, sats : int, ts : int) =
+    only_owner()
+    require(sats > 0, "BAD_SATS")
+
+    let limit = Map.lookup_default(npub, state.limits, 0)
+    let spent0 = Map.lookup_default(npub, state.spent, 0)
+
+    // If limit is 0, treat it as "no limit configured" and allow recording.
+    if(limit > 0) require(spent0 + sats =< limit, "LIMIT_EXCEEDED")
+
+    let evmap0 = Map.lookup_default(npub, state.by_event, {})
+    let evspent0 = Map.lookup_default(event_id, evmap0, 0)
+    let evmap1 = evmap0{ [event_id] = evspent0 + sats }
+
+    put(state{
+      spent[npub] = spent0 + sats,
+      by_event[npub] = evmap1,
+      last_ts[npub] = ts
+      })
