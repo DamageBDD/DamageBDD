@@ -64,7 +64,7 @@ patch
 config/sys.config
 config/sys.config.bak
 config/sys.config.dev
-config/sys.*.config
+#config/sys.*.config
 
 .gitconfig
 
@@ -243,4 +243,16 @@ packaging/mint/*/deb/
 packaging/mint/*/logs/
 packaging/slackware/out/
 packaging/ubuntu/*/deb/
-config/
+# Generated native compiler dependency files
+/apps/ecai/c_src/*.d
+/apps/erm/c_src/*.d
+/apps/erm/c_src/gtknode4/*.d
+/priv/crypto/damage-nsecbunker-crypto-c/src/*.d
+
+# Executables built from repository sources
+/apps/erm/c_src/gtknode4/gtknode4
+/apps/erm/priv/bin/gtknode4
+/priv/crypto/damage-nsecbunker-crypto-c/damage-nsecbunker-crypto-c
+
+# Blender automatic backup; retain the .blend source asset
+/apps/ecai/priv/blendomatic/*.blend1
