@@ -27,7 +27,15 @@
 -define(MAX_OUTPUT_BYTES, 300000).
 -define(MAX_SOURCE_BYTES, 65536).
 
-verify(PatchFile) -> verify(PatchFile, #{}).
+verify(A1) ->
+    ExistingResult = verify_without_ecai_capsule(A1),
+    ecai_repair_bridge:post_verify([A1], ExistingResult).
+
+verify(A1, A2) ->
+    ExistingResult = verify_without_ecai_capsule(A1, A2),
+    ecai_repair_bridge:post_verify([A1, A2], ExistingResult).
+
+verify_without_ecai_capsule(PatchFile) -> verify(PatchFile, #{}).
 
 cleanup_stale() -> cleanup_stale(#{}).
 
@@ -59,7 +67,7 @@ cleanup_stale(Opts) ->
             end
     end.
 
-verify(PatchFile0, Opts) when is_map(Opts) ->
+verify_without_ecai_capsule(PatchFile0, Opts) when is_map(Opts) ->
     PatchFile = filename:absname(path_to_list(PatchFile0)),
     Preapply = [filename:absname(path_to_list(P)) ||
                    P <- maps:get(preapply_patch_files, Opts, [])],

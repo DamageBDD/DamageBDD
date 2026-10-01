@@ -1197,7 +1197,11 @@ resume_inference_state(Repair, Opts)
 resume_inference_state(_Repair, Opts) ->
     Opts.
 
-attach_inference_state(Repair, Opts) when is_map(Repair), is_map(Opts) ->
+attach_inference_state(A1, A2) ->
+    [E1, E2] = ecai_repair_bridge:maybe_enrich_args(attach_inference_state, [A1, A2]),
+    attach_inference_state_without_ecai_capsule(E1, E2).
+
+attach_inference_state_without_ecai_capsule(Repair, Opts) when is_map(Repair), is_map(Opts) ->
     Repair1 = case maps:get(inference_meta, Opts, undefined) of
         Meta when is_map(Meta), map_size(Meta) > 0 ->
             Repair#{inference_meta => Meta};
