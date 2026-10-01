@@ -47,7 +47,7 @@ missing_preparation_fails_before_mint_test() ->
         Cid = <<"QmXsQVyTPVPgzHxinfiaj7Vzf9SrWVkkGNAHNfdm8RtJXS">>,
         ?assertEqual({error, installation_metadata_not_prepared},
             steps_release_nft:checked_mint_inputs(#{}, <<"v1.0">>,
-                <<"ubuntu-noble-amd64">>, <<>>, Cid, Cid))
+                <<"ubuntu-noble-amd64">>, <<>>, Cid, Cid, installation_policy))
     after
         lists:foreach(fun
             ({K, undefined}) -> application:unset_env(damage, K);

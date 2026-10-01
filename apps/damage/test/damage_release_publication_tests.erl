@@ -30,7 +30,7 @@ prepare(Fixture) ->
 
 check_final(Context, MetaCid) ->
     steps_release_nft:checked_mint_inputs(Context, <<"v1.4.2">>, platform(),
-        git_sha(), MetaCid, asset()).
+        git_sha(), MetaCid, asset(), installation_policy).
 
 prepare_and_verify_final_cid_test() ->
     with_kubo(fun(Fixture) ->
@@ -218,10 +218,10 @@ packaged_release_version_flows_into_context_test() ->
         ?assertEqual(Version, maps:get(packaged_release, Expected)),
         ok = kubo_put(Fixture, meta_cid(), jsx:encode(Prepared)),
         ?assertEqual(ok, steps_release_nft:checked_mint_inputs(Result,
-            Version, platform(), git_sha(), meta_cid(), asset())),
+            Version, platform(), git_sha(), meta_cid(), asset(), installation_policy)),
         ?assertEqual({error, {prepared_installation_metadata_invalid, release_version_mismatch}},
             steps_release_nft:checked_mint_inputs(Result, <<"install-opaque-cid">>,
-                platform(), git_sha(), meta_cid(), asset()))
+                platform(), git_sha(), meta_cid(), asset(), installation_policy))
     end).
 
 manifest_release_conflict_rejected_test() ->
@@ -268,7 +268,7 @@ changed_prepared_version(Change, MintVersion) ->
         ?assertEqual({error, prepared_installation_metadata_mismatch},
             steps_release_nft:checked_mint_inputs(
                 #{build_release_installation_expected => Expected}, MintVersion,
-                platform(), git_sha(), meta_cid(), asset())),
+                platform(), git_sha(), meta_cid(), asset(), installation_policy)),
         ?assertEqual(3, length(kubo_requests(Fixture))),
         ?assertEqual({<<"/ipfs/", (meta_cid())/binary>>, 1048577},
             lists:last(kubo_requests(Fixture)))

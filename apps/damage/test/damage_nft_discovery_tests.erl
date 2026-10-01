@@ -72,8 +72,8 @@ v2_wire_no_index_test() ->
 
 retry_content_mismatch_test() ->
     Expected = maps:remove(token_id, record_value()),
-    ?assert(steps_release_nft:existing_release_matches(record_value(), Expected)),
-    ?assertNot(steps_release_nft:existing_release_matches(
+    ?assertEqual([], steps_release_nft:existing_release_mismatches(record_value(), Expected)),
+    ?assertEqual([asset_cid], steps_release_nft:existing_release_mismatches(
         (record_value())#{asset_cid := <<"different">>}, Expected)).
 
 optional_announcement_failure_keeps_mint_test() ->

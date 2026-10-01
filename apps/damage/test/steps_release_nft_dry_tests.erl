@@ -32,9 +32,13 @@ mint_dry_run_variants_test_() ->
 retry_identity_test() ->
     Record = damage_release_test_support:release_record(),
     Expected = maps:remove(token_id, Record),
-    ?assert(steps_release_nft:existing_release_matches(Record, Expected)),
-    ?assertNot(steps_release_nft:existing_release_matches(
-        Record#{metadata_cid := <<"different">>}, Expected)).
+    ?assertEqual([], steps_release_nft:existing_release_mismatches(Record, Expected)),
+    lists:foreach(fun(Key) ->
+        ?assertEqual([Key], steps_release_nft:existing_release_mismatches(
+            Record#{Key := <<"different">>}, Expected)),
+        ?assertEqual([Key], steps_release_nft:existing_release_mismatches(
+            maps:remove(Key, Record), Expected))
+    end, [release, platform, git_sha, metadata_cid, asset_cid]).
 
 optional_announcement_failure_test() ->
     Mint = (damage_release_test_support:release_record())#{mint_status => minted,

@@ -26,7 +26,7 @@
     option_value/1, release_answer/6]).
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
--export([oracle_announcement_result/2, checked_mint_inputs/7]).
+-export([oracle_announcement_result/2, checked_mint_inputs/7, existing_release_mismatches/2]).
 -endif.
 -define(DEFAULT_QUERY_TTL, 100).
 -define(DEFAULT_RESPONSE_TTL, 50000).
@@ -1745,16 +1745,23 @@ sale_listing_is_replaceable_test() ->
         url => <<"https://example.test/ipfs/QmImage">>,
         sha256 => <<"0123456789abcdef">>
     },
+    Notification = default_release_notification(Mint,
+        #{<<"package_gateway">> => <<"https://example.test/ipfs">>}),
     Sale = #{damage_amount => 100.0, damage_text => <<"100">>},
     {30078, Content, Tags} =
-        release_nostr_payload(Mint, Image, Sale, none),
+        release_nostr_payload(Mint, Image, Sale, Notification),
     ?assertMatch({_, _}, binary:match(Content, <<"fresh spot-priced invoice">>)),
     ?assert(lists:member([<<"d">>, <<"build-release-nft:ct_test:42">>], Tags)),
     ?assertNot(lists:any(fun([<<"lightning">> | _]) -> true; (_) -> false end, Tags)),
+    ?assert(lists:member([<<"payment">>, <<"lightning">>], Tags)),
+    ?assert(lists:member([<<"price">>, <<"100">>, <<"DAMAGE">>], Tags)),
     Sold = Sale#{status => sold},
     {30078, SoldContent, SoldTags} =
-        release_nostr_payload(Mint, Image, none, Sold),
+        release_nostr_payload(Mint, Image, Sold, Notification),
     ?assertMatch({_, _}, binary:match(SoldContent, <<"Sold">>)),
+    %% Active and sold events must replace the same token's listing.
+    ?assert(lists:member([<<"d">>, <<"build-release-nft:ct_test:42">>], SoldTags)),
+    ?assert(lists:member([<<"price">>, <<"100">>, <<"DAMAGE">>], SoldTags)),
     ?assert(lists:member([<<"status">>, <<"sold">>], SoldTags)),
     ?assertNot(lists:member([<<"payment">>, <<"lightning">>], SoldTags)).
 
