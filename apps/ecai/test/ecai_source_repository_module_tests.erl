@@ -38,31 +38,47 @@ nested_module_source_is_resolved_test() ->
     ).
 
 with_repo(Fun) ->
-    N = integer_to_list(
-        erlang:unique_integer([positive, monotonic])),
-    Root = filename:join("/tmp", "ecai_source_modules_" ++ N),
-    Repo = filename:join(Root, "dev"),
-    StateRoot = filename:join(Root, "state"),
-    Src = filename:join([Repo, "apps", "ecai", "src"]),
-    Nested = filename:join(Src, "nested"),
-    ok = filelib:ensure_dir(filename:join(Nested, "dummy")),
-    ok = file:write_file(
-        filename:join(Src, "sample.erl"),
-        <<"-module(sample).\nvalue() -> one.\n">>
-    ),
-    ok = file:write_file(
-        filename:join(Nested, "nested_sample.erl"),
-        <<"-module(nested_sample).\nvalue() -> nested.\n">>
-    ),
-    ok = git(Repo, ["init", "-q"]),
-    ok = git(Repo, ["config", "user.email", "ecai@example.invalid"]),
-    ok = git(Repo, ["config", "user.name", "ECAI"]),
-    ok = git(Repo, ["add", "."]),
-    ok = git(Repo, ["commit", "-qm", "base"]),
+    Root = temp_root(),
     try
+        Repo = filename:join(Root, "dev"),
+        StateRoot = filename:join(Root, "state"),
+        Src = filename:join([Repo, "apps", "ecai", "src"]),
+        Nested = filename:join(Src, "nested"),
+        ok = filelib:ensure_dir(filename:join(Nested, "dummy")),
+        ok = file:write_file(filename:join(Src, "sample.erl"),
+            <<"-module(sample).\nvalue() -> one.\n">>),
+        ok = file:write_file(filename:join(Nested, "nested_sample.erl"),
+            <<"-module(nested_sample).\nvalue() -> nested.\n">>),
+        ok = git(Repo, ["init", "-q"]),
+        ok = git(Repo, ["config", "--local", "user.email", "ecai@example.invalid"]),
+        ok = git(Repo, ["config", "--local", "user.name", "ECAI"]),
+        ok = git(Repo, ["add", "."]),
+        %% Do not require a developer's signing key for a synthetic commit.
+        ok = git(Repo, ["commit", "--no-gpg-sign", "-qm", "base"]),
         Fun(Repo, StateRoot)
     after
-        _ = file:del_dir_r(Root)
+        ok = file:del_dir_r(Root)
+    end.
+
+%% A failed prior VM may leave directories behind. Never adopt one of them.
+temp_root() ->
+    {ok, _} = application:ensure_all_started(crypto),
+    Parent = case os:getenv("TMPDIR") of
+        false -> "/tmp";
+        "" -> "/tmp";
+        Value -> Value
+    end,
+    temp_root(filename:absname(Parent), 16).
+
+temp_root(_Parent, 0) ->
+    erlang:error(test_directory_collision_limit);
+temp_root(Parent, Attempts) ->
+    Suffix = binary_to_list(binary:encode_hex(crypto:strong_rand_bytes(16))),
+    Root = filename:join(Parent, "ecai_source_modules_" ++ Suffix),
+    case file:make_dir(Root) of
+        ok -> Root;
+        {error, eexist} -> temp_root(Parent, Attempts - 1);
+        {error, Reason} -> erlang:error({test_directory_failed, Root, Reason})
     end.
 
 git(Repo, Args) ->

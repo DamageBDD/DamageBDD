@@ -64,35 +64,43 @@ dirty_override_is_preserved_test() ->
     ).
 
 with_repo(Fun) ->
-    Repo = filename:join(
-        "/tmp",
-        "ecai_targeted_clean_" ++
-            integer_to_list(
-                erlang:unique_integer([positive, monotonic])
-            )
-    ),
-    Source = filename:join(
-        [Repo, "apps", "ecai", "src", "sample.erl"]
-    ),
-    ok = filelib:ensure_dir(Source),
-    ok = file:write_file(
-        Source,
-        <<"-module(sample).\nclean.\n">>
-    ),
-    ok = git(Repo, ["init", "-q"]),
-    ok = git(Repo, ["add", "."]),
-    ok = git(
-        Repo,
-        [
+    Repo = temp_root(),
+    try
+        Source = filename:join([Repo, "apps", "ecai", "src", "sample.erl"]),
+        ok = filelib:ensure_dir(Source),
+        ok = file:write_file(Source, <<"-module(sample).\nclean.\n">>),
+        ok = git(Repo, ["init", "-q"]),
+        ok = git(Repo, ["add", "."]),
+        %% Override inherited signing only for this disposable fixture commit.
+        ok = git(Repo, [
             "-c", "user.name=ECAI",
             "-c", "user.email=ecai@example.invalid",
-            "commit", "-qm", "base"
-        ]
-    ),
-    try
+            "commit", "--no-gpg-sign", "-qm", "base"
+        ]),
         Fun(Repo, Source)
     after
-        _ = os:cmd("rm -rf " ++ shell_quote(Repo))
+        ok = file:del_dir_r(Repo)
+    end.
+
+%% A failed prior VM may leave directories behind. Never adopt one of them.
+temp_root() ->
+    {ok, _} = application:ensure_all_started(crypto),
+    Parent = case os:getenv("TMPDIR") of
+        false -> "/tmp";
+        "" -> "/tmp";
+        Value -> Value
+    end,
+    temp_root(filename:absname(Parent), 16).
+
+temp_root(_Parent, 0) ->
+    erlang:error(test_directory_collision_limit);
+temp_root(Parent, Attempts) ->
+    Suffix = binary_to_list(binary:encode_hex(crypto:strong_rand_bytes(16))),
+    Root = filename:join(Parent, "ecai_targeted_clean_" ++ Suffix),
+    case file:make_dir(Root) of
+        ok -> Root;
+        {error, eexist} -> temp_root(Parent, Attempts - 1);
+        {error, Reason} -> erlang:error({test_directory_failed, Root, Reason})
     end.
 
 git(Repo, Args) ->

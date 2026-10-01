@@ -139,8 +139,20 @@ supervision_checks() ->
     {ok, Sup} = damage_ipfs_sup:start_link(Opts),
     unlink(Sup),
     try
-        %% Offline Kubo never prevents any of the seven children starting.
-        ?assertEqual(7, length(supervisor:which_children(Sup))),
+        %% Offline Kubo must not prevent the core IPFS workers from starting.
+        %% Additional supervised workers are allowed as the subsystem evolves.
+        Children = supervisor:which_children(Sup),
+        ChildIds = [Id || {Id, _Pid, _Type, _Modules} <- Children],
+        RequiredChildren = [
+            damage_ipfs_store,
+            damage_ipfs_client,
+            damage_ipfs_fetcher,
+            damage_ipfs_pinner,
+            damage_ipfs_reconciler,
+            damage_ipfs_health,
+            damage_ipfs_peers
+        ],
+        ?assertEqual([], RequiredChildren -- ChildIds),
         ?assertMatch({error, _}, damage_ipfs:cat(<<"FeatureCid">>)),
         ?assert(is_process_alive(Sup)),
         {ok, _} = damage_ipfs:pin_async(<<"PinA">>),
@@ -281,13 +293,100 @@ stop(P) ->
             end
     end.
 temp_dir() ->
-    Dir = filename:join(
-        "/tmp",
+    %% unique_integer/1 is only unique within one VM. Old directories survive
+    %% failed runs and must never be reused or deleted by a later test run.
+    {ok, _} = application:ensure_all_started(crypto),
+    Root = case os:getenv("TMPDIR") of
+        false -> "/tmp";
+        "" -> "/tmp";
+        Value -> Value
+    end,
+    temp_dir(filename:absname(Root), fun(_Attempt) ->
         "damage-ipfs-test-" ++
-            integer_to_list(erlang:unique_integer([positive, monotonic]))
-    ),
-    ok = file:make_dir(Dir),
-    Dir.
+            binary_to_list(binary:encode_hex(crypto:strong_rand_bytes(16)))
+    end, 16).
+
+%% Candidate injection is local to this test module, for deterministic tests
+%% of collisions. Only successful mkdir establishes ownership of a directory.
+temp_dir(Root, _NameFun, 0) ->
+    erlang:error({temp_dir_failed, Root, collision_limit});
+temp_dir(Root, NameFun, Attempts) when Attempts > 0 ->
+    Dir = filename:join(Root, NameFun(Attempts)),
+    case file:make_dir(Dir) of
+        ok -> Dir;
+        {error, eexist} -> temp_dir(Root, NameFun, Attempts - 1);
+        {error, Reason} -> erlang:error({temp_dir_failed, Dir, Reason})
+    end.
+
+%% Exercise the fixture itself without starting IPFS, Kubo, or DETS.
+temp_dir_is_fresh_test() ->
+    First = temp_dir(),
+    try
+        Second = temp_dir(),
+        try
+            ?assertNotEqual(First, Second),
+            ?assert(filelib:is_dir(First)),
+            ?assert(filelib:is_dir(Second))
+        after
+            _ = file:del_dir(Second)
+        end
+    after
+        _ = file:del_dir(First)
+    end.
+
+temp_dir_collision_preserves_existing_test() ->
+    lists:foreach(fun temp_dir_collision_check/1, [directory, file]).
+
+temp_dir_collision_check(Kind) ->
+    Root = temp_dir(),
+    Existing = filename:join(Root, "occupied"),
+    Fresh = filename:join(Root, "fresh"),
+    Marker = case Kind of
+        directory -> filename:join(Existing, "keep");
+        file -> Existing
+    end,
+    try
+        case Kind of
+            directory -> ok = file:make_dir(Existing);
+            file -> ok
+        end,
+        ok = file:write_file(Marker, <<"must not be touched">>),
+        NameFun = fun(2) -> "occupied"; (1) -> "fresh" end,
+        ?assertEqual(Fresh, temp_dir(Root, NameFun, 2)),
+        ?assert(filelib:is_dir(Fresh)),
+        ?assertEqual({ok, <<"must not be touched">>}, file:read_file(Marker))
+    after
+        %% Every path here was created inside this test's exclusive root.
+        _ = file:delete(Marker),
+        _ = file:del_dir(Existing),
+        _ = file:del_dir(Fresh),
+        _ = file:del_dir(Root)
+    end.
+
+temp_dir_collision_limit_test() ->
+    Root = temp_dir(),
+    Existing = filename:join(Root, "occupied"),
+    try
+        ok = file:make_dir(Existing),
+        ?assertError({temp_dir_failed, Root, collision_limit},
+            temp_dir(Root, fun(_) -> "occupied" end, 2)),
+        ?assert(filelib:is_dir(Existing))
+    after
+        _ = file:del_dir(Existing),
+        _ = file:del_dir(Root)
+    end.
+
+temp_dir_other_errors_are_not_retried_test() ->
+    Root = temp_dir(),
+    Missing = filename:join(Root, "missing-parent"),
+    Candidate = filename:join(Missing, "candidate"),
+    try
+        %% A second attempt would raise function_clause: enoent must surface.
+        ?assertError({temp_dir_failed, Candidate, enoent},
+            temp_dir(Missing, fun(2) -> "candidate" end, 2))
+    after
+        _ = file:del_dir(Root)
+    end.
 clean_dir(Dir) ->
     %% Explicit test-owned files only; never recursively delete caller paths.
     _ = file:delete(filename:join(Dir, "pin_intents.dets")),

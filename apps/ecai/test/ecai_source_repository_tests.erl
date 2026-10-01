@@ -108,8 +108,11 @@ with_repo(Fun) ->
         <<"-module(sample).\nvalue() -> one.\n">>
     ),
     ok = git(Repo, ["init", "-q"]),
-    ok = git(Repo, ["config", "user.email", "ecai@example.invalid"]),
-    ok = git(Repo, ["config", "user.name", "ECAI"]),
+    ok = git(Repo, ["config", "--local", "user.email", "ecai@example.invalid"]),
+    ok = git(Repo, ["config", "--local", "user.name", "ECAI"]),
+    %% Synthetic test repositories must not inherit workstation signing policy.
+    ok = git(Repo, ["config", "--local", "commit.gpgSign", "false"]),
+    ok = git(Repo, ["config", "--local", "tag.gpgSign", "false"]),
     ok = git(Repo, ["add", "."]),
     ok = git(Repo, ["commit", "-qm", "one"]),
     try
