@@ -78,8 +78,9 @@
 %%%
 %%% == Decoding Usage ==
 %%%
-%%% Only one function is available to decode bech32 string:
-%%% `decode/1'. Here few example.
+%%% `decode/1' uses the BIP-173/BIP-350 90-character limit.
+%%% `decode/2' also accepts an explicit length policy for extended formats.
+%%% Here are a few examples.
 %%%
 %%% ```
 %%% % decode a string as list()
@@ -710,12 +711,12 @@ encode_test() ->
 
 
 %%--------------------------------------------------------------------
-%% @doc`decode/1' function decodes bech32 encoded data.
+%% @doc `decode/1' decodes Bech32/Bech32m with the 90-character limit.
 %% @see decode/2
 %% @end
 %%--------------------------------------------------------------------
 -spec decode(Bech) -> Return when
-      Bech :: list(),
+      Bech :: list() | binary(),
       Return :: {ok, map()} | {error, Reason},
       Reason :: term().
 
@@ -724,6 +725,14 @@ decode(Bech) ->
 
 %%--------------------------------------------------------------------
 %% @doc `decode/2' function decodes bech32 encoded data.
+%%
+%% The default maximum encoded length is 90, as in BIP-173/BIP-350.
+%% Extended formats must opt in: pass `{max_length, infinity}' for BOLT-11
+%% invoices, or `{max_length, N}' for an application-specific positive limit.
+%% This changes only the overall length policy: HRP length (1..83), ASCII,
+%% case, separator, data alphabet and checksum checks still apply.
+%% No prefix automatically bypasses the default length check. The caller
+%% must still validate the protocol-specific HRP, payload and signature.
 %%
 %% == Examples ==
 %%
@@ -778,24 +787,46 @@ decode(Bech) ->
 %% @end
 %%--------------------------------------------------------------------
 -spec decode(Bech, Opts) -> Return when
-      Bech :: list(),
-      Opts :: [Option, ...],
-      Option :: {converter, Converter},
+      Bech :: list() | binary(),
+      Opts :: [Option],
+      Option :: {converter, Converter}
+              | {max_length, pos_integer() | infinity},
       Converter :: function() 
                  | {base, Base},
       Base :: pos_integer(),
       Return :: {ok, map()} | {error, Reason},
       Reason :: term().
 
-decode(Bech, Opts) 
-  when is_binary(Bech) ->
-    decode(binary_to_list(Bech), Opts);
-%decode(Bech, _Opts) 
-%  when length(Bech) > 90 ->
-%    {error, [{reason, "Overall max length exceeded"}]};
 decode(Bech, Opts) ->
-    State = #bech32{ origin = Bech },
-    decode_check1(Bech, State, Opts).
+    MaxLength = proplists:get_value(max_length, Opts, 90),
+    case decode_check_length(Bech, MaxLength) of
+        ok ->
+            %% Reject oversized binaries before allocating a character list.
+            String = case is_binary(Bech) of
+                         true -> binary_to_list(Bech);
+                         false -> Bech
+                     end,
+            State = #bech32{ origin = String },
+            decode_check1(String, State, Opts);
+        {error, _} = Error -> Error
+    end.
+
+%% @hidden
+%% An explicit extension relaxes only the total encoded-length limit.
+decode_check_length(_Bech, infinity) ->
+    ok;
+decode_check_length(Bech, MaxLength)
+  when is_integer(MaxLength), MaxLength > 0 ->
+    Size = case is_binary(Bech) of
+               true -> byte_size(Bech);
+               false -> length(Bech)
+           end,
+    case Size =< MaxLength of
+        true -> ok;
+        false -> {error, [{reason, "Overall max length exceeded"}]}
+    end;
+decode_check_length(_Bech, _MaxLength) ->
+    {error, [{reason, "Invalid max_length option"}]}.
 
 %%--------------------------------------------------------------------
 %% @hidden
@@ -838,6 +869,9 @@ decode_split(_Bech, [$1], _Data, _Position, _State, _Opts) ->
 decode_split(_Bech, [$1|_HRP], Data, _Position, _State, _Opts)
   when length(Data) < 6 ->
     {error, [{reason, "Too short checksum"}]};
+decode_split(_Bech, [$1|HRP], _Data, _Position, _State, _Opts)
+  when length(HRP) > 83 ->
+    {error, [{reason, "HRP max length exceeded"}]};
 decode_split(Bech, [$1|HRP], Data, _Position, State, Opts) ->
     FinalHRP = lists:reverse(HRP),
     NewState = State#bech32{ hrp = FinalHRP },
@@ -1109,8 +1143,11 @@ decode_test() ->
                  ,decode("16plkw9"))
     ,?assertEqual({error, [{reason, "Empty HRP"}]}
                  ,decode("1p2gdwpf"))
-    ,?assertEqual({error, [{reason, "Empty HRP"}]}
+    % This 256-character input has HRP "100u", not an empty HRP.
+    ,?assertEqual({error, [{reason, "Overall max length exceeded"}]}
                  ,decode("100u1pn05rmypp5s2xmyvajk7areg87lvnlmtpl0jy8d9hnhsq8gda4l5a775cq0y6qdqqcqzzsxqyz5vqsp500uqnhr2k5mshx6v9eehnlem438e3nk2rshy5gx3ga3l3chzf55s9qxpqysgq8znkrnsa7lh0phvxt20nknmeqzvdmx7pu465psf90jgh7rshrztsme7p8jf9eas8n368jmlrzz2dyl3mrvs6qp9q4nqud4v56r5df4qp4my6jf"))
+    ,?assertEqual({error, [{reason, "Invalid checksum"}]}
+                 ,decode("100u1pn05rmypp5s2xmyvajk7areg87lvnlmtpl0jy8d9hnhsq8gda4l5a775cq0y6qdqqcqzzsxqyz5vqsp500uqnhr2k5mshx6v9eehnlem438e3nk2rshy5gx3ga3l3chzf55s9qxpqysgq8znkrnsa7lh0phvxt20nknmeqzvdmx7pu465psf90jgh7rshrztsme7p8jf9eas8n368jmlrzz2dyl3mrvs6qp9q4nqud4v56r5df4qp4my6jf", [{max_length, infinity}]))
     ,?assertEqual({ok, #{ checksum => [4,18,23,26,14,26]
                         , data => [59,240,198,63,203,147,70,52,7,175,151,165,229,238,100,250,136,61,16,126,249,
                                    229,88,71,44,78,185,170,174,250,69,157,0]
@@ -1141,6 +1178,86 @@ decode_test() ->
                  ,bech32:decode("npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6"
                                ,[{converter,  fun(X) -> a/X end}]))
     ].
+
+%% @hidden
+%% Exercise the same boundary for both checksums and both input types.
+decode_length_boundary_test() ->
+    lists:foreach(fun(Format) ->
+        {ok, At90} = encode("a", lists:duplicate(82, 0), [{format, Format}]),
+        {ok, At91} = encode("a", lists:duplicate(83, 0), [{format, Format}]),
+        ?assertEqual(90, length(At90)),
+        ?assertEqual(91, length(At91)),
+        lists:foreach(fun(Input) ->
+            ?assertMatch({ok, #{format := Format}}, decode(Input))
+        end, [At90, list_to_binary(At90)]),
+        lists:foreach(fun(Input) ->
+            ?assertEqual({error, [{reason, "Overall max length exceeded"}]},
+                         decode(Input)),
+            ?assertEqual({error, [{reason, "Overall max length exceeded"}]},
+                         decode(Input, [{max_length, 90}])),
+            ?assertMatch({ok, #{format := Format}},
+                         decode(Input, [{max_length, 91}])),
+            ?assertMatch({ok, #{format := Format}},
+                         decode(Input, [{max_length, infinity}]))
+        end, [At91, list_to_binary(At91)])
+    end, [bech32, bech32m]).
+
+%% @hidden
+%% Published BOLT-11 "cup of coffee, within one minute" encoding vector.
+%% This test checks the Bech32 container, not invoice signature validation.
+%% https://github.com/lightning/bolts/blob/master/11-payment-encoding.md
+decode_bolt11_container_test() ->
+    Invoice = "lnbc2500u1pvjluezsp5zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zyg3zygspp5qqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqqqsyqcyq5rqwzqfqypqdq5xysxxatsyp3k7enxv4jsxqzpu9qrsgquk0rl77nj30yxdy8j9vdx85fkpmdla2087ne0xh8nhedh8w27kyke0lp53ut353s06fv3qfegext0eh0ymjpf39tuven09sam30g4vgpfna3rh",
+    ?assert(length(Invoice) > 90),
+    ?assertEqual({error, [{reason, "Overall max length exceeded"}]},
+                 decode(Invoice)),
+    Extended = [{max_length, infinity}],
+    {ok, Decoded} = decode(Invoice, Extended),
+    ?assertMatch(#{format := bech32, hrp := "lnbc2500u"}, Decoded),
+    ?assertEqual({ok, Decoded}, decode(list_to_binary(Invoice), Extended)),
+    ?assertMatch({ok, #{format := bech32, hrp := "lnbc2500u"}},
+                 decode(string:uppercase(Invoice), Extended)).
+
+%% @hidden
+%% Lifting the total-length limit must not bypass the other validations.
+decode_extended_validation_test() ->
+    Extended = [{max_length, infinity}],
+    lists:foreach(fun(Format) ->
+        Data = lists:duplicate(160, 0),
+        {ok, Encoded} = encode("test", Data, [{format, Format}]),
+        {ok, Decoded} = decode(Encoded, Extended),
+        ?assertEqual(Data, maps:get(data, Decoded)),
+        ?assertEqual(Format, maps:get(format, Decoded)),
+        %% Verify converter options still compose with the length option.
+        ?assertMatch({ok, #{data := _}},
+                     decode(Encoded, [{converter, {base, 8}} | Extended])),
+        {ok, Converted} = decode(Encoded, [{converter, {base, 8}} | Extended]),
+        ?assertEqual(lists:duplicate(100, 0), maps:get(data, Converted)),
+        Prefix = lists:sublist(Encoded, length(Encoded) - 1),
+        Replacement = case lists:last(Encoded) of $q -> $p; _ -> $q end,
+        ?assertEqual({error, [{reason, "Invalid checksum"}]},
+                     decode(Prefix ++ [Replacement], Extended)),
+        ?assertMatch({error, [{reason, "wrong case"} | _]},
+                     decode("T" ++ tl(Encoded), Extended)),
+        ?assertMatch({error, [{reason, "Invalid data character"} | _]},
+                     decode(Prefix ++ "b", Extended)),
+        {ok, EmptyHRP} = encode("", Data, [{format, Format}]),
+        ?assertEqual({error, [{reason, "Empty HRP"}]},
+                     decode(EmptyHRP, Extended)),
+        {ok, LongHRP} = encode(lists:duplicate(84, $a), [], [{format, Format}]),
+        ?assertEqual({error, [{reason, "HRP max length exceeded"}]},
+                     decode(LongHRP, Extended))
+    end, [bech32, bech32m]).
+
+%% @hidden
+decode_invalid_max_length_test() ->
+    lists:foreach(fun(MaxLength) ->
+        ?assertEqual({error, [{reason, "Invalid max_length option"}]},
+                     decode("a12uel5l", [{max_length, MaxLength}]))
+    end, [0, -1, 90.0, true, false, undefined, "90"]),
+    ?assertEqual({error, [{reason, "Overall max length exceeded"}]},
+                 decode("a12uel5l", [{max_length, 7}])),
+    ?assertMatch({ok, _}, decode("a12uel5l", [{max_length, 8}])).
 
 %%--------------------------------------------------------------------
 %% @hidden
