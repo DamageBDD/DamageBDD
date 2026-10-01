@@ -200,17 +200,19 @@ start_phase(register_node, _StartType, []) ->
             ?LOG_ERROR("Could not start Erlang distribution: ~p", [Reason]),
             {error, Reason}
     end;
-start_phase(start_sync, _StartType, []) ->
-    ?LOG_INFO("Starting sync."),
-    case init:get_plain_arguments() of
-        [_, "shell" | _] ->
-            ?LOG_INFO("Sourc sync enabled.", []),
-            sync:go();
-        Cause ->
-            ?LOG_INFO("Sourc sync disabled. ~p", [Cause]),
-            ok
+%% Keep the existing phase name until damage.app.src is migrated as well.
+%% No Sync dependency or Sync code is used by either phase.
+start_phase(start_sync, StartType, []) ->
+    start_phase(start_code_reload, StartType, []);
+start_phase(start_code_reload, _StartType, []) ->
+    case damage_reload:start() of
+        {ok, disabled} ->
+            ?LOG_INFO("Node-local code reload disabled.");
+        {ok, Pid} ->
+            ?LOG_INFO("Node-local code reload coordinator started: ~p", [Pid]);
+        {error, Reason} ->
+            ?LOG_WARNING("Code reload not started: ~p (node startup continues)", [Reason])
     end,
-    ?LOG_INFO("Sync Ready."),
     ok;
 start_phase(init_chain, _StartType, []) ->
     _ = maybe_bootstrap_node_registry(),
