@@ -1,0 +1,42 @@
+-module(erm_tts_chunk_tests).
+-include_lib("eunit/include/eunit.hrl").
+final_audio_test_()->
+    [{Name,fun()->audio(Name,PCM) end}||{Name,PCM}<-[
+        {"single_done",first()},
+        {"multi_done",<<(first())/binary,(second())/binary>>},
+        {"single_old",first()},
+        {"multi_old",<<(first())/binary,(second())/binary>>},
+        {"single_ok_last",first()}]].
+rejected_audio_test_()->
+    [{Name,fun()->rejected(Name,Error) end}||{Name,Error}<-[
+        {"empty",<<"empty_audio">>},{"null_samples",<<"invalid_audio">>},
+        {"invalid_rate",<<"invalid_audio">>},{"error_after_first",<<"synthesis_failed">>}]].
+first()-><<0:16/little-signed,16383:16/little-signed,-16383:16/little-signed,32767:16/little-signed,-32767:16/little-signed>>.
+second()-><<8191:16/little-signed,-8191:16/little-signed>>.
+audio(Text,Expected)->
+    with_port(fun(P,Capture)->
+        ?assertEqual(<<"D">>,speak(P,Text)),
+        {ok,Wav}=file:read_file(Capture),
+        <<"RIFF",_:32/little,"WAVEfmt ",_:8/binary,Rate:32/little,_:8/binary,"data",Size:32/little,PCM/binary>>=Wav,
+        ?assertEqual(22050,Rate),?assertEqual(byte_size(Expected),Size),?assertEqual(Expected,PCM),
+        %% Repeat on the same synthesizer to catch state carried between requests.
+        ?assertEqual(<<"D">>,speak(P,Text)),?assertEqual({ok,Wav},file:read_file(Capture))
+    end).
+rejected(Text,Error)->with_port(fun(P,Capture)->
+    ?assertEqual(<<"E",Error/binary>>,speak(P,Text)),
+    ?assertEqual({error,enoent},file:read_file(Capture))
+end).
+with_port(F)->
+    D=os:getenv("ERM_TTS_TEST_DIR"),Capture=os:getenv("ERM_TTS_CAPTURE_WAV"),file:delete(Capture),
+    P=open_port({spawn_executable,D++"/port"},[binary,{packet,4},use_stdio,exit_status,
+        {args,[D++"/model",D++"/config",D,D++"/player"]}]),
+    try receive {P,{data,<<"R">>}}->F(P,Capture) after 2000->error(start_timeout) end
+    after try port_close(P) catch _:_ ->ok end end.
+speak(P,Text)->true=port_command(P,<<"S",(list_to_binary(Text))/binary>>),
+    receive {P,{data,B}}->B;{P,{exit_status,N}}->error({native_exit,N}) after 2000->error(speech_timeout) end.
+
+volume_protocol_test_()->
+    [{binary_to_list(B),fun()->with_port(fun(P,_)->
+        true=port_command(P,B),
+        receive {P,{exit_status,N}}->?assertEqual(2,N) after 2000->error(invalid_packet_accepted) end
+    end) end}||B<-[<<"V201\nhello">>,<<"V-1\nhello">>,<<"V1x\nhello">>,<<"V100">>,<<"V100\n">>]].

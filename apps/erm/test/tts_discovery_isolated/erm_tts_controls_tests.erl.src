@@ -1,0 +1,140 @@
+-module(erm_tts_controls_tests).
+-include_lib("eunit/include/eunit.hrl").
+parse_test_()->
+    [{Text,fun()->?assertEqual({ok,#{action=>tts,control=>C}},erm_voice_intent:parse(Text)) end}
+     ||{Text,C}<-[{"repeat louder",{repeat,louder}},{"say that again",repeat},
+        {"repeat quieter",{repeat,quieter}},{"speak louder",louder},{"speak quieter",quieter},
+        {"set voice volume to 120 percent",{volume,120}},{"speech volume 0",{volume,0}},
+        {"be sassy",{personality,playful}},{"be plain",{personality,plain}},
+        {"change voice to Amy",{voice,<<"amy">>}},{"reload voice",reload}]].
+media_and_invalid_test()->
+    ?assertEqual({ok,#{action=>volume,value=>50}},erm_voice_intent:parse("volume 50")),
+    ?assertEqual({error,tts_volume_out_of_range},erm_voice_intent:parse("voice volume 201")),
+    ?assertEqual({error,invalid_tts_volume},erm_voice_intent:parse("voice volume -10")),
+    ?assertEqual({error,negated_command},erm_voice_intent:parse("don't repeat louder")),
+    ?assertEqual(unknown,erm_voice_intent:parse("repeat louder and stop music")).
+personality_test()->
+    ?assertEqual("Stopped.",erm_tts:response(ok,"stop")),
+    ?assertEqual("Stopped. Peace at last.",erm_tts:response(ok,"stop",playful)),
+    ?assertEqual("That didn't work. Rude.",erm_tts:response({error,failed},"stop",playful)),
+    ?assertEqual(undefined,erm_tts:response({ok,#{tts=>{repeat,louder}}},"repeat louder",playful)),
+    ?assertEqual(undefined,erm_tts:response({error,busy},"stop",playful)),
+    ?assertEqual(<<"Exact facts.">>,erm_tts:response({ok,#{action=>answer,text=><<"Exact facts.">>}},"ask",playful)).
+replay_whole_response_test_()->{timeout,10,fun()->with_tts(fun(_)->
+    ?assertEqual({error,nothing_to_repeat},erm_tts:repeat(louder)),?assertEqual(100,volume()),
+    Text=lists:flatten(lists:duplicate(70,"hello ")),{ok,Parts}=erm_tts:chunks(Text),
+    ?assert(length(Parts)>1),ok=erm_tts:say(Text),
+    ?assertEqual({error,busy},erm_tts:repeat(louder)),?assertEqual(100,volume()),
+    %% A volume adjustment does not split one response across different gains.
+    ok=erm_tts:set_volume(120),idle(),assert_gain(100),
+    ok=erm_tts:repeat(louder),idle(),assert_gain(130),
+    ?assertEqual(Parts++Parts,spoken()),
+    ok=erm_tts:set_volume(150),ok=erm_tts:louder(),?assertEqual(150,volume()),
+    ?assertEqual({error,tts_volume_out_of_range},erm_tts:set_volume(151)),
+    ?assertEqual({error,tts_volume_out_of_range},erm_tts:set_volume(-1)),
+    ?assertEqual({error,tts_volume_out_of_range},erm_tts:set_volume(1.5)),
+    ?assertEqual({error,invalid_repeat_direction},erm_tts:repeat(anything)),
+    ok=erm_tts:set_volume(0),ok=erm_tts:quieter(),?assertEqual(0,volume()),
+    ok=erm_tts:set_volume(100),ok=erm_tts:repeat(quieter),idle(),assert_gain(90)
+end) end}.
+failed_speech_keeps_replay_test_()->{timeout,10,fun()->with_tts(fun(_)->
+    ok=erm_tts:say("Keep this whole response."),idle(),
+    ok=erm_tts:say("empty"),wait(fun()->not maps:get(ready,erm_tts:status()) end),
+    ?assertEqual({error,not_ready},erm_tts:repeat(louder)),?assertEqual(100,volume()),
+    ok=erm_tts:reload(),ready(),ok=erm_tts:repeat(),idle(),
+    ?assertEqual([<<"Keep this whole response.">>,<<"empty">>,<<"Keep this whole response.">>],spoken())
+end) end}.
+reload_interrupts_and_validates_test_()->{timeout,10,fun()->with_tts(fun(Pid)->
+    ok=erm_tts:say("Remember me."),idle(),OldPort=element(3,sys:get_state(Pid)),
+    ok=erm_tts:say("slow"),ok=erm_tts:reload([{volume,125},{personality,playful}]),ready(),
+    ?assertNotEqual(OldPort,element(3,sys:get_state(Pid))),
+    Pid!{OldPort,{data,<<"D">>}},Pid!{OldPort,{data,<<"Eold_error">>}},
+    ?assertMatch(#{ready:=true,speaking:=false,volume:=125,personality:=playful,last_error:=undefined},erm_tts:status()),
+    ?assertEqual({error,invalid_tts_configuration},erm_tts:reload([{volume,999}])),
+    ?assertEqual({error,invalid_personality},erm_tts:set_personality(angry)),
+    ?assertEqual({error,unknown_voice},erm_tts:set_voice("https://untrusted/model")),
+    ?assertEqual({error,unknown_voice},erm_tts:reload([{voice,"not_a_voice"}])),
+    ?assertEqual(125,volume()),ok=erm_tts:repeat(),idle(),assert_gain(125),
+    ?assertEqual(<<"Remember me.">>,lists:last(spoken()))
+end) end}.
+voice_routing_and_answer_style_test_()->{timeout,10,fun()->with_tts(fun(_)->
+    persistent_term:put(voice_test_owner,self()),
+    {ok,Voice}=erm_voice:start_link([]),
+    try
+        ok=erm_tts:set_personality(playful),
+        %% Real intent planner, coordinator and TTS worker; no media module is
+        %% loaded here, so accidental media routing fails this test.
+        ok=erm_voice:command("ask what time is it"),
+        receive {ollama_request,_,"/api/chat",#{messages:=[#{content:=Prompt}|_]}}->
+            ?assertNotEqual(nomatch,binary:match(Prompt,<<"playful wit">>)),
+            ?assertNotEqual(nomatch,binary:match(Prompt,<<"Do not claim">>))
+        after 1000->error(no_ollama_request) end,
+        wait(fun()->maps:get(completed,erm_voice:status())=:=1 end),idle(),
+        ?assertEqual([<<"A short answer.">>],spoken()),
+        ok=erm_voice:command("repeat louder"),
+        wait(fun()->maps:get(completed,erm_voice:status())=:=2 end),idle(),
+        ?assertMatch(#{last_result:={ok,#{tts:={repeat,louder}}}},erm_voice:status()),
+        assert_gain(110),?assertEqual([<<"A short answer.">>,<<"A short answer.">>],spoken()),
+        %% No LLM is invoked for replay, and notify must not say "Done".
+        receive {ollama_request,_,_,_}->error(replay_called_model) after 50->ok end,
+        ?assertEqual(2,length(spoken())),
+        ok=erm_voice:command("voice volume 120"),wait(fun()->maps:get(completed,erm_voice:status())=:=3 end),
+        ?assertEqual(120,volume()),?assertEqual(2,length(spoken()))
+    after gen_server:stop(Voice),persistent_term:erase(voice_test_owner) end
+end) end}.
+voice_switch_uses_catalog_test_()->{timeout,10,fun()->
+    D=os:getenv("ERM_TTS_TEST_DIR"),Cache=D++"/catalog-cache",
+    Manifest=fixture_manifest(),Dir=Cache++"/"++hex(crypto:hash(sha256,term_to_binary(Manifest))),
+    ok=filelib:ensure_dir(Dir++"/model"),ok=file:write_file(Dir++"/model",<<"model">>),
+    ok=file:write_file(Dir++"/config",<<"config">>),
+    {ok,Pull}=erm_model_pull:start_link([{cache_dir,Cache},{manifests,#{amy_medium=>Manifest}}]),
+    Env=os:getenv("PIPER_MODEL"),os:putenv("PIPER_MODEL",D++"/model"),
+    try with_tts(fun(Tts)->
+        ?assert(lists:member(amy_medium,erm_tts:voices())),
+        ok=erm_tts:set_voice("Amy"),
+        wait(fun()->case erm_model_pull:status() of
+            #{models:=#{amy_medium:=#{state:=ready}}}->true;_->false end end),
+        Tts!connect,ready(),
+        ?assertMatch(#{voice:=amy_medium,model_source:=catalog},erm_tts:status()),
+        #{paths:=Paths}=erm_tts:diagnostics(),
+        ?assertEqual(Dir++"/model",maps:get(model,Paths)),
+        ?assertEqual(Dir++"/config",maps:get(config,Paths)),
+        ok=erm_tts:reload(),ready(),
+        ?assertEqual(Dir++"/model",maps:get(model,maps:get(paths,erm_tts:diagnostics()))),
+        %% Explicit file configuration remains available through reload/1.
+        ok=erm_tts:reload([{model,D++"/model"},{config,D++"/config"}]),ready(),
+        ?assertEqual(D++"/model",maps:get(model,maps:get(paths,erm_tts:diagnostics()))),
+        %% Catalogue mode overrides old file settings and the environment.
+        ok=erm_tts:reload([{model_source,catalog}]),ready(),
+        ?assertEqual(Dir++"/model",maps:get(model,maps:get(paths,erm_tts:diagnostics()))),
+        ?assertMatch(#{errors:=#{model:=#{reason:=missing_setting}}},
+                     erm_tts_paths:resolve(#{model_source=>catalog}))
+    end)
+    after gen_server:stop(Pull),case Env of false->os:unsetenv("PIPER_MODEL");_->os:putenv("PIPER_MODEL",Env) end end
+end}.
+fixture_manifest()->#{revision=>"fixture",files=>[
+    #{role=>Role,name=>Name,url=>"https://localhost/"++Name,bytes=>byte_size(B),sha256=>hex(crypto:hash(sha256,B))}
+    ||{Role,Name,B}<-[{model,"model",<<"model">>},{config,"config",<<"config">>}]]}.
+hex(B)->lists:flatten([io_lib:format("~2.16.0b",[X])||<<X>><=B]).
+default_volume_preserved_test_()->{timeout,5,fun()->with_tts([],fun(_)->
+    ?assertEqual(120,volume()),ok=erm_tts:say("Existing volume."),idle(),assert_gain(120)
+end) end}.
+with_tts(F)->with_tts([{volume,100}],F).
+with_tts(Overrides,F)->
+    D=os:getenv("ERM_TTS_TEST_DIR"),file:delete(os:getenv("ERM_TTS_CAPTURE_TEXT")),
+    application:set_env(erm,whisper_trigger,[{length_ms,10},{keep_ms,10},{step_ms,10}]),
+    {ok,Pid}=erm_tts:start_link(Overrides++[{binary,D++"/port"},{model,D++"/model"},{config,D++"/config"},
+        {espeak_data,D},{player,D++"/player"},{echo_guard_ms,30}]),
+    try ready(),F(Pid)
+    after gen_server:stop(Pid),application:unset_env(erm,whisper_trigger),persistent_term:erase({erm_tts,suppress_until}) end.
+volume()->maps:get(volume,erm_tts:status()).
+ready()->wait(fun()->maps:get(ready,erm_tts:status()) end).
+idle()->wait(fun()->not maps:get(speaking,erm_tts:status()) end).
+spoken()->case file:read_file(os:getenv("ERM_TTS_CAPTURE_TEXT")) of
+    {ok,B}->binary:split(B,<<"\n">>,[global,trim_all]);{error,enoent}->[] end.
+assert_gain(N)->{ok,Args}=file:read_file(os:getenv("ERM_TTS_CAPTURE_ARGS")),
+    ?assertNotEqual(nomatch,binary:match(Args,iolist_to_binary(["--volume=",integer_to_list(N),"\n"]))),
+    ?assertNotEqual(nomatch,binary:match(Args,<<"--volume-max=200\n">>)).
+wait(F)->wait(F,300).
+wait(F,0)->?assertEqual(true,F());
+wait(F,N)->case F() of true->ok;false->timer:sleep(10),wait(F,N-1) end.

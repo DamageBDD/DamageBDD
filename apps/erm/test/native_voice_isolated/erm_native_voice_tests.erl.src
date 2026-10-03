@@ -1,0 +1,88 @@
+-module(erm_native_voice_tests).
+-include_lib("eunit/include/eunit.hrl").
+math_test()->
+    {ok,V}=erm_native_voice:normalise([3.0,4.0]),
+    ?assert(abs(erm_native_voice:score(V,V)-1.0)<0.00001),
+    ?assertEqual({error,invalid_embedding},erm_native_voice:normalise([0.0,0.0])),
+    ?assertEqual(0.0,erm_native_voice:score([1.0,0.0],[0.0,1.0])).
+protocol_test()->
+    ?assertMatch({ok,#{embedding:=[1.0,0.0],text:=<<"hey bob stop">>}},erm_native_voice:decode(packet(1,1,[1.0,0.0],2000,<<"hey bob stop">>))),
+    ?assertMatch({error,_},erm_native_voice:decode(<<"U",0:64>>)),
+    ?assertMatch({error,_},erm_native_voice:decode(packet(1,1,[1.0,0.0],2000,<<255>>))),
+    ?assertMatch({error,_},erm_native_voice:decode(packet(1,1,[1.0,0.0],16000,<<>>))).
+supervisor_native_test()->
+    Specs=erm_sup:whisper_child_specs(true,#{backend=>native,native=>[{speaker_threshold,0.8},{speaker_threshold,0.2}],trigger_phrases=>["bob"]}),
+    ?assertEqual([erm_voice,erm_native_voice],[maps:get(id,X)||X<-Specs]),
+    ?assertMatch({erm_native_voice,start_link,[#{speaker_threshold:=0.8,trigger_phrases:=["bob"]}]},maps:get(start,lists:last(Specs))).
+native_test_()->{foreach,fun setup/0,fun cleanup/1,[
+    fun(O)->fun()->
+        inject(1,[1.0,0.0],2000,<<"Hey Bob stop music">>),
+        ?assertEqual({rejected,not_enrolled},maps:get(last,erm_native_voice:status())),no_command(),
+        enroll(),inject(5,[1.0,0.0],2000,<<"Hey Bob stop music">>),
+        receive {command,<<"stop music">>}->ok after 1000->error(no_dispatch) end,
+        {ok,Info}=file:read_file_info(maps:get(profile_file,O)),
+        ?assertEqual(8#600,element(8,Info) band 8#777),
+        gen_server:stop(erm_native_voice),{ok,_}=erm_native_voice:start_link(O),wait_ready(100),
+        ?assert(maps:get(enrolled,erm_native_voice:status()))
+    end end,
+    fun(_)->fun()->enroll(),inject(4,[0.0,1.0],2000,<<"Hey Bob stop">>),
+        ?assertMatch({rejected,{speaker_mismatch,_}},maps:get(last,erm_native_voice:status())),no_command()
+    end end,
+    fun(_)->fun()->enroll(),inject(4,[1.0,0.0],500,<<"Hey Bob stop">>),
+        ?assertEqual({rejected,insufficient_audio},maps:get(last,erm_native_voice:status())),no_command()
+    end end,
+    fun(_)->fun()->enroll(),inject(4,[1.0,0.0],2000,<<"Hey Bob">>),
+        ?assertEqual({rejected,wake_without_command},maps:get(last,erm_native_voice:status())),
+        inject(5,[1.0,0.0],2000,<<"stop music">>),no_command()
+    end end,
+    fun(_)->fun()->enroll(),S=sys:get_state(erm_native_voice),P=element(3,S),E=element(6,S),
+        erm_native_voice!{P,{data,packet(E-1,4,[1.0,0.0],2000,<<"Hey Bob stop">>)}},
+        _=erm_native_voice:status(),no_command(),
+        persistent_term:put({erm_tts,suppress_until},erlang:monotonic_time(millisecond)+5000),
+        inject(5,[1.0,0.0],2000,<<"Hey Bob stop">>),no_command(),
+        ?assertEqual({dropped,tts},maps:get(last,erm_native_voice:status()))
+    end end,
+    fun(_)->fun()->ok=erm_native_voice:enrol("owner",3),
+        inject(1,[1.0,0.0],2000,<<"first sample">>),
+        inject(2,[0.0,1.0],2000,<<"different speaker">>),
+        ?assertEqual({rejected,enrolment_inconsistent},maps:get(last,erm_native_voice:status())),
+        ?assertMatch(#{collected:=1},maps:get(enrolment,erm_native_voice:status())),
+        ok=erm_native_voice:cancel_enrol(),?assertNot(maps:get(enrolled,erm_native_voice:status()))
+    end end,
+    fun(O)->fun()->enroll(),gen_server:stop(erm_native_voice),
+        {ok,_}=erm_native_voice:start_link(O#{observe_only=>true}),wait_ready(100),
+        inject(1,[1.0,0.0],2000,<<"Hey Bob stop">>),no_command(),
+        ?assertMatch(#{dispatch:=observe_only},maps:get(last,erm_native_voice:status()))
+    end end,
+    fun(O)->fun()->enroll(),gen_server:stop(erm_native_voice),
+        ok=file:write_file(maps:get(speaker_model,O),<<"different model">>),
+        {ok,_}=erm_native_voice:start_link(O),wait_ready(100),
+        ?assertNot(maps:get(enrolled,erm_native_voice:status()))
+    end end,
+    fun(_)->fun()->enroll(),inject(4,[1.0,0.0],2000,<<"Hey Bob stop">>),
+        receive {command,<<"stop">>}->ok after 1000->error(no_dispatch) end,
+        inject(4,[1.0,0.0],2000,<<"Hey Bob stop">>),no_command(),
+        S=sys:get_state(erm_native_voice),port_close(element(3,S)),
+        timer:sleep(20),?assertNot(maps:get(ready,erm_native_voice:status()))
+    end end]}.
+setup()->
+    persistent_term:erase({erm_tts,suppress_until}),persistent_term:put(native_test_owner,self()),
+    D=os:getenv("NATIVE_TEST_TMP"),Id=integer_to_list(erlang:unique_integer([positive])),
+    Model=filename:join(D,"model-"++Id),ok=file:write_file(Model,<<"model">>),
+    O=#{binary=>filename:join(D,"fake_port"),whisper_model=>Model,vad_model=>Model,speaker_model=>Model,
+        arecord=>"/bin/false",profile_file=>filename:join(D,"profile-"++Id),speaker_threshold=>0.8},
+    {ok,_}=erm_native_voice:start_link(maps:to_list(O)),wait_ready(100),O.
+cleanup(_)->
+    try gen_server:stop(erm_native_voice) catch exit:_->ok end,
+    persistent_term:erase({erm_tts,suppress_until}),persistent_term:erase(native_test_owner).
+wait_ready(0)->error(not_ready);
+wait_ready(N)->case maps:get(ready,erm_native_voice:status()) of true->ok;false->timer:sleep(10),wait_ready(N-1) end.
+enroll()->persistent_term:put(native_test_owner,self()),ok=erm_native_voice:enrol("owner",3),
+    Start=element(13,sys:get_state(erm_native_voice)),
+    [inject(I,[1.0,0.0],2000,<<"enrolment sample">>)||I<-lists:seq(Start+1,Start+3)],
+    ?assert(maps:get(enrolled,erm_native_voice:status())),no_command().
+inject(I,V,Ms,Text)->S=sys:get_state(erm_native_voice),
+    erm_native_voice!{element(3,S),{data,packet(element(6,S),I,V,Ms,Text)}},_=erm_native_voice:status(),ok.
+packet(E,I,V,Ms,Text)->B= << <<F:32/float-big>>||F<-V >>,
+    <<"U",E:64,I:64,Ms:32,(length(V)):16,B/binary,Text/binary>>.
+no_command()->receive {command,C}->error({unexpected_command,C}) after 20->ok end.

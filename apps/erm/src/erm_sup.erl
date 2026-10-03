@@ -566,6 +566,16 @@ whisper_child_specs() ->
 whisper_child_specs(false, _Opts) ->
     ?LOG_DEBUG("Whisper trigger disabled by configuration.", []),
     [];
+whisper_child_specs(true, #{backend := native} = Opts) ->
+    Native = case maps:get(native, Opts, []) of
+        M when is_map(M) -> M;
+        L when is_list(L) -> proplists:to_map(L)
+    end,
+    NativeOpts = Native#{trigger_phrases => maps:get(trigger_phrases, Opts, ["bob"])},
+    voice_child_specs(Opts) ++ [#{id => erm_native_voice,
+        start => {erm_native_voice, start_link, [NativeOpts]},
+        restart => permanent, shutdown => 5000, type => worker,
+        modules => [erm_native_voice]}];
 whisper_child_specs(true, Opts) ->
     case whisper_trigger_srv:availability(Opts) of
         {ok, Runtime} ->

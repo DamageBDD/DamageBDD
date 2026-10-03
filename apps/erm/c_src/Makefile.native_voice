@@ -1,0 +1,12 @@
+WHISPER_PREFIX ?= /opt/whisper
+SHERPA_PREFIX ?= /opt/sherpa-onnx
+CXX ?= c++
+CXXFLAGS ?= -O2 -Wall -Wextra
+TARGET ?= ../priv/erm_native_voice
+all: $(TARGET)
+$(TARGET): erm_native_voice.cpp
+	mkdir -p $(dir $(TARGET))
+	$(CXX) $(CXXFLAGS) -std=c++17 -pthread -I$(WHISPER_PREFIX)/include -I$(SHERPA_PREFIX)/include $< -L$(WHISPER_PREFIX)/lib -L$(SHERPA_PREFIX)/lib -Wl,--disable-new-dtags,-rpath,$(WHISPER_PREFIX)/lib:$(SHERPA_PREFIX)/lib -lwhisper -lsherpa-onnx-c-api -o $@
+clean:
+	rm -f $(TARGET)
+.PHONY: all clean

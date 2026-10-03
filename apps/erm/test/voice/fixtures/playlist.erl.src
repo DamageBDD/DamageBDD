@@ -1,0 +1,10 @@
+-module(playlist).
+-export([all/0, current/0, get_by_index/1, peek_next/0, peek_prev/0, set_current/1, sync_current_path/1]).
+-include("erm_playlist.hrl").
+all() -> [{0,#track{id=1,path=filename:join(os:getenv("ERM_VOICE_TEST_DIR"),"current.flac")}},{1,#track{id=2,path=filename:join(os:getenv("ERM_VOICE_TEST_DIR"),"next.flac")}}].
+current() -> {ok,element(2,hd(all()))}.
+get_by_index(0) -> current().
+peek_next() -> {ok,element(2,lists:nth(2,all()))}.
+peek_prev() -> current().
+set_current(Id) -> persistent_term:get(voice_test_owner) ! {set_current,Id}, ok.
+sync_current_path(_) -> ok.

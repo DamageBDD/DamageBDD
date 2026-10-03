@@ -29,7 +29,7 @@ options(Options) ->
             O when is_list(O) -> proplists:to_map(O)
         end,
         true = is_boolean(maps:get(enabled, M, true)),
-        Defaults = #{settle_ms => 1100, command_window_ms => 8000,
+        Defaults = #{settle_ms => 1100, urgent_settle_ms => 300, command_window_ms => 8000,
                      rearm_silence_ms => 6000, command_dedupe_ms => 6000,
                      max_command_bytes => 512, planning_timeout_ms => 30000,
                      action_timeout_ms => 30000, ollama_timeout_ms => 12000,
@@ -40,6 +40,9 @@ options(Options) ->
         end, maps:keys(Defaults)),
         true = maps:get(settle_ms, Opts) < maps:get(command_window_ms, Opts),
         true = maps:get(max_command_bytes, Opts) =< 4096,
+        true = is_boolean(maps:get(auto_pull_model, Opts, true)),
+        PullTimeout = maps:get(model_pull_timeout_ms, Opts, 600000),
+        true = is_integer(PullTimeout) andalso PullTimeout > 0 andalso PullTimeout =< 3600000,
         Actions = maps:get(actions, Opts, []),
         true = is_list(Actions) andalso length(Actions) =< 32,
         Builtins = erm_voice_intent:actions(#{}),
@@ -56,6 +59,7 @@ options(Options) ->
     catch _:_ -> {error, invalid_voice_configuration} end.
 
 init(Options) ->
+    logger:update_process_metadata(#{domain => [erm, voice]}),
     process_flag(trap_exit, true),
     case options(Options) of
         {ok, Opts} ->
@@ -79,8 +83,16 @@ handle_call(_, _From, S) -> {reply, {error, unsupported_call}, S}.
 
 handle_cast({transcript, Text, Phrases}, S) ->
     try erm_voice_boundary:feed(Text, Phrases, now_ms(), S#st.boundary, S#st.opts) of
-        B -> {noreply, S#st{boundary = B}}
-    catch _:_ -> {noreply, S#st{boundary = erm_voice_boundary:cancel(S#st.boundary)}} end;
+        B ->
+            case boundary_changed(S#st.boundary, B) of
+                true -> utterance_trace(transcript, #{raw => bounded_text(Text),
+                    before => boundary_view(S#st.boundary), after_state => boundary_view(B)}, S);
+                false -> ok
+            end,
+            {noreply, S#st{boundary = B}}
+    catch Class:Reason ->
+        logger:warning("voice transcript rejected: ~p:~tp", [Class, Reason]),
+        {noreply, S#st{boundary = erm_voice_boundary:cancel(S#st.boundary)}} end;
 handle_cast(reset_boundary, S) ->
     {noreply, S#st{boundary = erm_voice_boundary:new()}};
 handle_cast(reset, S) ->
@@ -89,11 +101,25 @@ handle_cast(_, S) -> {noreply, S}.
 
 handle_info(tick, S0) ->
     {Event, B} = erm_voice_boundary:tick(now_ms(), S0#st.boundary, S0#st.opts),
+    case boundary_changed(S0#st.boundary, B) orelse Event =/= none of
+        true -> utterance_trace(capture_tick, #{event_result => Event,
+                    before => boundary_view(S0#st.boundary), after_state => boundary_view(B)}, S0);
+        false -> ok
+    end,
     S1 = S0#st{boundary = B, tick = erlang:send_after(100, self(), tick)},
     case Event of
         {command, Text} -> {_Reply, S2} = accept(Text, S1), {noreply, S2};
         none -> {noreply, S1}
     end;
+handle_info({voice_model_pull, Ref}, S = #st{opts = Opts,
+        job = #{ref := Ref, phase := plan, timer := OldTimer} = Job}) ->
+    erlang:cancel_timer(OldTimer),
+    %% Pulling can take minutes. Keep it in the cancellable planning worker.
+    Budget = maps:get(model_pull_timeout_ms, Opts, 600000) +
+             2 * maps:get(ollama_timeout_ms, Opts, 12000) + 5000,
+    TimerToken = make_ref(),
+    Timer = erlang:send_after(Budget, self(), {voice_timeout, Ref, TimerToken}),
+    {noreply, S#st{job = Job#{timer => Timer, timeout_token => TimerToken}}};
 handle_info({voice_result, Ref, Result}, S = #st{job = #{ref := Ref, phase := plan}}) ->
     Ready = clear_job(S),
     case Result of
@@ -103,7 +129,7 @@ handle_info({voice_result, Ref, Result}, S = #st{job = #{ref := Ref, phase := pl
     end;
 handle_info({voice_result, Ref, Result}, S = #st{job = #{ref := Ref, phase := action}}) ->
     {noreply, record_result(Result, clear_job(S))};
-handle_info({voice_timeout, Ref}, S = #st{job = #{ref := Ref, pid := Pid, phase := Phase}}) ->
+handle_info({voice_timeout, Ref, Token}, S = #st{job = #{ref := Ref, timeout_token := Token, pid := Pid, phase := Phase}}) ->
     unlink(Pid), exit(Pid, kill),
     %% An action timeout is indeterminate: never retry it automatically.
     {noreply, record_result({error, {Phase, timeout}}, clear_job(S))};
@@ -122,19 +148,24 @@ accept(Text, S = #st{job = #{phase := plan}}) ->
 accept(_Text, S) -> {{error, busy}, record_result({error, busy}, S)}.
 
 launch(Phase, Input, S = #st{opts = Opts}) ->
+    utterance_trace(dispatch, #{stage => Phase, input => Input}, S),
     Parent = self(), Ref = make_ref(),
     {Pid, Mon} = spawn_opt(fun() ->
+        logger:update_process_metadata(#{domain => [erm, voice]}),
         Result = try
             case Phase of
-                plan -> erm_voice_intent:plan(Input, Opts);
+                plan -> erm_voice_intent:plan(Input, Opts#{model_pull_notify =>
+                    fun() -> Parent ! {voice_model_pull, Ref} end});
                 action -> execute(Input, Opts)
             end
         catch C:R -> {error, {C, R}} end,
         Parent ! {voice_result, Ref, Result}
     end, [link, monitor]),
     Timeout = maps:get(case Phase of plan -> planning_timeout_ms; action -> action_timeout_ms end, Opts),
-    Timer = erlang:send_after(Timeout, self(), {voice_timeout, Ref}),
-    S#st{job = #{ref => Ref, pid => Pid, monitor => Mon, timer => Timer, phase => Phase}}.
+    Token = make_ref(),
+    Timer = erlang:send_after(Timeout, self(), {voice_timeout, Ref, Token}),
+    S#st{job = #{ref => Ref, pid => Pid, monitor => Mon, timer => Timer, timeout_token => Token, phase => Phase}}.
+execute(#{action := tts} = Intent, _Opts) -> erm_voice_tts:execute(Intent);
 execute(#{action := custom, name := Name, query := Q}, Opts) ->
     case lists:keyfind(Name, 1, maps:get(actions, Opts, [])) of
         {Name, _, {M, F}} -> apply(M, F, [Q, #{source => voice, action => Name}]);
@@ -151,7 +182,15 @@ clear_job(S = #st{job = #{pid := Pid, monitor := Mon, timer := Timer}}) ->
     S#st{job = undefined}.
 record_result(Result, S) ->
     logger:notice("voice command result: ~tp", [Result]),
-    erm_tts:notify(Result, S#st.last_command),
+    %% TTS is optional, including in isolated test VMs.
+    case whereis(erm_tts) of
+        undefined -> ok;
+        _ ->
+            try erm_tts:notify(Result, S#st.last_command)
+            catch Class:Reason ->
+                logger:warning("voice TTS notification failed: ~p:~tp", [Class, Reason])
+            end
+    end,
     S#st{last_result = Result, completed = S#st.completed + 1}.
 safe_command(Text0, Opts) ->
     try unicode:characters_to_binary(Text0) of
@@ -171,3 +210,37 @@ terminate(_, S) ->
     end,
     ok.
 code_change(_, S, _) -> {ok, S}.
+
+%% Diagnostic text is bounded; no logger calls in the pure boundary module.
+utterance_trace(Event, Data, #st{opts = Opts}) ->
+    case maps:get(debug_utterances, Opts, false) of
+        true -> logger:debug("voice_trace ~tp", [Data#{event => Event}],
+                             #{domain => [erm, voice]});
+        _ -> ok
+    end.
+%% Ignore rolling redraw timestamps and dedupe bookkeeping when deciding to log.
+boundary_changed(A, B) -> boundary_signature(A) =/= boundary_signature(B).
+boundary_signature(B) -> maps:with([phase, text, consumed, wake_prefix], B).
+boundary_view(B) ->
+    View = boundary_signature(B),
+    case maps:get(deadline, B, undefined) of
+        D when is_integer(D) -> View#{remaining_ms => max(0, D - now_ms())};
+        _ -> View
+    end.
+bounded_text(Text) ->
+    try unicode:characters_to_list(Text) of
+        L when is_list(L) -> lists:sublist(L, 1024);
+        _ -> invalid_unicode
+    catch _:_ -> invalid_text end.
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+trace_boundary_changes_test() ->
+    A = #{phase => idle, text => <<>>, consumed => <<>>, wake_prefix => <<>>},
+    ?assertNot(boundary_changed(A, A#{last_seen => 100, changed => 99})),
+    ?assert(boundary_changed(A, A#{phase => capturing})),
+    ?assert(boundary_changed(A, A#{text => <<"pause">>})),
+    ?assert(boundary_changed(A, A#{wake_prefix => <<"hey">>})),
+    ?assertNot(maps:is_key(deadline, boundary_view(A#{deadline => now_ms()+500}))),
+    ?assert(maps:is_key(remaining_ms, boundary_view(A#{deadline => now_ms()+500}))).
+-endif.

@@ -251,6 +251,7 @@ call_if_started(Request) ->
 %%%===================================================================
 
 init(Opts) ->
+    logger:update_process_metadata(#{domain => [erm, whisper]}),
     process_flag(trap_exit, true),
     case resolve_runtime(Opts) of
         {ok, Bin, Model} ->
@@ -402,7 +403,9 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info({Port, {data, Data}}, State0 = #state{port = Port, buffer = Buffer0}) ->
-    case erm_tts:suppressed() of
+    %% Read the lease directly so isolated voice builds need no TTS module.
+    Now = erlang:monotonic_time(millisecond),
+    case Now < persistent_term:get({erm_tts, suppress_until}, Now) of
         true -> {noreply, State0#state{buffer = <<>>, recent_output = #{}}};
         false ->
             Buffer1 = <<Buffer0/binary, Data/binary>>,
@@ -838,8 +841,11 @@ process_output_record(Record0, State0) ->
 maybe_voice_record(_Record, #state{opts = #{voice_enabled := false}}) -> ok;
 maybe_voice_record(Record, #state{trigger_phrases = Phrases}) ->
     case transcript_text(Record) of
-        {ok, Text} -> erm_voice:transcript(Text, Phrases);
-        ignore -> ok
+        {ok, Text} ->
+            Result = erm_voice:transcript(Text, Phrases),
+            whisper_trace(forward_transcript, #{text => Text, result => Result}),
+            Result;
+        ignore -> whisper_trace(stream_record, Record)
     end.
 
 deduplicate_output_record(<<>>, State) ->
@@ -983,6 +989,7 @@ debounce_elapsed(Last, Now, DebounceMs) ->
 
 run_handler(Handler, Text, Hostname) ->
     _ = spawn(fun() ->
+        logger:update_process_metadata(#{domain => [erm, whisper]}),
         try Handler(Text, Hostname) of
             _ -> ok
         catch
@@ -996,7 +1003,7 @@ run_handler(Handler, Text, Hostname) ->
     ok.
 
 default_trigger_handler(Text, Host) ->
-    logger:notice("hostname ~ts detected in speech: ~ts", [Host, Text]).
+    logger:notice("speech trigger callback host=~ts transcript=~ts", [Host, Text]).
 
 safe_normalize_phrases(Phrases) ->
     try normalize_phrases(Phrases) of
@@ -1344,4 +1351,59 @@ tts_suppression_test() ->
         {noreply,N}=handle_info({fake_port,{data,<<"bob play\n">>}},S),
         ?assertEqual(<<>>,N#state.buffer),?assertEqual(#{},N#state.recent_output)
     after persistent_term:erase({erm_tts,suppress_until}) end.
+-endif.
+
+%% Configuration is read here so it can be toggled without restarting capture.
+whisper_trace(_Event, <<>>) -> ok;
+whisper_trace(Event, Value) ->
+    Config = application:get_env(erm, whisper_trigger, []),
+    Enabled = case Config of
+        M when is_map(M) -> maps:get(debug_utterances, M, false);
+        L when is_list(L) -> proplists:get_value(debug_utterances, L, false);
+        _ -> false
+    end,
+    case Enabled of
+        true ->
+            case whisper_trace_changed(Event, Value) of
+                true -> logger:debug("whisper_trace event=~p data=~P", [Event, Value, 12],
+                                      #{domain => [erm, whisper]});
+                false -> ok
+            end;
+        _ -> erase({?MODULE, trace_last, Event}), ok
+    end.
+
+%% Per-process diagnostic state only: never skip transcript delivery or alter
+%% recognition dedupe/rearm state. Separate keys prevent stream diagnostics
+%% from resetting transcript deduplication. Memory holds one value per event.
+whisper_trace_changed(Event, Value) ->
+    Key = {?MODULE, trace_last, Event},
+    case get(Key) of
+        {seen, Value} -> false;
+        _ -> put(Key, {seen, Value}), true
+    end.
+
+-ifdef(TEST).
+trace_redraw_dedupe_test() ->
+    Key = {?MODULE, trace_last, forward_transcript}, erase(Key),
+    V = #{text => <<"Thank you.">>, result => ok},
+    try
+        ?assert(whisper_trace_changed(forward_transcript, V)),
+        ?assertNot(whisper_trace_changed(forward_transcript, V)),
+        ok = whisper_trace(raw_record, <<>>),
+        ?assertNot(whisper_trace_changed(forward_transcript, V)),
+        ?assert(whisper_trace_changed(forward_transcript, V#{result => {error, not_started}})),
+        ?assert(whisper_trace_changed(forward_transcript, V)),
+        ?assert(whisper_trace_changed(forward_transcript, V#{text => <<"hey bob pause">>}))
+    after erase(Key) end.
+
+trace_preserves_delivery_test() ->
+    %% Repeated redraws must still reach the coordinator before output dedupe.
+    undefined = whereis(erm_voice), true = register(erm_voice, self()),
+    try
+        S = #state{trigger_phrases = [<<"bob">>]},
+        ok = maybe_voice_record(<<"Thank you.">>, S),
+        ok = maybe_voice_record(<<"Thank you.">>, S),
+        receive {'$gen_cast', {transcript, _, _}} -> ok after 100 -> error(first_missing) end,
+        receive {'$gen_cast', {transcript, _, _}} -> ok after 100 -> error(second_missing) end
+    after unregister(erm_voice) end.
 -endif.

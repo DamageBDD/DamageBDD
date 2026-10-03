@@ -1,0 +1,37 @@
+-module(damage_gun).
+-export([post/6]).
+post(_Host,_Port,Path,_Headers,Body,_Options) ->
+    %% Each isolated VM selects its scenario explicitly before starting tests.
+    case persistent_term:get({erm_voice_test, http_scenario}) of
+        voice -> voice_request(Path, Body);
+        pull -> pull_request(Path)
+    end.
+
+voice_request(Path, Body) ->
+    Owner=persistent_term:get(voice_test_owner),
+    Owner ! {ollama_request, self(), Path, binary_to_term(Body,[safe])},
+    case persistent_term:get(voice_test_mode, answer) of
+        wait -> receive release -> ok end;
+        _ -> ok
+    end,
+    Content=case persistent_term:get(voice_test_mode, answer) of
+        intent -> term_to_binary(#{<<"action">>=><<"pause">>,<<"query">>=><<>>,<<"value">>=>0});
+        unsafe -> term_to_binary(#{<<"action">>=><<"shell">>,<<"query">>=><<"anything">>,<<"value">>=>0});
+        _ -> <<"A short answer.">>
+    end,
+    {ok,#{status=>200,json=>#{<<"message">>=>#{<<"content">>=>Content}}}}.
+
+pull_request(Path) ->
+    Mode=persistent_term:get(pull_test_mode,success),
+    case Path of
+        "/api/pull" ->
+            put(pulls,1),timer:sleep(80),
+            case Mode of failed->{error,timeout};_->{ok,#{status=>200,json=>#{<<"status">>=><<"success">>}}} end;
+        "/api/chat" ->
+            case {get(pulls),Mode} of
+                {1,success}->{ok,#{status=>200,json=>#{<<"message">>=>#{<<"content">>=><<"ready">>}}}};
+                {_,route}->{ok,#{status=>404}};
+                {_,wrong_model}->{ok,#{status=>404,json=>#{<<"error">>=><<"model 'other' not found">>}}};
+                _->{ok,#{status=>404,json=>#{<<"error">>=><<"model 'qwen3:1.7b' not found">>}}}
+            end
+    end.

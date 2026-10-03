@@ -150,7 +150,7 @@ tick(Now, S0, Opts) ->
             Deadline = maps:get(deadline, S),
             Changed = maps:get(changed, S),
             case {Now >= Deadline, Text =/= <<>> andalso is_integer(Changed)
-                  andalso Now - Changed >= maps:get(settle_ms, Opts, 1100)} of
+                  andalso Now - Changed >= settle_delay(Text, Opts)} of
                 {true, _} -> {none, cancel(S)}; %% Never execute a truncated timeout.
                 {false, true} ->
                     Recent = maps:filter(fun(_, At) ->
@@ -172,3 +172,47 @@ expire_lock(Now, S = #{phase := locked, last_seen := Last}, Opts)
         false -> S
     end;
 expire_lock(_Now, S, _Opts) -> S.
+
+%% Exact reversible interruption commands need less settling than open-ended
+%% speech. Do not widen wake matching or treat arbitrary prefixes as commands.
+settle_delay(Text, Opts) ->
+    Normal = maps:get(settle_ms, Opts, 1100),
+    case Text of
+        <<"stop">> -> min(Normal, maps:get(urgent_settle_ms, Opts, 300));
+        <<"stop music">> -> min(Normal, maps:get(urgent_settle_ms, Opts, 300));
+        <<"pause">> -> min(Normal, maps:get(urgent_settle_ms, Opts, 300));
+        <<"pause music">> -> min(Normal, maps:get(urgent_settle_ms, Opts, 300));
+        _ -> Normal
+    end.
+
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+urgent_stop_before_noise_test() ->
+    O = #{settle_ms => 1100},
+    S1 = feed("Hey Bob", ["bob"], 0, new(), O),
+    S2 = feed("Hey Bob stop", ["bob"], 508, S1, O),
+    {none, S3} = tick(800, S2, O),
+    {{command, <<"stop">>}, S4} = tick(900, S3, O),
+    S5 = feed("Hey Bob stop music", ["bob"], 1048, S4, O),
+    {none, S6} = tick(1500, S5, O),
+    S7 = feed("Thank you", ["bob"], 2026, S6, O),
+    ?assertMatch({none, _}, tick(2300, S7, O)).
+urgent_corrected_stop_test() ->
+    O = #{settle_ms => 1100},
+    S1 = feed("Hey Bob it's tough music", ["bob"], 0, new(), O),
+    S2 = feed("Hey Bob stop music", ["bob"], 500, S1, O),
+    {{command, <<"stop music">>}, S3} = tick(850, S2, O),
+    S4 = feed("Hey Bobs tough music", ["bob"], 1530, S3, O),
+    S5 = feed("Hey Bob stop music", ["bob"], 1531, S4, O),
+    ?assertMatch({none, _}, tick(2700, S5, O)).
+urgent_scope_test() ->
+    O = #{settle_ms => 1100},
+    ?assertEqual(nomatch, wake("Hey Bobs stop music", ["bob"])),
+    ?assertEqual(1100, settle_delay(<<"play song stop music">>, O)),
+    ?assertEqual(1100, settle_delay(<<"stop music after this song">>, O)),
+    ?assertEqual(300, settle_delay(<<"pause music">>, O)),
+    ?assertEqual(700, settle_delay(<<"stop">>, O#{urgent_settle_ms => 700})),
+    S1 = feed("Bob stop", ["bob"], 0, new(), O),
+    S2 = feed("Bob do not stop", ["bob"], 100, S1, O),
+    ?assertMatch({none, _}, tick(400, S2, O)).
+-endif.

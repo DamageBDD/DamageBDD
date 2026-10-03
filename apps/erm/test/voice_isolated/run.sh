@@ -15,6 +15,7 @@ erlc -Werror -I "$include" -o "$tmp" \
     "$root/apps/erm/src/erm_voice.erl" \
     "$root/apps/erm/src/erm_voice_boundary.erl" \
     "$root/apps/erm/src/erm_voice_intent.erl" \
+    "$root/apps/erm/src/erm_voice_tts.erl" \
     "$root/apps/erm/src/erm_voice_media.erl" \
     "$root/apps/erm/test/erm_voice_tests.erl" "$tmp"/*.erl
 erl -noshell -pa "$tmp" -eval '

@@ -20,6 +20,7 @@ static std::mutex mutex;
 static std::condition_variable wake;
 static std::string pending;
 static bool busy=false;
+static int pending_volume=120;
 static bool io(int fd, void *ptr, size_t n, bool writing) {
   auto p=static_cast<char*>(ptr);
   while(n) { ssize_t k=writing?write(fd,p,n):read(fd,p,n);
@@ -34,17 +35,22 @@ static void send(const std::string &s) {
 }
 static void le(std::vector<uint8_t>&v,uint32_t n,int count) { for(int i=0;i<count;i++)v.push_back(uint8_t(n>>(8*i))); }
 static void tag(std::vector<uint8_t>&v,const char *s) {v.insert(v.end(),s,s+4);}
-static void speak(piper_synthesizer *s,const std::string &text,const char *player) {
+static void speak(piper_synthesizer *s,const std::string &text,const char *player,int volume) {
   auto opts=piper_default_synthesize_options(s);
   if(piper_synthesize_start(s,text.c_str(),&opts)!=PIPER_OK)throw std::runtime_error("synthesis_start");
   std::vector<uint8_t> pcm; int rate=0;
   for(;;) {
     piper_audio_chunk c{}; int rc=piper_synthesize_next(s,&c);
-    if(rc==PIPER_DONE)break;
-    if(rc!=PIPER_OK)throw std::runtime_error("synthesis_failed");
-    if(c.sample_rate<=0||c.sample_rate>192000||(rate&&rate!=c.sample_rate)||c.num_samples>8000000||pcm.size()+c.num_samples*2>16000000)throw std::runtime_error("invalid_audio");
-    rate=c.sample_rate;
-    for(size_t i=0;i<c.num_samples;i++) {float x=c.samples[i];if(!std::isfinite(x))x=0; x=std::fmax(-1.f,std::fmin(1.f,x));le(pcm,uint16_t(int16_t(x*32767)),2);}
+    // libpiper can return PIPER_DONE together with the final audio chunk.
+    // Copy samples before interpreting completion; older versions instead
+    // return PIPER_OK for that chunk and an empty PIPER_DONE on the next call.
+    if(rc!=PIPER_OK&&rc!=PIPER_DONE)throw std::runtime_error("synthesis_failed");
+    if(c.num_samples) {
+      if(!c.samples||c.sample_rate<=0||c.sample_rate>192000||(rate&&rate!=c.sample_rate)||c.num_samples>8000000||pcm.size()+c.num_samples*2>16000000)throw std::runtime_error("invalid_audio");
+      rate=c.sample_rate;
+      for(size_t i=0;i<c.num_samples;i++) {float x=c.samples[i];if(!std::isfinite(x))x=0; x=std::fmax(-1.f,std::fmin(1.f,x));le(pcm,uint16_t(int16_t(x*32767)),2);}
+    }
+    if(rc==PIPER_DONE||c.is_last)break;
   }
   if(!rate||pcm.empty())throw std::runtime_error("empty_audio");
   std::vector<uint8_t> wav;
@@ -52,7 +58,8 @@ static void speak(piper_synthesizer *s,const std::string &text,const char *playe
   int fd=memfd_create("erm-speech",0); if(fd<0)throw std::runtime_error("audio_fd");
   if(!io(fd,wav.data(),wav.size(),true)||!io(fd,pcm.data(),pcm.size(),true)||lseek(fd,0,SEEK_SET)<0){close(fd);throw std::runtime_error("audio_write");}
   std::string path="/proc/self/fd/"+std::to_string(fd);
-  const char *args[]={player,"--no-config","--no-video","--no-terminal","--really-quiet","--input-terminal=no","--audio-display=no","--",path.c_str(),nullptr};
+  std::string gain="--volume="+std::to_string(volume);
+  const char *args[]={player,"--volume-max=200",gain.c_str(),"--no-config","--no-video","--no-terminal","--really-quiet","--input-terminal=no","--audio-display=no","--",path.c_str(),nullptr};
   pid_t parent=getpid(), child=fork();
   if(child==0) {
     prctl(PR_SET_PDEATHSIG,SIGKILL);if(getppid()!=parent)_Exit(1);
@@ -71,15 +78,23 @@ int main(int argc,char **argv) {
   std::thread([&]{
     auto s=piper_create(argv[1],argv[2],argv[3]);
     if(!s){send("Emodel_load_failed");_Exit(1);}send("R");
-    for(;;){std::string text;{std::unique_lock<std::mutex> lock(mutex);wake.wait(lock,[]{return !pending.empty();});text.swap(pending);}
-      try{speak(s,text,argv[4]);{std::lock_guard<std::mutex> lock(mutex);busy=false;}send("D");}
+    for(;;){std::string text;int volume;{std::unique_lock<std::mutex> lock(mutex);wake.wait(lock,[]{return !pending.empty();});text.swap(pending);volume=pending_volume;}
+      try{speak(s,text,argv[4],volume);{std::lock_guard<std::mutex> lock(mutex);busy=false;}send("D");}
       catch(const std::exception &e){send(std::string("E")+e.what());_Exit(1);}
     }
   }).detach();
   for(;;){uint8_t h[4];if(!io(0,h,4,false))_Exit(0);size_t n=(uint32_t(h[0])<<24)|(uint32_t(h[1])<<16)|(uint32_t(h[2])<<8)|h[3];
-    if(n<2||n>4097)_Exit(2);
+    if(n<2||n>4102)_Exit(2);
     std::string msg(n,'\0');if(!io(0,msg.data(),n,false))_Exit(0);
-    if(msg[0]!='S'||msg.find('\0')!=std::string::npos)_Exit(2);
-    {std::lock_guard<std::mutex> lock(mutex);if(busy)_Exit(2);busy=true;pending=msg.substr(1);}wake.notify_one();
+    if(msg.find('\0')!=std::string::npos)_Exit(2);
+    size_t start=1;int volume=120;
+    if(msg[0]=='V') {
+      auto end=msg.find('\n');if(end<2||end>4||end+1>=msg.size())_Exit(2);
+      volume=0;for(size_t i=1;i<end;i++){if(msg[i]<'0'||msg[i]>'9')_Exit(2);volume=volume*10+(msg[i]-'0');}
+      if(volume>200)_Exit(2);
+      start=end+1;
+    } else if(msg[0]!='S')_Exit(2); // legacy requests retain the existing 120% gain
+    if(msg.size()-start>4096)_Exit(2);
+    {std::lock_guard<std::mutex> lock(mutex);if(busy)_Exit(2);busy=true;pending=msg.substr(start);pending_volume=volume;}wake.notify_one();
   }
 }

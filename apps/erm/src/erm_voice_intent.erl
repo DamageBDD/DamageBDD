@@ -4,6 +4,11 @@
 -export([plan/2, parse/1, validate/2, actions/1, request/4]).
 
 parse(Text) ->
+    case erm_voice_tts:parse(Text) of
+        unknown -> parse_media(Text);
+        Control -> Control
+    end.
+parse_media(Text) ->
     T = erm_voice_boundary:normalize(Text),
     case T of
         <<"play">> -> action(play);
@@ -159,10 +164,20 @@ answer(Q, Sources, Opts) ->
                "Do not execute or claim to execute actions.">>
     end,
     Query = jsx:encode(#{question => Q, sources => SafeSources}),
-    case request(System, Query, undefined, Opts) of
+    case request(answer_style(System), Query, undefined, Opts) of
         {ok, Reply} -> {ok, #{action => answer, text => Reply, sources => SafeSources}};
         Error -> Error
     end.
+%% Personality affects answer wording only; classification and actions retain
+%% their strict prompts. It is read at request time so runtime changes apply.
+answer_style(System) ->
+    case try erm_tts:personality() catch _:_ -> plain end of
+        playful -> <<System/binary, " Use brief, dry, playful wit, at most one short aside. "
+                     "Preserve facts, uncertainty, source attribution and action results. "
+                     "Never invent success or insult the user. Avoid jokes for serious distress.">>;
+        _ -> System
+    end.
+
 clip(T, N) -> unicode:characters_to_binary(lists:sublist(unicode:characters_to_list(T), N)).
 
 request(System, User, Format, Opts) ->
@@ -174,12 +189,20 @@ request(System, User, Format, Opts) ->
              options => #{temperature => 0, num_ctx => 4096,
                           num_predict => case Format of undefined -> 192; _ -> 128 end}},
     Body = jsx:encode(case Format of undefined -> Base; _ -> Base#{format => Format} end),
-    case damage_gun:post(maps:get(ollama_host, Opts, "localhost"),
-                         maps:get(ollama_port, Opts, 11434), "/api/chat",
-                         [{<<"content-type">>, <<"application/json">>}], Body,
-                         #{timeout => maps:get(ollama_timeout_ms, Opts, 12000),
-                           connect_timeout => 1500, decode => json,
-                           proxy => direct, transport => tcp}) of
+    chat_request(Body, Model, Opts, maps:get(auto_pull_model, Opts, true)).
+
+chat_request(Body, Model, Opts, CanPull) ->
+    case ollama_post("/api/chat", Body, maps:get(ollama_timeout_ms, Opts, 12000), Opts) of
+        {ok, #{status := 404, json := Json}} when CanPull =:= true ->
+            %% A route/proxy 404 must never trigger a model download.
+            case missing_model(field(error, Json, undefined), Model) of
+                true ->
+                    case pull_model(Model, Opts) of
+                        ok -> chat_request(Body, Model, Opts, false);
+                        Error -> Error
+                    end;
+                false -> {error, {ollama_http_status, 404}}
+            end;
         {ok, #{status := Status, json := Json}} when Status >= 200, Status < 300 ->
             Message = field(message, Json, #{}),
             case field(content, Message, undefined) of
@@ -194,3 +217,40 @@ request(System, User, Format, Opts) ->
 field(Key, Map, Default) when is_map(Map) ->
     maps:get(Key, Map, maps:get(atom_to_binary(Key, utf8), Map, Default));
 field(_, _, Default) -> Default.
+
+missing_model(Error, Model) when is_binary(Error) ->
+    %% Match Ollama's model-not-found error, including this exact configured name.
+    Lower = string:lowercase(Error),
+    binary:match(Lower, <<"model">>) =/= nomatch andalso
+    binary:match(Lower, <<"not found">>) =/= nomatch andalso
+    binary:match(Error, Model) =/= nomatch;
+missing_model(_, _) -> false.
+
+pull_model(Model, Opts) ->
+    Timeout = maps:get(model_pull_timeout_ms, Opts, 600000),
+    case maps:get(model_pull_notify, Opts, undefined) of
+        F when is_function(F, 0) -> F();
+        _ -> ok
+    end,
+    logger:notice("voice model pull started: model=~ts timeout_ms=~p", [Model, Timeout],
+                  #{domain => [erm, voice]}),
+    Result = case ollama_post("/api/pull", jsx:encode(#{model => Model, stream => false}), Timeout, Opts) of
+        {ok, #{status := 200, json := Json}} ->
+            case field(status, Json, undefined) of
+                <<"success">> -> ok;
+                _ -> {error, {model_pull_failed, field(error, Json, invalid_response)}}
+            end;
+        {ok, #{status := Status}} -> {error, {model_pull_http_status, Status}};
+        {error, Reason} -> {error, {model_pull_failed, Reason}};
+        _ -> {error, {model_pull_failed, invalid_response}}
+    end,
+    logger:notice("voice model pull finished: model=~ts result=~tp", [Model, Result],
+                  #{domain => [erm, voice]}),
+    Result.
+
+ollama_post(Path, Body, Timeout, Opts) ->
+    damage_gun:post(maps:get(ollama_host, Opts, "localhost"),
+        maps:get(ollama_port, Opts, 11434), Path,
+        [{<<"content-type">>, <<"application/json">>}], Body,
+        #{timeout => Timeout, connect_timeout => 1500, decode => json,
+          proxy => direct, transport => tcp}).

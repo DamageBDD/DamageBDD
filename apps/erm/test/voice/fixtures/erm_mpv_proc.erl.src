@@ -1,0 +1,9 @@
+-module(erm_mpv_proc).
+-export([command/3]).
+command(F, A, _) ->
+    persistent_term:get(voice_test_owner) ! {mpv, F, A},
+    case F of
+        status -> {ok, #{idle_active => false, path => <<"/test/current.flac">>}};
+        get_property -> {ok, <<"/test/current.flac">>};
+        _ -> ok
+    end.

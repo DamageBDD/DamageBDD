@@ -1,0 +1,140 @@
+-module(erm_model_pull_tests).
+-include_lib("eunit/include/eunit.hrl").
+pipeline_test_()->{foreach,fun setup/0,fun cleanup/1,[
+ fun(C)->fun()->
+    ets:insert(maps:get(table,C),{"/a",{slow,150,<<"hello">>}}),
+    ?assertMatch({pending,_},erm_model_pull:ensure(fixture)),
+    ?assertMatch({pending,_},erm_model_pull:ensure(fixture)),
+    ?assertEqual({error,busy},erm_model_pull:ensure(lessac_low)),
+    P=ready(),?assertEqual({ok,<<"hello">>},file:read_file(maps:get(model,P))),
+    ?assertEqual(2,ets:lookup_element(maps:get(table,C),count,2)),
+    ?assertMatch({ok,_},erm_model_pull:ensure(fixture)),
+    ?assertEqual([],stages(C))
+ end end,
+ fun(C)->fun()->
+    P=ready_after_pull(),gen_server:stop(erm_model_pull),exit(maps:get(server,C),shutdown),
+    {ok,_}=erm_model_pull:start_link(maps:get(opts,C)),
+    ?assertMatch({pending,_},erm_model_pull:ensure(fixture)),?assertEqual(P,ready())
+ end end,
+ fun(C)->fun()->
+    ets:insert(maps:get(table,C),{"/a",{body,<<"HELLO">>}}),
+    erm_model_pull:ensure(fixture),?assertEqual(checksum_mismatch,failed()),
+    ?assertEqual([],stages(C)),?assertEqual([],[N||N<-children(C),length(N)=:=64]),
+    ?assertEqual({error,checksum_mismatch},erm_model_pull:ensure(fixture)),
+    ets:insert(maps:get(table,C),{"/a",{body,<<"hello">>}}),
+    ?assertMatch({pending,_},erm_model_pull:retry(fixture)),_=ready()
+ end end,
+ fun(C)->fun()->
+    ets:insert(maps:get(table,C),{"/a",{status,404}}),
+    erm_model_pull:ensure(fixture),?assertEqual({http_status,404},failed()),?assertEqual([],stages(C))
+ end end,
+ fun(C)->fun()->
+    ets:insert(maps:get(table,C),{"/a",{body,<<"too much content">>}}),
+    erm_model_pull:ensure(fixture),?assertEqual(size_limit_exceeded,failed())
+ end end,
+ fun(C)->fun()->
+    ets:insert(maps:get(table,C),{"/a",{body,<<"hi">>}}),
+    erm_model_pull:ensure(fixture),?assertEqual({size_mismatch,2},failed())
+ end end,
+ fun(C)->fun()->
+    T=maps:get(table,C),ets:insert(T,[{"/a",{redirect,maps:get(base,C)++"/real"}},{"/real",{body,<<"hello">>}}]),
+    _=ready_after_pull(),?assertEqual(3,ets:lookup_element(T,count,2))
+ end end,
+ fun(C)->fun()->
+    ets:insert(maps:get(table,C),{"/a",{redirect,"http://localhost/unsafe"}}),
+    erm_model_pull:ensure(fixture),_=failed(),?assertEqual([],stages(C))
+ end end,
+ fun(C)->fun()->
+    ets:insert(maps:get(table,C),{"/a",{slow,2000,<<"hello">>}}),
+    erm_model_pull:ensure(fixture),wait_state(downloading,100),
+    ok=erm_model_pull:cancel(),?assertEqual(cancelled,failed()),?assertEqual([],stages(C))
+ end end,
+ fun(C)->fun()->
+    P=ready_after_pull(),ok=file:write_file(maps:get(model,P),<<"broken">>),
+    erm_model_pull:retry(fixture),?assertEqual(P,ready()),
+    ?assertEqual({ok,<<"hello">>},file:read_file(maps:get(model,P))),?assertEqual([],stages(C))
+ end end,
+ fun(C)->fun()->
+    gen_server:stop(erm_model_pull),
+    {ok,_}=erm_model_pull:start_link((maps:get(opts,C))#{timeout_ms=>1000}),
+    ets:insert(maps:get(table,C),{"/a",{slow,2500,<<"hello">>}}),
+    erm_model_pull:ensure(fixture),?assertEqual(download_timeout,failed()),?assertEqual([],stages(C))
+ end end,
+ fun(C)->fun()->
+    ets:insert(maps:get(table,C),{"/b",{status,404}}),
+    erm_model_pull:ensure(fixture),?assertEqual({http_status,404},failed()),
+    ?assertEqual([],children(C))
+ end end,
+ fun(C)->fun()->
+    gen_server:stop(erm_model_pull),B=binary:copy(<<"a">>,2097152),
+    O=maps:get(opts,C),#{fixture:=#{files:=[F,G]}}=maps:get(manifests,O),
+    Big=F#{bytes=>byte_size(B),sha256=>hex(crypto:hash(sha256,B))},
+    ets:insert(maps:get(table,C),{"/a",{body,B}}),
+    {ok,_}=erm_model_pull:start_link(O#{manifests=>#{fixture=>#{files=>[Big,G]}}}),
+    P=ready_after_pull(),?assertEqual({ok,B},file:read_file(maps:get(model,P)))
+ end end,
+ fun(C)->fun()->
+    ets:insert(maps:get(table,C),{"/a",{slow,300,<<"hello">>}}),
+    erm_model_pull:ensure(fixture),wait_state(downloading,100),
+    Old=whereis(erm_model_pull),unlink(Old),Ref=monitor(process,Old),exit(Old,kill),
+    receive {'DOWN',Ref,process,Old,_}->ok after 1000->error(still_alive) end,
+    {ok,_}=erm_model_pull:start_link(maps:get(opts,C)),
+    _=ready_after_pull(),?assertEqual([],stages(C))
+ end end,
+ fun(_)->fun()->
+    Tmp=os:getenv("MODEL_TEST_TMP"),ok=file:write_file(Tmp++"/phontab",<<>>),
+    O=#{voice=>fixture,binary=>Tmp++"/fake_tts",espeak_data=>Tmp,player=>"/bin/true"},
+    {ok,Tts}=erm_tts:start_link(O),
+    try _=ready(),Tts!connect,tts_ready(100),
+        ?assertEqual(ok,erm_tts:say("test")),
+        ?assertMatch(#{errors:=#{},model_pull:=#{models:=#{fixture:=#{state:=ready}}}},erm_tts:diagnostics())
+    after gen_server:stop(Tts),persistent_term:erase({erm_tts,suppress_until}) end
+ end end,
+ fun(_)->fun()->?assertEqual({error,unknown_model},erm_model_pull:ensure(unknown)) end end
+]}.
+setup()->
+    {ok,_}=application:ensure_all_started(ssl),{ok,_}=application:ensure_all_started(inets),
+    Tmp=os:getenv("MODEL_TEST_TMP"),ok=public_key:cacerts_load(Tmp++"/ca.pem"),
+    {ok,L}=ssl:listen(0,[binary,{active,false},{reuseaddr,true},{ip,{127,0,0,1}},
+        {certfile,Tmp++"/cert.pem"},{keyfile,Tmp++"/key.pem"}]),
+    {ok,{_,Port}}=ssl:sockname(L),Base="https://localhost:"++integer_to_list(Port),
+    T=ets:new(routes,[set,public]),ets:insert(T,[{count,0},{"/a",{body,<<"hello">>}},{"/b",{body,<<"{}">>}}]),
+    Server=spawn(fun()->serve(L,T) end),
+    D=Tmp++"/cache-"++integer_to_list(erlang:unique_integer([positive])),
+    M=#{files=>[spec(model,"voice.onnx",Base++"/a",<<"hello">>),spec(config,"voice.onnx.json",Base++"/b",<<"{}">>)]},
+    O=#{cache_dir=>D,timeout_ms=>10000,manifests=>#{fixture=>M}},
+    {ok,Manager}=erm_model_pull:start_link(O),unlink(Manager),
+    #{opts=>O,dir=>D,server=>Server,listen=>L,table=>T,base=>Base}.
+cleanup(C)->
+    try gen_server:stop(erm_model_pull) catch exit:_->ok end,
+    exit(maps:get(server,C),shutdown),ssl:close(maps:get(listen,C)),ets:delete(maps:get(table,C)).
+spec(Role,N,U,B)->#{role=>Role,name=>N,url=>U,bytes=>byte_size(B),sha256=>hex(crypto:hash(sha256,B))}.
+hex(B)->lists:flatten([io_lib:format("~2.16.0b",[X])||<<X>><=B]).
+ready_after_pull()->erm_model_pull:ensure(fixture),ready().
+ready()->wait_state(ready,500),{ok,P}=erm_model_pull:ensure(fixture),P.
+failed()->wait_state(failed,500),#{models:=#{fixture:=#{error:=R}}}=erm_model_pull:status(),R.
+wait_state(_,0)->error({timeout,erm_model_pull:status()});
+wait_state(State,N)->case erm_model_pull:status() of
+    #{models:=#{fixture:=#{state:=State}}}->ok;
+    #{models:=#{fixture:=#{state:=failed,error:=R}}} when State=/=failed->error({pull_failed,R});
+    _->timer:sleep(10),wait_state(State,N-1)
+end.
+children(C)->case file:list_dir(maps:get(dir,C)) of {ok,N}->N;{error,enoent}->[] end.
+stages(C)->[N||N<-children(C),string:find(N,".stage-")=/=nomatch].
+serve(L,T)->case ssl:transport_accept(L) of
+    {ok,S}->try
+        {ok,C}=ssl:handshake(S,2000),{ok,B}=ssl:recv(C,0,2000),
+        [_,Path|_]=binary:split(B,<<" ">>,[global]),
+        ets:update_counter(T,count,1),
+        Route=case ets:lookup(T,binary_to_list(Path)) of [{_,R}]->R;_->{status,404} end,
+        reply(C,Route),ssl:close(C)
+    catch _:_ ->ssl:close(S) end,serve(L,T);
+    _->ok
+end.
+reply(S,{slow,Ms,B})->timer:sleep(Ms),reply(S,{body,B});
+reply(S,{body,B})->ssl:send(S,["HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: ",integer_to_list(byte_size(B)),"\r\n\r\n",B]);
+reply(S,{status,N})->ssl:send(S,["HTTP/1.1 ",integer_to_list(N)," Error\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"]);
+reply(S,{redirect,U})->ssl:send(S,["HTTP/1.1 302 Found\r\nLocation: ",U,"\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"]).
+
+tts_ready(0)->error({tts_not_ready,erm_tts:status()});
+tts_ready(N)->case maps:get(ready,erm_tts:status()) of true->ok;false->timer:sleep(10),tts_ready(N-1) end.

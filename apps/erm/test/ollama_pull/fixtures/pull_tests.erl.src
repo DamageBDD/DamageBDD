@@ -1,0 +1,15 @@
+-module(pull_tests).
+-include_lib("eunit/include/eunit.hrl").
+request(Mode,Opts)->erase(pulls),persistent_term:put(pull_test_mode,Mode),erm_voice_intent:request(<<"s">>,<<"u">>,undefined,Opts).
+success_test()->?assertEqual({ok,<<"ready">>},request(success,#{})),?assertEqual(1,get(pulls)).
+route_test()->?assertEqual({error,{ollama_http_status,404}},request(route,#{})),?assertEqual(undefined,get(pulls)).
+wrong_model_test()->?assertEqual({error,{ollama_http_status,404}},request(wrong_model,#{})),?assertEqual(undefined,get(pulls)).
+disabled_test()->?assertEqual({error,{ollama_http_status,404}},request(success,#{auto_pull_model=>false})),?assertEqual(undefined,get(pulls)).
+failed_test()->?assertEqual({error,{model_pull_failed,timeout}},request(failed,#{})).
+retry_once_test()->?assertEqual({error,{ollama_http_status,404}},request(still_missing,#{})).
+extended_deadline_test()->
+ persistent_term:put(pull_test_mode,success),
+ {ok,P}=erm_voice:start_link(#{planning_timeout_ms=>30,model_pull_timeout_ms=>1000}),
+ try ok=erm_voice:command("ask hello"),timer:sleep(180),
+     S=erm_voice:status(),?assertMatch({ok,#{action:=answer}},maps:get(last_result,S))
+ after gen_server:stop(P) end.
