@@ -101,7 +101,13 @@ handle_cast({transcript, Text, Phrases}, S) ->
                     before => boundary_view(S#st.boundary), after_state => boundary_view(B)}, S);
                 false -> ok
             end,
-            {noreply, S#st{boundary = B}}
+            %% Final records have a real boundary: consume them before another
+            %% cast can replace the candidate. Legacy text still waits for tick.
+            Next = S#st{boundary = B},
+            case Text of
+                #{final := true} -> {noreply, dispatch_boundary(Next)};
+                _ -> {noreply, Next}
+            end
     catch Class:Reason ->
         subsystem_log(warning, "voice transcript rejected: ~p:~tp", [Class, Reason]),
         {noreply, S#st{boundary = erm_voice_boundary:cancel(S#st.boundary)}} end;
@@ -112,17 +118,7 @@ handle_cast(reset, S) ->
 handle_cast(_, S) -> {noreply, S}.
 
 handle_info(tick, S0) ->
-    {Event, B} = erm_voice_boundary:tick(now_ms(), S0#st.boundary, S0#st.opts),
-    case boundary_changed(S0#st.boundary, B) orelse Event =/= none of
-        true -> utterance_trace(capture_tick, #{event_result => Event,
-                    before => boundary_view(S0#st.boundary), after_state => boundary_view(B)}, S0);
-        false -> ok
-    end,
-    S1 = S0#st{boundary = B, tick = erlang:send_after(100, self(), tick)},
-    case Event of
-        {command, Text} -> {_Reply, S2} = accept(Text, S1), {noreply, S2};
-        none -> {noreply, S1}
-    end;
+    {noreply, dispatch_boundary(S0#st{tick = erlang:send_after(100, self(), tick)})};
 handle_info({voice_model_pull, Ref}, S = #st{opts = Opts,
         job = #{ref := Ref, phase := plan, timer := OldTimer} = Job}) ->
     erlang:cancel_timer(OldTimer),
@@ -140,21 +136,44 @@ handle_info({voice_timeout, Ref, Token} = Msg, S = #st{priority = #{ref := Ref, 
 handle_info({'DOWN', Mon, process, _, _} = Msg, S = #st{priority = #{monitor := Mon}}) ->
     priority_info(Msg, S);
 handle_info({voice_result, Ref, Result}, S = #st{job = #{ref := Ref, phase := plan}}) ->
-    Ready = clear_job(S),
+    Ready = finish_job(S),
     case Result of
         {ok, #{action := answer} = Answer} -> {noreply, record_result({ok, Answer}, Ready)};
         {ok, Intent} when is_map(Intent) -> {noreply, launch(action, Intent, Ready)};
         Error -> {noreply, record_result(Error, Ready)}
     end;
 handle_info({voice_result, Ref, Result}, S = #st{job = #{ref := Ref, phase := action}}) ->
-    {noreply, record_result(Result, clear_job(S))};
+    {noreply, record_result(Result, finish_job(S))};
 handle_info({voice_timeout, Ref, Token}, S = #st{job = #{ref := Ref, timeout_token := Token, pid := Pid, phase := Phase}}) ->
     unlink(Pid), exit(Pid, kill),
     %% An action timeout is indeterminate: never retry it automatically.
-    {noreply, record_result({error, {Phase, timeout}}, clear_job(S))};
+    {noreply, record_result({error, {Phase, timeout}}, finish_job(S))};
 handle_info({'DOWN', Mon, process, _Pid, Reason}, S = #st{job = #{monitor := Mon}}) ->
-    {noreply, record_result({error, {worker_down, Reason}}, clear_job(S))};
+    {noreply, record_result({error, {worker_down, Reason}}, finish_job(S))};
 handle_info(_, S) -> {noreply, S}.
+
+%% Completion state and TTS must describe the worker that actually finished.
+finish_job(S = #st{job = #{command := Command}}) ->
+    (clear_job(S))#st{last_command = Command}.
+
+dispatch_boundary(S0) ->
+    {Event, B} = erm_voice_boundary:tick(now_ms(), S0#st.boundary, S0#st.opts),
+    case boundary_changed(S0#st.boundary, B) orelse Event =/= none of
+        true -> utterance_trace(capture_tick, #{event_result => Event,
+                    before => boundary_view(S0#st.boundary), after_state => boundary_view(B)}, S0);
+        false -> ok
+    end,
+    S1 = S0#st{boundary = B},
+    case Event of
+        {command, Text} ->
+            {Reply, S2} = accept(Text, S1),
+            case Reply of
+                {error, busy} -> subsystem_log(notice, "voice command rejected (busy): ~tp", [Text]);
+                _ -> ok
+            end,
+            S2;
+        none -> S1
+    end.
 
 priority_info(Msg, S) ->
     {noreply, Next} = handle_info(Msg, S#st{job = S#st.priority, priority = undefined}),
@@ -201,7 +220,8 @@ launch(Phase, Input, S = #st{opts = Opts}) ->
     Timeout = maps:get(case Phase of plan -> planning_timeout_ms; action -> action_timeout_ms end, Opts),
     Token = make_ref(),
     Timer = erlang:send_after(Timeout, self(), {voice_timeout, Ref, Token}),
-    S#st{job = #{ref => Ref, pid => Pid, monitor => Mon, timer => Timer, timeout_token => Token, phase => Phase, input => Input}}.
+    S#st{job = #{ref => Ref, pid => Pid, monitor => Mon, timer => Timer, timeout_token => Token, phase => Phase, input => Input,
+                  command => S#st.last_command}}.
 execute(#{action := tts} = Intent, _Opts) -> erm_voice_tts:execute(Intent);
 execute(#{action := custom, name := Name, query := Q}, Opts) ->
     case lists:keyfind(Name, 1, maps:get(actions, Opts, [])) of
@@ -286,6 +306,58 @@ trace_boundary_changes_test() ->
     ?assert(boundary_changed(A, A#{wake_prefix => <<"hey">>})),
     ?assertNot(maps:is_key(deadline, boundary_view(A#{deadline => now_ms()+500}))),
     ?assert(maps:is_key(remaining_ms, boundary_view(A#{deadline => now_ms()+500}))).
+
+final_transcript_dispatches_before_next_cast_test() ->
+    {ok, Opts} = options(#{}),
+    S0 = #st{opts = Opts, boundary = erm_voice_boundary:new()},
+    {noreply, S1} = handle_cast({transcript,
+        #{utterance_id => <<"first">>, text => <<"bob play">>, final => true}, ["bob"]}, S0),
+    try
+        ?assertMatch(#{phase := plan, input := <<"play">>}, S1#st.job),
+        {noreply, S2} = handle_cast({transcript,
+            #{utterance_id => <<"second">>, text => <<"bob next">>, final => true}, ["bob"]}, S1),
+        ?assertEqual(S1#st.job, S2#st.job),
+        ?assertEqual(locked, maps:get(phase, S2#st.boundary)),
+        {noreply, S3} = handle_cast({transcript,
+            #{utterance_id => <<"first">>, text => <<"bob play">>, final => true}, ["bob"]}, S2),
+        ?assertEqual(S2#st.job, S3#st.job)
+    after cancel_plan(S1) end.
+
+priority_result_labels_test_() ->
+    [?_test(priority_result_labels(Order, Completion)) ||
+        Order <- [priority_first, original_first],
+        Completion <- [result, timeout, down]].
+
+priority_result_labels(Order, Completion) ->
+    {ok, Opts} = options(#{}),
+    Original = test_job(<<"original custom command">>),
+    Priority = test_job(<<"stop">>),
+    S = #st{opts = Opts, job = Original, priority = Priority, last_command = <<"stop">>},
+    {First, Second} = case Order of
+        priority_first -> {Priority, Original};
+        original_first -> {Original, Priority}
+    end,
+    try
+        {noreply, S1} = handle_info(test_completion(Completion, First), S),
+        ?assertEqual(maps:get(command, First), S1#st.last_command),
+        {noreply, S2} = handle_info(test_completion(Completion, Second), S1),
+        ?assertEqual(maps:get(command, Second), S2#st.last_command),
+        ?assertEqual(2, S2#st.completed),
+        ?assertEqual(undefined, S2#st.job),
+        ?assertEqual(undefined, S2#st.priority)
+    after
+        exit(maps:get(pid, Original), kill),
+        exit(maps:get(pid, Priority), kill)
+    end.
+
+test_job(Command) ->
+    {Pid, Mon} = spawn_monitor(fun() -> receive done -> ok end end),
+    #{ref => make_ref(), pid => Pid, monitor => Mon,
+      timer => erlang:send_after(60000, self(), unused_test_timer),
+      timeout_token => make_ref(), phase => action, command => Command}.
+test_completion(result, J) -> {voice_result, maps:get(ref, J), {ok, done}};
+test_completion(timeout, J) -> {voice_timeout, maps:get(ref, J), maps:get(timeout_token, J)};
+test_completion(down, J) -> {'DOWN', maps:get(monitor, J), process, maps:get(pid, J), failed}.
 -endif.
 
 subsystem_log(Level, Format, Args) ->
