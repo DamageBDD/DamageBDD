@@ -55,6 +55,93 @@ malformed_repair_record_is_ignored_test() ->
         _ = file:del_dir_r(Base)
     end.
 
+log_incidents_are_sorted_filterable_and_thinned_in_snapshot_test() ->
+    Base = temp_dir("log-incidents"),
+    File = filename:join(Base, "store.dets"),
+    Tab = ecai_learning_store_log_incident_dets,
+    try dets:close(Tab) catch _:_:_ -> ok end,
+    {ok, Tab} = dets:open_file(Tab, [{file, File}, {type, set}]),
+    try
+        ok = dets:insert(Tab, [
+            {{log_incident, <<"older">>}, #{
+                application => damage,
+                module => damage_worker,
+                status => learned,
+                persist_seq => 10,
+                observed_event => #{message => <<"redacted">>},
+                inference => #{provider => ollama}
+            }},
+            {{log_incident, <<"newer">>}, #{
+                application => ecai,
+                module => ecai_patch_worker,
+                status => failed,
+                persist_seq => 11,
+                observed_event => #{message => <<"redacted">>},
+                inference => #{provider => ollama}
+            }},
+            {{log_incident, <<"malformed">>}, not_a_map},
+            {{checkpoint, ecai_log_learning}, #{
+                schema_version => 1,
+                queue => [#{event => #{message => <<"redacted">>}}],
+                current_item => #{event => #{message => <<"redacted">>}},
+                counters => #{queued => 1}
+            }},
+            {{checkpoint, ecai_health_monitor}, #{
+                schema => <<"ecai.health-monitor-checkpoint">>,
+                version => 1,
+                cycles => 2,
+                latest_report => #{
+                    checked_at => <<"2026-10-02T00:00:00Z">>,
+                    status => degraded,
+                    diagnostics => #{secret => <<"not-for-snapshot">>},
+                    recent_logs => [#{message => <<"not-for-snapshot">>}],
+                    resolution_source => guarded_inference,
+                    automatic_execution => false,
+                    resolution => #{
+                        summary => <<"recover the pool">>,
+                        steps => [#{id => <<"refresh-inference-pool">>, commands => []}],
+                        automatic_execution => false
+                    }
+                }
+            }}
+        ]),
+        ok = dets:sync(Tab),
+        [Newest, Older] = ecai_learning_store:collect_log_incidents(Tab, all),
+        ?assertEqual(<<"newer">>, maps:get(fingerprint, Newest)),
+        ?assertEqual(<<"older">>, maps:get(fingerprint, Older)),
+        [Filtered] = ecai_learning_store:collect_log_incidents(
+            Tab,
+            {damage, damage_worker}
+        ),
+        ?assertEqual(<<"older">>, maps:get(fingerprint, Filtered)),
+        Snapshot = ecai_learning_store:build_snapshot_data(Tab),
+        Incidents = maps:get(log_incidents, Snapshot),
+        ?assertEqual(2, length(Incidents)),
+        ?assert(lists:all(
+            fun(Incident) ->
+                not maps:is_key(observed_event, Incident) andalso
+                    not maps:is_key(inference, Incident)
+            end,
+            Incidents
+        )),
+        Checkpoints = maps:get(runtime_checkpoints, Snapshot),
+        LogCheckpoint = maps:get(ecai_log_learning, Checkpoints),
+        ?assertNot(maps:is_key(queue, LogCheckpoint)),
+        ?assertNot(maps:is_key(current_item, LogCheckpoint)),
+        HealthCheckpoint = maps:get(ecai_health_monitor, Checkpoints),
+        ThinReport = maps:get(latest_report, HealthCheckpoint),
+        ?assertNot(maps:is_key(diagnostics, ThinReport)),
+        ?assertNot(maps:is_key(recent_logs, ThinReport)),
+        ThinResolution = maps:get(resolution, ThinReport),
+        ?assertEqual(
+            [<<"refresh-inference-pool">>],
+            maps:get(step_ids, ThinResolution)
+        )
+    after
+        _ = dets:close(Tab),
+        _ = file:del_dir_r(Base)
+    end.
+
 temp_dir(Suffix) ->
     Base = filename:join(
         "/tmp",

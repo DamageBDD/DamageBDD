@@ -36,7 +36,19 @@
                 ssh
             ]
         },
-        {env, []},
+        {env, [
+            {ecai_log_learning_enabled, true},
+            {ecai_log_capture_level, warning},
+            {ecai_log_learning_level, error},
+            {ecai_log_learning_apps, [damage, ecai, erm]},
+            {ecai_log_learning_cooldown_ms, 300000},
+            {ecai_log_recent_limit, 64},
+            {ecai_log_pending_limit, 256},
+            {ecai_log_flush_interval_ms, 1000},
+            {ecai_log_flush_batch, 8},
+            {ecai_log_handler_max_queue, 1000},
+            {ecai_log_max_text_bytes, 4096}
+        ]},
         {modules, []},
         {licenses, ["Apache 2.0"]},
         {

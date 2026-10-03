@@ -24,6 +24,16 @@
     repairs/0,
     repairs/1,
     durability/0,
+    health_monitor_status/0,
+    health_report/0,
+    health_resolution/0,
+    health_check/0,
+    recent_logs/0,
+    recent_logs/1,
+    log_learning_status/0,
+    incidents/0,
+    incidents/1,
+    incidents/2,
     events/2,
     events/3
 ]).
@@ -38,6 +48,9 @@ status() ->
         patch_manager => safe_call(fun ecai_patch_manager:status/0),
         integration => safe_call(fun ecai_patch_integration:status/0),
         relations => safe_call(fun ecai_relation_learning:status/0),
+        health_monitor => safe_call(fun ecai_health_monitor:status/0),
+        log_bridge => safe_call(fun damage_ecai_log_bridge:status/0),
+        log_learning => safe_call(fun ecai_log_learning:status/0),
         snapshot_path => snapshot_path()
     }.
 
@@ -88,9 +101,26 @@ durability() ->
     #{
         learner => checkpoint_summary(ecai_learning_store:get_checkpoint(codebase_learner)),
         patch_manager => checkpoint_summary(ecai_learning_store:get_checkpoint(patch_manager)),
+        health_monitor => checkpoint_summary(
+            ecai_learning_store:get_checkpoint(ecai_health_monitor)
+        ),
+        log_learning => checkpoint_summary(
+            ecai_learning_store:get_checkpoint(ecai_log_learning)
+        ),
         store => safe_call(fun ecai_learning_store:status/0),
         integration => safe_call(fun ecai_patch_integration:status/0)
     }.
+
+health_monitor_status() -> ecai_health_monitor:status().
+health_report() -> ecai_health_monitor:latest().
+health_resolution() -> ecai_health_monitor:resolution().
+health_check() -> ecai_health_monitor:check_now().
+recent_logs() -> damage_ecai_log_bridge:recent().
+recent_logs(Limit) -> damage_ecai_log_bridge:recent(Limit).
+log_learning_status() -> ecai_log_learning:status().
+incidents() -> ecai_log_learning:incidents().
+incidents(Limit) -> ecai_log_learning:incidents(Limit).
+incidents(App, Module) -> ecai_log_learning:incidents(App, Module).
 
 events(Type, Id) -> ecai_learning_store:events(Type, Id).
 events(Type, Id, Limit) -> ecai_learning_store:events(Type, Id, Limit).

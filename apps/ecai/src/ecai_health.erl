@@ -6,6 +6,10 @@
     patch_queue/0,
     probe_patch_queue/1,
     all_systems_go/0,
+    monitor_status/0,
+    latest_report/0,
+    resolution/0,
+    check_with_resolution/0,
     print/0
 ]).
 
@@ -22,6 +26,7 @@
     ecai_learning_store,
     ecai_ollama_pool,
     ecai_codebase_learner,
+    ecai_log_learning,
     ecai_patch_sup,
     ecai_patch_manager,
     ecai_patch_integration,
@@ -29,7 +34,9 @@
 ]).
 
 -define(OPTIONAL_PROCESSES, [
-    ecai_vuln_monitor
+    ecai_vuln_monitor,
+    ecai_health_monitor,
+    damage_ecai_log_bridge
 ]).
 
 -define(DEFAULT_CALL_TIMEOUT_MS, 5000).
@@ -55,6 +62,18 @@ all_systems_go() ->
 patch_queue() ->
     D = diagnostics(),
     maps:get(patch_queue, D).
+
+monitor_status() ->
+    safe_public_call(ecai_health_monitor, status, []).
+
+latest_report() ->
+    safe_public_call(ecai_health_monitor, latest, []).
+
+resolution() ->
+    safe_public_call(ecai_health_monitor, resolution, []).
+
+check_with_resolution() ->
+    safe_public_call(ecai_health_monitor, check_now, []).
 
 print() ->
     D = diagnostics(),
@@ -100,6 +119,8 @@ diagnostics() ->
 
     StoreR = safe_apply(ecai_learning_store, status, []),
     LearnerR = safe_apply(ecai_codebase_learner, status, []),
+    LogLearningR = safe_apply(ecai_log_learning, status, []),
+    LogBridgeR = safe_apply(damage_ecai_log_bridge, status, []),
     PoolR = safe_apply(ecai_ollama_pool, status, []),
     ManagerR = safe_apply(ecai_patch_manager, status, []),
     IntegrationR = safe_apply(ecai_patch_integration, status, []),
@@ -108,6 +129,8 @@ diagnostics() ->
 
     Store = component_value(StoreR),
     Learner = component_map(LearnerR),
+    LogLearning = component_map(LogLearningR),
+    LogBridge = component_map(LogBridgeR),
     Pool = component_map(PoolR),
     Manager = component_map(ManagerR),
     Integration0 = component_map(IntegrationR),
@@ -126,6 +149,8 @@ diagnostics() ->
         processes => Processes,
         store => Store,
         learner => Learner,
+        log_learning => LogLearning,
+        log_bridge => LogBridge,
         inference_pool => Pool,
         inference => Inference,
         patch_manager => Manager,
@@ -472,6 +497,7 @@ classify_overall(D) ->
     Inference = maps:get(inference, D, #{}),
     PQ = maps:get(patch_queue, D, #{}),
     Learner = maps:get(learner, D, #{}),
+    LogLearning = maps:get(log_learning, D, #{}),
     Integration = maps:get(integration, D, #{}),
     RequiredUp = maps:get(all_required_up, Processes, false),
     ComponentsResponding = components_responding(D),
@@ -479,6 +505,7 @@ classify_overall(D) ->
     PQState = maps:get(state, PQ, unknown),
     LearnerPhase = maps:get(phase, Learner, unknown),
     LearnerReady = maps:get(ready, Learner, false) =:= true,
+    LogLearningHealthy = log_learning_healthy(LogLearning),
     IntegrationState = maps:get(diagnostic_state, Integration, unknown),
     case true of
         _ when RequiredUp =:= false ->
@@ -486,6 +513,8 @@ classify_overall(D) ->
         _ when PoolHealthy =:= false ->
             fail;
         _ when ComponentsResponding =:= false ->
+            degraded;
+        _ when LogLearningHealthy =:= false ->
             degraded;
         _ when IntegrationState =:= validated_repairs_pending_integration ->
             degraded;
@@ -511,6 +540,25 @@ classify_overall(D) ->
             go
     end.
 
+log_learning_healthy(LogLearning) when is_map(LogLearning) ->
+    case maps:get(enabled, LogLearning, true) of
+        false ->
+            true;
+        true ->
+            Queued = maps:get(queued, LogLearning, 0),
+            MaxQueue = maps:get(max_queue, LogLearning, 0),
+            AtCapacity =
+                is_integer(Queued) andalso Queued > 0 andalso
+                is_integer(MaxQueue) andalso MaxQueue > 0 andalso
+                Queued >= MaxQueue,
+            maps:get(last_error, LogLearning, undefined) =:= undefined andalso
+                not AtCapacity;
+        _ ->
+            false
+    end;
+log_learning_healthy(_) ->
+    false.
+
 patch_ready(D) ->
     Learner = maps:get(learner, D, #{}),
     Inference = maps:get(inference, D, #{}),
@@ -528,7 +576,15 @@ components_responding(D) ->
                 _ -> false
             end
         end,
-        [store, learner, inference_pool, patch_manager, reconciler, integration]
+        [
+            store,
+            learner,
+            log_learning,
+            inference_pool,
+            patch_manager,
+            reconciler,
+            integration
+        ]
     ).
 
 diagnostic_summary(D, Status, PatchReady) ->
@@ -542,6 +598,8 @@ diagnostic_summary(D, Status, PatchReady) ->
         {patch_ready, PatchReady},
         {components_responding, components_responding(D)},
         {learner_ready, get_in(D, [learner, ready], false)},
+        {log_learning_healthy, log_learning_healthy(maps:get(log_learning, D, #{}))},
+        {log_learning_queued, get_in(D, [log_learning, queued], unknown)},
         {patch_queue, maps:get(state, PQ, unknown)},
         {patch_free_capacity, get_in(Inference, [roles, patch, available], unknown)},
         {audit_free_capacity, get_in(Inference, [roles, audit, available], unknown)},
@@ -626,6 +684,13 @@ probe_state(After, Signals) ->
 %%--------------------------------------------------------------------
 %% Utilities
 %%--------------------------------------------------------------------
+
+safe_public_call(Module, Function, Args) ->
+    try apply(Module, Function, Args) of
+        Value -> Value
+    catch
+        Class:Reason -> {error, {Class, Reason}}
+    end.
 
 safe_apply(Module, Function, Args) ->
     Parent = self(),

@@ -118,11 +118,27 @@ component_api_failure_is_degraded_test() ->
     D = D0#{patch_manager => #{status => error, error => timeout}},
     ?assertEqual(degraded, ecai_health:classify_overall(D)).
 
+runtime_log_learning_error_is_degraded_test() ->
+    D0 = healthy_overall_fixture(),
+    D = D0#{log_learning => #{
+        enabled => true,
+        queued => 1,
+        max_queue => 256,
+        last_error => inference_unavailable
+    }},
+    ?assertEqual(degraded, ecai_health:classify_overall(D)).
+
 healthy_overall_fixture() ->
     #{
         processes => #{all_required_up => true},
         store => #{},
         learner => #{phase => idle, ready => true},
+        log_learning => #{
+            enabled => true,
+            queued => 0,
+            max_queue => 256,
+            last_error => undefined
+        },
         inference_pool => #{},
         inference => #{status => healthy},
         patch_manager => #{},

@@ -40,6 +40,7 @@ init([]) ->
         type => worker,
         modules => [ecai_codebase_learner]
     },
+    LogLearning = ecai_log_learning:child_spec(#{}),
     PatchManager = #{
         id => ecai_patch_manager,
         start => {ecai_patch_manager, start_link, [#{}]},
@@ -50,5 +51,24 @@ init([]) ->
     },
     Integration = ecai_patch_integration:child_spec(#{}),
     Reconciler = ecai_patch_reconciler:child_spec(#{}),
-    {ok, {{rest_for_one, 10, 10},
-          [Store, OllamaPool, PatchSup, Learner, PatchManager, Integration, Reconciler]}}.
+    Core = [
+        Store,
+        OllamaPool,
+        PatchSup,
+        Learner,
+        LogLearning,
+        PatchManager,
+        Integration,
+        Reconciler
+    ],
+    {ok, {{rest_for_one, 10, 10}, Core ++ health_monitor_specs()}}.
+
+health_monitor_specs() ->
+    case application:get_env(ecai, code_health_monitor_enabled, true) of
+        true ->
+            [ecai_health_monitor:child_spec(#{})];
+        false ->
+            [];
+        Invalid ->
+            erlang:error({invalid_configuration, code_health_monitor_enabled, Invalid})
+    end.

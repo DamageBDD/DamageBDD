@@ -59,7 +59,8 @@ init([]) ->
                 shutdown => 60000,
                 type => worker,
                 modules => [secrets]
-            },
+            }
+        ] ++ ecai_logging_specs() ++ [
             #{
                 id => nostr_pool,
                 start => {
@@ -241,3 +242,13 @@ init([]) ->
     AllChildren = Core ++ PoolSpecs,
 
     {ok, {SupFlags, AllChildren}}.
+
+ecai_logging_specs() ->
+    case application:get_env(damage, ecai_log_learning_enabled, true) of
+        true ->
+            [damage_ecai_log_bridge:child_spec(#{})];
+        false ->
+            [];
+        Invalid ->
+            erlang:error({invalid_configuration, ecai_log_learning_enabled, Invalid})
+    end.
