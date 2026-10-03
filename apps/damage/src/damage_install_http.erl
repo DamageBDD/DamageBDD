@@ -176,7 +176,7 @@ json_body(Req0) ->
     case cowboy_req:has_body(Req0) of
         true ->
             {ok, Bin, Req} = cowboy_req:read_body(Req0),
-            {catch jsx:decode(Bin, [return_maps]), Req};
+            {damage_otp_compat:catch_value(fun() -> jsx:decode(Bin, [return_maps]) end), Req};
         false ->
             {#{}, Req0}
     end.

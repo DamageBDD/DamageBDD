@@ -18,12 +18,12 @@
 %-define(CHROMEDRIVER, "http://localhost:9515/").
 start_session(ChromeDriver, Context) when is_list(ChromeDriver) ->
     case
-        catch webdrv_session:start_session(
+        damage_otp_compat:catch_value(fun() -> webdrv_session:start_session(
             default,
             ChromeDriver,
             webdrv_cap:default_chrome(),
             10000
-        )
+        ) end)
     of
         {ok, WebDriverPid} ->
             maps:put(chromedriver, WebDriverPid, Context);
@@ -35,7 +35,7 @@ start_session(ChromeDriver, Context) when is_list(ChromeDriver) ->
     end.
 
 ensure_session(Config, Context) ->
-    case catch maps:get(chromedriver, Context, none) of
+    case damage_otp_compat:catch_value(fun() -> maps:get(chromedriver, Context, none) end) of
         none ->
             case lists:keyfind(chromedriver, 1, Config) of
                 {chromedriver, ChromeDriver} ->

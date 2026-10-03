@@ -195,51 +195,6 @@ ensure_phase4b_defaults(Context0) ->
             })
     end.
 
-phase4b_env(Context) ->
-    Root = binary_to_list(maps:get(root, ns(Context))),
-    Vault = binary_to_list(maps:get(vault_path, ns(Context))),
-    ReportDir = binary_to_list(maps:get(report_dir, ns(Context))),
-    Passphrase = env_or("DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", "phase4b-bdd-production-passphrase"),
-    Backend = env_or(
-        "DAMAGE_NSECBUNKER_CRYPTO_CMD",
-        filename:join([
-            Root, "priv", "crypto", "damage-nsecbunker-crypto-c", "damage-nsecbunker-crypto-c"
-        ])
-    ),
-    [
-        {"DAMAGE_ROOT", Root},
-        {"DAMAGE_NSECBUNKER_PROD_VAULT", Vault},
-        {"DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", Passphrase},
-        {"DAMAGE_NSECBUNKER_REPORT_DIR", ReportDir},
-        {"DAMAGE_NSECBUNKER_CRYPTO_CMD", Backend},
-        {"RESET_PROD_VAULT", env_or("RESET_PROD_VAULT", "")},
-        {"DAMAGE_NSECBUNKER_PRODUCTION_CEREMONY_APPROVED",
-            "I_UNDERSTAND_THIS_CREATES_A_PRODUCTION_DAMAGEBDD_NODE_KEY"}
-    ].
-
-run_shell(Cmd, Env, TimeoutMs) ->
-    Port = open_port({spawn_executable, "/bin/sh"}, [
-        binary,
-        exit_status,
-        stderr_to_stdout,
-        {args, ["-c", Cmd]},
-        {env, Env}
-    ]),
-    collect_port(Port, TimeoutMs, <<>>).
-
-collect_port(Port, TimeoutMs, Acc) ->
-    receive
-        {Port, {data, Data}} ->
-            collect_port(Port, TimeoutMs, <<Acc/binary, Data/binary>>);
-        {Port, {exit_status, 0}} ->
-            Acc;
-        {Port, {exit_status, Status}} ->
-            error({phase4b_production_key_ceremony_failed, Status, Acc})
-    after TimeoutMs ->
-        _ = erlang:port_close(Port),
-        error({phase4b_production_key_ceremony_timeout, TimeoutMs, Acc})
-    end.
-
 read_json_report(Context) ->
     Path = maps:get(json_report, ns(Context)),
     Bin = read_file(Path),
@@ -368,14 +323,6 @@ is_npub(Bin) ->
         match -> true;
         nomatch -> false
     end.
-
-shell_quote(Str) when is_list(Str) ->
-    "'" ++ lists:flatten([quote_char(C) || C <- Str]) ++ "'";
-shell_quote(Bin) when is_binary(Bin) ->
-    shell_quote(binary_to_list(Bin)).
-
-quote_char($') -> "'\\''";
-quote_char(C) -> [C].
 
 ns(Context) -> maps:get(?NS, Context, #{}).
 put_ns(Context, NS) -> maps:put(?NS, NS, Context).

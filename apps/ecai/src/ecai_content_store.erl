@@ -98,7 +98,7 @@ handle_call(_Other, _From, State) -> {reply, {error, unsupported_call}, State}.
 
 handle_cast(_Msg, State) -> {noreply, State}.
 handle_info(_Info, State) -> {noreply, State}.
-terminate(_Reason, State) -> catch dets:close(State#state.tab), ok.
+terminate(_Reason, State) -> ecai_otp_compat:catch_value(fun() -> dets:close(State#state.tab) end), ok.
 code_change(_Old, State, _Extra) -> {ok, State}.
 
 persist(Tab, JobId, Job) ->

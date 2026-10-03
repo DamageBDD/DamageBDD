@@ -68,7 +68,7 @@ handle_continue(load_ctx, Ctx0) ->
     {noreply, NewCtx}.
 
 terminate(Reason, _State) ->
-    catch ecai_index_snapshot:force(),
+    ecai_otp_compat:catch_value(fun() -> ecai_index_snapshot:force() end),
     ?LOG_DEBUG("ECAI Search server terminating ~p", [Reason]),
     ok.
 

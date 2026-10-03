@@ -2269,7 +2269,7 @@ stream_heartbeat_interval() ->
 
 stream_execution_loop(
     ReqStream,
-    {Worker, _MonitorRef} = Monitor,
+    {Worker, MonitorRef} = Monitor,
     State,
     StartedMs,
     HeartbeatMs
@@ -2284,7 +2284,7 @@ stream_execution_loop(
             Footer = stream_crash_footer(Class, Reason),
             Req = cowboy_req:stream_body(Footer, fin, ReqStream),
             {stop, Req, State};
-        {'DOWN', _MonitorRef, process, Worker, Reason} ->
+        {'DOWN', MonitorRef, process, Worker, Reason} ->
             %% A worker can die before delivering its result. Never leave the
             %% HTTP connection hanging forever in that case.
             ?LOG_ERROR("stream execution worker died reason=~p", [Reason]),

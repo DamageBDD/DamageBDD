@@ -39,7 +39,7 @@ init([]) ->
 
 handle_info({Port, {data, Line}}, State = #state{port = Port, subscribers = Subs}) ->
     Event = parse_event(Line),
-    [catch apply(Fun, [Event]) || {_Pid, Fun} <- Subs],
+    [erm_otp_compat:catch_value(fun() -> apply(Fun, [Event]) end) || {_Pid, Fun} <- Subs],
     {noreply, State};
 handle_info({_Port, closed}, State) ->
     io:format("⚠️  herbstclient port closed.~n"),

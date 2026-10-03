@@ -302,7 +302,7 @@ handle_info(_Info, State) ->
 terminate(_Reason, State0) ->
     Ids = maps:keys(State0#state.objects),
     _ = lists:foldl(fun do_destroy/2, State0, Ids),
-    catch wx:destroy(),
+    erm_otp_compat:catch_value(fun() -> wx:destroy() end),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -887,8 +887,8 @@ detach_from_parent(#object{parent = root}, _Objects) ->
 detach_from_parent(#object{parent = ParentId, wx_ref = WxRef}, Objects) ->
     case maps:get(ParentId, Objects, undefined) of
         #object{sizer = ParentSizer, container = ParentContainer} ->
-            catch wxSizer:detach(ParentSizer, WxRef),
-            catch wxWindow:layout(ParentContainer),
+            erm_otp_compat:catch_value(fun() -> wxSizer:detach(ParentSizer, WxRef) end),
+            erm_otp_compat:catch_value(fun() -> wxWindow:layout(ParentContainer) end),
             ok;
         _ ->
             ok
@@ -896,7 +896,7 @@ detach_from_parent(#object{parent = ParentId, wx_ref = WxRef}, Objects) ->
 
 destroy_native(#object{wx_ref = WxRef}) ->
     %% 'Destroy'/1 defers top-level deletion until outstanding events are safe.
-    catch wxWindow:'Destroy'(WxRef),
+    erm_otp_compat:catch_value(fun() -> wxWindow:'Destroy'(WxRef) end),
     ok.
 
 maybe_remove_owner_monitor(Owner, State = #state{objects = Objects, owner_monitors = Monitors}) ->

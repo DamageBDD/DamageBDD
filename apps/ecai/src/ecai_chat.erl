@@ -195,7 +195,7 @@ handle_call(
     %% -------------------------
     %% Uses your new disk index + docstore
     DiskContext =
-        case catch ecai_ollama_rag:retrieve_sources("ecai_index", Query, TopK) of
+        case ecai_otp_compat:catch_value(fun() -> ecai_ollama_rag:retrieve_sources("ecai_index", Query, TopK) end) of
             Sources when is_list(Sources) -> Sources;
             _ -> []
         end,
@@ -518,12 +518,12 @@ to_bin(Other) -> list_to_binary(io_lib:format("~p", [Other])).
 
 maybe_store_ipfs(Question, Answer) ->
     QCID =
-        case catch damage_ipfs:add({data, Question}) of
+        case ecai_otp_compat:catch_value(fun() -> damage_ipfs:add({data, Question}) end) of
             {ok, CID} -> CID;
             _ -> undefined
         end,
     ACID =
-        case catch damage_ipfs:add({data, Answer}) of
+        case ecai_otp_compat:catch_value(fun() -> damage_ipfs:add({data, Answer}) end) of
             {ok, CID0} -> CID0;
             _ -> undefined
         end,

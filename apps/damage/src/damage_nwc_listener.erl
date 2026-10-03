@@ -400,11 +400,11 @@ relays(Opts) ->
     end.
 
 resolve_service_pubkey(CryptoHandler) ->
-    case catch apply(CryptoHandler, service_pubkey_hex, []) of
+    case damage_otp_compat:catch_value(fun() -> apply(CryptoHandler, service_pubkey_hex, []) end) of
         PubKey when is_binary(PubKey) ->
             PubKey;
         _ ->
-            case catch apply(CryptoHandler, public_key_hex, []) of
+            case damage_otp_compat:catch_value(fun() -> apply(CryptoHandler, public_key_hex, []) end) of
                 PubKey when is_binary(PubKey) ->
                     PubKey;
                 _ ->
@@ -731,7 +731,7 @@ nwc_error_summary(Reason) ->
 
 decode_request(CryptoHandler, Event) ->
     ClientPub = maps:get(<<"pubkey">>, Event, undefined),
-    case catch apply(CryptoHandler, nwc_decode_request, [Event]) of
+    case damage_otp_compat:catch_value(fun() -> apply(CryptoHandler, nwc_decode_request, [Event]) end) of
         {ok, Req0} when is_map(Req0) ->
             {ok, ensure_client_pubkey(Req0, ClientPub)};
         {ok, _Req} = Ok ->
@@ -781,7 +781,7 @@ send_response(Event, Payload, _State = #state{crypto_handler = CryptoHandler, co
     end.
 
 encode_response(CryptoHandler, Event, Payload) ->
-    case catch apply(CryptoHandler, nwc_encode_response, [Event, Payload, ?RESPONSE_KIND]) of
+    case damage_otp_compat:catch_value(fun() -> apply(CryptoHandler, nwc_encode_response, [Event, Payload, ?RESPONSE_KIND]) end) of
         {ok, _Event} = Ok ->
             Ok;
         {'EXIT', Reason} ->
@@ -791,7 +791,7 @@ encode_response(CryptoHandler, Event, Payload) ->
     end.
 
 create_signed_event(CryptoHandler, Kind, Content, Tags) ->
-    case catch apply(CryptoHandler, create_signed_event, [Kind, Content, Tags]) of
+    case damage_otp_compat:catch_value(fun() -> apply(CryptoHandler, create_signed_event, [Kind, Content, Tags]) end) of
         {ok, _Event} = Ok ->
             Ok;
         {'EXIT', Reason} ->
@@ -984,7 +984,7 @@ conn_known(_, _, _) ->
 drop_conn(ConnPid, State) ->
     case conn_known_pid(ConnPid, State) of
         true ->
-            catch gun:close(ConnPid),
+            damage_otp_compat:catch_value(fun() -> gun:close(ConnPid) end),
             remove_conn(ConnPid, State);
         false ->
             State
@@ -1015,7 +1015,7 @@ close_all_conns(#state{conns = Conns, conn_pid = ConnPid}) ->
     lists:foreach(
         fun
             (#{conn_pid := Pid}) when is_pid(Pid) ->
-                catch gun:close(Pid);
+                damage_otp_compat:catch_value(fun() -> gun:close(Pid) end);
             (_) ->
                 ok
         end,
@@ -1023,7 +1023,7 @@ close_all_conns(#state{conns = Conns, conn_pid = ConnPid}) ->
     ),
     case ConnPid of
         undefined -> ok;
-        P when is_pid(P) -> catch gun:close(P)
+        P when is_pid(P) -> damage_otp_compat:catch_value(fun() -> gun:close(P) end)
     end,
     ok.
 summarize_state(

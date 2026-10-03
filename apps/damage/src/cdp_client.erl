@@ -84,7 +84,7 @@ discover_ws(Opts = #{host := Host, port := Port}) ->
     Type = maps:get(type, Opts, <<"page">>),
     case cdp_http_get(Host, Port, "/json") of
         {200, Body} ->
-            case catch jsx:decode(Body, [return_maps]) of
+            case damage_otp_compat:catch_value(fun() -> jsx:decode(Body, [return_maps]) end) of
                 List when is_list(List) ->
                     pick_ws(List, Type);
                 _ ->
@@ -113,7 +113,7 @@ load_protocol_dynamic(#state{host = Host, port = Port}) when
 ->
     case cdp_http_get(Host, Port, "/json/protocol") of
         {200, Bin} ->
-            case catch jiffy:decode(Bin, [return_maps]) of
+            case damage_otp_compat:catch_value(fun() -> jiffy:decode(Bin, [return_maps]) end) of
                 #{<<"domains">> := Domains} ->
                     Idx = build_command_index(Domains),
                     ?LOG_INFO("Loaded CDP protocol from DevTools (~p domains)", [maps:size(Idx)]),
@@ -182,7 +182,7 @@ handle_cast(_Msg, S) ->
     {noreply, S}.
 
 handle_info({gun_ws, _Conn, _Ref, {text, Data}}, S = #state{pending = P0}) ->
-    case catch jsx:decode(Data, [return_maps]) of
+    case damage_otp_compat:catch_value(fun() -> jsx:decode(Data, [return_maps]) end) of
         #{<<"id">> := Id} = R ->
             case maps:take(Id, P0) of
                 {From, P1} ->
@@ -228,7 +228,7 @@ terminate(Reason, _S = #state{conn = Conn}) ->
     maybe_close_gun(Conn),
     ok.
 maybe_close_gun(Conn) when is_pid(Conn) ->
-    catch gun:close(Conn),
+    damage_otp_compat:catch_value(fun() -> gun:close(Conn) end),
     ok;
 maybe_close_gun(_) ->
     ok.
@@ -387,7 +387,7 @@ load_protocol() ->
 read_domains(Path) ->
     case file:read_file(Path) of
         {ok, Bin} ->
-            case catch jsx:decode(Bin, [return_maps]) of
+            case damage_otp_compat:catch_value(fun() -> jsx:decode(Bin, [return_maps]) end) of
                 #{<<"domains">> := DomainList} -> DomainList;
                 _ -> []
             end;

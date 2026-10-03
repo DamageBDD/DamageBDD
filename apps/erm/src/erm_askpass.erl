@@ -186,7 +186,7 @@ get_input(TextCtrl) ->
     string:strip(Text).
 
 close_frame(Frame) ->
-    catch wxWindow:close(Frame).
+    erm_otp_compat:catch_value(fun() -> wxWindow:close(Frame) end).
 
 with_wx(Fun) ->
     %% Ensure wx is available and a display/wayland session exists
@@ -198,7 +198,7 @@ with_wx(Fun) ->
             try
                 Fun()
             after
-                catch wx:destroy(WX)
+                erm_otp_compat:catch_value(fun() -> wx:destroy(WX) end)
             end
     end.
 
@@ -232,7 +232,7 @@ maybe_devtty_password(Prompt) ->
             catch
                 _:E -> {error, {tty_password_failed, E}}
             after
-                catch file:close(Dev)
+                erm_otp_compat:catch_value(fun() -> file:close(Dev) end)
             end;
         {error, enoent} ->
             {error, no_tty};
@@ -258,7 +258,7 @@ maybe_devtty_text(Prompt) ->
             catch
                 _:E -> {error, {tty_text_failed, E}}
             after
-                catch file:close(Dev)
+                erm_otp_compat:catch_value(fun() -> file:close(Dev) end)
             end;
         {error, enoent} ->
             {error, no_tty};

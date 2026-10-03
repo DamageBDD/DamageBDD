@@ -79,7 +79,7 @@ bfs(_Graph, [], Seen, _MaxDepth) ->
     lists:sort(fun({A, DA}, {B, DB}) ->
         (DA < DB) orelse ((DA =:= DB) andalso (A =< B))
     end, maps:to_list(Seen));
-bfs(Graph, [{Module, Depth} | Rest], Seen, MaxDepth) when Depth >= MaxDepth ->
+bfs(Graph, [{_Module, Depth} | Rest], Seen, MaxDepth) when Depth >= MaxDepth ->
     bfs(Graph, Rest, Seen, MaxDepth);
 bfs(Graph, [{Module, Depth} | Rest], Seen0, MaxDepth) ->
     Neighbours = lists:usort(outgoing(Graph, Module) ++ incoming(Graph, Module)),

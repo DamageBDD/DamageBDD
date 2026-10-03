@@ -554,12 +554,12 @@ required_tags_map(_) ->
 
 event_kind_key(K) when is_integer(K) -> K;
 event_kind_key(K) when is_binary(K) ->
-    case catch binary_to_integer(K) of
+    case damage_otp_compat:catch_value(fun() -> binary_to_integer(K) end) of
         I when is_integer(I) -> I;
         _ -> K
     end;
 event_kind_key(K) when is_list(K) ->
-    case catch list_to_integer(K) of
+    case damage_otp_compat:catch_value(fun() -> list_to_integer(K) end) of
         I when is_integer(I) -> I;
         _ -> K
     end;
@@ -568,14 +568,14 @@ event_kind_key(K) ->
 
 int_or_default(I, _Default) when is_integer(I) -> I;
 int_or_default(B, Default) when is_binary(B) ->
-    case catch binary_to_integer(B) of
+    case damage_otp_compat:catch_value(fun() -> binary_to_integer(B) end) of
         I when is_integer(I) -> I;
         _ -> Default
     end;
 int_or_default(L, Default) when is_list(L) ->
     case is_string(L) of
         true ->
-            case catch list_to_integer(L) of
+            case damage_otp_compat:catch_value(fun() -> list_to_integer(L) end) of
                 I when is_integer(I) -> I;
                 _ -> Default
             end;
@@ -799,10 +799,6 @@ secure_owner_status(Config) ->
         true -> damage_nsecbunker_secret_owner:status();
         false -> #{enabled => false}
     end.
-
-ensure_audit_path(Config) ->
-    Path = maps:get(audit_log, Config, damage_nsecbunker_config:default_audit_log()),
-    filelib:ensure_dir(path_list(Path)).
 
 write_audit(Config, #{audit_line := AuditLine}) ->
     write_audit(Config, AuditLine);

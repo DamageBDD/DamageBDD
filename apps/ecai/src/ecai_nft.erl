@@ -260,7 +260,7 @@ decrypt_verified_pqc_payload(PublicManifest, PQPrivateKey) when
                 _ -> secrets_pqc:decrypt(Envelope, PQPrivateKey, AADContext)
             end,
         ok = verify_verified_payload_hash(PublicManifest, Plaintext),
-        case catch jsx:decode(Plaintext, [return_maps]) of
+        case ecai_otp_compat:catch_value(fun() -> jsx:decode(Plaintext, [return_maps]) end) of
             {'EXIT', _} -> {ok, Plaintext};
             Json -> {ok, Json}
         end

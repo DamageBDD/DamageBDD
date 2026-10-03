@@ -318,7 +318,7 @@ do_post_action(_Action, Data, _Req, _State) ->
 
 from_json(Req, #{action := Action} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
-    case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
+    case damage_otp_compat:catch_value(fun() -> jsx:decode(Data, [return_maps, {labels, atom}]) end) of
         badarg ->
             Response =
                 cowboy_req:set_resp_body(
@@ -494,7 +494,7 @@ http_get_json(UrlBin) when is_binary(UrlBin) ->
                         {error, Reason}
                 end
             after
-                catch gun:close(ConnPid)
+                damage_otp_compat:catch_value(fun() -> gun:close(ConnPid) end)
             end;
         {error, Reason} ->
             {error, Reason}

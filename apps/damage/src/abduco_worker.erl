@@ -110,11 +110,11 @@ handle_call({signal, Sig0}, _From, S = #state{exec_pid = EP, os_pid = OP}) ->
     Reply =
         case {is_pid_alive(EP), is_os_alive(OP)} of
             {true, true} ->
-                catch exec:kill(EP, Sig),
+                damage_otp_compat:catch_value(fun() -> exec:kill(EP, Sig) end),
                 ok;
             %% child may have reaped; try via ExecPid anyway
             {true, false} ->
-                catch exec:kill(EP, Sig),
+                damage_otp_compat:catch_value(fun() -> exec:kill(EP, Sig) end),
                 ok;
             {_, _} ->
                 {error, not_running}
@@ -129,7 +129,7 @@ handle_call(revive, _From, S = #state{cmd = Cmd, env = Env, exec_pid = EP, os_pi
             {reply, ok, S#state{exec_pid = ExecPid, os_pid = OsPid}}
     end;
 handle_call(stop, _From, S = #state{exec_pid = EP}) ->
-    _ = (catch exec:stop(EP)),
+    _ = (damage_otp_compat:catch_value(fun() -> exec:stop(EP) end)),
     {reply, ok, S};
 handle_call(_Req, _From, S) ->
     {reply, ok, S}.
@@ -146,7 +146,7 @@ handle_info(_Info, S) ->
 handle_cast(_Info, State) -> {noreply, State}.
 
 terminate(_Reason, #state{exec_pid = EP}) ->
-    _ = (catch exec:stop(EP)),
+    _ = (damage_otp_compat:catch_value(fun() -> exec:stop(EP) end)),
     ok.
 
 code_change(_Old, S, _Extra) -> {ok, S}.

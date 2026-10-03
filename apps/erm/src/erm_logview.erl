@@ -105,10 +105,10 @@ do_init(Config) ->
     ]),
 
     %% Fonts (reuse your erm_fonts if present, else fallback)
-    catch begin
+    erm_otp_compat:catch_value(fun() -> begin
         Font = erm_fonts:get_font(Frame, 10, 400),
         wxTextCtrl:setFont(Text, Font)
-    end,
+    end end),
 
     %% Layout
     TopSizer = wxBoxSizer:new(?wxVERTICAL),
@@ -234,10 +234,10 @@ code_change(_, _, State) -> {ok, State}.
 terminate(_Reason, State) -> cleanup(State).
 
 cleanup(State = #state{fh = Fh, timer = Tmr, parent = Frame}) ->
-    catch (Fh =/= undefined andalso file:close(Fh)),
-    catch wxTimer:stop(Tmr),
-    catch wxFrame:destroy(Frame),
-    catch wx:destroy(),
+    erm_otp_compat:catch_value(fun() -> (Fh =/= undefined andalso file:close(Fh)) end),
+    erm_otp_compat:catch_value(fun() -> wxTimer:stop(Tmr) end),
+    erm_otp_compat:catch_value(fun() -> wxFrame:destroy(Frame) end),
+    erm_otp_compat:catch_value(fun() -> wx:destroy() end),
     State.
 
 %% ------------------------------------------------------------------
@@ -315,7 +315,7 @@ maybe_tail(
             case {Inode2 =/= Inode, Sz < LastSz} of
                 {true, _} ->
                     wxStatusBar:setStatusText(Status, "Log rotated, reopening…", []),
-                    catch file:close(Fh),
+                    erm_otp_compat:catch_value(fun() -> file:close(Fh) end),
                     open_file(Path, ?DEFAULT_TAIL_BYTES, State#state{fh = undefined});
                 {_, true} ->
                     wxStatusBar:setStatusText(Status, "Log truncated, resetting offset…", []),

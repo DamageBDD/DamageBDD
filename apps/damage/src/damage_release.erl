@@ -226,9 +226,11 @@ runtime_code_hash(ReleaseInfo) ->
     end.
 
 source_included() ->
-    case code:lib_dir(damage, src) of
-        Dir when is_list(Dir) -> filelib:is_dir(Dir);
-        _ -> false
+    case code:lib_dir(damage) of
+        AppDir when is_list(AppDir) ->
+            filelib:is_dir(filename:join(AppDir, "src"));
+        _ ->
+            false
     end.
 
 build_info(Function, Default) ->

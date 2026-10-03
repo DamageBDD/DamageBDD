@@ -427,7 +427,7 @@ direct_nwc_roundtrip(Relay, Event, Filter, Conn, TimeoutMs) ->
                         {error, {subscribe_ws_send_failed, SubErr}}
                 end
             after
-                catch gun:close(ConnPid)
+                damage_otp_compat:catch_value(fun() -> gun:close(ConnPid) end)
             end;
         {error, Reason} ->
             {error, {open_relay_failed, Url, Reason}}

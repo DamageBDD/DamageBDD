@@ -95,7 +95,7 @@ handle_info(_Info, State) ->
 
 terminate(_Reason, State) ->
     maybe_cancel_timer(State#state.close_timer),
-    catch ecai_mic_stream:unsubscribe(),
+    ecai_otp_compat:catch_value(fun() -> ecai_mic_stream:unsubscribe() end),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->

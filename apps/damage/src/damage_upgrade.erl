@@ -195,12 +195,12 @@ do_upgrade(TarPath0) ->
     end.
 
 safe_downgrade(From) ->
-    catch release_handler:install_release(From),
-    catch release_handler:make_permanent(From),
+    damage_otp_compat:catch_value(fun() -> release_handler:install_release(From) end),
+    damage_otp_compat:catch_value(fun() -> release_handler:make_permanent(From) end),
     ok.
 
 safe_uninstall(Vsn) ->
-    catch release_handler:uninstall_release(Vsn),
+    damage_otp_compat:catch_value(fun() -> release_handler:uninstall_release(Vsn) end),
     ok.
 
 %%%==================================================================

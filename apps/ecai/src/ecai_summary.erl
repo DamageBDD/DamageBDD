@@ -328,7 +328,7 @@ safe_ctx() ->
 
 docs_count(Ctx) ->
     %% #docs in the loaded index
-    case catch ecai_search:size(Ctx) of
+    case ecai_otp_compat:catch_value(fun() -> ecai_search:size(Ctx) end) of
         #{docs := N} when is_integer(N) -> N;
         _ -> 1
     end.

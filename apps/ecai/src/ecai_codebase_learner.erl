@@ -265,13 +265,6 @@ enqueue_module_change(_App, _Module, State0 = #state{phase = Phase})
     ok = checkpoint_and_publish(State1),
     {noreply, State1}.
 
-entry_pending(Entry, State) ->
-    lists:member(Entry, State#state.queue) orelse
-        lists:any(
-            fun(Task) -> maps:get(entry, Task, undefined) =:= Entry end,
-            maps:values(State#state.inflight)
-        ).
-
 dispatch(State0) ->
     case can_dispatch(State0) of
         false ->

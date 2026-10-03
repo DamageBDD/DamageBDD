@@ -213,12 +213,12 @@ maybe_index(undefined, _Cid, _Meta) ->
     ok;
 maybe_index({M, F}, Cid, Meta) ->
     spawn(fun() ->
-        catch apply(M, F, [Cid, Meta])
+        damage_otp_compat:catch_value(fun() -> apply(M, F, [Cid, Meta]) end)
     end),
     ok;
 maybe_index(Fun, Cid, Meta) when is_function(Fun, 2) ->
     spawn(fun() ->
-        catch Fun(Cid, Meta)
+        damage_otp_compat:catch_value(fun() -> Fun(Cid, Meta) end)
     end),
     ok;
 maybe_index(Other, _Cid, _Meta) ->

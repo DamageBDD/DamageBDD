@@ -362,7 +362,7 @@ step(
     Expected = list_to_binary(Expected0),
     case maps:get(response, Context) of
         [{status_code, _}, _Headers, {body, Body}] ->
-            case catch jsx:decode(Body, [return_maps]) of
+            case damage_otp_compat:catch_value(fun() -> jsx:decode(Body, [return_maps]) end) of
                 {'EXIT', Msg} ->
                     ?LOG_ERROR("Unexpected ~p ~p", [Body, Msg]),
                     maps:put(fail, damage_utils:strf("invalid json: ~p", [Body]), Context);
@@ -700,7 +700,7 @@ step(_Config, Context, _, _N, ?STEP_RESPONSE_JSON_SHOULD_BE, Args) ->
 %%------------------------------------------------------------------------------
 step(_Config, Context, _, _N, ?STEP_VAR_EQ_JSON_LIT, _) ->
     Actual = maps:get(list_to_atom(Variable), Context, none),
-    case catch jsx:decode(list_to_binary(Value), [return_maps]) of
+    case damage_otp_compat:catch_value(fun() -> jsx:decode(list_to_binary(Value), [return_maps]) end) of
         {'EXIT', Reason} ->
             maps:put(
                 fail,
@@ -754,7 +754,7 @@ step(
     _
 ) ->
     [{status_code, _}, _Hdrs, {body, Body}] = maps:get(response, Context0),
-    case catch jsx:decode(Body, [return_maps]) of
+    case damage_otp_compat:catch_value(fun() -> jsx:decode(Body, [return_maps]) end) of
         {'EXIT', _} ->
             maps:put(fail, <<"invalid json in response">>, Context0);
         Json ->
@@ -797,7 +797,7 @@ step(
 ) ->
     case maps:get(response, Context) of
         [{status_code, _}, _Hdrs, {body, Body}] ->
-            case catch jsx:decode(Body, [return_maps]) of
+            case damage_otp_compat:catch_value(fun() -> jsx:decode(Body, [return_maps]) end) of
                 {'EXIT', _} ->
                     maps:put(fail, <<"invalid json in response">>, Context);
                 Json ->
@@ -1327,7 +1327,7 @@ gun_post(Config0, Context, Path, Headers, Data) ->
         Resp = gun_await(ConnPid, StreamRef, Context),
         Resp
     after
-        catch gun:close(ConnPid)
+        damage_otp_compat:catch_value(fun() -> gun:close(ConnPid) end)
     end.
 
 gun_patch(Config0, Context, Path, Headers, Data) ->
@@ -1336,7 +1336,7 @@ gun_patch(Config0, Context, Path, Headers, Data) ->
         StreamRef = gun:patch(ConnPid, Path, Headers, Data),
         gun_await(ConnPid, StreamRef, Context)
     after
-        catch gun:close(ConnPid)
+        damage_otp_compat:catch_value(fun() -> gun:close(ConnPid) end)
     end.
 
 gun_put(Config0, Context, Path, Headers, Data) ->
@@ -1345,7 +1345,7 @@ gun_put(Config0, Context, Path, Headers, Data) ->
         StreamRef = gun:put(ConnPid, Path, Headers, Data),
         gun_await(ConnPid, StreamRef, Context)
     after
-        catch gun:close(ConnPid)
+        damage_otp_compat:catch_value(fun() -> gun:close(ConnPid) end)
     end.
 
 gun_get(Config, Context, Path, Headers) ->
@@ -1354,7 +1354,7 @@ gun_get(Config, Context, Path, Headers) ->
         StreamRef = gun:get(ConnPid, Path, Headers),
         gun_await(ConnPid, StreamRef, Context)
     after
-        catch gun:close(ConnPid)
+        damage_otp_compat:catch_value(fun() -> gun:close(ConnPid) end)
     end.
 
 gun_options(Config, Context, Path, Headers) ->
@@ -1363,7 +1363,7 @@ gun_options(Config, Context, Path, Headers) ->
         StreamRef = gun:options(ConnPid, Path, Headers),
         gun_await(ConnPid, StreamRef, Context)
     after
-        catch gun:close(ConnPid)
+        damage_otp_compat:catch_value(fun() -> gun:close(ConnPid) end)
     end.
 
 gun_head(Config, Context, Path, Headers) ->
@@ -1372,7 +1372,7 @@ gun_head(Config, Context, Path, Headers) ->
         StreamRef = gun:head(ConnPid, Path, Headers),
         gun_await(ConnPid, StreamRef, Context)
     after
-        catch gun:close(ConnPid)
+        damage_otp_compat:catch_value(fun() -> gun:close(ConnPid) end)
     end.
 
 gun_delete(Config, Context, Path, Headers) ->
@@ -1381,7 +1381,7 @@ gun_delete(Config, Context, Path, Headers) ->
         StreamRef = gun:delete(ConnPid, Path, Headers),
         gun_await(ConnPid, StreamRef, Context)
     after
-        catch gun:close(ConnPid)
+        damage_otp_compat:catch_value(fun() -> gun:close(ConnPid) end)
     end.
 
 retry_get(Config, Context, Path, Headers, N, WaitSecs, Attempt) ->
@@ -1427,7 +1427,7 @@ retry_get_once(Config, Context, Path, Headers) ->
                         {error, {unexpected_response, Other}}
                 end
             after
-                catch gun:close(ConnPid)
+                damage_otp_compat:catch_value(fun() -> gun:close(ConnPid) end)
             end;
         {error, Reason} ->
             {error, {connection_failed, Reason}};
@@ -1494,7 +1494,7 @@ ejsonpath_match(Path, Data, Expected, Context) ->
                         Expected
                 end
         end,
-    case catch ejsonpath:q(Path, Data) of
+    case damage_otp_compat:catch_value(fun() -> ejsonpath:q(Path, Data) end) of
         {[Expected0 | _], _} ->
             Context;
         UnExpected ->

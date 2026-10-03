@@ -331,7 +331,7 @@ maybe_index_event(Event, _State = #state{base_dir = BaseDir}) ->
         path => maps:get(path, Event),
         ts => maps:get(ts, Event)
     },
-    case catch ecai_log_index:add_doc(BaseDir, Meta) of
+    case ecai_otp_compat:catch_value(fun() -> ecai_log_index:add_doc(BaseDir, Meta) end) of
         ok -> ok;
         {'EXIT', _} -> ok;
         _ -> ok

@@ -150,8 +150,8 @@ handle_info(Other, S) ->
     {noreply, S}.
 
 terminate(_Why, #state{tbi = TBI}) ->
-    catch wxTaskBarIcon:removeIcon(TBI),
-    catch wxTaskBarIcon:destroy(TBI),
+    erm_otp_compat:catch_value(fun() -> wxTaskBarIcon:removeIcon(TBI) end),
+    erm_otp_compat:catch_value(fun() -> wxTaskBarIcon:destroy(TBI) end),
     ok.
 
 code_change(_Old, S, _Extra) -> {ok, S}.
@@ -215,9 +215,9 @@ dispatch_menu(Term, #state{on_menu = undefined}) ->
     ?LOG_INFO("erm_tray: menu clicked ~p (no handler)", [Term]),
     ok;
 dispatch_menu(Term, #state{on_menu = Fun}) when is_function(Fun, 1) ->
-    catch Fun({menu, Term});
+    erm_otp_compat:catch_value(fun() -> Fun({menu, Term}) end);
 dispatch_menu(Term, #state{on_menu = {M, F, A}}) ->
-    catch erlang:apply(M, F, [{menu, Term} | A]).
+    erm_otp_compat:catch_value(fun() -> erlang:apply(M, F, [{menu, Term} | A]) end).
 
 %%%===================================================================
 %%% ID mapping
@@ -310,7 +310,7 @@ first_existing([P | Ps]) ->
 run_cmd(CmdIO) ->
     %% flatten -> binary -> charlist (unicode-aware)
     CmdStr = unicode:characters_to_list(iolist_to_binary(CmdIO)),
-    case catch exec:run(CmdStr, [sync, stdout, stderr]) of
+    case erm_otp_compat:catch_value(fun() -> exec:run(CmdStr, [sync, stdout, stderr]) end) of
         {ok, _} = OK ->
             OK;
         {error, E} ->

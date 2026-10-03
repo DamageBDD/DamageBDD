@@ -191,7 +191,7 @@ to_json(Req, #{ae_account := _AeAccount, action := get_knowledge} = State) ->
 
 from_json(Req, #{action := search} = State) ->
     {ok, Body, Req1} = cowboy_req:read_body(Req),
-    case catch jsx:decode(Body, [return_maps]) of
+    case ecai_otp_compat:catch_value(fun() -> jsx:decode(Body, [return_maps]) end) of
         #{<<"q">> := Q} = M ->
             Limit =
                 case maps:get(<<"limit">>, M, 10) of
@@ -234,7 +234,7 @@ from_json(Req, #{action := search} = State) ->
 from_json(Req, #{ae_account := AeAccount, action := encode} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
     ?LOG_DEBUG("post action ~p ", [Data]),
-    case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
+    case ecai_otp_compat:catch_value(fun() -> jsx:decode(Data, [return_maps, {labels, atom}]) end) of
         #{
             subject := _Subject,
             predicate := _Predicate,
@@ -261,7 +261,7 @@ from_json(Req, #{ae_account := AeAccount, action := encode} = State) ->
 from_json(Req, #{ae_account := AeAccount} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
     ?LOG_DEBUG("post action ~p ", [Data]),
-    case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
+    case ecai_otp_compat:catch_value(fun() -> jsx:decode(Data, [return_maps, {labels, atom}]) end) of
         #{<<"session_id">> := SessionID, <<"user_id">> := AeAccount, <<"message">> := Message} ->
             AIReply = ecai_chat:get_reply(SessionID, Message),
             Response = #{<<"reply">> => AIReply},
@@ -293,7 +293,7 @@ get_knowledge(KnowledgeTxHash) ->
                 PathPrefix ++ "v3/aex141/" ++ KnowledgeNftContract ++ "/tokens/" ++ KnowledgeTxHash,
             StreamRef = gun:get(ConnPid, Path),
             MetaData =
-                case catch read_stream(ConnPid, StreamRef) of
+                case ecai_otp_compat:catch_value(fun() -> read_stream(ConnPid, StreamRef) end) of
                     #{amount := null} ->
                         0;
                     {error, Error} ->

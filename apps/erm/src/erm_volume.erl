@@ -130,7 +130,7 @@ init(Config) ->
     }}.
 
 terminate(_Reason, #state{parent = Frame}) ->
-    catch wxFrame:destroy(Frame),
+    erm_otp_compat:catch_value(fun() -> wxFrame:destroy(Frame) end),
     wx:destroy().
 
 code_change(_, _, State) -> {stop, ignore, State}.

@@ -240,7 +240,7 @@ is_active(Account) ->
             Active;
         _ ->
             Balance =
-                case catch damage_ae:balance(Account) of
+                case damage_otp_compat:catch_value(fun() -> damage_ae:balance(Account) end) of
                     B when is_integer(B) -> B;
                     Err ->
                         ?LOG_WARNING("balance lookup failed ~p for ~p", [Err, Account]),

@@ -160,7 +160,7 @@ open_capture_port(Cmd) ->
 close_port(undefined) ->
     ok;
 close_port(Port) when is_port(Port) ->
-    catch port_close(Port),
+    ecai_otp_compat:catch_value(fun() -> port_close(Port) end),
     ok.
 
 take_frames_zero_copy(Bin, FrameBytes) ->

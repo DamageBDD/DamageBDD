@@ -195,7 +195,7 @@ from_html(Req, #{action := Action} = State) ->
 from_json(Req, #{action := Action} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     {Status0, Response0} =
-        case catch jsx:decode(Data, [return_maps]) of
+        case damage_otp_compat:catch_value(fun() -> jsx:decode(Data, [return_maps]) end) of
             badarg ->
                 {400, #{status => <<"failed">>, message => <<"Json decode error.">>}};
             {'EXIT', {badarg, _}} ->

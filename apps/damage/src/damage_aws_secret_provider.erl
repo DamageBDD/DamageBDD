@@ -69,7 +69,7 @@ runtime_metadata(Config, Dependencies, DependencyOverrides) ->
             {error, invalid_imdsv2_metadata}
     end.
 
-injected_runtime_metadata(Config, Dependencies, DependencyOverrides) ->
+injected_runtime_metadata(Config, _Dependencies, DependencyOverrides) ->
     case
         {
             maps:find(prepare_runtime, DependencyOverrides),

@@ -552,7 +552,7 @@ integration_base(Opts) ->
                                  Value =/= <<"HEAD">> ->
                     Value;
                 _ ->
-                    case catch ecai_source_repository:current(Opts) of
+                    case ecai_otp_compat:catch_value(fun() -> ecai_source_repository:current(Opts) end) of
                         {ok, #{commit := Commit}} -> Commit;
                         _ -> "HEAD"
                     end
@@ -635,7 +635,7 @@ current_summary(Current) when is_map(Current) -> maps:without([pid, mon, ref], C
 schedule_next(Delay) -> erlang:send_after(Delay, self(), scan), ok.
 
 repo_root(Opts) ->
-    case catch ecai_source_repository:current(Opts) of
+    case ecai_otp_compat:catch_value(fun() -> ecai_source_repository:current(Opts) end) of
         {ok, #{root := Root}} ->
             filename:absname(path_to_list(Root));
         _ ->

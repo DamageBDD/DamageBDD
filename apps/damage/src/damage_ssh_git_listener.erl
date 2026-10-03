@@ -12,13 +12,12 @@
 -license("Apache-2.0").
 
 -behaviour(gen_server).
--behaviour(ssh_server_channel).
 
 -include_lib("kernel/include/logger.hrl").
 
 -export([start_link/0, child_spec/0]).
+-export([app_env/2, authorize_push/2, check_repo_path/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
--export([handle_msg/2, handle_ssh_msg/2]).
 
 -record(state, {
     daemon_pid,
@@ -26,15 +25,6 @@
     repos_root,
     %% #{<<"secure.git">> => [<<"ak_xxx">>, ...] | <<"*">> | all}
     allow_push = #{}
-}).
-
--record(git_channel_state, {
-    cm = undefined,
-    channel_id = undefined,
-    port = undefined,
-    command = undefined,
-    repo = undefined,
-    timer_ref = undefined
 }).
 
 %%% ---------- Public
@@ -89,7 +79,7 @@ init([]) ->
         %% forwarded into git-upload-pack/git-receive-pack and stdout can be
         %% streamed back. Do not use {exec,{direct,Fun}} here: that callback
         %% only receives the command/user/client info and cannot pump channel IO.
-        {ssh_cli, {?MODULE, [git_cli]}},
+        {ssh_cli, {damage_ssh_git_channel, [git_cli]}},
         {connectfun, fun connect_fun/3},
         {failfun, fun fail_fun/3},
         {parallel_login, true},
@@ -115,10 +105,7 @@ init([]) ->
                 ListenAddr, Port, Reason
             ]),
             {stop, {ssh_daemon_start_failed, Reason}}
-    end;
-%% ssh_server_channel callback for {ssh_cli, {?MODULE, [git_cli]}}
-init([git_cli]) ->
-    {ok, #git_channel_state{}}.
+    end.
 
 handle_call(_Req, _From, State) -> {reply, ok, State}.
 handle_cast(_Msg, State) -> {noreply, State}.
@@ -135,82 +122,6 @@ connect_fun(User, Peer, Method) ->
 fail_fun(User, Peer, Reason) ->
     ?LOG_WARNING("Git SSH auth failed user=~p from=~p reason=~p", [User, Peer, Reason]),
     ok.
-
-handle_msg({ssh_channel_up, ChannelId, CM}, State) ->
-    {ok, State#git_channel_state{cm = CM, channel_id = ChannelId}};
-handle_msg(
-    {Port, {data, Bin}}, #git_channel_state{cm = CM, channel_id = ChannelId, port = Port} = State
-) ->
-    _ = ssh_connection:send(CM, ChannelId, 0, Bin),
-    {ok, State};
-handle_msg(
-    {Port, {exit_status, Code}},
-    #git_channel_state{cm = CM, channel_id = ChannelId, port = Port} = State
-) ->
-    cancel_timer(State#git_channel_state.timer_ref),
-    _ = ssh_connection:send_eof(CM, ChannelId),
-    _ = ssh_connection:exit_status(CM, ChannelId, Code),
-    {stop, ChannelId, State#git_channel_state{port = undefined, timer_ref = undefined}};
-handle_msg(
-    {'EXIT', Port, Reason}, #git_channel_state{cm = CM, channel_id = ChannelId, port = Port} = State
-) ->
-    cancel_timer(State#git_channel_state.timer_ref),
-    ?LOG_WARNING("Git helper port exited reason=~p", [Reason]),
-    _ = ssh_connection:send(CM, ChannelId, 1, io_lib:format("git helper exited: ~p~n", [Reason])),
-    _ = ssh_connection:exit_status(CM, ChannelId, 1),
-    {stop, ChannelId, State#git_channel_state{port = undefined, timer_ref = undefined}};
-handle_msg(
-    git_timeout, #git_channel_state{port = Port, cm = CM, channel_id = ChannelId} = State
-) when is_port(Port) ->
-    port_close(Port),
-    _ = ssh_connection:send(CM, ChannelId, 1, <<"git helper timed out\n">>),
-    _ = ssh_connection:exit_status(CM, ChannelId, 124),
-    {stop, ChannelId, State#git_channel_state{port = undefined, timer_ref = undefined}};
-handle_msg(_Msg, State) ->
-    {ok, State}.
-
-handle_ssh_msg({ssh_cm, CM, {exec, ChannelId, WantReply, Command}}, State) ->
-    start_git_exec(CM, ChannelId, WantReply, Command, State);
-handle_ssh_msg(
-    {ssh_cm, _CM, {data, _ChannelId, 0, Data}}, #git_channel_state{port = Port} = State
-) when
-    is_port(Port)
-->
-    true = port_command(Port, Data),
-    {ok, State};
-handle_ssh_msg({ssh_cm, _CM, {data, _ChannelId, 1, _Data}}, State) ->
-    %% Ignore client stderr data.
-    {ok, State};
-handle_ssh_msg({ssh_cm, _CM, {eof, _ChannelId}}, State) ->
-    %% Git smart protocol sends its own flush packet. Keep the helper alive so it
-    %% can finish and return output; the port exit_status closes the SSH channel.
-    {ok, State};
-handle_ssh_msg({ssh_cm, CM, {shell, ChannelId, WantReply}}, State) ->
-    _ = ssh_connection:reply_request(CM, WantReply, failure, ChannelId),
-    _ = ssh_connection:send(CM, ChannelId, 1, <<"shell disabled; Git commands only\n">>),
-    _ = ssh_connection:exit_status(CM, ChannelId, 1),
-    {stop, ChannelId, State};
-handle_ssh_msg({ssh_cm, CM, {pty, ChannelId, WantReply, _Pty}}, State) ->
-    _ = ssh_connection:reply_request(CM, WantReply, failure, ChannelId),
-    {ok, State};
-handle_ssh_msg({ssh_cm, CM, {env, ChannelId, WantReply, _Var, _Value}}, State) ->
-    %% Allow harmless env requests from Git clients.
-    _ = ssh_connection:reply_request(CM, WantReply, success, ChannelId),
-    {ok, State};
-handle_ssh_msg(
-    {ssh_cm, _CM, {window_change, _ChannelId, _Width, _Height, _PixWidth, _PixHeight}}, State
-) ->
-    {ok, State};
-handle_ssh_msg({ssh_cm, _CM, {signal, _ChannelId, _SignalName}}, State) ->
-    {ok, State};
-handle_ssh_msg({ssh_cm, _CM, {exit_signal, ChannelId, _Signal, _Error, _Lang}}, State) ->
-    {stop, ChannelId, State};
-handle_ssh_msg({ssh_cm, _CM, {exit_status, ChannelId, _Status}}, State) ->
-    {stop, ChannelId, State};
-handle_ssh_msg({ssh_cm, _CM, {closed, ChannelId}}, State) ->
-    {stop, ChannelId, State};
-handle_ssh_msg(_Msg, State) ->
-    {ok, State}.
 
 %%% ---------- Helpers
 
@@ -340,88 +251,6 @@ ensure_host_key_hint(SystemDir) ->
             ),
             ok
     end.
-
-%% Accept only: git-upload-pack 'repo.git' | git-receive-pack 'repo.git'
-parse_git_cmd(Command0) ->
-    Command =
-        case Command0 of
-            B when is_binary(B) -> binary_to_list(B);
-            L when is_list(L) -> L
-        end,
-    %% Preserve quoted repo path:
-    case
-        re:run(Command, "^(git-(upload|receive)-pack)\\s+'([^']+)'\\s*$", [
-            {capture, all_but_first, list}
-        ])
-    of
-        {match, ["git-upload-pack", _, Repo]} -> {upload_pack, Repo};
-        {match, ["git-receive-pack", _, Repo]} -> {receive_pack, Repo};
-        nomatch -> unknown
-    end.
-
-start_git_exec(CM, ChannelId, WantReply, Command, State) ->
-    case parse_git_cmd(Command) of
-        {upload_pack, Repo} ->
-            start_git_helper(
-                CM, ChannelId, WantReply, "/usr/bin/git-upload-pack", Repo, upload_pack, State
-            );
-        {receive_pack, Repo} ->
-            case authorize_push(Repo, CM) of
-                ok ->
-                    start_git_helper(
-                        CM,
-                        ChannelId,
-                        WantReply,
-                        "/usr/bin/git-receive-pack",
-                        Repo,
-                        receive_pack,
-                        State
-                    );
-                {error, E} ->
-                    fail_exec(
-                        CM, ChannelId, WantReply, 1, io_lib:format("unauthorized: ~p~n", [E]), State
-                    )
-            end;
-        unknown ->
-            fail_exec(CM, ChannelId, WantReply, 1, <<"forbidden\n">>, State)
-    end.
-
-start_git_helper(CM, ChannelId, WantReply, Cmd, Repo, CommandTag, State) ->
-    case check_repo_path(Repo) of
-        {ok, AbsRepo} ->
-            _ = ssh_connection:reply_request(CM, WantReply, success, ChannelId),
-            Port = open_port({spawn_executable, Cmd}, [
-                binary,
-                use_stdio,
-                stream,
-                exit_status,
-                {args, [AbsRepo]}
-            ]),
-            {ok, TimeoutMs} = app_env(git_exec_timeout_ms, 600000),
-            TimerRef = erlang:send_after(TimeoutMs, self(), git_timeout),
-            {ok, State#git_channel_state{
-                cm = CM,
-                channel_id = ChannelId,
-                port = Port,
-                command = CommandTag,
-                repo = AbsRepo,
-                timer_ref = TimerRef
-            }};
-        {error, R} ->
-            fail_exec(CM, ChannelId, WantReply, 1, io_lib:format("bad repo: ~p~n", [R]), State)
-    end.
-
-fail_exec(CM, ChannelId, WantReply, Code, Msg, State) ->
-    _ = ssh_connection:reply_request(CM, WantReply, failure, ChannelId),
-    _ = ssh_connection:send(CM, ChannelId, 1, Msg),
-    _ = ssh_connection:exit_status(CM, ChannelId, Code),
-    {stop, ChannelId, State}.
-
-cancel_timer(undefined) ->
-    ok;
-cancel_timer(Ref) ->
-    _ = erlang:cancel_timer(Ref),
-    ok.
 
 %% Only allow pushes for repos and accounts you approve.
 authorize_push(Repo, _CM) ->

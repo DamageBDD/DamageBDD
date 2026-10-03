@@ -156,7 +156,7 @@ handle_call(
     _From,
     #{fail2ban_exclusions := Exclusions, fail2ban_service := "postfix"} = Context
 ) ->
-    case catch parse_postfix_log(Data) of
+    case damage_otp_compat:catch_value(fun() -> parse_postfix_log(Data) end) of
         {ok, Ip} ->
             check_ban(Ip, 0, Exclusions, Context);
         Fail ->
@@ -168,7 +168,7 @@ handle_call(
     _From,
     #{fail2ban_exclusions := Exclusions, fail2ban_service := "nginx"} = Context
 ) ->
-    case catch parse_nginx_log(Data) of
+    case damage_otp_compat:catch_value(fun() -> parse_nginx_log(Data) end) of
         {ok, #{client_ip := Ip, status_code := Status}} ->
             check_ban(Ip, Status, Exclusions, Context);
         Fail ->

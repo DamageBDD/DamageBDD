@@ -241,7 +241,7 @@ to_json(Req, #{action := features} = State) ->
             {<<"Path required">>, Req, State};
         Hash0 ->
             Hash = binary_to_list(Hash0),
-            case catch cat(list_to_binary(Hash), <<"">>) of
+            case damage_otp_compat:catch_value(fun() -> cat(list_to_binary(Hash), <<"">>) end) of
                 Response when is_binary(Response) ->
                     {Response, Req, State};
                 _ ->
@@ -387,7 +387,7 @@ do_query(#{public_key := AeAccount}) ->
 from_json(Req, #{public_key := AeAccount} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     {Status, Resp0} =
-        case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
+        case damage_otp_compat:catch_value(fun() -> jsx:decode(Data, [{labels, atom}, return_maps]) end) of
             {'EXIT', {badarg, Trace}} ->
                 logger:error("json decoding failed ~p err: ~p.", [Data, Trace]),
                 {400, <<"Json decoding failed.">>};

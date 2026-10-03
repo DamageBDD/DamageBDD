@@ -108,7 +108,7 @@ step(
 ) ->
     true = steps_utils:is_admin(Context0),
     NpubKey = npub_to_key(Npub0),
-    case catch maybe_contract_get_spent(Context0, NpubKey) of
+    case damage_otp_compat:catch_value(fun() -> maybe_contract_get_spent(Context0, NpubKey) end) of
         {ok, Spent} when is_integer(Spent) ->
             maps:put(OutVar, Spent, Context0);
         Other ->
@@ -492,7 +492,7 @@ apply_zap_result(Config, Context, Index, Total, Job, Res, Totals0, Spent0, Error
                         "record_zap start event=~p npub=~p sats=~p",
                         [Id, NpubKey, Amount]
                     ),
-                    case catch maybe_contract_record_zap(Context, NpubKey, Id, Amount) of
+                    case damage_otp_compat:catch_value(fun() -> maybe_contract_record_zap(Context, NpubKey, Id, Amount) end) of
                         #{"tx_hash" := TxHash} when is_binary(TxHash), TxHash =/= <<>> ->
                             OnchainEndMs = erlang:monotonic_time(millisecond),
                             ?LOG_WARNING(
@@ -846,11 +846,11 @@ ensure_zap_pool() ->
 
 emit_progress(Config, Msg) ->
     ?LOG_INFO("~s", [Msg]),
-    catch formatter:format(
+    damage_otp_compat:catch_value(fun() -> formatter:format(
         Config,
         print,
         {<<"Then">>, 0, ["nostr payout"], to_bin(Msg), #{}, success}
-    ),
+    ) end),
     ok.
 
 progress_line(ok, Index, Total, R) ->
@@ -970,7 +970,7 @@ to_lower(C) -> C.
 
 parse_since(Date0) ->
     B = to_bin(Date0),
-    case catch binary_to_integer(B) of
+    case damage_otp_compat:catch_value(fun() -> binary_to_integer(B) end) of
         N when is_integer(N), N > 0 -> N;
         _ -> parse_isoish(B)
     end.
@@ -990,7 +990,7 @@ parse_isoish(_Other) ->
     erlang:system_time(seconds) - 86400.
 
 bin2i(Bin2) ->
-    case catch binary_to_integer(Bin2) of
+    case damage_otp_compat:catch_value(fun() -> binary_to_integer(Bin2) end) of
         I when is_integer(I) -> I;
         _ -> 0
     end.
@@ -1002,12 +1002,12 @@ to_bin(T) -> unicode:characters_to_binary(io_lib:format("~p", [T])).
 
 to_int(I, _Default) when is_integer(I) -> I;
 to_int(B, Default) when is_binary(B) ->
-    case catch binary_to_integer(B) of
+    case damage_otp_compat:catch_value(fun() -> binary_to_integer(B) end) of
         N when is_integer(N) -> N;
         _ -> Default
     end;
 to_int(L, Default) when is_list(L) ->
-    case catch list_to_integer(L) of
+    case damage_otp_compat:catch_value(fun() -> list_to_integer(L) end) of
         N when is_integer(N) -> N;
         _ -> Default
     end;

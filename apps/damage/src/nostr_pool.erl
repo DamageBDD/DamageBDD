@@ -162,7 +162,7 @@ handle_call(reset, _From, S = #state{workers = Workers}) ->
 
     lists:foreach(
         fun({_R, Pid}) ->
-            catch exit(Pid, kill)
+            damage_otp_compat:catch_value(fun() -> exit(Pid, kill) end)
         end,
         maps:to_list(Workers)
     ),
@@ -174,7 +174,7 @@ handle_call({reset_relays, Relays}, _From, S = #state{workers = Workers0}) ->
     %% kill all existing workers
     lists:foreach(
         fun({_R, Pid}) ->
-            catch exit(Pid, kill)
+            damage_otp_compat:catch_value(fun() -> exit(Pid, kill) end)
         end,
         maps:to_list(Workers0)
     ),
@@ -187,7 +187,7 @@ handle_call({kill_worker, Relay}, _From, S = #state{workers = Workers}) ->
     Key = relay_key(Relay),
     case maps:get(Key, Workers, undefined) of
         Pid when is_pid(Pid) ->
-            catch exit(Pid, kill),
+            damage_otp_compat:catch_value(fun() -> exit(Pid, kill) end),
             {reply, ok, S#state{workers = maps:remove(Key, Workers)}};
         _ ->
             {reply, ok, S}
@@ -277,9 +277,9 @@ do_publish_sync(Event, Relays0, TimeoutMs, S) ->
                             Result =
                                 case get_worker(R, S) of
                                     {ok, WorkerPid} ->
-                                        catch nostr_relay_worker:publish_sync(
+                                        damage_otp_compat:catch_value(fun() -> nostr_relay_worker:publish_sync(
                                             WorkerPid, Event, TimeoutMs
-                                        );
+                                        ) end);
                                     Error ->
                                         Error
                                 end,
@@ -332,7 +332,7 @@ collect_publish_ack(Ref, Helpers, Deadline, Errors, EventId) ->
 kill_publish_helpers(Helpers) ->
     lists:foreach(
         fun({Pid, _Relay}) ->
-            catch exit(Pid, kill)
+            damage_otp_compat:catch_value(fun() -> exit(Pid, kill) end)
         end,
         Helpers
     ).

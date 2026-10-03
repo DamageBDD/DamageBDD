@@ -101,57 +101,6 @@ read_number([C | Rest], Acc) ->
         false -> {lists:reverse(Acc), [C | Rest]}
     end.
 
-%% -------------------------------------------------------------------
-%% arg-word splitting (non-numeric params)
-%% -------------------------------------------------------------------
-
-arg_words() ->
-    %% Keep this list small and “argument-like” to avoid breaking phrase chunks
-    ["left", "right", "center", "top", "bottom", "middle", "start", "end"].
-
-read_arg_word(Rest = [C | _]) ->
-    case is_alpha(C) of
-        true -> try_match_arg_words(Rest, arg_words());
-        false -> {none}
-    end;
-read_arg_word([]) ->
-    {none}.
-
-try_match_arg_words(_Rest, []) ->
-    {none};
-try_match_arg_words(Rest, [W | Ws]) ->
-    case prefix_ci(Rest, W) of
-        {true, RestAfter} ->
-            %% ensure next char is a boundary (or end)
-            case RestAfter of
-                [] ->
-                    {arg, W, RestAfter, true};
-                [Next | _] ->
-                    case is_boundary(Next) of
-                        true -> {arg, W, RestAfter, true};
-                        false -> try_match_arg_words(Rest, Ws)
-                    end
-            end;
-        false ->
-            try_match_arg_words(Rest, Ws)
-    end.
-
-prefix_ci(Rest, Word) ->
-    WL = length(Word),
-    case length(Rest) >= WL of
-        false ->
-            false;
-        true ->
-            Prefix = lists:sublist(Rest, WL),
-            case string:to_lower(Prefix) =:= Word of
-                true -> {true, lists:nthtail(WL, Rest)};
-                false -> false
-            end
-    end.
-
-is_alpha(C) ->
-    (C >= $a andalso C =< $z) orelse (C >= $A andalso C =< $Z).
-
 is_boundary(C) ->
     C =:= $\s orelse C =:= $\t orelse C =:= $\n orelse
         C =:= $. orelse C =:= $, orelse C =:= $: orelse

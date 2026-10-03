@@ -152,7 +152,7 @@ to_json(Req, State) ->
 
 from_json(Req, #{action := invoice} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
-    case catch jsx:decode(Data, [return_maps, {labels, atom}]) of
+    case damage_otp_compat:catch_value(fun() -> jsx:decode(Data, [return_maps, {labels, atom}]) end) of
         {'EXIT', _} ->
             reply_json(
                 400, #{status => <<"failed">>, message => <<"Json decode error.">>}, Req0, State

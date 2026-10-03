@@ -54,14 +54,14 @@
 start(Config) -> wx_object:start_link(?MODULE, Config, []).
 
 show() ->
-    case catch gproc:lookup_local_name({?MODULE, instance}) of
+    case erm_otp_compat:catch_value(fun() -> gproc:lookup_local_name({?MODULE, instance}) end) of
         undefined -> start([]);
         {'EXIT', _} -> start([]);
         Pid when is_pid(Pid) -> wx_object:call(Pid, show)
     end.
 
 close() ->
-    case catch gproc:lookup_local_name({?MODULE, instance}) of
+    case erm_otp_compat:catch_value(fun() -> gproc:lookup_local_name({?MODULE, instance}) end) of
         undefined -> ok;
         {'EXIT', _} -> ok;
         Pid when is_pid(Pid) -> wx_object:call(Pid, close)
@@ -97,7 +97,7 @@ init(Config) ->
     wx:batch(fun() -> do_init(File, Data0) end).
 
 terminate(_Reason, #state{parent = Frame}) ->
-    catch wxFrame:destroy(Frame),
+    erm_otp_compat:catch_value(fun() -> wxFrame:destroy(Frame) end),
     wx:destroy().
 
 code_change(_Vsn, _OldState, State) -> {stop, ignore, State}.
@@ -203,7 +203,7 @@ do_init(File, Data0) ->
 
     wxFrame:fit(Frame),
     center_and_show(Frame),
-    catch gproc:reg_other({n, l, {?MODULE, instance}}, self()),
+    erm_otp_compat:catch_value(fun() -> gproc:reg_other({n, l, {?MODULE, instance}}, self()) end),
     {Frame, State1}.
 
 rebuild(State = #state{notebook = NB}) ->

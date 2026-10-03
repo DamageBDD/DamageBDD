@@ -760,55 +760,9 @@ recompute_root(Ctx, Term) ->
 next_id(Ctx) ->
     ets:update_counter(Ctx#ctx.next_id_tab, seq, {2, 1}) - 1.
 
-%%%===================================================================
-%%% Term extraction
-%%%===================================================================
-terms_from_record(Record) ->
-    ecai_terms:terms_from_record(Record).
-
-%% helpers to fan out across word lists
-suffixes_many(Toks, Min, Max) ->
-    lists:usort(lists:append([suffixes(T, Min, Max) || T <- Toks])).
-
-ngrams_many(_Toks, 0) -> [];
-ngrams_many(Toks, N) -> lists:usort(lists:append([ngrams(T, N) || T <- Toks])).
-
 term_key(Namespace, Token0) ->
     Token = binary:copy(Token0),
     <<Namespace/binary, $:, Token/binary>>.
-term_pfx(Namespace, Prefix0) ->
-    Prefix = binary:copy(Prefix0),
-    <<"pfx:", Namespace/binary, $:, Prefix/binary>>.
-term_sfx(Field, Suffix0) ->
-    Suffix = binary:copy(Suffix0),
-    <<"sfx:", Field/binary, $:, Suffix/binary>>.
-term_ng(Field, Ng0) ->
-    Ng = binary:copy(Ng0),
-    <<"ng:", Field/binary, $:, Ng/binary>>.
-
-reverse_bin(B) ->
-    <<<<C>> || C <- lists:reverse(binary:bin_to_list(B))>>.
-
-suffixes(Bin, Min, Max) ->
-    Len = byte_size(Bin),
-    From = min(Len, Max),
-    [binary:part(Bin, Len - N, N) || N <- lists:seq(Min, From)].
-
-ngrams(Bin, N) when N >= 1 ->
-    L = byte_size(Bin),
-    if
-        L < N -> [];
-        true -> [binary:part(Bin, I, N) || I <- lists:seq(0, L - N)]
-    end.
-
-prefixes_many(Tokens, Min, Max) ->
-    lists:usort(lists:append([pfx1(T, Min, Max) || T <- Tokens])).
-
-pfx1(Bin, Min, Max) ->
-    Len = byte_size(Bin),
-    To = min(Max, Len),
-    [binary:part(Bin, 0, N) || N <- lists:seq(Min, To)].
-
 %%%===================================================================
 %%% Posting access (exact + prefix)
 %%%===================================================================

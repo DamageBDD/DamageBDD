@@ -347,7 +347,7 @@ with_fixture(Fun) ->
             ok = file:write_file(maps:get(M, Paths), maps:get(M, Beams)),
             {module, M} = code:load_binary(M, maps:get(M, Paths), maps:get(M, Beams))
         end || M <- [?A, ?B]],
-        ?assertEqual(SrcDir, code:lib_dir(damage, src)),
+        ?assertEqual(SrcDir, filename:join(code:lib_dir(damage), "src")),
         Fun(#{root => Root, beams => Beams, paths => Paths})
     after
         [stop_worker(P) || P <- erlang:get(hotcode_test_workers)],

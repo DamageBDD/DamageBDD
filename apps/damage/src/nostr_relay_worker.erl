@@ -174,7 +174,7 @@ handle_info(ping, S0) ->
                 S1;
             true ->
                 %% WebSocket ping frame
-                catch gun:ws_send(S1#state.conn_pid, S1#state.stream_ref, {ping, <<>>}),
+                damage_otp_compat:catch_value(fun() -> gun:ws_send(S1#state.conn_pid, S1#state.stream_ref, {ping, <<>>}) end),
                 S1
         end,
     {noreply, schedule_ping(S)};
@@ -221,7 +221,7 @@ handle_info(_Info, S) ->
 
 terminate(_Reason, S) ->
     %% Best effort close
-    catch gun:close(S#state.conn_pid),
+    damage_otp_compat:catch_value(fun() -> gun:close(S#state.conn_pid) end),
     ok.
 
 %% ---------------------------
@@ -400,7 +400,7 @@ on_disconnect(S0 = #state{pending = Pending0}) ->
     %% Fail all synchronous subscriptions and publishes tied to the dead
     %% connection. Publish entries are namespaced as {publish, EventId}.
     fail_pending_calls(Pending0, {error, disconnected}),
-    catch gun:close(S0#state.conn_pid),
+    damage_otp_compat:catch_value(fun() -> gun:close(S0#state.conn_pid) end),
     S1 = S0#state{
         conn_pid = undefined,
         stream_ref = undefined,

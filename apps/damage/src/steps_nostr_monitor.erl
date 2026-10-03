@@ -464,7 +464,7 @@ handle_info(_Info, St) ->
 
 terminate(_Reason, #st{conn_pid = ConnPid, stream_ref = StreamRef, sub_id = SubId}) ->
     %% Best-effort CLOSE + close connection
-    catch begin
+    damage_otp_compat:catch_value(fun() -> begin
         case {ConnPid, StreamRef} of
             {P, S} when is_pid(P) ->
                 _ = gun:ws_send(P, S, {text, jsx:encode([<<"CLOSE">>, SubId])}),
@@ -472,7 +472,7 @@ terminate(_Reason, #st{conn_pid = ConnPid, stream_ref = StreamRef, sub_id = SubI
             _ ->
                 ok
         end
-    end,
+    end end),
     ok.
 
 %% -------------------------------------------------------------------

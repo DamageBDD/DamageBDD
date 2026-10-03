@@ -23,19 +23,19 @@ reset() ->
 reset(Ctx = #ctx{}) ->
     ?LOG_WARNING("ECAI Reset: wiping all ETS and GPU resources", []),
     %% 1. Stop background snapshotter if running
-    catch ecai_index_snapshot:stop(),
+    ecai_otp_compat:catch_value(fun() -> ecai_index_snapshot:stop() end),
 
     %% 2. Free GPU memory (both compact and dynamic)
     case Ctx#ctx.backend of
         gpu ->
-            catch ecai_gpu:free_dynamic(Ctx#ctx.dyn),
-            catch ecai_gpu:free(Ctx#ctx.gpu);
+            ecai_otp_compat:catch_value(fun() -> ecai_gpu:free_dynamic(Ctx#ctx.dyn) end),
+            ecai_otp_compat:catch_value(fun() -> ecai_gpu:free(Ctx#ctx.gpu) end);
         _ ->
             ok
     end,
 
     %% 3. Drop all ETS tables
-    catch ecai_search:wipe(Ctx),
+    ecai_otp_compat:catch_value(fun() -> ecai_search:wipe(Ctx) end),
 
     %% 4. Build a new blank context with GPU ready
     NewCtx = fresh_ctx(),

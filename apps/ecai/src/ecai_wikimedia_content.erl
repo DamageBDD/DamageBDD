@@ -398,14 +398,14 @@ finalize_ranked(Runtime, ProgressFun) when is_map(Runtime), is_function(Progress
             maybe_cleanup_extracted(Runtime),
             {ok, Meta#{cached => true}};
         not_found ->
-            finalize_ranked_fresh(Runtime, ProgressFun, MarkerPath);
+            finalize_ranked_fresh(Runtime, ProgressFun);
         {error, _Reason} = Error ->
             Error
     end;
 finalize_ranked(_Runtime, _ProgressFun) ->
     {error, badarg}.
 
-finalize_ranked_fresh(Runtime, ProgressFun, MarkerPath) ->
+finalize_ranked_fresh(Runtime, ProgressFun) ->
     safe_progress(ProgressFun, #{phase => finalizing_visibility_selection}),
     Extracted = extracted_files(Runtime),
     case collect_valid_ranks(Extracted, gb_sets:empty(), 0) of
@@ -821,7 +821,7 @@ utf8_prefix(Bin0, MaxBytes) ->
         false -> utf8_prefix_shrink(Bin, MaxBytes)
     end.
 
-utf8_prefix_shrink(Bin, Size) when Size =< 0 -> <<>>;
+utf8_prefix_shrink(_Bin, Size) when Size =< 0 -> <<>>;
 utf8_prefix_shrink(Bin, Size) ->
     Prefix = binary:part(Bin, 0, Size),
     case ecai_chunker:validate_utf8(Prefix) of

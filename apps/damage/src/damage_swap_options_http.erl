@@ -123,7 +123,7 @@ to_json(Req, State) ->
     %% Return whatever is currently tracked in-memory by the orchestrator
     %% (the gen_server already supports list_tracked/0). :contentReference[oaicite:3]{index=3}
     Opts0 =
-        case catch damage_swap_option:list_tracked() of
+        case damage_otp_compat:catch_value(fun() -> damage_swap_option:list_tracked() end) of
             {'EXIT', _} -> [];
             Opts -> Opts
         end,
@@ -155,7 +155,7 @@ enrich_issue(Other) ->
 from_json(Req, State) ->
     {ok, Body, _Req2} = cowboy_req:read_body(Req),
     Decoded =
-        case catch jsx:decode(Body, [{labels, atom}, return_maps]) of
+        case damage_otp_compat:catch_value(fun() -> jsx:decode(Body, [{labels, atom}, return_maps]) end) of
             {'EXIT', _} -> {error, bad_json};
             Map when is_map(Map) -> {ok, Map}
         end,

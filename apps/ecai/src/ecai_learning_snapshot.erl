@@ -131,7 +131,7 @@ collect_port(Port, Acc, Timeout) ->
         {Port, {exit_status, 0}} -> {ok, Acc};
         {Port, {exit_status, Status}} -> {error, {exit_status, Status, Acc}}
     after Timeout ->
-        catch port_close(Port),
+        ecai_otp_compat:catch_value(fun() -> port_close(Port) end),
         {error, timeout}
     end.
 

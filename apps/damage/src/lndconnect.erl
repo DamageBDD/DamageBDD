@@ -184,7 +184,7 @@ terminate(Reason, State) ->
     ?LOG_ERROR("Terminating lndconnect ~p", [Reason]),
     ok.
 maybe_close_gun(Conn) when is_pid(Conn) ->
-    catch gun:close(Conn),
+    damage_otp_compat:catch_value(fun() -> gun:close(Conn) end),
     ok;
 maybe_close_gun(_) ->
     ok.

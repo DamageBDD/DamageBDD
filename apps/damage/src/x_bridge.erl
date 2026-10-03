@@ -275,7 +275,7 @@ do_gun_post(HostBin, Port, PathBin, Headers, BodyBin) when
                         {error, {unexpected, Other}}
                 end
             after
-                catch gun:shutdown(Conn)
+                damage_otp_compat:catch_value(fun() -> gun:shutdown(Conn) end)
             end;
         {error, Reason} ->
             ?LOG_WARNING("gun open failed: ~p", [Reason]),
@@ -304,7 +304,7 @@ do_gun_get(Host, Port, Path, Headers) ->
                         {error, {unexpected, Other}}
                 end
             after
-                catch gun:shutdown(Conn)
+                damage_otp_compat:catch_value(fun() -> gun:shutdown(Conn) end)
             end;
         {error, Reason} ->
             ?LOG_WARNING("gun open failed: ~p", [Reason]),

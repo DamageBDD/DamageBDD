@@ -299,7 +299,7 @@ with_client(Ctx0, Fun) when is_map(Ctx0), is_function(Fun, 1) ->
     case steps_cdp:ensure_client(Ctx0) of
         {ok, C1} ->
             P = maps:get(cdp_pid, C1),
-            Res = (catch Fun(P)),
+            Res = (damage_otp_compat:catch_value(fun() -> Fun(P) end)),
             handle_cdp_fun_result(Res, C1);
         {error, Why} ->
             maps:put(fail, to_bin(io_lib:format("No CDP: ~p", [Why])), Ctx0)
@@ -929,11 +929,11 @@ fail_msg(MsgBin) when is_binary(MsgBin) ->
 to_number(Str) when is_binary(Str) -> to_number(binary_to_list(Str));
 to_number(Str) when is_list(Str) ->
     %% Accept "1" or "1.0" or "0.5"
-    case catch list_to_integer(Str) of
+    case damage_otp_compat:catch_value(fun() -> list_to_integer(Str) end) of
         I when is_integer(I) ->
             float(I);
         _ ->
-            case catch list_to_float(Str) of
+            case damage_otp_compat:catch_value(fun() -> list_to_float(Str) end) of
                 F when is_float(F) -> F;
                 _ -> erlang:error({bad_number, Str})
             end

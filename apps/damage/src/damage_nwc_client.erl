@@ -125,7 +125,7 @@ publish(Event, Relays0) when is_map(Event), is_list(Relays0) ->
                         "NWC publish failed id=~p reason=~p; resetting pool and retrying",
                         [EventId, FirstReason]
                     ),
-                    _ = catch nostr_pool:reset(Sorted),
+                    _ = damage_otp_compat:catch_value(fun() -> nostr_pool:reset(Sorted) end),
                     timer:sleep(300),
                     retry_publish(Event, Sorted, FirstReason)
             end;

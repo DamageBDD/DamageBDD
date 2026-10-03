@@ -143,7 +143,7 @@ launch(Key, RunDir, C0) ->
     end.
 
 kill_rec(#rec{exec_pid = ExecPid}) when is_pid(ExecPid) ->
-    catch exec:kill(ExecPid),
+    damage_otp_compat:catch_value(fun() -> exec:kill(ExecPid) end),
     ok;
 kill_rec(_) ->
     ok.

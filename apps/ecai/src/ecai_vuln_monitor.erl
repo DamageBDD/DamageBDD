@@ -227,7 +227,6 @@ handle_call(status, _From, State) ->
         report_file => State#state.report_file,
         dets_file => State#state.dets_file,
         rescan_unchanged => State#state.rescan_unchanged,
-        canonical_commit => State#state.canonical_commit,
         phase => State#state.phase,
         resume_count => State#state.resume_count,
         next_run_at_ms => State#state.next_run_at_ms
@@ -328,7 +327,7 @@ handle_info(scan_next, State0 = #state{queue = [Module | Rest]}) ->
                 ),
                 %% Keep the deterministic code-learning substrate hot whenever
                 %% the vulnerability monitor observes a newly scanned source.
-                _ = catch ecai_codebase_learner:module_changed(State1#state.app, Module),
+                _ = ecai_otp_compat:catch_value(fun() -> ecai_codebase_learner:module_changed(State1#state.app, Module) end),
                 State1#state{last_error = undefined};
             {skip, unchanged} ->
                 logger:debug(

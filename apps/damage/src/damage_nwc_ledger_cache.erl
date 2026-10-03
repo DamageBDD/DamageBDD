@@ -77,11 +77,10 @@ stop() ->
 
 ensure_started() ->
     case start() of
-        {ok, _Pid} -> ok;
-        {error, {already_started, _Pid}} -> ok;
+        {ok, _Pid} -> create_tables();
+        {error, {already_started, _Pid}} -> create_tables();
         {error, Why} -> {error, Why}
-    end,
-    create_tables().
+    end.
 
 init([]) ->
     create_tables(),
@@ -194,7 +193,7 @@ fetch_ledger_events(LedgerCt, Limit, Direction) ->
         {module, damage_nwc_http} ->
             case erlang:function_exported(damage_nwc_http, ledger_events, 3) of
                 true ->
-                    case catch damage_nwc_http:ledger_events(LedgerCt, Limit, Direction) of
+                    case damage_otp_compat:catch_value(fun() -> damage_nwc_http:ledger_events(LedgerCt, Limit, Direction) end) of
                         {ok, Events} when is_list(Events) -> {ok, Events};
                         {error, _} = Error -> Error;
                         {'EXIT', Why} -> {error, {ledger_events_exit, Why}};
@@ -674,7 +673,7 @@ maybe_decode_bytearray(Encoded) ->
     maybe_decode_bytearray(Encoded, [bytearray, contract_bytearray]).
 
 maybe_decode_bytearray(Encoded, [Type | Rest]) ->
-    case catch aeser_api_encoder:decode(Type, Encoded) of
+    case damage_otp_compat:catch_value(fun() -> aeser_api_encoder:decode(Type, Encoded) end) of
         {Type, Bin} when is_binary(Bin) -> Bin;
         Bin when is_binary(Bin) -> Bin;
         _ -> maybe_decode_bytearray(Encoded, Rest)
@@ -874,12 +873,12 @@ get_any(_Other, _Keys, Default) ->
 int_value(V, _Default) when is_integer(V) -> V;
 int_value(V, _Default) when is_float(V) -> trunc(V);
 int_value(V, Default) when is_binary(V) ->
-    case catch binary_to_integer(V) of
+    case damage_otp_compat:catch_value(fun() -> binary_to_integer(V) end) of
         I when is_integer(I) -> I;
         _ -> Default
     end;
 int_value(V, Default) when is_list(V) ->
-    case catch list_to_integer(V) of
+    case damage_otp_compat:catch_value(fun() -> list_to_integer(V) end) of
         I when is_integer(I) -> I;
         _ -> Default
     end;

@@ -86,7 +86,7 @@ request(Method, Host0, Port, Path0, Headers0, Body0, Opts0) when
                 end
             after
                 case Close of
-                    true -> catch gun:close(ConnPid);
+                    true -> damage_otp_compat:catch_value(fun() -> gun:close(ConnPid) end);
                     false -> ok
                 end
             end;
@@ -129,7 +129,7 @@ do_request(Method, ConnPid, Path, Headers, Body, Timeout, Decode) ->
         end,
 
     Reply = await_response(ConnPid, StreamRef, Timeout, Decode),
-    catch gun:cancel(ConnPid, StreamRef),
+    damage_otp_compat:catch_value(fun() -> gun:cancel(ConnPid, StreamRef) end),
     Reply.
 
 await_response(ConnPid, StreamRef, Timeout, Decode) ->
@@ -288,14 +288,14 @@ open_ws(Host0, Port, Path, Opts0) ->
                         {ok, StreamRef} ->
                             {ok, ConnPid, StreamRef};
                         Error ->
-                            catch gun:close(ConnPid),
+                            damage_otp_compat:catch_value(fun() -> gun:close(ConnPid) end),
                             Error
                     end;
                 {ok, Protocol} ->
-                    catch gun:close(ConnPid),
+                    damage_otp_compat:catch_value(fun() -> gun:close(ConnPid) end),
                     {error, {invalid_ws_protocol, Protocol}};
                 Error ->
-                    catch gun:close(ConnPid),
+                    damage_otp_compat:catch_value(fun() -> gun:close(ConnPid) end),
                     Error
             end;
         Error ->
@@ -306,7 +306,7 @@ await_up(ConnPid) ->
     await_up(ConnPid, ?DEFAULT_CONNECT_TIMEOUT).
 
 await_up(ConnPid, Timeout) ->
-    case catch gun:await_up(ConnPid, Timeout) of
+    case damage_otp_compat:catch_value(fun() -> gun:await_up(ConnPid, Timeout) end) of
         {ok, _Protocol} = Ok ->
             %?LOG_DEBUG("gun connection up protocol=~p", [Protocol]),
             Ok;
@@ -377,10 +377,10 @@ ws_upgrade(ConnPid, Path0, WsHeaders) ->
     end.
 
 ws_send(ConnPid, StreamRef, Frame) ->
-    catch gun:ws_send(ConnPid, StreamRef, Frame).
+    damage_otp_compat:catch_value(fun() -> gun:ws_send(ConnPid, StreamRef, Frame) end).
 
 ws_close(ConnPid) ->
-    catch gun:close(ConnPid),
+    damage_otp_compat:catch_value(fun() -> gun:close(ConnPid) end),
     ok.
 
 %% ===================================================================
@@ -452,7 +452,7 @@ socks_opts(Host, Port, tcp, _Opts) ->
     #{host => Host, port => Port, transport => tcp}.
 
 safe_gun_open(Host, Port, Opts) ->
-    case catch gun:open(Host, Port, Opts) of
+    case damage_otp_compat:catch_value(fun() -> gun:open(Host, Port, Opts) end) of
         {ok, _Pid} = Ok -> Ok;
         {'EXIT', {noproc, _} = Reason} -> {error, {gun_not_started, Reason}};
         {'EXIT', Reason} -> {error, {gun_open_exit, Reason}};
@@ -462,7 +462,7 @@ safe_gun_open(Host, Port, Opts) ->
 maybe_drain_http_body(_ConnPid, _StreamRef, fin) ->
     ok;
 maybe_drain_http_body(ConnPid, StreamRef, nofin) ->
-    _ = catch gun:await_body(ConnPid, StreamRef, 2000),
+    _ = damage_otp_compat:catch_value(fun() -> gun:await_body(ConnPid, StreamRef, 2000) end),
     ok;
 maybe_drain_http_body(_, _, _) ->
     ok.

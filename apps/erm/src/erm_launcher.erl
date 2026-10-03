@@ -120,7 +120,7 @@ show() ->
         Pid -> wx_object:call(Pid, show)
     end.
 show(AppModule) ->
-    case catch AppModule:show() of
+    case erm_otp_compat:catch_value(fun() -> AppModule:show() end) of
         ok -> ok;
         Res -> ?LOG_ERROR("Error: Unable to show app ~p ~p~n", [AppModule, Res])
     end.

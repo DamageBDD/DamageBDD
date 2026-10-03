@@ -138,7 +138,7 @@ capture_base(Module) ->
     {module, Module} = must_loaded(code:ensure_loaded(Module)),
     %% Read the exact packaged file, not code:get_object_code's code-path search.
     %% Refuse to label an already-untracked hot load as the immutable base.
-    Dir = code:lib_dir(damage, ebin),
+    Dir = app_subdir("ebin"),
     require(is_list(Dir), release_ebin_unavailable),
     Path = filename:join(Dir, atom_to_list(Module) ++ ".beam"),
     must_ok(regular_file(Path)),
@@ -238,11 +238,17 @@ source_path(Module) when is_atom(Module) ->
 
 -spec release_source(module()) -> {ok, file:filename_all()} | {error, term()}.
 release_source(Module) when is_atom(Module) ->
-    case code:lib_dir(damage, src) of
+    case app_subdir("src") of
         Dir when is_list(Dir) ->
             Path = filename:join(Dir, atom_to_list(Module) ++ ".erl"),
             case regular_file(Path) of ok -> {ok, Path}; Error -> Error end;
         _ -> {error, release_source_dir_unavailable}
+    end.
+
+app_subdir(SubDir) ->
+    case code:lib_dir(damage) of
+        AppDir when is_list(AppDir) -> filename:join(AppDir, SubDir);
+        Error -> Error
     end.
 
 regular_file(Path) ->
@@ -275,7 +281,7 @@ compile_snapshot(Module, Source, Bytes) ->
     try
         must_ok(file:change_mode(Dir, 8#700)),
         must_ok(write_exclusive(Path, Bytes)),
-        Include = case code:lib_dir(damage, include) of
+        Include = case app_subdir("include") of
             D when is_list(D) -> [{i, D}];
             _ -> []
         end,

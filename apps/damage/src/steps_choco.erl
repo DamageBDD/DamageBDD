@@ -94,7 +94,7 @@ parse_local_exact(Pkg0, OutBin) ->
 %% Simple semver-ish comparator supporting =, ==, >, >=, <, <=
 splitv(V) ->
     [
-        case catch binary_to_integer(P) of
+        case damage_otp_compat:catch_value(fun() -> binary_to_integer(P) end) of
             I when is_integer(I) -> {i, I};
             _ -> {s, P}
         end

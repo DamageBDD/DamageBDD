@@ -112,7 +112,7 @@ gun_get(URL) ->
                         {error, Reason}
                 end
             after
-                catch gun:close(ConnPid)
+                damage_otp_compat:catch_value(fun() -> gun:close(ConnPid) end)
             end;
         {error, Reason} ->
             ?LOG_ERROR("damage_gun open failed ~p", [Reason]),

@@ -93,7 +93,7 @@ handle_info(_Info, State) ->
     {noreply, State}.
 
 terminate(_Reason, _State) ->
-    catch ecai_audio_utterance:unsubscribe(),
+    ecai_otp_compat:catch_value(fun() -> ecai_audio_utterance:unsubscribe() end),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -103,7 +103,7 @@ verify_utterance(Utt, State) ->
     Quality = quality(Utt),
     Checks = checks(Utt, Quality, State),
     Decision = decide(Checks, State#state.accept_candidates),
-    Score = score(Quality, Checks),
+    Score = score(Checks),
     #{
         type => ecai_audio_utterance_verification,
         utterance_id => maps:get(utterance_id, Utt, undefined),
@@ -219,7 +219,7 @@ candidateish(Checks) ->
         maps:get(min_frames_ok, Checks) andalso
         maps:get(has_aggregate_hash_ok, Checks).
 
-score(Quality, Checks) ->
+score(Checks) ->
     Base = 100,
     Penalties =
         penalty(not maps:get(duration_min_ok, Checks), 20) +

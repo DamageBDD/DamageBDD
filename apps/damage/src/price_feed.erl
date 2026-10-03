@@ -185,7 +185,7 @@ fetch_coinstore_prices() ->
                         Error
                 end
             after
-                catch gun:close(ConnPid)
+                damage_otp_compat:catch_value(fun() -> gun:close(ConnPid) end)
             end;
         Error ->
             Error
@@ -210,7 +210,7 @@ await_coinstore_response(ConnPid, StreamRef, Timeout) ->
             {error, {unexpected_gun_response, Other}}
     end.
 decode_coinstore_price_body(Body) ->
-    case catch jsx:decode(Body, [return_maps]) of
+    case damage_otp_compat:catch_value(fun() -> jsx:decode(Body, [return_maps]) end) of
         #{<<"code">> := 0, <<"data">> := Data} when is_list(Data) ->
             %% Data items look like: #{<<"symbol">> := <<"btcusdt">>, <<"price">> := <<"400">>}
             case {find_price(<<"BTCUSDT">>, Data), find_price(<<"DAMAGEUSDT">>, Data)} of

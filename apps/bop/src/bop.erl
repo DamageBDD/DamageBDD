@@ -32,7 +32,7 @@ start_link([]) -> gen_server:start_link(?MODULE, [], []).
 init([]) ->
     process_flag(trap_exit, true),
     cln:register_listener(invoice_paid),
-    Rate = case catch price_feed:get_price() of
+    Rate = case bop_otp_compat:catch_value(fun() -> price_feed:get_price() end) of
                {ok, Rate0} -> Rate0;
                _ -> 0
            end,
@@ -85,7 +85,7 @@ handle_info({cln_event, invoice_paid,
                     Pid ! {invoice_paid, PaymentHash},
                     ok
             end,
-            case catch contract_call(
+            case bop_otp_compat:catch_value(fun() -> contract_call(
                 "LightningProofRegistry",
                 ?BOP_VAULT_CONTRACT,
                 "register_payment",
@@ -93,7 +93,7 @@ handle_info({cln_event, invoice_paid,
                  PaymentHash,
                  AmountReceivedMsat,
                  AudMilli
-                ]) of
+                ]) end) of
                 #{"error_code" := "already_known", "reason" := "Invalid tx"} ->
                     {noreply, State};
                 Result ->

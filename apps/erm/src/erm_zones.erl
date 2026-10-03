@@ -144,7 +144,7 @@ init(_Config) ->
     {Frame, State0}.
 
 terminate(_Reason, #state{parent = Frame}) ->
-    catch wxFrame:destroy(Frame),
+    erm_otp_compat:catch_value(fun() -> wxFrame:destroy(Frame) end),
     wx:destroy().
 
 code_change(_OldVsn, _NewVsn, State) ->

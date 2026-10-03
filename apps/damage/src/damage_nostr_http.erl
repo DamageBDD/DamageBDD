@@ -336,12 +336,12 @@ qs_get_int(Key, Qs, Default) ->
     case lists:keyfind(Key, 1, Qs) of
         {_, V} when is_integer(V) -> V;
         {_, V} when is_binary(V) ->
-            case catch binary_to_integer(V) of
+            case damage_otp_compat:catch_value(fun() -> binary_to_integer(V) end) of
                 I when is_integer(I) -> I;
                 _ -> Default
             end;
         {_, V} when is_list(V) ->
-            case catch list_to_integer(V) of
+            case damage_otp_compat:catch_value(fun() -> list_to_integer(V) end) of
                 I when is_integer(I) -> I;
                 _ -> Default
             end;

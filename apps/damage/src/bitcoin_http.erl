@@ -358,7 +358,7 @@ reply_json(Status, Body, Req) ->
 decode_json(<<>>) ->
     {ok, #{}};
 decode_json(Raw) ->
-    case catch jsx:decode(Raw, [return_maps]) of
+    case damage_otp_compat:catch_value(fun() -> jsx:decode(Raw, [return_maps]) end) of
         Json when is_map(Json) -> {ok, Json};
         {'EXIT', _} -> {error, <<"JSON decoding failed">>};
         _Other -> {error, <<"JSON body must be an object">>}
@@ -377,10 +377,10 @@ json_amount(Key, Map) ->
         Amount when is_integer(Amount), Amount > 0 -> {ok, Amount};
         Amount when is_float(Amount), Amount > 0 -> {ok, Amount};
         Amount when is_binary(Amount) ->
-            case catch binary_to_float(Amount) of
+            case damage_otp_compat:catch_value(fun() -> binary_to_float(Amount) end) of
                 F when is_float(F), F > 0 -> {ok, F};
                 _ ->
-                    case catch binary_to_integer(Amount) of
+                    case damage_otp_compat:catch_value(fun() -> binary_to_integer(Amount) end) of
                         I when is_integer(I), I > 0 -> {ok, I};
                         _ -> {error, <<"amount_btc must be a positive number">>}
                     end
@@ -465,7 +465,7 @@ pick_keys(Map, Keys) ->
 
 to_int(Value, _Default) when is_integer(Value) -> Value;
 to_int(Value, Default) when is_binary(Value) ->
-    case catch binary_to_integer(Value) of
+    case damage_otp_compat:catch_value(fun() -> binary_to_integer(Value) end) of
         I when is_integer(I) -> I;
         _ -> Default
     end;

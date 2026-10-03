@@ -109,7 +109,7 @@ collect(Port, Deadline, Acc, Status, Eof) ->
             Remaining = Deadline - erlang:monotonic_time(millisecond),
             case Remaining =< 0 of
                 true ->
-                    catch port_close(Port),
+                    ecai_otp_compat:catch_value(fun() -> port_close(Port) end),
                     {error, git_timeout};
                 false ->
                     receive
@@ -122,7 +122,7 @@ collect(Port, Deadline, Acc, Status, Eof) ->
                         {'EXIT', Port, Reason} ->
                             {error, {git_port_exit, Reason}}
                     after Remaining ->
-                        catch port_close(Port),
+                        ecai_otp_compat:catch_value(fun() -> port_close(Port) end),
                         {error, git_timeout}
                     end
             end

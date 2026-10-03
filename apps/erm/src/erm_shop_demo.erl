@@ -579,7 +579,7 @@ ask_invoice(St = #st{frame = Frame}) ->
     end.
 
 ensure_nwc_connected() ->
-    case catch erm_pay:status() of
+    case erm_otp_compat:catch_value(fun() -> erm_pay:status() end) of
         #{connected := true} -> ok;
         #{connected := false} -> {error, not_connected};
         {'EXIT', _} -> {error, erm_pay_not_running};
@@ -587,13 +587,13 @@ ensure_nwc_connected() ->
     end.
 
 maybe_subscribe_pay_events() ->
-    case catch erm_pay:subscribe() of
+    case erm_otp_compat:catch_value(fun() -> erm_pay:subscribe() end) of
         ok -> ok;
         _ -> skipped
     end.
 
 pay_status_text() ->
-    case catch erm_pay:status() of
+    case erm_otp_compat:catch_value(fun() -> erm_pay:status() end) of
         #{connected := true, uri := Uri} ->
             iolist_to_binary(["Connected: ", Uri]);
         #{connected := false} ->

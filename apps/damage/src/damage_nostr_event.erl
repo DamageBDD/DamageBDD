@@ -173,7 +173,7 @@ has_tag(Event0, TagName0) ->
     TagName = bin(TagName0),
     lists:any(
         fun
-            ([TagName | _]) -> true;
+            ([Name | _]) -> Name =:= TagName;
             (_) -> false
         end,
         maps:get(tags, Event, [])

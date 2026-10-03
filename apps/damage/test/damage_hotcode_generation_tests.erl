@@ -260,7 +260,7 @@ with_fixture(Test) ->
         BasePath = filename:join(Ebin, atom_to_list(?M) ++ ".beam"),
         ok = file:write_file(BasePath, BaseBeam),
         {module, ?M} = code:load_binary(?M, BasePath, BaseBeam),
-        ?assertEqual(Src, code:lib_dir(damage, src)),
+        ?assertEqual(Src, filename:join(code:lib_dir(damage), "src")),
         Test(#{root => Root, base_beam => BaseBeam, base_path => BasePath})
     after
         [stop_worker(P) || P <- get(?WORKERS)],

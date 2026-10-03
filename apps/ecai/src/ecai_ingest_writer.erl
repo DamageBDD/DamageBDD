@@ -253,7 +253,7 @@ handle_info(_Message, State) ->
     {noreply, State}.
 
 terminate(_Reason, #st{wal = Wal}) ->
-    _ = catch ecai_wal:close(Wal),
+    _ = ecai_otp_compat:catch_value(fun() -> ecai_wal:close(Wal) end),
     ok.
 
 code_change(_OldVersion, State, _Extra) ->

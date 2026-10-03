@@ -121,7 +121,7 @@ handle_call(_Req, _From, St) ->
     {reply, {error, unknown_request}, St}.
 
 handle_cast(stop, St = #st{port = Port}) ->
-    catch port_close(Port),
+    erm_otp_compat:catch_value(fun() -> port_close(Port) end),
     {stop, normal, St};
 handle_cast(_Msg, St) ->
     {noreply, St}.
@@ -138,7 +138,7 @@ handle_info(_Info, St) ->
     {noreply, St}.
 
 terminate(_Reason, #st{port = Port}) ->
-    catch port_close(Port),
+    erm_otp_compat:catch_value(fun() -> port_close(Port) end),
     ok.
 
 code_change(_OldVsn, St, _Extra) ->

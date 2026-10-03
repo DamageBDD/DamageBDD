@@ -657,7 +657,7 @@ deploy_node_registry() ->
                 #{"contract_id" := ContractId} ->
                     %% Optional: remember + hot-set for this runtime
                     erlang:put(node_registry_contract_id, ContractId),
-                    catch gen_server:call(?MODULE, {set_contract, ContractId}),
+                    damage_otp_compat:catch_value(fun() -> gen_server:call(?MODULE, {set_contract, ContractId}) end),
                     ContractId;
                 #{"return_type" := "revert"} = Info ->
                     {error, {node_registry_deploy_revert, Info}};

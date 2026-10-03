@@ -112,7 +112,7 @@ start_server(Opts) ->
 ensure_gtknode4_ready(Opts) ->
     _ = maybe_start_gtknode4(),
     Timeout = maps:get(ready_timeout, Opts, ?DEFAULT_READY_TIMEOUT),
-    case catch gtknode4:await_ready(Timeout) of
+    case erm_otp_compat:catch_value(fun() -> gtknode4:await_ready(Timeout) end) of
         ok ->
             ok;
         {error, Reason} ->
@@ -130,7 +130,7 @@ maybe_start_gtknode4() ->
         undefined ->
             case whereis(erm_sup) of
                 Pid when is_pid(Pid) ->
-                    case catch erm_sup:start_gtknode4() of
+                    case erm_otp_compat:catch_value(fun() -> erm_sup:start_gtknode4() end) of
                         {ok, _} -> ok;
                         {error, already_present} -> ok;
                         {error, {already_started, _}} -> ok;
@@ -377,7 +377,7 @@ handle_info(_Message, State) ->
 
 terminate(_Reason, State) ->
     cancel_timer(State#state.timer),
-    catch gtkgs:destroy(drishti_window),
+    erm_otp_compat:catch_value(fun() -> gtkgs:destroy(drishti_window) end),
     ok.
 
 code_change(_OldVersion, State, _Extra) ->

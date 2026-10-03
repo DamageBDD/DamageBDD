@@ -47,7 +47,7 @@ ledger_events(LedgerCt0, Limit0, Direction0) ->
             ]),
             Path = PathPrefix ++ "v3/contracts/logs?" ++ Query,
             Res = fetch_pages(ConnPid, PathPrefix, Path, Limit, ?MAX_PAGES, []),
-            catch gun:close(ConnPid),
+            damage_otp_compat:catch_value(fun() -> gun:close(ConnPid) end),
             Res;
         Error ->
             Error
@@ -311,7 +311,7 @@ maybe_decode_encoded(Encoded) ->
     maybe_decode_encoded(Encoded, [bytearray, contract_bytearray, hash]).
 
 maybe_decode_encoded(Encoded, [Type | Rest]) ->
-    case catch aeser_api_encoder:decode(Type, Encoded) of
+    case damage_otp_compat:catch_value(fun() -> aeser_api_encoder:decode(Type, Encoded) end) of
         {Type, Bin} when is_binary(Bin) -> Bin;
         {_OtherType, Bin} when is_binary(Bin) -> Bin;
         Bin when is_binary(Bin) -> Bin;
@@ -404,7 +404,7 @@ session_index_policy(ClientPubHex) ->
         expires_height => 0,
         spent_msat => 0
     },
-    case catch damage_nwc_session_index:get(ClientPubHex) of
+    case damage_otp_compat:catch_value(fun() -> damage_nwc_session_index:get(ClientPubHex) end) of
         {ok, #{meta := Meta0}} when is_map(Meta0) ->
             Meta = normalize_json(Meta0),
             Policy0 = map_get_any([policy, <<"policy">>], Meta, #{}),
@@ -633,12 +633,12 @@ to_key(K) -> to_bin(K).
 int_value(V, _Default) when is_integer(V) -> V;
 int_value(V, _Default) when is_float(V) -> trunc(V);
 int_value(V, Default) when is_binary(V) ->
-    case catch binary_to_integer(V) of
+    case damage_otp_compat:catch_value(fun() -> binary_to_integer(V) end) of
         I when is_integer(I) -> I;
         _ -> Default
     end;
 int_value(V, Default) when is_list(V) ->
-    case catch list_to_integer(V) of
+    case damage_otp_compat:catch_value(fun() -> list_to_integer(V) end) of
         I when is_integer(I) -> I;
         _ -> Default
     end;

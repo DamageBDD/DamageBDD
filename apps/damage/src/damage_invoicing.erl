@@ -124,7 +124,7 @@ allowed_methods(Req, State) ->
     {[<<"GET">>, <<"POST">>, <<"DELETE">>], Req, State}.
 
 to_json(Req, #{action := price} = State) ->
-    case catch price_feed:get_price() of
+    case damage_otp_compat:catch_value(fun() -> price_feed:get_price() end) of
         Price when is_float(Price) ->
             {jsx:encode(#{btc => #{aud => Price}, ok => true}), Req, State};
         _ ->
@@ -143,7 +143,7 @@ to_json(Req, #{public_key := _AeAccount} = State) ->
 
 from_json(Req, #{public_key := AeAccount} = State) ->
     {ok, Data, Req2} = cowboy_req:read_body(Req),
-    case catch jsx:decode(Data, [{labels, atom}, return_maps]) of
+    case damage_otp_compat:catch_value(fun() -> jsx:decode(Data, [{labels, atom}, return_maps]) end) of
         {'EXIT', {badarg, Trace}} ->
             ?LOG_ERROR("json decoding failed ~p err: ~p.", [Data, Trace]),
             {

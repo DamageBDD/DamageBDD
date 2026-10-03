@@ -129,7 +129,7 @@ maybe_sysctl(Key, Val) ->
                     ?LOG_INFO("sysctl set ~s=~s", [Key, Val]),
                     ok;
                 {error, [{exit_status, _Status}, {stderr, Out}]} ->
-                    case catch damage_priv:permission_denied(Out) of
+                    case damage_otp_compat:catch_value(fun() -> damage_priv:permission_denied(Out) end) of
                         true ->
                             ?LOG_WARNING(
                                 "sysctl ~s=~s permission denied; attempting elevation…",
@@ -148,7 +148,7 @@ maybe_sysctl(Key, Val) ->
                             {error, sysctl_failed}
                     end;
                 {error, [{exit_status, _Status}, {stdout, Out}]} ->
-                    case catch damage_priv:permission_denied(Out) of
+                    case damage_otp_compat:catch_value(fun() -> damage_priv:permission_denied(Out) end) of
                         true ->
                             ?LOG_WARNING(
                                 "sysctl ~s=~s permission denied; attempting elevation…",
@@ -205,7 +205,7 @@ find_nofile_line(Text) ->
     end.
 
 to_int(S) ->
-    case catch list_to_integer(S) of
+    case damage_otp_compat:catch_value(fun() -> list_to_integer(S) end) of
         I when is_integer(I) -> I;
         _ -> 0
     end.
@@ -215,7 +215,7 @@ get_env_int(Key, Default) ->
         false ->
             Default;
         Val ->
-            case (catch list_to_integer(Val)) of
+            case (damage_otp_compat:catch_value(fun() -> list_to_integer(Val) end)) of
                 I when is_integer(I), I > 0 -> I;
                 _ -> Default
             end
@@ -226,7 +226,7 @@ get_env_int(Key, Default) ->
 
 %% Prefer BEAM’s own view; fall back to /proc/stat; then env; then 4.
 get_cpu_cores() ->
-    case catch erlang:system_info(logical_processors_available) of
+    case damage_otp_compat:catch_value(fun() -> erlang:system_info(logical_processors_available) end) of
         I when is_integer(I), I > 0 ->
             I;
         _ ->
@@ -285,7 +285,7 @@ get_total_mem_mb() ->
     end.
 
 safe_int(S) ->
-    case catch list_to_integer(string:trim(S)) of
+    case damage_otp_compat:catch_value(fun() -> list_to_integer(string:trim(S)) end) of
         I when is_integer(I) -> I;
         _ -> 0
     end.
@@ -295,7 +295,7 @@ getenv_int_default(Key, Default) ->
         false ->
             Default;
         V ->
-            case catch list_to_integer(string:trim(V)) of
+            case damage_otp_compat:catch_value(fun() -> list_to_integer(string:trim(V)) end) of
                 I when is_integer(I) -> I;
                 _ -> Default
             end
@@ -305,7 +305,7 @@ run_int_or_default(Cmd, Default) ->
     case exec:run(Cmd, [sync, stdout]) of
         {ok, Out} ->
             Str = string:trim(Out),
-            case catch list_to_integer(Str) of
+            case damage_otp_compat:catch_value(fun() -> list_to_integer(Str) end) of
                 I when is_integer(I) -> I;
                 _ -> Default
             end;

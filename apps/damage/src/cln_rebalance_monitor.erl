@@ -384,7 +384,7 @@ collect_port(Port, TimeoutMs, Acc) ->
         {Port, {exit_status, Status}} ->
             {error, {ollama_exit, Status, iolist_to_binary(lists:reverse(Acc))}}
     after TimeoutMs ->
-        catch port_close(Port),
+        damage_otp_compat:catch_value(fun() -> port_close(Port) end),
         {error, ollama_timeout}
     end.
 

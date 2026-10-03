@@ -139,7 +139,7 @@ register_contract(KeyPair, RegistryId, Name, ContractId) ->
             [to_str(Name), to_str(ContractId)]
         )
     of
-        {ok, Bool} = Ok ->
+        {ok, _Bool} = Ok ->
             invalidate_cache(RegistryId, Name),
             Ok;
         Error ->
@@ -157,7 +157,7 @@ update_contract(KeyPair, RegistryId, Name, ContractId) ->
             [to_str(Name), to_str(ContractId)]
         )
     of
-        {ok, Bool} = Ok ->
+        {ok, _Bool} = Ok ->
             invalidate_cache(RegistryId, Name),
             Ok;
         Error ->

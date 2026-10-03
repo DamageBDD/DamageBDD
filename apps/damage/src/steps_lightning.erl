@@ -81,7 +81,7 @@ step(
 
             case maps:get(response, C1, undefined) of
                 [{status_code, 200}, _Headers, {body, Body}] ->
-                    case catch jsx:decode(Body, [return_maps]) of
+                    case damage_otp_compat:catch_value(fun() -> jsx:decode(Body, [return_maps]) end) of
                         {'EXIT', _} ->
                             maps:put(fail, <<"invalid lnurlp json">>, Context);
                         Json ->
@@ -138,7 +138,7 @@ step(
 
             case maps:get(response, C0, undefined) of
                 [{status_code, 200}, _Headers, {body, Body}] ->
-                    case catch jsx:decode(Body, [return_maps]) of
+                    case damage_otp_compat:catch_value(fun() -> jsx:decode(Body, [return_maps]) end) of
                         {'EXIT', _} ->
                             maps:put(fail, <<"invalid lnurl callback json">>, Context);
                         Json ->

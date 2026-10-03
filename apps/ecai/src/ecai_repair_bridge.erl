@@ -305,7 +305,7 @@ note_error(Request, Reason) ->
     Metadata = case is_map(Metadata0) of true -> Metadata0; false -> #{} end,
     Request#{metadata => Metadata#{ecai_capsule_error => Reason}}.
 
-first_nonempty([Value | Rest]) when is_list(Value), Value =/= [] -> Value;
+first_nonempty([Value | _Rest]) when is_list(Value), Value =/= [] -> Value;
 first_nonempty([_ | Rest]) -> first_nonempty(Rest);
 first_nonempty([]) -> [].
 

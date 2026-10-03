@@ -479,55 +479,6 @@ debit_after_payment(Owner, LedgerCt, ClientPubHex, AmountMsat, Ref, Meta) ->
             ok
     end.
 
-%%%===================================================================
-%%% Normalization helpers
-%%%===================================================================
-
-normalize_policy(#{<<"max_single_msat">> := A, <<"max_total_msat">> := B, <<"expires_height">> := C}) ->
-    #{max_single_msat => intish(A), max_total_msat => intish(B), expires_height => intish(C)};
-normalize_policy(#{max_single_msat := A, max_total_msat := B, expires_height := C}) ->
-    #{max_single_msat => intish(A), max_total_msat => intish(B), expires_height => intish(C)};
-normalize_policy({A, B, C}) ->
-    #{max_single_msat => intish(A), max_total_msat => intish(B), expires_height => intish(C)};
-normalize_policy(Other) ->
-    #{raw => Other}.
-
-normalize_int(I) when is_integer(I) -> {ok, I};
-normalize_int({I}) when is_integer(I) -> {ok, I};
-normalize_int({variant, [0, 1], 1, {I}}) when is_integer(I) -> {ok, I};
-normalize_int({variant, [0, 1], 0, {}}) ->
-    {ok, 0};
-normalize_int(B) when is_binary(B) ->
-    try
-        {ok, binary_to_integer(B)}
-    catch
-        _:_ -> {error, {bad_integer, B}}
-    end;
-normalize_int(L) when is_list(L) ->
-    try
-        {ok, list_to_integer(L)}
-    catch
-        _:_ -> {error, {bad_integer, L}}
-    end;
-normalize_int(Other) ->
-    {error, {bad_integer, Other}}.
-
-intish(I) when is_integer(I) -> I;
-intish(B) when is_binary(B) ->
-    try
-        binary_to_integer(B)
-    catch
-        _:_ -> 0
-    end;
-intish(L) when is_list(L) ->
-    try
-        list_to_integer(L)
-    catch
-        _:_ -> 0
-    end;
-intish(_) ->
-    0.
-
 current_height() ->
     case erlang:function_exported(damage_ae, top_height, 0) of
         true ->

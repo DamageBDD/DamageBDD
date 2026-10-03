@@ -76,7 +76,7 @@ handle_info(_Msg, State) ->
     {noreply, State}.
 
 terminate(_Reason, _State) ->
-    catch gproc:unreg({p, l, {cln_event, invoice_paid}}),
+    damage_otp_compat:catch_value(fun() -> gproc:unreg({p, l, {cln_event, invoice_paid}}) end),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -350,7 +350,7 @@ release_settled(Label) ->
     end.
 
 ensure_invoice_paid_subscription() ->
-    case catch gproc:reg({p, l, {cln_event, invoice_paid}}) of
+    case damage_otp_compat:catch_value(fun() -> gproc:reg({p, l, {cln_event, invoice_paid}}) end) of
         true -> ok;
         ok -> ok;
         {error, {already_registered, _}} -> ok;
