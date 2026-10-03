@@ -18,6 +18,7 @@
 open(BaseDir0) ->
     try
         BaseDir = path_list(BaseDir0),
+        ok = ecai_private_store:assert_public(BaseDir),
         ok = filelib:ensure_dir(filename:join(BaseDir, "docstore/x")),
         Path = filename:join([BaseDir, "docstore", "ecai_docstore.dets"]),
         case ensure_table_file(Path) of

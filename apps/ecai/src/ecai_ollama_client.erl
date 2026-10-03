@@ -179,9 +179,10 @@ ollama_request(Prompt, JsonMode, Opts) ->
                 <<"stream">> => false,
                 <<"options">> => #{<<"temperature">> => maps:get(temperature, Opts, 0)}
             },
+            WithSystem = maybe_put_system(Base, <<"system">>, Opts),
             BodyMap = case JsonMode of
-                true -> Base#{<<"format">> => <<"json">>};
-                false -> Base
+                true -> WithSystem#{<<"format">> => <<"json">>};
+                false -> WithSystem
             end,
             Headers = [
                 {<<"content-type">>, <<"application/json">>},
@@ -219,7 +220,8 @@ openai_request(Prompt, JsonMode, Opts) ->
                 <<"input">> => Prompt,
                 <<"store">> => maps:get(store, Opts, false)
             },
-            Base1 = maybe_put_openai_reasoning(Base0, Opts),
+            WithSystem = maybe_put_system(Base0, <<"instructions">>, Opts),
+            Base1 = maybe_put_openai_reasoning(WithSystem, Opts),
             Base2 = maybe_put_openai_max_output(Base1, Opts),
             Base3 = maybe_put_openai_temperature(Base2, Opts),
             BodyMap = case JsonMode of
@@ -257,6 +259,14 @@ openai_request(Prompt, JsonMode, Opts) ->
                 {error, Reason} ->
                     {error, {openai_request_failed, Reason}}
             end
+    end.
+
+%% Preserve a distinct system/instructions channel for permissioned RAG.
+maybe_put_system(Body, Key, Opts) ->
+    case maps:get(system, Opts, undefined) of
+        undefined -> Body;
+        System when is_binary(System); is_list(System) ->
+            Body#{Key => to_binary(System)}
     end.
 
 maybe_put_openai_reasoning(Body, Opts) ->

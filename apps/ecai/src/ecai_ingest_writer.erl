@@ -516,7 +516,13 @@ normalize_base_dir(_Invalid) ->
 ensure_storage_dirs(BaseDir) ->
     %% ecai_wal stores the durable ingest log beneath BaseDir/wal.
     %% Ensure the full tree exists before ecai_wal:open/2 on first boot.
-    ecai_paths:ensure_dir(filename:join(BaseDir, "wal")).
+    try
+        ok = ecai_private_store:assert_public(BaseDir),
+        ecai_paths:ensure_dir(filename:join(BaseDir, "wal"))
+    catch
+        error:private_index_requires_authorized_api ->
+            {error, private_index_requires_authorized_api}
+    end.
 
 log_recovery(BaseDir, Recovery, Unique, Duplicates) ->
     RepairedBytes = maps:get(repaired_bytes, Recovery),

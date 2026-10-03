@@ -2,6 +2,7 @@
 
 -export([
     new/1,
+    index_private/4,
     add_doc/3,
     add_records/2,
     flush/1,
@@ -20,7 +21,12 @@
     max_docs = 50000
 }).
 
+%% Private callers use an explicitly authorised, ciphertext-only path.
+index_private(Corpus, Principal, BatchId, Records) ->
+    ecai_private_index:index(Corpus, Principal, BatchId, Records).
+
 new(BaseDir) ->
+    ok = ecai_private_store:assert_public(BaseDir),
     ok = filelib:ensure_dir(filename:join(BaseDir, "x")),
     {ok, Tab} = ecai_disk_docstore:open(BaseDir),
     #st{
@@ -47,6 +53,7 @@ add_doc(
     DocInt,
     Record
 ) when is_integer(DocInt), DocInt > 0, is_map(Record) ->
+    ok = ecai_private_policy:assert_public_record(Record),
     Terms = ecai_terms:terms_from_record(Record),
     Meta = maps:with(
         [

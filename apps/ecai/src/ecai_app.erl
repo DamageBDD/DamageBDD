@@ -94,6 +94,7 @@ get_trails() ->
         [
             ecai_api,
             ecai_index_jobs_http,
+            ecai_private_http,
             ecai_wikimedia_http,
             ecai_yelp_admin,
             ecai_dashboard,

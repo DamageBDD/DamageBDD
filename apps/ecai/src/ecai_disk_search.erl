@@ -6,6 +6,7 @@
 -export([term_postings/3]).
 
 term_postings(BaseDir, HotTab, Term) ->
+    ok = ecai_private_store:assert_public(BaseDir),
     case ecai_hot_terms:get(HotTab, Term) of
         {ok, Docs} ->
             Docs;

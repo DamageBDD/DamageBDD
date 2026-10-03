@@ -93,6 +93,7 @@ open(BaseDir) ->
 open(BaseDir0, Opts) when is_map(Opts) ->
     case {normalize_base_dir(BaseDir0), validate_options(Opts)} of
         {{ok, BaseDir}, {ok, MaxBatchEvents, MaxBatchBytes}} ->
+            ok = ecai_private_store:assert_public(BaseDir),
             Path = wal_path(BaseDir),
             case filelib:ensure_dir(Path) of
                 ok -> open_path(Path, MaxBatchEvents, MaxBatchBytes);

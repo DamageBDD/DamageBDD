@@ -2,6 +2,7 @@
 
 -export([
     ask_qa/2,
+    ask_private/4,
     ask_bdd/2,
     retrieve_sources/3
 ]).
@@ -12,6 +13,10 @@
 -define(EMBED_MODEL, <<"nomic-embed-text">>).
 
 -define(DEFAULT_CANDIDATE_POOL, 24).
+
+%% Does not call public retrieval or embedding reranking.
+ask_private(Corpus, Principal, Query, Destination) ->
+    ecai_llm_bridge:ask(Corpus, Principal, Query, Destination).
 
 ask_qa(BaseDir, Query0) ->
     Query = to_bin(Query0),
@@ -30,6 +35,7 @@ ask_bdd(BaseDir, Query0) ->
 %%====================================================================
 
 retrieve_sources(BaseDir, QueryBin, K) ->
+    ok = ecai_private_store:assert_public(BaseDir),
     HotTab = ecai_hot_terms:new(20000),
     Terms = tokenize(QueryBin),
 

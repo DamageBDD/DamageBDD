@@ -10,6 +10,7 @@
 -define(MAGIC, <<"ECS1">>).
 
 write(BaseDir, SegName, TermDocs) ->
+    ok = ecai_private_store:assert_public(BaseDir),
     Path = filename:join(BaseDir, SegName),
     Tmp = Path ++ ".tmp",
     {ok, FD} = file:open(Tmp, [raw, binary, write]),

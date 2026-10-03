@@ -178,6 +178,7 @@ new() ->
 add_record(Ctx = #ctx{doc2id_tab = DocTable}, DocId, Record) when
     is_binary(DocId), is_map(Record)
 ->
+    ok = ecai_private_policy:assert_public_record(Record),
     %% Derive terms before reserving an ID so invalid records cannot leave a
     %% half-created document mapping.
     Terms = ecai_terms:terms_from_record(Record),
@@ -199,6 +200,7 @@ add_record(_Ctx, _DocId, _Record) ->
     {error, badarg}.
 
 upsert_record(Ctx, DocId, Record) when is_binary(DocId), is_map(Record) ->
+    ok = ecai_private_policy:assert_public_record(Record),
     case ets:lookup(Ctx#ctx.doc2id_tab, DocId) of
         [] ->
             add_record(Ctx, DocId, Record);

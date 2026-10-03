@@ -31,6 +31,7 @@ flush() ->
     gen_server:call(?MODULE, flush).
 
 init({BaseDir, Max}) ->
+    ok = ecai_private_store:assert_public(BaseDir),
     ok = filelib:ensure_dir(filename:join(BaseDir, "x")),
     {ok, #st{base_dir = BaseDir, max_docs = Max}}.
 
