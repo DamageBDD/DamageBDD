@@ -1,0 +1,77 @@
+-module(erm_voice_health_tests).
+-include_lib("eunit/include/eunit.hrl").
+
+%% Run in a fresh VM: this suite deliberately installs the supplied Logger config.
+observability_test_() ->
+    {setup, fun setup/0, fun cleanup/1, fun(Dir) -> [
+        ?_test(routing(Dir)),
+        ?_test(disabled()),
+        ?_test(unavailable()),
+        ?_test(bounded_status()),
+        ?_test(tcp_probe()),
+        ?_test(?assertMatch(#{status := error}, erm_voice_health:check(#{timeout_ms => -1})))
+    ] end}.
+
+setup() ->
+    Dir = os:getenv("VOICE_LOG_TEST_TMP"),
+    {ok, [Config]} = file:consult(os:getenv("VOICE_LOG_TEST_CONFIG")),
+    Kernel = proplists:get_value(kernel, Config),
+    ok = logger:set_primary_config(level, debug),
+    _ = logger:remove_handler(default),
+    lists:foreach(fun({handler, Id, Module, C}) ->
+        HC = maps:get(config, C),
+        File = filename:join(Dir, atom_to_list(Id) ++ ".log"),
+        TestC = C#{config => HC#{type => file, file => File},
+                   formatter => {logger_formatter, #{single_line => true}}},
+        ok = logger:add_handler(Id, Module, TestC)
+    end, proplists:get_value(logger, Kernel)),
+    Dir.
+cleanup(_) ->
+    lists:foreach(fun logger:remove_handler/1, logger:get_handler_ids()),
+    application:unset_env(erm, whisper_trigger).
+
+routing(Dir) ->
+    #{marker := Marker} = erm_voice_health:log_probe(),
+    logger:notice("ordinary_health_marker"),
+    logger:notice("voice_child_marker", [], #{domain => [erm, voice, worker]}),
+    lists:foreach(fun logger_std_h:filesync/1, logger:get_handler_ids()),
+    {ok, Voice} = file:read_file(filename:join(Dir, "erm_voice_file.log")),
+    {ok, Whisper} = file:read_file(filename:join(Dir, "erm_whisper_file.log")),
+    ?assertNotEqual(nomatch, binary:match(Voice, Marker)),
+    ?assertNotEqual(nomatch, binary:match(Whisper, Marker)),
+    ?assertNotEqual(nomatch, binary:match(Voice, <<"voice_child_marker">>)),
+    ?assertEqual(nomatch, binary:match(Whisper, <<"voice_child_marker">>)),
+    ?assertEqual(nomatch, binary:match(Voice, <<"ordinary_health_marker">>)),
+    lists:foreach(fun(Id) ->
+        {ok, Body} = file:read_file(filename:join(Dir, atom_to_list(Id) ++ ".log")),
+        ?assertEqual(nomatch, binary:match(Body, <<"health log probe">>)),
+        ?assertEqual(nomatch, binary:match(Body, <<"voice_child_marker">>))
+    end, [default, debug_file, info_file, error_file]),
+    {ok, Info} = file:read_file(filename:join(Dir, "info_file.log")),
+    ?assertNotEqual(nomatch, binary:match(Info, <<"ordinary_health_marker">>)).
+
+disabled() ->
+    application:set_env(erm, whisper_trigger, [{enabled, false}]),
+    ?assertMatch(#{status := disabled}, erm_voice_health:check()).
+unavailable() ->
+    application:set_env(erm, whisper_trigger, [{enabled, true}]),
+    ?assertMatch(#{status := degraded, checks := #{speech := #{reason := not_started}}},
+                 erm_voice_health:check()).
+bounded_status() ->
+    Pid = spawn(fun() -> receive finish -> ok end end),
+    true = register(whisper_trigger_srv, Pid),
+    try
+        Start = erlang:monotonic_time(millisecond),
+        H = erm_voice_health:check(#{timeout_ms => 30}),
+        ?assertMatch(#{checks := #{speech := #{reason := timeout}}}, H),
+        ?assert(erlang:monotonic_time(millisecond) - Start < 1000)
+    after exit(Pid, kill) end.
+tcp_probe() ->
+    {ok, Socket} = gen_tcp:listen(0, [{active, false}, {ip, {127,0,0,1}}]),
+    {ok, Port} = inet:port(Socket),
+    application:set_env(erm, whisper_trigger,
+        [{enabled, true}, {voice, [{ollama_host, "127.0.0.1"}, {ollama_port, Port}]}]),
+    try
+        ?assertMatch(#{checks := #{ollama := #{status := ok, scope := tcp_only}}},
+                     erm_voice_health:check(#{probe_ollama => true}))
+    after gen_tcp:close(Socket) end.

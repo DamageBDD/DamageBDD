@@ -10,6 +10,11 @@ parse(Text) ->
     end.
 parse_media(Text) ->
     T = erm_voice_boundary:normalize(Text),
+    case volume_input(Text) of
+        not_volume -> parse_text(T, Text);
+        Result -> Result
+    end.
+parse_text(T, Raw) ->
     case T of
         <<"play">> -> action(play);
         <<"start">> -> action(play);
@@ -38,22 +43,30 @@ parse_media(Text) ->
         <<"never mind">> -> {error, cancelled};
         <<"don t ", _/binary>> -> {error, negated_command};
         <<"do not ", _/binary>> -> {error, negated_command};
-        <<"ask ecai ", Q/binary>> when Q =/= <<>> -> {ok, #{action => ecai, query => Q}};
-        <<"ask ", Q/binary>> when Q =/= <<>> -> {ok, #{action => ask, query => Q}};
-        <<"play song ", Q/binary>> when Q =/= <<>> -> {ok, #{action => play_song, query => Q}};
-        <<"play ", Q/binary>> when Q =/= <<>> -> {ok, #{action => play_song, query => Q}};
+        <<"ask ecai ", Q/binary>> when Q =/= <<>> -> {ok, #{action => ecai, query => erm_voice_boundary:suffix(unicode:characters_to_binary(Raw), 2)}};
+        <<"ask ", Q/binary>> when Q =/= <<>> -> {ok, #{action => ask, query => erm_voice_boundary:suffix(unicode:characters_to_binary(Raw), 1)}};
+        <<"play song ", Q/binary>> when Q =/= <<>> -> {ok, #{action => play_song, query => erm_voice_boundary:suffix(unicode:characters_to_binary(Raw), 2)}};
+        <<"play ", Q/binary>> when Q =/= <<>> -> {ok, #{action => play_song, query => erm_voice_boundary:suffix(unicode:characters_to_binary(Raw), 1)}};
         _ -> parse_volume(T)
     end.
 action(A) -> {ok, #{action => A}}.
-parse_volume(T) ->
-    case re:run(T, "^(?:set )?volume(?: to)? ([0-9]{1,3})(?: percent)?$",
-                [{capture, [1], binary}]) of
-        {match, [N]} ->
-            case binary_to_integer(N) of
-                V when V =< 100 -> {ok, #{action => volume, value => V}};
-                _ -> {error, volume_out_of_range}
-            end;
-        _ -> unknown
+%% Validate before punctuation folding: -5, 3.5 and 1/2 must not become
+%% unsigned integers or reach the model for reinterpretation.
+parse_volume(_) -> unknown.
+volume_input(Text) ->
+    Raw = unicode:characters_to_nfkc_binary(Text),
+    case re:run(Raw, "^\\s*(?:set\\s+)?volume\\b", [unicode, caseless, {capture, none}]) of
+        nomatch -> not_volume;
+        match ->
+            case re:run(Raw, "^\\s*(?:set\\s+)?volume(?:\\s+to)?\\s+([0-9]{1,3})(?:\\s+percent)?[.!?]?\\s*$",
+                        [unicode, caseless, {capture, [1], binary}]) of
+                {match, [N]} ->
+                    case binary_to_integer(N) of
+                        V when V =< 100 -> {ok, #{action => volume, value => V}};
+                        _ -> {error, volume_out_of_range}
+                    end;
+                _ -> {error, invalid_volume}
+            end
     end.
 
 plan(Text, Opts) ->

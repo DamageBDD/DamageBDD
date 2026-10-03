@@ -288,7 +288,7 @@ handle_call(start_listening, _From, State0) ->
 handle_call(stop_listening, _From, State = #state{port = Port}) when is_port(Port) ->
     _ = erm_voice:reset(),
     State1 = close_stream(State),
-    logger:info("whisper trigger listening stopped"),
+    subsystem_log(info, "whisper trigger listening stopped"),
     {reply, ok, State1};
 handle_call(stop_listening, _From, State) ->
     {reply, {ok, already_stopped}, State};
@@ -319,7 +319,7 @@ handle_call({set_trigger_phrases, Phrases0}, _From, State) ->
         {ok, Phrases} ->
             _ = erm_voice:reset(),
             Opts1 = maps:put(trigger_phrases, Phrases, State#state.opts),
-            logger:info("whisper trigger phrases changed to ~p", [Phrases]),
+            subsystem_log(info, "whisper trigger phrases changed to ~p", [Phrases]),
             {reply, {ok, Phrases}, State#state{
                 opts = Opts1,
                 trigger_phrases = Phrases,
@@ -342,7 +342,7 @@ handle_call({select_input_source, Source0}, _From, State0) ->
             Opts1 = maps:put(capture, Capture, State0#state.opts),
             case reconfigure_stream_if_listening(Opts1, State0) of
                 {ok, State1} ->
-                    logger:info("whisper input source changed to ~p", [Selected]),
+                    subsystem_log(info, "whisper input source changed to ~p", [Selected]),
                     {reply, {ok, Selected}, State1};
                 {error, Reason, State1} ->
                     {reply, {error, {input_source_restart_failed, Reason}}, State1}
@@ -365,6 +365,18 @@ handle_call(cleanup_existing, _From, State) ->
         end,
     Pids = cleanup_matching_processes(State#state.bin, State#state.model, Excluded),
     {reply, {ok, Pids}, State};
+%% Small health snapshot: no device enumeration and no transcript contents.
+handle_call(health, _From, State) ->
+    Listening = is_port(State#state.port) andalso
+                erlang:port_info(State#state.port) =/= undefined,
+    {reply, #{ready => true, listening => Listening, os_pid => State#state.os_pid,
+              bin => State#state.bin, model => State#state.model,
+              last_error => State#state.last_error,
+              transcript_count => State#state.transcript_count,
+              trigger_count => State#state.trigger_count,
+              last_transcript_at_ms => State#state.last_transcript_at_ms,
+              last_output_at_ms => State#state.last_output_at_ms,
+              uptime_ms => uptime_ms(State#state.started_at_ms)}, State};
 handle_call(status, _From, State) ->
     Reply = #{
         backend => whisper_cpp,
@@ -415,7 +427,7 @@ handle_info({Port, {data, Data}}, State0 = #state{port = Port, buffer = Buffer0}
     end;
 handle_info({Port, {exit_status, Status}}, State = #state{port = Port}) ->
     _ = erm_voice:reset(),
-    logger:error("whisper-stream exited with status ~p", [Status]),
+    subsystem_log(error, "whisper-stream exited with status ~p", [Status]),
     Reason = {whisper_exit, Status},
     {noreply, State#state{
         port = undefined,
@@ -427,7 +439,7 @@ handle_info({Port, {exit_status, Status}}, State = #state{port = Port}) ->
     }};
 handle_info({'EXIT', Port, Reason}, State = #state{port = Port}) ->
     _ = erm_voice:reset(),
-    logger:error("whisper-stream port exited: ~p", [Reason]),
+    subsystem_log(error, "whisper-stream port exited: ~p", [Reason]),
     PortReason = {whisper_port_exit, Reason},
     {noreply, State#state{
         port = undefined,
@@ -533,7 +545,7 @@ open_stream(
     of
         Port ->
             OsPid = port_os_pid(Port),
-            logger:info(
+            subsystem_log(info,
                 "whisper trigger listening for ~p using ~ts and ~ts (OS pid ~p)",
                 [Phrases, Bin, Model, OsPid]
             ),
@@ -556,7 +568,7 @@ open_stream(
             }}
     catch
         error:Reason ->
-            logger:error("could not start whisper-stream: ~p", [Reason]),
+            subsystem_log(error, "could not start whisper-stream: ~p", [Reason]),
             {error, {whisper_stream_open_failed, Reason}}
     end.
 
@@ -945,13 +957,13 @@ handle_transcript(
     }
 ) ->
     Text = normalize_text(Text0),
-    %logger:notice("speech detected: ~ts", [Text]),
+    %subsystem_log(notice, "speech detected: ~ts", [Text]),
     State1 = State#state{
         last_transcript = Text,
         last_transcript_at_ms = erlang:system_time(millisecond),
         transcript_count = State#state.transcript_count + 1
     },
-    %logger:debug("case-folded trigger check: text=~tp phrases=~tp", [Text, Phrases]),
+    %subsystem_log(debug, "case-folded trigger check: text=~tp phrases=~tp", [Text, Phrases]),
     case matching_phrase(Text, Phrases) of
         nomatch ->
             State1;
@@ -960,7 +972,7 @@ handle_transcript(
             case debounce_elapsed(LastTrigger, Now, DebounceMs) of
                 true ->
                     run_handler(Handler, Text, Hostname),
-                    logger:notice("speech trigger matched (case-insensitive): ~ts", [Phrase]),
+                    subsystem_log(notice, "speech trigger matched (case-insensitive): ~ts", [Phrase]),
                     State1#state{
                         last_trigger_ms = Now,
                         last_trigger_at_ms = erlang:system_time(millisecond),
@@ -994,7 +1006,7 @@ run_handler(Handler, Text, Hostname) ->
             _ -> ok
         catch
             Class:Reason:Stacktrace ->
-                logger:error(
+                subsystem_log(error,
                     "speech trigger handler failed: ~p:~p~n~p",
                     [Class, Reason, Stacktrace]
                 )
@@ -1003,7 +1015,7 @@ run_handler(Handler, Text, Hostname) ->
     ok.
 
 default_trigger_handler(Text, Host) ->
-    logger:notice("speech trigger callback host=~ts transcript=~ts", [Host, Text]).
+    subsystem_log(notice, "speech trigger callback host=~ts transcript=~ts", [Host, Text]).
 
 safe_normalize_phrases(Phrases) ->
     try normalize_phrases(Phrases) of
@@ -1154,7 +1166,7 @@ ends_with_record_separator(Bin) ->
 maybe_echo_output(Record, Opts) ->
     case maps:get(echo_output, Opts, false) of
         true ->
-            logger:notice("whisper-stream: ~ts", [Record]);
+            subsystem_log(notice, "whisper-stream: ~ts", [Record]);
         false ->
             ok
     end.
@@ -1186,7 +1198,7 @@ cleanup_matching_processes(Bin0, Model0, Excluded) ->
             lists:foreach(fun terminate_os_process/1, Pids),
             case Pids of
                 [] -> ok;
-                _ -> logger:notice("cleaned up stale whisper-stream processes: ~p", [Pids])
+                _ -> subsystem_log(notice, "cleaned up stale whisper-stream processes: ~p", [Pids])
             end,
             Pids;
         _ ->
@@ -1235,7 +1247,7 @@ terminate_os_process(Pid) when is_integer(Pid), Pid > 0 ->
         true ->
             ok;
         false ->
-            logger:warning("whisper-stream pid ~p ignored SIGTERM; sending SIGKILL", [Pid]),
+            subsystem_log(warning, "whisper-stream pid ~p ignored SIGTERM; sending SIGKILL", [Pid]),
             signal_process(Pid, "KILL"),
             _ = wait_for_process_exit(Pid, 25),
             ok
@@ -1365,7 +1377,7 @@ whisper_trace(Event, Value) ->
     case Enabled of
         true ->
             case whisper_trace_changed(Event, Value) of
-                true -> logger:debug("whisper_trace event=~p data=~P", [Event, Value, 12],
+                true -> subsystem_log(debug, "whisper_trace event=~p data=~P", [Event, Value, 12],
                                       #{domain => [erm, whisper]});
                 false -> ok
             end;
@@ -1407,3 +1419,9 @@ trace_preserves_delivery_test() ->
         receive {'$gen_cast', {transcript, _, _}} -> ok after 100 -> error(second_missing) end
     after unregister(erm_voice) end.
 -endif.
+
+subsystem_log(Level, Format, Args) ->
+    logger:log(Level, Format, Args, #{domain => [erm, whisper]}).
+subsystem_log(Level, Format, Args, Meta) ->
+    logger:log(Level, Format, Args, Meta#{domain => [erm, whisper]}).
+subsystem_log(Level, Format) -> subsystem_log(Level, Format, []).

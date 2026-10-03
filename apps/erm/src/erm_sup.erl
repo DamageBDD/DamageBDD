@@ -78,28 +78,6 @@ enabled() ->
 %%% GTK4 session
 %%%===================================================================
 
-gtknode4_specs() ->
-    Config0 = application:get_env(erm, gtknode4, #{}),
-    Config = options_map(Config0),
-    case gtknode4_run_decision(Config) of
-        run ->
-            SessionConfig = maps:remove(enabled, Config),
-            ?LOG_INFO(
-                "Enabling supervised gtknode4 session in ~p mode",
-                [maps:get(mode, SessionConfig, local_cnode)]
-            ),
-            [gtknode4_child_spec(SessionConfig)];
-        disabled ->
-            ?LOG_INFO("gtknode4 session is disabled by ERM configuration", []),
-            [];
-        headless ->
-            ?LOG_INFO(
-                "gtknode4 session deferred because no graphical display is available",
-                []
-            ),
-            []
-    end.
-
 %% Reconcile the live supervision tree with the current application
 %% environment. Supervisor init/1 is only evaluated when erm_sup starts, so
 %% application:set_env/3 and hot-loaded configuration otherwise have no effect
@@ -224,23 +202,6 @@ gtknode4_restart_policy(SessionConfig) ->
 %%%===================================================================
 %%% ERM Lens optional subsystem
 %%%===================================================================
-
-lens_specs() ->
-    Config = lens_config(),
-    case maps:get(enabled, Config, true) of
-        true ->
-            LensConfig = maps:remove(enabled, Config),
-            ?LOG_INFO("Enabling supervised ERM Lens subsystem", []),
-            case lens_child_spec(LensConfig) of
-                {ok, Spec} -> [Spec];
-                {error, Reason} ->
-                    ?LOG_WARNING("ERM Lens child spec unavailable: ~p", [Reason]),
-                    []
-            end;
-        false ->
-            ?LOG_INFO("ERM Lens is disabled by ERM configuration", []),
-            []
-    end.
 
 sync_lens() ->
     Config = lens_config(),
@@ -411,14 +372,22 @@ optional_status() ->
     end.
 
 reclaim_registered_supervisor(Name, Pid) ->
-    case catch gen_server:stop(Pid, shutdown, 10000) of
+    try gen_server:stop(Pid, shutdown, 10000) of
         ok ->
             ok;
-        {'EXIT', Reason} ->
-            ?LOG_WARNING("Could not stop stale ~p cleanly pid=~p reason=~p", [Name, Pid, Reason]),
-            catch exit(Pid, shutdown);
         Other ->
             ?LOG_WARNING("Unexpected stop result for stale ~p pid=~p result=~p", [Name, Pid, Other])
+    catch
+        Class:Reason ->
+            ?LOG_WARNING("Could not stop stale ~p cleanly pid=~p class=~p reason=~p",
+                         [Name, Pid, Class, Reason]),
+            try exit(Pid, shutdown) of
+                _ -> ok
+            catch
+                ExitClass:ExitReason ->
+                    ?LOG_WARNING("Could not signal stale ~p pid=~p class=~p reason=~p",
+                                 [Name, Pid, ExitClass, ExitReason])
+            end
     end,
     wait_unregistered(Name, 100).
 
@@ -556,7 +525,7 @@ whisper_child_specs() ->
             Opts = maps:remove(enabled, Opts0),
             whisper_child_specs(Enabled, Opts);
         {error, Reason} ->
-            ?LOG_WARNING(
+            whisper_log(warning,
                 "Ignoring invalid erm whisper_trigger configuration: ~p",
                 [Reason]
             ),
@@ -564,7 +533,7 @@ whisper_child_specs() ->
     end.
 
 whisper_child_specs(false, _Opts) ->
-    ?LOG_DEBUG("Whisper trigger disabled by configuration.", []),
+    whisper_log(debug, "Whisper trigger disabled by configuration.", []),
     [];
 whisper_child_specs(true, #{backend := native} = Opts) ->
     Native = case maps:get(native, Opts, []) of
@@ -579,7 +548,7 @@ whisper_child_specs(true, #{backend := native} = Opts) ->
 whisper_child_specs(true, Opts) ->
     case whisper_trigger_srv:availability(Opts) of
         {ok, Runtime} ->
-            ?LOG_INFO("Whisper trigger available: ~p", [Runtime]),
+            whisper_log(info, "Whisper trigger available: ~p", [Runtime]),
             voice_child_specs(Opts) ++ [
                 #{
                     id => whisper_trigger_srv,
@@ -591,11 +560,11 @@ whisper_child_specs(true, Opts) ->
                 }
             ];
         {error, Reason} ->
-            ?LOG_INFO("Whisper trigger unavailable; not starting: ~p", [Reason]),
+            whisper_log(info, "Whisper trigger unavailable; not starting: ~p", [Reason]),
             []
     end;
 whisper_child_specs(Invalid, _Opts) ->
-    ?LOG_WARNING("Ignoring invalid whisper_trigger enabled value: ~p", [Invalid]),
+    whisper_log(warning, "Ignoring invalid whisper_trigger enabled value: ~p", [Invalid]),
     [].
 %% Voice and Whisper have no wx dependency. Start the router first so the
 %% first stream record can never race its registered process.
@@ -609,7 +578,7 @@ voice_child_specs(WhisperOpts) ->
                            modules => [erm_voice]}]
             end;
         {error, Reason} ->
-            ?LOG_WARNING("Voice actions disabled: ~p", [Reason]),
+            logger:log(warning, "Voice actions disabled: ~p", [Reason], #{domain => [erm, voice]}),
             []
     end.
 
@@ -630,3 +599,6 @@ options_map(undefined) ->
     #{};
 options_map(Other) ->
     error({bad_gtknode4_config, Other}).
+
+whisper_log(Level, Format, Args) ->
+    logger:log(Level, Format, Args, #{domain => [erm, whisper]}).

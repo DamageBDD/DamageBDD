@@ -1,11 +1,14 @@
 %% Supervised voice coordinator. No LLM or MPV work blocks this gen_server.
 -module(erm_voice).
 -behaviour(gen_server).
--export([start_link/1, transcript/2, command/1, status/0, reset/0, options/1]).
+-export([start_link/1, transcript/2, command/1, status/0, reset/0, options/1, healthcheck/0, healthcheck/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -record(st, {opts, boundary, tick, job = undefined, last_result = undefined,
-             last_command = undefined, completed = 0}).
+             last_command = undefined, completed = 0, priority = undefined}).
+
+healthcheck() -> erm_voice_health:check().
+healthcheck(Opts) -> erm_voice_health:check(Opts).
 
 start_link(Opts) -> gen_server:start_link({local, ?MODULE}, ?MODULE, Opts, []).
 transcript(Text, Phrases) ->
@@ -29,6 +32,7 @@ options(Options) ->
             O when is_list(O) -> proplists:to_map(O)
         end,
         true = is_boolean(maps:get(enabled, M, true)),
+        true = is_boolean(maps:get(require_final, M, false)),
         Defaults = #{settle_ms => 1100, urgent_settle_ms => 300, command_window_ms => 8000,
                      rearm_silence_ms => 6000, command_dedupe_ms => 6000,
                      max_command_bytes => 512, planning_timeout_ms => 30000,
@@ -68,9 +72,11 @@ init(Options) ->
         {error, Reason} -> {stop, Reason}
     end.
 handle_call(status, _From, S) ->
-    {reply, #{phase => maps:get(phase, S#st.boundary), busy => S#st.job =/= undefined,
+    {reply, #{phase => maps:get(phase, S#st.boundary), busy => S#st.job =/= undefined orelse S#st.priority =/= undefined,
+              priority_busy => S#st.priority =/= undefined,
               model => maps:get(model, S#st.opts, "qwen3:1.7b"),
               last_command => S#st.last_command, last_result => S#st.last_result,
+              health_settings => maps:with([ollama_host, ollama_port, require_final, ecai_base_dir], S#st.opts),
               completed => S#st.completed}, S};
 handle_call({command, Text0}, _From, S) ->
     case safe_command(Text0, S#st.opts) of
@@ -79,6 +85,12 @@ handle_call({command, Text0}, _From, S) ->
             {reply, Reply, Next};
         Error -> {reply, Error, S}
     end;
+handle_call({media_permit, Ref}, _From, S) ->
+    Allowed = lists:any(fun
+        (#{ref := R}) -> R =:= Ref;
+        (_) -> false
+    end, [S#st.job, S#st.priority]),
+    {reply, Allowed, S};
 handle_call(_, _From, S) -> {reply, {error, unsupported_call}, S}.
 
 handle_cast({transcript, Text, Phrases}, S) ->
@@ -91,7 +103,7 @@ handle_cast({transcript, Text, Phrases}, S) ->
             end,
             {noreply, S#st{boundary = B}}
     catch Class:Reason ->
-        logger:warning("voice transcript rejected: ~p:~tp", [Class, Reason]),
+        subsystem_log(warning, "voice transcript rejected: ~p:~tp", [Class, Reason]),
         {noreply, S#st{boundary = erm_voice_boundary:cancel(S#st.boundary)}} end;
 handle_cast(reset_boundary, S) ->
     {noreply, S#st{boundary = erm_voice_boundary:new()}};
@@ -120,6 +132,13 @@ handle_info({voice_model_pull, Ref}, S = #st{opts = Opts,
     TimerToken = make_ref(),
     Timer = erlang:send_after(Budget, self(), {voice_timeout, Ref, TimerToken}),
     {noreply, S#st{job = Job#{timer => Timer, timeout_token => TimerToken}}};
+%% Reuse normal worker cleanup for the independently tracked priority lane.
+handle_info({voice_result, Ref, _} = Msg, S = #st{priority = #{ref := Ref}}) ->
+    priority_info(Msg, S);
+handle_info({voice_timeout, Ref, Token} = Msg, S = #st{priority = #{ref := Ref, timeout_token := Token}}) ->
+    priority_info(Msg, S);
+handle_info({'DOWN', Mon, process, _, _} = Msg, S = #st{priority = #{monitor := Mon}}) ->
+    priority_info(Msg, S);
 handle_info({voice_result, Ref, Result}, S = #st{job = #{ref := Ref, phase := plan}}) ->
     Ready = clear_job(S),
     case Result of
@@ -137,6 +156,22 @@ handle_info({'DOWN', Mon, process, _Pid, Reason}, S = #st{job = #{monitor := Mon
     {noreply, record_result({error, {worker_down, Reason}}, clear_job(S))};
 handle_info(_, S) -> {noreply, S}.
 
+priority_info(Msg, S) ->
+    {noreply, Next} = handle_info(Msg, S#st{job = S#st.priority, priority = undefined}),
+    {noreply, Next#st{job = S#st.job, priority = Next#st.job}}.
+
+accept(_Text, S = #st{priority = P}) when P =/= undefined ->
+    {{error, busy}, S};
+accept(Text, S = #st{job = #{phase := action}}) ->
+    case erm_voice_intent:parse(Text) of
+        {ok, #{action := A} = Intent} when A =:= stop; A =:= pause ->
+            %% Existing side effects are NOT rolled back. Cancel builtin
+            %% workers, retain custom jobs, and submit to the same MPV owner.
+            Base = cancel_media_job(S),
+            Priority = launch(action, Intent, Base#st{job = undefined, last_command = Text}),
+            {ok, Priority#st{priority = Priority#st.job, job = Base#st.job}};
+        _ -> {{error, busy}, S}
+    end;
 accept(Text, S = #st{job = undefined}) -> {ok, launch(plan, Text, S#st{last_command = Text})};
 accept(Text, S = #st{job = #{phase := plan}}) ->
     case erm_voice_intent:parse(Text) of
@@ -156,7 +191,9 @@ launch(Phase, Input, S = #st{opts = Opts}) ->
             case Phase of
                 plan -> erm_voice_intent:plan(Input, Opts#{model_pull_notify =>
                     fun() -> Parent ! {voice_model_pull, Ref} end});
-                action -> execute(Input, Opts)
+                action ->
+                    put(erm_voice_job_ref, Ref),
+                    execute(Input, Opts)
             end
         catch C:R -> {error, {C, R}} end,
         Parent ! {voice_result, Ref, Result}
@@ -164,7 +201,7 @@ launch(Phase, Input, S = #st{opts = Opts}) ->
     Timeout = maps:get(case Phase of plan -> planning_timeout_ms; action -> action_timeout_ms end, Opts),
     Token = make_ref(),
     Timer = erlang:send_after(Timeout, self(), {voice_timeout, Ref, Token}),
-    S#st{job = #{ref => Ref, pid => Pid, monitor => Mon, timer => Timer, timeout_token => Token, phase => Phase}}.
+    S#st{job = #{ref => Ref, pid => Pid, monitor => Mon, timer => Timer, timeout_token => Token, phase => Phase, input => Input}}.
 execute(#{action := tts} = Intent, _Opts) -> erm_voice_tts:execute(Intent);
 execute(#{action := custom, name := Name, query := Q}, Opts) ->
     case lists:keyfind(Name, 1, maps:get(actions, Opts, [])) of
@@ -172,6 +209,12 @@ execute(#{action := custom, name := Name, query := Q}, Opts) ->
         false -> {error, unsupported_action}
     end;
 execute(Intent, Opts) -> erm_voice_media:execute(Intent, Opts).
+
+%% Custom handlers may have their own external effects; leave them tracked.
+%% Builtin media workers lose their permit before a priority control is sent.
+cancel_media_job(S = #st{job = #{input := #{action := A}}}) when A =:= custom; A =:= tts -> S;
+cancel_media_job(S = #st{job = #{pid := Pid}}) ->
+    unlink(Pid), exit(Pid, kill), clear_job(S).
 
 cancel_plan(S = #st{job = #{phase := plan, pid := Pid}}) ->
     unlink(Pid), exit(Pid, kill), clear_job(S);
@@ -181,14 +224,14 @@ clear_job(S = #st{job = #{pid := Pid, monitor := Mon, timer := Timer}}) ->
     unlink(Pid), erlang:demonitor(Mon, [flush]), erlang:cancel_timer(Timer),
     S#st{job = undefined}.
 record_result(Result, S) ->
-    logger:notice("voice command result: ~tp", [Result]),
+    subsystem_log(notice, "voice command result: ~tp", [Result]),
     %% TTS is optional, including in isolated test VMs.
     case whereis(erm_tts) of
         undefined -> ok;
         _ ->
             try erm_tts:notify(Result, S#st.last_command)
             catch Class:Reason ->
-                logger:warning("voice TTS notification failed: ~p:~tp", [Class, Reason])
+                subsystem_log(warning, "voice TTS notification failed: ~p:~tp", [Class, Reason])
             end
     end,
     S#st{last_result = Result, completed = S#st.completed + 1}.
@@ -204,17 +247,17 @@ safe_command(Text0, Opts) ->
 now_ms() -> erlang:monotonic_time(millisecond).
 terminate(_, S) ->
     erlang:cancel_timer(S#st.tick),
-    case S#st.job of
-        #{pid := Pid} -> unlink(Pid), exit(Pid, kill);
-        _ -> ok
-    end,
+    lists:foreach(fun
+        (#{pid := Pid}) -> unlink(Pid), exit(Pid, kill);
+        (_) -> ok
+    end, [S#st.job, S#st.priority]),
     ok.
 code_change(_, S, _) -> {ok, S}.
 
 %% Diagnostic text is bounded; no logger calls in the pure boundary module.
 utterance_trace(Event, Data, #st{opts = Opts}) ->
     case maps:get(debug_utterances, Opts, false) of
-        true -> logger:debug("voice_trace ~tp", [Data#{event => Event}],
+        true -> subsystem_log(debug, "voice_trace ~tp", [Data#{event => Event}],
                              #{domain => [erm, voice]});
         _ -> ok
     end.
@@ -244,3 +287,8 @@ trace_boundary_changes_test() ->
     ?assertNot(maps:is_key(deadline, boundary_view(A#{deadline => now_ms()+500}))),
     ?assert(maps:is_key(remaining_ms, boundary_view(A#{deadline => now_ms()+500}))).
 -endif.
+
+subsystem_log(Level, Format, Args) ->
+    logger:log(Level, Format, Args, #{domain => [erm, voice]}).
+subsystem_log(Level, Format, Args, Meta) ->
+    logger:log(Level, Format, Args, Meta#{domain => [erm, voice]}).

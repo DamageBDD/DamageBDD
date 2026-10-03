@@ -11,8 +11,8 @@ tick(Time, S) -> erm_voice_boundary:tick(Time, S, opts()).
 wake_test_() ->
     [?_assertEqual(Expected, erm_voice_boundary:wake(Text, ["bob"])) ||
         {Text, Expected} <- [
-            {"BOB, next song!", {wake, <<"next song">>}},
-            {"Hey Bob, pause.", {wake, <<"pause">>}},
+            {"BOB, next song!", {wake, <<"next song!">>}},
+            {"Hey Bob, pause.", {wake, <<"pause.">>}},
             {"okay bob stop", {wake, <<"stop">>}},
             {"Bobby next", nomatch},
             {"bobcat", nomatch},
@@ -117,11 +117,11 @@ song_selection_test() ->
     ?assertEqual({error, song_not_found}, erm_voice_media:select_song("made up title", Tracks)),
     ?assertEqual({error, song_not_found}, erm_voice_media:select_song("", Tracks)).
 
-different_action_without_silence_test() ->
+legacy_revision_cannot_change_action_test() ->
     S1 = feed("bob next", 0, erm_voice_boundary:new()),
     {{command, _}, S2} = tick(1000, S1),
     S3 = feed("bob pause", 1200, S2),
-    ?assertMatch({{command, <<"pause">>}, _}, tick(2200, S3)).
+    ?assertMatch({none, _}, tick(2200, S3)).
 late_revision_not_second_action_test() ->
     S1 = feed("bob play wonderwall", 0, erm_voice_boundary:new()),
     {{command, _}, S2} = tick(1000, S1),
@@ -138,9 +138,74 @@ expired_multiword_prefix_test() ->
     S2 = erm_voice_boundary:feed("ripper next", ["thread ripper"], 2000, S1, opts()),
     ?assertMatch({none, _}, tick(3100, S2)).
 
-wake_only_after_previous_command_test() ->
+legacy_wake_only_requires_rearm_test() ->
     S1 = feed("bob next", 0, erm_voice_boundary:new()),
     {{command, _}, S2} = tick(1000, S1),
     S3 = feed("bob", 1400, S2),
     S4 = feed("pause", 1800, S3),
-    ?assertMatch({{command, <<"pause">>}, _}, tick(2900, S4)).
+    ?assertMatch({none, _}, tick(2900, S4)).
+
+structured(Id, Text, Final, Time, S) ->
+    feed(#{utterance_id => Id, text => Text, final => Final}, Time, S).
+
+partial_waits_for_final_test() ->
+    S1 = structured(<<"u1">>, <<"Bob play">>, false, 0, erm_voice_boundary:new()),
+    {none, S2} = tick(2000, S1),
+    S3 = structured(<<"u1">>, <<"Bob play Wonderwall">>, true, 2100, S2),
+    ?assertMatch({{command, <<"play Wonderwall">>}, _}, tick(2101, S3)).
+
+same_command_new_utterance_test() ->
+    S1 = structured(<<"u1">>, <<"bob next">>, true, 0, erm_voice_boundary:new()),
+    {{command, _}, S2} = tick(1, S1),
+    S3 = structured(<<"u2">>, <<"bob next">>, true, 100, S2),
+    ?assertMatch({{command, <<"next">>}, _}, tick(101, S3)).
+
+late_final_redraw_ignored_test() ->
+    S1 = structured(<<"u1">>, <<"bob next">>, true, 0, erm_voice_boundary:new()),
+    {{command, _}, S2} = tick(1, S1),
+    S3 = structured(<<"u1">>, <<"bob pause">>, true, 100, S2),
+    ?assertMatch({none, _}, tick(1500, S3)).
+
+final_is_immutable_before_tick_test() ->
+    S1 = structured(<<"u1">>, <<"bob next">>, true, 0, erm_voice_boundary:new()),
+    S2 = structured(<<"u1">>, <<"bob stop">>, true, 1, S1),
+    ?assertMatch({{command, <<"next">>}, _}, tick(2, S2)).
+
+abandoned_utterance_cannot_return_test() ->
+    S1 = structured(<<"u1">>, <<"bob play">>, false, 0, erm_voice_boundary:new()),
+    S2 = structured(<<"u2">>, <<"bob pause">>, false, 100, S1),
+    S3 = structured(<<"u1">>, <<"bob play music">>, true, 200, S2),
+    ?assertMatch({none, _}, tick(1500, S3)).
+
+unrelated_text_does_not_unlock_test() ->
+    S1 = feed("bob next", 0, erm_voice_boundary:new()),
+    {{command, _}, S2} = tick(1000, S1),
+    S3 = feed("background conversation", 1200, S2),
+    S4 = feed("bob pause", 1400, S3),
+    ?assertMatch({none, _}, tick(2500, S4)).
+
+late_final_cannot_extend_deadline_test() ->
+    S1 = structured(<<"u1">>, <<"bob">>, false, 0, erm_voice_boundary:new()),
+    S2 = structured(<<"u1">>, <<"bob next">>, true, 8001, S1),
+    ?assertMatch({none, _}, tick(8002, S2)).
+
+strict_mode_rejects_unfinalized_text_test() ->
+    O = (opts())#{require_final => true},
+    S = erm_voice_boundary:feed("bob next", ["bob"], 0, erm_voice_boundary:new(), O),
+    ?assertMatch({none, _}, erm_voice_boundary:tick(1500, S, O)).
+
+punctuation_preserved_test() ->
+    ?assertEqual({wake, <<"ask Is -5 < 0?">>},
+                 erm_voice_boundary:wake("Bob, ask Is -5 < 0?", ["bob"])),
+    ?assertEqual({ok, #{action => ask, query => <<"Is -5 < 0?">>}},
+                 erm_voice_intent:parse("ask Is -5 < 0?")),
+    ?assertEqual({ok, #{action => play_song, query => <<"Don't Stop Me Now">>}},
+                 erm_voice_intent:parse("play Don't Stop Me Now")).
+
+invalid_volume_never_reaches_model_test_() ->
+    [?_assertMatch({error, _}, erm_voice_intent:plan(T, #{})) || T <-
+        ["volume -5", "set volume to +5", "volume 3.5", "volume 1/2", "volume 101"]].
+
+require_final_configuration_test() ->
+    ?assertMatch({ok, _}, erm_voice:options(#{require_final => true})),
+    ?assertMatch({error, _}, erm_voice:options(#{require_final => invalid})).

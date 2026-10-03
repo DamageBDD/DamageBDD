@@ -28,14 +28,31 @@ execute(#{action := play_song, query := Query}, _Opts) ->
 execute(#{action := show_player}, _Opts) -> erm_mpv:show();
 execute(#{action := hide_player}, _Opts) -> erm_mpv:close();
 execute(#{action := now_playing}, _Opts) ->
-    sync_current(),
-    case playlist:current() of
-        {ok, T} -> {ok, #{title => title(T), artist => text(T#track.artist)}};
-        _ -> {error, nothing_playing}
+    case cmd(status, []) of
+        {ok, #{idle_active := false, path := Path}} when is_binary(Path); is_list(Path) ->
+            _ = playlist:sync_current_path(Path),
+            case playlist:current() of
+                {ok, T} ->
+                    case text(T#track.path) =:= text(Path) of
+                        true -> {ok, #{title => title(T), artist => text(T#track.artist)}};
+                        false -> {error, playback_not_in_playlist}
+                    end;
+                _ -> {error, playback_not_in_playlist}
+            end;
+        {ok, _} -> {error, nothing_playing};
+        Error -> Error
     end;
 execute(_, _) -> {error, unsupported_media_action}.
 
-cmd(F, Args) -> erm_mpv_proc:command(F, Args, 3000).
+cmd(F, Args) ->
+    case get(erm_voice_job_ref) of
+        undefined -> erm_mpv_proc:command(F, Args, 3000);
+        Ref ->
+            case gen_server:call(erm_voice, {media_permit, Ref}, 1000) of
+                true -> erm_mpv_proc:command(F, Args, 3000);
+                false -> {error, cancelled}
+            end
+    end.
 sync_current() ->
     case cmd(get_property, [<<"path">>]) of
         {ok, Path} when is_binary(Path); is_list(Path) -> playlist:sync_current_path(Path);
@@ -65,10 +82,17 @@ play_track(T = #track{id = Id}) ->
     case Tail of
         [] -> {error, track_not_in_playlist};
         _ ->
-            Paths = [text(X#track.path) || {_, X} <- Tail],
-            case lists:all(fun valid_path/1, Paths) of
+            case valid_path(text(T#track.path)) of
                 false -> {error, invalid_playlist_path};
-                true -> load_tail(T, Paths)
+                true ->
+                    Paths = [text(X#track.path) || {_, X} <- Tail,
+                                                  valid_path(text(X#track.path))],
+                    Skipped = length(Tail) - length(Paths),
+                    case Skipped of
+                        0 -> ok;
+                        _ -> subsystem_log(warning, "Voice queue skipped ~p unavailable entries", [Skipped])
+                    end,
+                    load_tail(T, Paths)
             end
     end.
 valid_path(<<>>) -> false;
@@ -137,3 +161,6 @@ title(#track{path = P}) -> text(filename:rootname(filename:basename(P))).
 words(T) -> binary:split(erm_voice_boundary:normalize(T), <<" ">>, [global, trim_all]).
 text(undefined) -> <<>>;
 text(T) -> unicode:characters_to_binary(T).
+
+subsystem_log(Level, Format, Args) ->
+    logger:log(Level, Format, Args, #{domain => [erm, voice]}).
