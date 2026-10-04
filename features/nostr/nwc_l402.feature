@@ -16,7 +16,7 @@ Feature: L402 payment via NIP-47 and execute_feature
 
     Given I am using server "https://run.dev.damagebdd.com"
     #Given I am using server "https://lightning.lodgeit.org"
-    And I set "Authorization" header to "Bearer {{{access_token}}}"
+    And I use the current DamageBDD authorization
     And I set "content-type" header to "application/json"
 
   Scenario: pay for execute_feature using NWC wallet
@@ -30,9 +30,11 @@ Feature: L402 payment via NIP-47 and execute_feature
       {
       "relays": [
             "wss://nostr-01.yakihonne.com",
+            "wss://bucket.coracle.social",
+            "wss://relay.nsec.app",
             "wss://relay.damus.io",
             "wss://nos.lol",
-            "wss://nostr-02.yakihonne.com",
+            "wss://nostr-02.yakihonne.com"
             "wss://nostr.wine/",
             "wss://nostr-01.yakihonne.com/",
             "wss://search.nos.today/",
