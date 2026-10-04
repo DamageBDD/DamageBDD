@@ -2450,6 +2450,8 @@ relay_proxy_from_policy(Profile) ->
         case application:get_env(damage, nostr_relay_proxy_policy) of
             {ok, M} when is_map(M) ->
                 maps:get(Profile, M, maps:get(default, M, auto));
+            {ok, L} when is_list(L) ->
+                proplists:get_value(Profile, L, proplists:get_value(default, L, auto));
             _ ->
                 auto
         end,
@@ -2578,6 +2580,8 @@ normalize_relays(Relays) when is_list(Relays) ->
         Relays
     ).
 
+normalize_relay(List) when is_list(List), List =/= [], is_tuple(hd(List)) ->
+    normalize_relay(maps:from_list(List));
 normalize_relay(#{url := #{url := _} = Nested} = M) ->
     maps:merge(normalize_relay(Nested), maps:remove(url, M));
 normalize_relay(#{<<"url">> := Url} = M) ->

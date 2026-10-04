@@ -12,6 +12,8 @@ init(ServiceSpecs) ->
     ChildSpecs = lists:map(fun service_spec/1, ServiceSpecs),
     {ok, {SupFlags, ChildSpecs}}.
 
+service_spec(Spec0) when is_list(Spec0) ->
+    service_spec(maps:from_list(Spec0));
 service_spec(#{name := Name} = Spec) ->
     #{
         id => Name,

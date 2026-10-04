@@ -19,22 +19,22 @@
                 %% the complete protocol in doc/gtknode4_protocol.md. Enable it
                 %% in sys.config with the local/fake/visual examples supplied
                 %% by this integration bundle.
-                {gtknode4, #{
-                    enabled => false,
-                    mode => local_cnode,
-                    port => #{
-                        cnode_regname => gtknode4,
-                        controller_regname => gtknode4,
-                        handshake_timeout => 10000,
-                        test_mode => false
-                    },
-                    gs => #{
-                        test_mode => false,
-                        backend_timeout => 5000,
-                        dialog_timeout => infinity,
-                        event_log_limit => 1000
-                    }
-                }}
+                {gtknode4, [
+                    {enabled, false},
+                    {mode, local_cnode},
+                    {port, [
+                        {cnode_regname, gtknode4},
+                        {controller_regname, gtknode4},
+                        {handshake_timeout, 10000},
+                        {test_mode, false}
+                    ]},
+                    {gs, [
+                        {test_mode, false},
+                        {backend_timeout, 5000},
+                        {dialog_timeout, infinity},
+                        {event_log_limit, 1000}
+                    ]}
+                ]}
             ]
         },
         {modules, []},

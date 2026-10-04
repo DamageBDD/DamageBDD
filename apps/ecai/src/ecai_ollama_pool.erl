@@ -596,6 +596,8 @@ normalize_nodes(Nodes0) ->
 
 normalize_node({invalid_nodes, Other}) ->
     throw({invalid_inference_nodes, Other});
+normalize_node(Node0) when is_list(Node0) ->
+    normalize_node(maps:from_list(Node0));
 normalize_node(Node0) when is_map(Node0) ->
     Provider = normalize_provider(maps:get(provider, Node0, ollama)),
     Defaults = provider_node_defaults(Provider),

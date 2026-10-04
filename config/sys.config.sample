@@ -1,42 +1,114 @@
 %%% -*- mode: erlang; erlang-indent-level: 4; -*-
 %% ---------------------------------------------------------------------------
-%% DamageBDD reference sys.config
+%% DamageBDD exhaustive sys.config sample
 %% ---------------------------------------------------------------------------
-%% Source checkout:
-%%   cp config/sys.config.sample config/sys.config
+%% This file is the single documented configuration reference for the in-tree
+%% DamageBDD applications. It supersedes the old config/*fragment* snippets.
 %%
-%% Packaged/systemd installation:
-%%   install -m 0644 config/sys.config.sample /etc/damage/damage.config
+%% Coverage policy:
+%%   * every current canonical application:get_env/app.src option consumed by
+%%     damage, ecai, erm, erm_pay, nosternity and bop is listed;
+%%   * structured application-owned configuration is shown as tuple/proplist
+%%     data; runtime modules normalize it to internal maps where required;
+%%   * compatibility aliases remain accepted by code where migration requires
+%%     them, but are intentionally not presented as canonical options here;
+%%   * OTP/library-owned schemas (Logger and cowboy_swagger) retain maps because
+%%     those APIs define map-shaped configuration;
+%%   * commented options are documented overrides, not requirements. Leaving
+%%     them commented uses the source default shown beside the option;
+%%   * secrets/private keys/tokens should use the encrypted secrets layer even
+%%     where a legacy application-env option still exists.
 %%
-%% The release loads the packaged file with:
-%%   /opt/damage/bin/damage foreground -config /etc/damage/damage.config
-%%
-%% IMPORTANT
-%%   * This is an Erlang term file. It does NOT expand ${ENVIRONMENT_VARIABLES}.
-%%   * The application name is `damage`, not `damagebdd`.
-%%   * Keep passwords, nsecs, macaroons, runes, private keys and vault
-%%     passphrases out of this file. Store them with the encrypted secrets API.
-%%   * The defaults below favour a single-node installation behind a reverse
-%%     proxy. Review every optional integration before enabling it.
-%%   * Paths under /var are package defaults. For an unprivileged source checkout,
-%%     replace them with writable paths such as ./var/lib/damage and ./var/log/damage.
-%%
+%% Erlang term files do not expand ${ENVIRONMENT_VARIABLES}. Paths beginning
+%% with ~/ are expanded only by DamageBDD modules that explicitly support it.
 [
-    %% -----------------------------------------------------------------------
-    %% Erlang logging
-    %% -----------------------------------------------------------------------
-    %% `logger_level` is the primary runtime threshold. The file handlers rotate
-    %% at 10 MiB and retain five files. The parent directory must exist and be
-    %% writable by the release user before the VM starts.
     {
         kernel,
         [
             %% Logger primary threshold. Development keeps debug available to
             %% file handlers; production sample uses info.
             {logger_level, info},
+            {module_level, info, [damage_reload]},
             {
                 logger,
                 [
+                    {module_level, debug, [
+                        erm_voice,
+                        erm_voice_intent,
+                        erm_voice_media,
+                        whisper_trigger_srv,
+                        erm_tts
+                    ]},
+                    {handler, erm_voice_file, logger_std_h, #{
+                        level => debug,
+                        filter_default => stop,
+                        filters => [
+                            {only_erm_voice, {
+                                fun logger_filters:domain/2, {log, sub, [erm, voice]}
+                            }}
+                        ],
+                        config => #{
+                            type => file,
+                            file => "/var/log/damage/erm_voice.log",
+                            max_no_bytes => 10485760,
+                            max_no_files => 5,
+                            compress_on_rotate => true,
+                            filesync_repeat_interval => 1000
+                        },
+                        formatter =>
+                            {logger_formatter, #{
+                                single_line => true,
+                                chars_limit => 8192,
+                                template => [time, " ", level, " ", pid, " ", msg, "\n"]
+                            }}
+                    }},
+                    {handler, erm_whisper_file, logger_std_h, #{
+                        level => debug,
+                        filter_default => stop,
+                        filters => [
+                            {only_erm_whisper, {
+                                fun logger_filters:domain/2, {log, sub, [erm, whisper]}
+                            }}
+                        ],
+                        config => #{
+                            type => file,
+                            file => "/var/log/damage/erm_whisper.log",
+                            max_no_bytes => 10485760,
+                            max_no_files => 5,
+                            compress_on_rotate => true,
+                            filesync_repeat_interval => 1000
+                        },
+                        formatter =>
+                            {logger_formatter, #{
+                                single_line => true,
+                                chars_limit => 8192,
+                                template => [time, " ", level, " ", pid, " ", msg, "\n"]
+                            }}
+                    }},
+                    {handler, erm_tts_file, logger_std_h, #{
+                        level => debug,
+                        filter_default => stop,
+                        filters => [
+                            {only_erm_tts, {
+                                fun logger_filters:domain/2, {log, sub, [erm, tts]}
+                            }}
+                        ],
+                        config => #{
+                            type => file,
+                            file => "/var/log/damage/erm_tts.log",
+                            max_no_bytes => 10485760,
+                            max_no_files => 5,
+                            compress_on_rotate => true,
+                            filesync_repeat_interval => 1000
+                        },
+                        formatter =>
+                            {logger_formatter, #{
+                                single_line => true,
+                                chars_limit => 8192,
+                                template => [time, " ", level, " ", pid, " ", msg, "\n"]
+                            }}
+                    }},
+
                     %% Console: warnings/errors only, excluding explicitly
                     %% routed subsystem domains.
                     {
@@ -47,9 +119,27 @@
                             level => warning,
                             filter_default => log,
                             filters => [
-                                {exclude_erm_lens,
-                                    {fun logger_filters:domain/2,
-                                        {stop, sub, [erm, lens]}}}
+                                {exclude_erm_voice, {
+                                    fun logger_filters:domain/2, {stop, sub, [erm, voice]}
+                                }},
+                                {exclude_erm_whisper, {
+                                    fun logger_filters:domain/2, {stop, sub, [erm, whisper]}
+                                }},
+                                {exclude_erm_tts, {
+                                    fun logger_filters:domain/2, {stop, sub, [erm, tts]}
+                                }},
+                                {exclude_erm_lens, {
+                                    fun logger_filters:domain/2, {stop, sub, [erm, lens]}
+                                }},
+                                {exclude_nsecbunker, {
+                                    fun logger_filters:domain/2, {stop, sub, [damage, nsecbunker]}
+                                }},
+                                {exclude_nwc, {
+                                    fun logger_filters:domain/2, {stop, sub, [damage, nwc]}
+                                }},
+                                {exclude_nostr_relay, {
+                                    fun logger_filters:domain/2, {stop, sub, [damage, nostr, relay]}
+                                }}
                             ],
                             config => #{type => standard_io},
                             formatter => {pretty_logger, #{}}
@@ -65,11 +155,28 @@
                             level => debug,
                             filter_default => stop,
                             filters => [
-                                {exclude_erm_lens,
-                                    {fun logger_filters:domain/2,
-                                        {stop, sub, [erm, lens]}}},
-                                {debug_only,
-                                    {fun logger_filters:level/2, {log, eq, debug}}}
+                                {exclude_erm_voice, {
+                                    fun logger_filters:domain/2, {stop, sub, [erm, voice]}
+                                }},
+                                {exclude_erm_whisper, {
+                                    fun logger_filters:domain/2, {stop, sub, [erm, whisper]}
+                                }},
+                                {exclude_erm_tts, {
+                                    fun logger_filters:domain/2, {stop, sub, [erm, tts]}
+                                }},
+                                {exclude_erm_lens, {
+                                    fun logger_filters:domain/2, {stop, sub, [erm, lens]}
+                                }},
+                                {exclude_nsecbunker, {
+                                    fun logger_filters:domain/2, {stop, sub, [damage, nsecbunker]}
+                                }},
+                                {exclude_nwc, {
+                                    fun logger_filters:domain/2, {stop, sub, [damage, nwc]}
+                                }},
+                                {exclude_nostr_relay, {
+                                    fun logger_filters:domain/2, {stop, sub, [damage, nostr, relay]}
+                                }},
+                                {debug_only, {fun logger_filters:level/2, {log, eq, debug}}}
                             ],
                             config => #{
                                 type => file,
@@ -91,9 +198,27 @@
                             level => info,
                             filter_default => log,
                             filters => [
-                                {exclude_erm_lens,
-                                    {fun logger_filters:domain/2,
-                                        {stop, sub, [erm, lens]}}}
+                                {exclude_erm_voice, {
+                                    fun logger_filters:domain/2, {stop, sub, [erm, voice]}
+                                }},
+                                {exclude_erm_whisper, {
+                                    fun logger_filters:domain/2, {stop, sub, [erm, whisper]}
+                                }},
+                                {exclude_erm_tts, {
+                                    fun logger_filters:domain/2, {stop, sub, [erm, tts]}
+                                }},
+                                {exclude_erm_lens, {
+                                    fun logger_filters:domain/2, {stop, sub, [erm, lens]}
+                                }},
+                                {exclude_nsecbunker, {
+                                    fun logger_filters:domain/2, {stop, sub, [damage, nsecbunker]}
+                                }},
+                                {exclude_nwc, {
+                                    fun logger_filters:domain/2, {stop, sub, [damage, nwc]}
+                                }},
+                                {exclude_nostr_relay, {
+                                    fun logger_filters:domain/2, {stop, sub, [damage, nostr, relay]}
+                                }}
                             ],
                             config => #{
                                 type => file,
@@ -115,9 +240,27 @@
                             level => warning,
                             filter_default => log,
                             filters => [
-                                {exclude_erm_lens,
-                                    {fun logger_filters:domain/2,
-                                        {stop, sub, [erm, lens]}}}
+                                {exclude_erm_voice, {
+                                    fun logger_filters:domain/2, {stop, sub, [erm, voice]}
+                                }},
+                                {exclude_erm_whisper, {
+                                    fun logger_filters:domain/2, {stop, sub, [erm, whisper]}
+                                }},
+                                {exclude_erm_tts, {
+                                    fun logger_filters:domain/2, {stop, sub, [erm, tts]}
+                                }},
+                                {exclude_erm_lens, {
+                                    fun logger_filters:domain/2, {stop, sub, [erm, lens]}
+                                }},
+                                {exclude_nsecbunker, {
+                                    fun logger_filters:domain/2, {stop, sub, [damage, nsecbunker]}
+                                }},
+                                {exclude_nwc, {
+                                    fun logger_filters:domain/2, {stop, sub, [damage, nwc]}
+                                }},
+                                {exclude_nostr_relay, {
+                                    fun logger_filters:domain/2, {stop, sub, [damage, nostr, relay]}
+                                }}
                             ],
                             config => #{
                                 type => file,
@@ -151,15 +294,127 @@
                             level => debug,
                             filter_default => stop,
                             filters => [
-                                {only_erm_lens,
-                                    {fun logger_filters:domain/2,
-                                        {log, sub, [erm, lens]}}}
+                                {only_erm_lens, {
+                                    fun logger_filters:domain/2, {log, sub, [erm, lens]}
+                                }}
                             ],
                             config => #{
                                 type => file,
                                 file => "/var/log/damage/erm_lens.log",
                                 max_no_bytes => 10485760,
                                 max_no_files => 5,
+                                compress_on_rotate => true,
+                                filesync_repeat_interval => 1000
+                            },
+                            formatter => {pretty_logger, #{}}
+                        }
+                    },
+                    {
+                        handler,
+                        blossom_file,
+                        logger_std_h,
+                        #{
+                            level => debug,
+                            filter_default => stop,
+                            filters => [
+                                {only_damage_blossom, {
+                                    fun logger_filters:domain/2,
+                                    {log, sub, [damage, blossom]}
+                                }}
+                            ],
+                            config => #{
+                                type => file,
+                                file => "/var/log/damage/blossom.log",
+                                max_no_bytes => 10485760,
+                                max_no_files => 10,
+                                compress_on_rotate => true,
+                                filesync_repeat_interval => 1000
+                            },
+                            formatter =>
+                                {pretty_logger, #{
+                                    max_event_chars => 12000,
+                                    max_text_chars => 4096,
+                                    max_binary => 256,
+                                    max_string => 1024,
+                                    max_list => 32,
+                                    max_map => 48,
+                                    max_tuple => 24,
+                                    depth => 8
+                                }}
+                        }
+                    },
+
+                    %% NIP-46 bunker runtime and relay transport.
+                    {
+                        handler,
+                        nsecbunker_file,
+                        logger_std_h,
+                        #{
+                            level => debug,
+                            filter_default => stop,
+                            filters => [
+                                {only_nsecbunker, {
+                                    fun logger_filters:domain/2,
+                                    {log, sub, [damage, nsecbunker]}
+                                }}
+                            ],
+                            config => #{
+                                type => file,
+                                file => "/var/log/damage/nsecbunker.log",
+                                max_no_bytes => 10485760,
+                                max_no_files => 10,
+                                compress_on_rotate => true,
+                                filesync_repeat_interval => 1000
+                            },
+                            formatter => {pretty_logger, #{}}
+                        }
+                    },
+
+                    %% NIP-47 / Nostr Wallet Connect listener.
+                    {
+                        handler,
+                        nwc_file,
+                        logger_std_h,
+                        #{
+                            level => debug,
+                            filter_default => stop,
+                            filters => [
+                                {only_nwc, {
+                                    fun logger_filters:domain/2,
+                                    {log, sub, [damage, nwc]}
+                                }}
+                            ],
+                            config => #{
+                                type => file,
+                                file => "/var/log/damage/nwc.log",
+                                max_no_bytes => 10485760,
+                                max_no_files => 10,
+                                compress_on_rotate => true,
+                                filesync_repeat_interval => 1000
+                            },
+                            formatter => {pretty_logger, #{}}
+                        }
+                    },
+
+                    %% Generic Nostr relay-pool workers.
+                    {
+                        handler,
+                        nostr_relay_file,
+                        logger_std_h,
+                        #{
+                            level => debug,
+                            filter_default => stop,
+                            filters => [
+                                {only_nostr_relay, {
+                                    fun logger_filters:domain/2,
+                                    {log, sub, [damage, nostr, relay]}
+                                }}
+                            ],
+                            config => #{
+                                type => file,
+                                file => "/var/log/damage/nostr_relay.log",
+                                max_no_bytes => 10485760,
+                                max_no_files => 10,
                                 compress_on_rotate => true,
                                 filesync_repeat_interval => 1000
                             },
@@ -176,9 +431,9 @@
                             level => debug,
                             filter_default => stop,
                             filters => [
-                                {only_damage_gun,
-                                    {fun logger_filters:domain/2,
-                                        {log, sub, [damage, gun]}}}
+                                {only_damage_gun, {
+                                    fun logger_filters:domain/2, {log, sub, [damage, gun]}
+                                }}
                             ],
                             config => #{
                                 type => file,
@@ -194,304 +449,1192 @@
             }
         ]
     },
-    {
-        damage,
-        [
-            %% --- Core paths and public identity ----------------------------
-            {feature_dirs, ["./features/"]},
-            {logo_image, "/static/img/logo.png"},
-            {run_user, "damage"},
+    {damage, [
+        %% Core node / HTTP
+        {feature_dirs, ["./features/"]},
+        {contracts_dir, "apps/damage/priv/contracts"},
+        {run_user, "damage"},
+        {api_url, "http://127.0.0.1:4888"},
+        {ip, {127, 0, 0, 1}},
+        {port, 4888},
+        {cookie_secure, false},
+        {allowance, 0},
+        {node_admins, []},
+        {strict_no_catchall, true},
+        {cmd_allowed, []},
 
-            {secrets_state_dir, "~/.local/state/damage"},
-            %% Or exact overrides:
-            %% {keystore, "~/.local/state/damage/keys/damage.key"},
-            %% {secrets_dets_file, "~/.local/state/damage/dets/damage.dets"}
+        %% State / secrets
+        {state_dir, "~/.local/state/damage"},
+        {secrets_state_dir, "~/.local/state/damage"},
+        {runtime_data_dir, "~/.local/state/damage/runtime/data"},
+        {runs_dir, "~/.local/state/damage/runtime/runs"},
+        %% {keystore, "~/.local/state/damage/keys/damage.key"},
+        %% {secrets_dets_file, "~/.local/state/damage/dets/damage.dets"},
 
-            %% Public origin used for report links, account emails and browser
-            %% flows. Set this to the externally reachable HTTPS origin in
-            %% production, for example "https://bdd.example.com".
-            {api_url, "http://127.0.0.1:4888"},
+        %% Outbound proxy / Tor
+        {proxy, none},
+        {proxy_exclude, [
+            "localhost", "127.0.0.1", "::1", ".local", ".lan", ".internal"
+        ]},
+        %% {tor_control_host, "127.0.0.1"},
+        %% {tor_control_port, 9051},
+        %% {tor_control_timeout, 5000},
+        %% {tor_control_cookie_file, "/run/tor/control.authcookie"},
+        %% {tor_control_password, "DO_NOT_STORE_PLAINTEXT_PASSWORDS_HERE"},
+        %% {tor_socks_host, "127.0.0.1"},
+        %% {tor_socks_port, 9050},
+        %% {tor_hidden_service_hostname_file, "/var/lib/damage/tor/hostname"},
 
-            %% Initial account allowance. Zero avoids allocating execution
-            %% credit accidentally on a newly deployed private node.
-            {allowance, 0},
+        %% Aeternity
+        {ae_network_id, "ae_mainnet"},
+        {ae_tls, true},
+        {ae_nodes, [{"mainnet.aeternity.io", 443, "/"}]},
+        {ae_mdw_nodes, [{"mainnet.aeternity.io", 443, "/mdw/"}]},
+        {ae_mdw_ws_nodes, [{"mainnet.aeternity.io", 443, "/mdw/v3/websocket"}]},
+        {ae_fee_multiplier, 2},
+        {ae_gas_multiplier, 2},
+        {ae_gas_price_multiplier, 3},
+        {ae_nonce_strategy, chain},
+        %% Deployment contract overrides. These were present in the old full
+        %% profiles but should only be set to real deployed contracts.
+        %% {account_registry_ct, "ct_REPLACE_ME"},
+        %% {node_registry_ct, "ct_REPLACE_ME"},
 
-            {data_dir, "/var/lib/damage/"},
-            {keystore, "/var/lib/damage/damage.key"},
+        %% Nostr relay entries accept a URL string or a tuple/proplist.
+        {nostr_relays, [
+            [{url, "wss://nos.lol"}],
+            [{url, "wss://relay.primal.net"}, {profile, primal}, {proxy, direct}]
+        ]},
+        {nostr_relay_proxy_policy, [
+            {cloudflare_browser, direct},
+            {primal, direct},
+            {yakihonne, direct},
+            {default, auto}
+        ]},
+        %% {nostr_npub, "npub1_REPLACE_ME"},
 
-            %% --- HTTP listener and browser/session security ----------------
-            %% Keep loopback when Nginx, Caddy, HAProxy or a tunnel is the
-            %% public entry point. Change to {0,0,0,0} only deliberately.
+        %% Nostr Wallet Connect
+        {nwc_ledger_mode, operator_signed},
+        {nwc_relays, ["wss://nos.lol", "wss://relay.primal.net"]},
+        {nwc_balance_cache_ttl_ms, 5000},
+
+        %% Bitcoin / Lightning. Credentials are intentionally not included.
+        {bitcoin_rpc_host, "127.0.0.1"},
+        {bitcoin_rpc_port, 8332},
+        {bitcoin_rpc_user, "damage"},
+        {bitcoin_wallet, "damage"},
+        {cln_enabled, false},
+        {cln_websocket_enabled, true},
+        {cln_restart_backoff_ms, 30000},
+        {cln_host, "127.0.0.1"},
+        {cln_port, 3010},
+        {cln_wspath, "/"},
+        {cln_cacertfile, "/var/lib/damage/lightning/ca.pem"},
+        {cln_certfile, "/var/lib/damage/lightning/client.pem"},
+        {cln_keyfile, "/var/lib/damage/lightning/client-key.pem"},
+        {l402_price_msat, 1000},
+        {l402_min_sats, 1},
+        {l402_invoice_expiry, 600},
+        {l402_uses, 1},
+
+        %% Monero wallet RPC; spending is off by default.
+        {monero_wallet_rpc_host, "127.0.0.1"},
+        {monero_wallet_rpc_port, 18083},
+        {monero_wallet_rpc_timeout, 120000},
+        {monero_wallet_rpc_transport, tcp},
+        {monero_wallet_rpc_allow_remote, false},
+        {monero_account_index, 0},
+        {monero_min_confirmations, 10},
+        {monero_poll_interval_ms, 10000},
+        {monero_store_after_invoice, true},
+        {monero_steps_require_admin, true},
+        {monero_allow_spend, false},
+        {monero_transfer_priority, 0},
+        {monero_do_not_relay, false},
+
+        %% Canonical IPFS runtime/client configuration. The legacy flat ipfs_*
+        %% aliases are intentionally omitted. `ipfs` below is reserved for Kubo
+        %% config entries consumed by ipfs_util.
+        {ipfs_runtime, [
+            {managed_kubo, false},
+            {kubo_repo, "~/.local/state/damage/runtime/ipfs/kubo"},
+            {kubo_api_port, 5002},
+            {kubo_gateway_port, 8081},
+            {kubo_swarm_port, 4002},
+            {kubo_start_timeout_ms, 15000},
+            {kubo_retry_ms, 5000},
+            {kubo_gc, true},
+            {kubo_binary, "ipfs"},
+            {ipfs_api, "http://127.0.0.1:5001"},
+            {ipfs_peers, []},
+            %% Structured peers may group several transports under one peer id:
+            %% {ipfs_peers, [
+            %%     [{peer_id, <<"12D3KooW...">>},
+            %%      {addrs, ["/ip4/127.0.0.1/tcp/4001/p2p/12D3KooW..."]}]
+            %% ]},
+            {peer_interval_ms, 30000},
+            {backend, damage_ipfs_backend},
+            {data_dir, "~/.local/state/damage/runtime/ipfs"},
+            {request_timeout_ms, 50000},
+            {connect_timeout_ms, 5000},
+            {http_timeout_ms, 15000},
+            {client_concurrency, 8},
+            {client_queue_limit, 64},
+            {fetch_concurrency, 4},
+            {fetch_queue_limit, 32},
+            {max_request_bytes, 67108864},
+            {max_response_bytes, 67108864},
+            {max_intents, 100000},
+            {pin_poll_ms, 1000},
+            {retry_base_ms, 2000},
+            {retry_max_ms, 300000},
+            {health_interval_ms, 30000},
+            {reconcile_interval_ms, 60000},
+            {reconcile_batch, 32},
+            {max_peers, 128},
+            {loop_timeout_ms, 120000},
+            {headers, []}
+        ]},
+        {ipfs, [
+            {"Addresses.Gateway", "/ip4/127.0.0.1/tcp/8081"}
+        ]},
+
+        %% Blossom / NIP-96
+        {blossom_public_base_url, "http://127.0.0.1:4888"},
+        {blossom_max_bytes, 67108864},
+        {blossom_max_serve_bytes, 67108864},
+        {blossom_upload_timeout_ms, 120000},
+        {blossom_pin_uploads, true},
+        {blossom_auth_clock_skew_seconds, 20},
+        {blossom_auth_max_age_seconds, 300},
+        {blossom_auth_max_ttl_seconds, 900},
+        {blossom_allowed_content_types, [
+            "image/jpeg", "image/png", "image/gif", "image/webp", "image/avif",
+            "image/heic", "image/heif", "video/mp4", "video/quicktime",
+            "video/webm", "audio/mpeg", "audio/ogg", "audio/wav", "application/pdf"
+        ]},
+        {blossom_allow_octet_stream, false},
+        {blossom_upload_ip_requests_per_minute, 60},
+        {blossom_upload_pubkey_requests_per_minute, 20},
+        {blossom_delete_ip_requests_per_minute, 60},
+        {blossom_delete_pubkey_requests_per_minute, 30},
+        {blossom_download_ip_requests_per_minute, 600},
+        {blossom_list_ip_requests_per_minute, 60},
+        {blossom_rate_max_keys, 100000},
+        {nip96_public_base_url, "http://127.0.0.1:4888"},
+        {nip96_max_bytes, 67108864},
+        {nip96_upload_timeout_ms, 120000},
+        {nip96_pin_uploads, true},
+
+        %% Build-release NFT publication. These settings were previously kept
+        %% in sys.config.nft-release.fragment.config. Leave contract/account
+        %% identifiers commented until a deployment has real values.
+        %% {build_release_nft_contract, "ct_REPLACE_WITH_EXISTING_NFT_CONTRACT"},
+        %% {build_release_reader_account, "ak_REPLACE_WITH_PUBLIC_READER_ACCOUNT"},
+        {build_release_query_timeout, 10000},
+        {build_release_ipfs_gateway, "https://ipfs.io/ipfs"},
+        {build_release_publish_timeout, 300000},
+        {build_release_require_installation, true},
+        {build_release_announce_oracle, false},
+
+        %% SMTP metadata; password is the encrypted smtp_pass secret.
+        {smtp_host, "127.0.0.1"},
+        {smtp_hostname, "localhost"},
+        {smtp_from, {"DamageBDD Node", "damage@localhost"}},
+        {smtp_user, ""},
+        {smtp_port, 25},
+
+        %% Worker pools and external supervised commands.
+        {pools, [
+            {damage, [{size, 4}, {max_overflow, 8}], []},
+            {damage_ai, [{size, 1}, {max_overflow, 2}], []},
+            {formatter, [{size, 4}, {max_overflow, 16}], []}
+        ]},
+        {abduco_workers, []},
+        %% Market and systemd shapes retained from the retired full profiles.
+        %% {market_rules, [
+        %%     {"DAMAGEUSDT", [{price_precision, 4}, {min_qty, 100.0}]}
+        %% ]},
+        %% {systemd, [
+        %%     {nginx, {admins, ["ak_REPLACE_ME"]}}
+        %% ]},
+        %% {abduco_workers, [
+        %%     [{name, lightpanda},
+        %%      {cmd, ["bin/lightpanda-x86_64-linux", "--verbose"]},
+        %%      {env, [{"EXAMPLE", "value"}]}]
+        %% ]},
+
+        %% fs-based operator code reload (replacement for the removed Sync app).
+        {code_reload, [
+            {enabled, false},              %% false | dev | true
+            {mode, sources},               %% sources | rebar
+            {root, "/absolute/path/to/DamageBDD"},
+            {apps, [damage, nosternity, erm, ecai, vanillae, bop]},
+            {source_dirs, ["/var/lib/damage/custom/src"]},
+            {include_dirs, ["/var/lib/damage/custom/include"]},
+            {modules, [steps_local]},
+            {erl_opts, [debug_info]},
+            {reuse_compile_opts, true},
+            {profile, "default"},
+            {rebar3, "rebar3"},
+            {build_dir, "/absolute/path/to/DamageBDD/_build/damage_reload"},
+            {debounce_ms, 300},
+            {retry_ms, 1000},
+            {rescan_ms, 5000},
+            {build_timeout_ms, 300000},
+            {load_on_start, false},
+            {exclude_modules, []}
+        ]},
+
+        {operator_hotcode, [
+            {enabled, false},
+            {allowed_modules, [steps_http, text_formatter, html_formatter]}
+        ]},
+        {operator_source_dir, "/var/lib/damage/overrides/src"},
+
+        %% SSH services. ssh_subsystems is the canonical enable switch; the
+        %% nested enabled flags are retained for standalone/legacy starts.
+        {ssh_subsystems, []},
+        {ssh_git, [
+            {enabled, false},
+            {listen_addr, {127, 0, 0, 1}},
+            {port, 2222},
+            {system_dir, "~/.local/state/damage/ssh/git/system"},
+            {user_dir, "~/.local/state/damage/ssh/git/user"},
+            {repos_root, "~/.local/state/damage/git"},
+            {allow_push, []},
+            {git_exec_timeout_ms, 600000}
+        ]},
+        {ssh_tunnel, [
+            {enabled, false},
             {ip, {127, 0, 0, 1}},
-            {port, 4888},
+            {port, 2223},
+            {system_dir, "~/.local/state/damage/ssh/tunnel/system"},
+            {user_dir, "~/.local/state/damage/ssh/tunnel/user"},
+            {hello_timeout, 5000},
+            {negotiation_timeout, 30000},
+            {max_sessions, 16},
+            {tunnel_start_port, 8888},
+            {tunnel_end_port, 9000},
+            {tunnel_target_host, "localhost"},
+            {tunnel_target_port, 8888}
+        ]},
 
-            %% Set true only after the public origin is HTTPS.
-            {cookie_secure, false},
-
-            %% Reject broad catch-all step definitions during step discovery.
-            {strict_no_catchall, true},
-
-            %% Only explicitly trusted Aeternity accounts belong here.
-            {node_admins, []},
-
-            %% Empty means command-execution steps have no operator-approved
-            %% command entries. Add the narrowest possible exact commands.
-            {cmd_allowed, []},
-
-            %% --- SMTP metadata ---------------------------------------------
-            %% Credentials are stored as the encrypted secret `smtp_pass`.
-            %% These loopback placeholders avoid embedding a real mail host.
-            {smtp_host, "127.0.0.1"},
-            {smtp_hostname, "localhost"},
-            {smtp_from, {"DamageBDD Node", "damage@localhost"}},
-            {smtp_user, ""},
-            {smtp_port, 25},
-
-            %% --- IPFS report/artifact storage ------------------------------
-            %% Kubo's RPC API normally listens on 127.0.0.1:5001. The gateway
-            %% multiaddress below follows the current DamageBDD package sample;
-            %% change it when your Kubo gateway uses another port.
-            {ipfs, [{"Addresses.Gateway", "/ip4/127.0.0.1/tcp/8082"}]},
-
-            %% --- Aeternity node and middleware -----------------------------
-            %% These lists are required by the current application startup and
-            %% chain-connected features. Keep network_id, REST and WebSocket
-            %% endpoints on the same network. Add fallbacks in priority order.
-            {ae_network_id, "ae_mainnet"},
-            {ae_tls, true},
-            {
-                ae_nodes,
-                [
-                    {"mainnet.aeternity.io", 443, "/"}
-                ]
-            },
-            {
-                ae_mdw_nodes,
-                [
-                    {"mainnet.aeternity.io", 443, "/mdw/"}
-                ]
-            },
-            {
-                ae_mdw_ws_nodes,
-                [
-                    {"mainnet.aeternity.io", 443, "/mdw/v3/websocket"}
-                ]
-            },
-
-            %% Safety multipliers used when estimating fees and gas.
-            {ae_fee_multiplier, 2},
-            {ae_gas_multiplier, 2},
-            {ae_gas_price_multiplier, 3},
-
-            %% Optional deployment-specific contract overrides. Leave these
-            %% unset to use the contracts compiled/configured by the release.
-            %% {token_contract, "ct_REPLACE_ME"},
-            %% {account_contract, "ct_REPLACE_ME"},
-            %% {identity_contract, "ct_REPLACE_ME"},
-
-            %% --- Outbound proxy policy -------------------------------------
-            %% Supported proxy values include `none` and
-            %% {socks5, "127.0.0.1", 9050}. Local/internal hosts bypass the
-            %% proxy. TLS verification remains enabled by damage_gun.
-            {proxy, none},
-            {
-                proxy_exclude,
-                [
-                    "localhost",
-                    "127.0.0.1",
-                    "::1",
-                    ".local",
-                    ".lan",
-                    "ipfs",
-                    "bitcoin",
-                    "lightning",
-                    "ae_mdw"
-                ]
-            },
-
-            %% --- Nostr relays and service identity -------------------------
-            %% Relay URLs are public configuration. Private nsecs are encrypted
-            %% secrets (`nostr_nsec` and, for NWC, `damage_nostr_nsec`).
-            {
-                nostr_relays,
-                [
-                    "wss://nos.lol",
-                    "wss://offchain.pub",
-                    "wss://relay.primal.net"
-                ]
-            },
-            {nostr_relay_proxy_policy, #{default => auto}},
-            %% {nostr_npub, "npub1_REPLACE_ME"},
-
-            %% --- Nostr Wallet Connect (NIP-47) -----------------------------
-            %% The current handler falls back to server_signed when this key is
-            %% absent. operator_signed is the least-permissive recognised mode
-            %% for existing-ledger mutation paths, but it is NOT a global NWC
-            %% disable switch: missing-ledger bootstrap can still use an available
-            %% custodial key. Block /api/nwc/ at the reverse proxy when NWC is not
-            %% operated, and review the current code before exposing those routes.
-            {nwc_ledger_mode, operator_signed},
-
-            %% --- Bitcoin Core and Lightning -------------------------------
-            %% Bitcoin RPC password: encrypted secret `bitcoin_rpc_password`.
-            {bitcoin_rpc_port, 8332},
-            {bitcoin_rpc_user, "damage"},
-            {bitcoin_wallet, "damage"},
-
-            %% Explicit false prevents automatic CLN backend startup. Change to
-            %% true only after configuring the endpoint, TLS files and `cln_rune`.
-            {cln_enabled, false},
-            {cln_websocket_enabled, true},
-            {cln_restart_backoff_ms, 30000},
-            {cln_host, "127.0.0.1"},
-            {cln_port, 3010},
-            {cln_wspath, "/"},
-            {cln_cacertfile, "/var/lib/damage/lightning/ca.pem"},
-            {cln_certfile, "/var/lib/damage/lightning/client.pem"},
-            {cln_keyfile, "/var/lib/damage/lightning/client-key.pem"},
-
-            %% Optional LND values. Enable an LND pool only after these paths
-            %% and the encrypted `lnd_macaroon` secret are valid.
-            %% {lnd_host, "127.0.0.1"},
-            %% {lnd_port, 8011},
-            %% {lnd_wspath, "/v1/invoices/subscribe?method=GET"},
-            %% {lnd_certfile, "/var/lib/lnd/tls.cert"},
-            %% {lnd_keyfile, "/var/lib/lnd/tls.key"},
-
-            %% L402 is not enabled until l402_account is set and a Lightning
-            %% backend is usable. These are static fallback pricing bounds.
-            {l402_price_msat, 1000},
-            {l402_min_sats, 1},
-            %% {l402_account, "ak_REPLACE_ME"},
-
-            %% --- Worker pools ----------------------------------------------
-            %% Conservative single-node sizes. Increase only after measuring
-            %% scheduler, memory, file-descriptor, browser and upstream limits.
-            {
-                pools,
-                [
-                    {damage, [{size, 4}, {max_overflow, 8}], []},
-                    {damage_ai, [{size, 1}, {max_overflow, 2}], []},
-                    {formatter, [{size, 4}, {max_overflow, 16}], []},
-                    {
-                        damage_ipfs,
-                        [{size, 2}, {max_overflow, 4}],
-                        [{"127.0.0.1", 5001}]
-                    }
-                ]
-            },
-
-            %% DamageBDD does not start external daemons by default. Prefer
-            %% systemd/containers for Kubo, browsers, Bitcoin and Lightning.
-            {abduco_workers, []},
-            {chromedriver, "http://127.0.0.1:9515/"},
-
-            %% --- NIP-46 nsecbunker custody ---------------------------------
-            %% Standard Erlang strings/proplists are used intentionally. This
-            %% block is disabled and local by default. Production mode requires
-            %% a valid crypto backend and vault path; AWS custody additionally
-            %% requires the dedicated AWS configuration fragment and EC2 role.
-            {nsecbunker_rate_backend, ets},
-            {
-                nsecbunker,
-                [
-                    {enabled, false},
-                    {secret_provider, local},
-                    {relay_client_enabled, false},
-                    {relay_publication_mode, "return_only"},
-                    {mode, "development"},
-                    {crypto_backend_cmd, "/opt/damage/bin/damage-nsecbunker-crypto-c"},
-                    {crypto_timeout_ms, 5000},
-                    {vault_path, "/var/lib/damage/nsecbunker/node.vault"},
-                    {audit_log, "/var/log/damage/nsecbunker_audit.log"},
-                    {authorized_clients, []},
-                    {allowed_methods, ["connect", "ping", "get_public_key", "sign_event"]},
-                    {allowed_kinds, [1, 30023]},
-                    {
-                        relays,
-                        [
-                            "wss://relay.damus.io",
-                            "wss://relay.primal.net",
-                            "wss://nos.lol"
-                        ]
-                    },
-                    {
-                        limits,
-                        [
-                            {created_at_skew_seconds, 600},
-                            {created_at_window_seconds, 600},
-                            {max_kind_1_bytes, 4096},
-                            {max_kind_30023_bytes, 131072},
-                            {rate_limit_per_minute, 12},
-                            {rate_limit_window_seconds, 60}
-                        ]
-                    },
-                    {
-                        kind_30023,
-                        [
-                            {require_tags, ["d", "title", "published_at"]},
-                            {reject_html, true}
-                        ]
-                    },
-                    {genesis, [{enabled, false}, {allowed_content_sha256, []}]}
-                ]
-            },
-
-            %% Optional post-quantum envelope backend. The module must implement
-            %% the keypair/encapsulate/decapsulate adapter expected by secrets_pqc.
-            %% {pqc_backend_module, damage_pqc_backend},
-
-            %% --- Optional SSH services -------------------------------------
-            %% Both are disabled in the safe sample. Never expose SSH listeners
-            %% without host keys, authentication policy and firewall review.
-            {
-                ssh_git,
-                [
-                    {enabled, false},
-                    {listen_addr, {127, 0, 0, 1}},
-                    {port, 2222},
-                    {system_dir, "/var/lib/damage/ssh/git/system"},
-                    {user_dir, "/var/lib/damage/ssh/git/user"},
-                    {repos_root, "/var/lib/damage/git"}
-                ]
-            },
-            {
-                ssh_tunnel,
-                [
-                    {enabled, false},
-                    {ip, {127, 0, 0, 1}},
-                    {port, 2223},
-                    {system_dir, "/var/lib/damage/ssh/tunnel/system"},
-                    {user_dir, "/var/lib/damage/ssh/tunnel/user"}
-                ]
-            },
-            {operator_hotcode, [
-                %% Disabled by default; enable explicitly for operator maintenance.
-                {enabled, false},
-                {allowed_modules, [steps_http, text_formatter, html_formatter]}
+        %% NIP-46 custody. Disabled by default. Canonical keys are shown; old
+        %% aliases such as bunker_pubkey, bdd_contract_sha, rate_limit_backend
+        %% and limits.rate_limit_* are intentionally omitted.
+        {nsecbunker, [
+            {enabled, false},
+            {mode, development},
+            {secret_provider, local},
+            {state_dir, "~/.local/state/damage"},
+            {vault_mode, create_if_missing},
+            {vault_path, "~/.local/state/damage/keys/nsecbunker/node.vault"},
+            {audit_log, "~/.local/state/damage/logs/nsecbunker_audit.log"},
+            {crypto_backend_cmd, "/opt/damage/bin/damage-nsecbunker-crypto-c"},
+            {crypto_init_timeout_ms, 5000},
+            {crypto_timeout_ms, 10000},
+            {crypto_unlock_timeout_ms, 15000},
+            {vault_passphrase, nsecbunker_vault_passphrase},
+            {bunker_pubkey_hex, "REPLACE_WITH_64_HEX_PUBKEY"},
+            {bunker_npub, "npub1_REPLACE_ME"},
+            {contract_sha, "REPLACE_WITH_RATIFIED_CONTRACT_SHA"},
+            {authorized_clients, []},
+            {allowed_methods, [connect, ping, get_public_key, sign_event]},
+            {allowed_kinds, [1, 30023]},
+            {relays, ["wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"]},
+            {relay_client_enabled, false},
+            {relay_autosubscribe, true},
+            {relay_publication_mode, return_only},
+            {require_inbound_p_tag, true},
+            {bunker_publishes, false},
+            {signing_timeout_ms, 10000},
+            {bootstrap_retry_min_ms, 1000},
+            {bootstrap_retry_max_ms, 30000},
+            {relay_connect_timeout_ms, 15000},
+            {relay_publish_timeout_ms, 15000},
+            {relay_reconnect_ms, 5000},
+            {relay_max_reconnect_ms, 300000},
+            {relay_max_retries, 8},
+            {relay_circuit_open_ms, 900000},
+            {relay_subscribe_mfa, {damage_nsecbunker_relay, subscribe}},
+            {relay_publish_mfa, {damage_nsecbunker_relay, publish_event}},
+            {limits, [
+                {created_at_skew_seconds, 600},
+                {max_kind_1_bytes, 4096},
+                {max_kind_30023_bytes, 131072}
             ]},
-            {operator_source_dir, "/var/lib/damage/overrides/src"}
-        ]
-    },
+            {max_event_bytes, [{1, 4096}, {30023, 131072}]},
+            {required_tags, [{30023, ["d", "title", "published_at"]}]},
+            {reject_active_content, true},
+            {kind_30023, [
+                {require_tags, ["d", "title", "published_at"]},
+                {reject_html, true}
+            ]},
+            {rate_backend, ets},
+            {rate_limit, [{max_requests, 30}, {window_seconds, 60}]},
+            {genesis, [{enabled, false}, {allowed_content_sha256, []}]},
+            {report_dir, "/var/lib/damage/nsecbunker/reports"},
+            {phase4a_dev_vault_path, "/var/lib/damage/nsecbunker/dev_damagebdd_rehearsal.vault"},
+            {phase4b_prod_vault_path, "/var/lib/damage/nsecbunker/damagebdd_node_production.vault"},
+            {phase4b_production_key_script,
+                "scripts/nsecbunker/phase4b_create_production_damagebdd_node_key.sh"},
+            {backend_owner, damage_nsecbunker_secret_owner},
+            {backend_module, damage_nsecbunker_port},
+            {aws_secret, [
+                {region, "ap-southeast-2"},
+                {secret_id, "/damage/prod/nsecbunker/vault-passphrase"},
+                {expected_account_id, "REPLACE_WITH_AWS_ACCOUNT_ID"},
+                {expected_role_name, "damage-node-prod"}
+            ]}
+        ]}
 
-    %% -----------------------------------------------------------------------
-    %% Supporting application configuration
-    %% -----------------------------------------------------------------------
-    {
-        cowboy_swagger,
-        [
-            {
-                global_spec,
-                #{
-                    swagger => "2.0",
-                    info => #{title => "DamageBDD API"},
-                    basePath => "/api-docs"
-                }
-            }
-        ]
-    },
+        %% ------------------------------------------------------------------
+        %% COMPLETE TOP-LEVEL OPTION REFERENCE
+        %% Every current canonical application-env key consumed by this app
+        %% is listed below. Entries are commented because the code default is
+        %% normally preferable. Uncomment only when overriding it.
+        %% ------------------------------------------------------------------
+        %% abduco_workers: configured above. Code default: required/no explicit call-site default
+        %% {account_registry_cache_ttl_seconds, 3000}, %% default: 3000
+        %% {account_registry_ct, "ct_REPLACE_ME"}, %% default: required/no explicit call-site default
+        %% {ae_contract_call_gas_limit, undefined}, %% default: required/no explicit call-site default
+        %% {ae_contract_create_gas_limit, undefined}, %% default: required/no explicit call-site default
+        %% {ae_contract_default_call_gas, undefined}, %% default: required/no explicit call-site default
+        %% {ae_contract_gas_estimation, true}, %% default: true
+        %% {ae_contract_gas_headroom, 100000}, %% default: 100000
+        %% {ae_contract_gas_margin_min, undefined}, %% default: required/no explicit call-site default
+        %% {ae_contract_gas_margin_percent, undefined}, %% default: required/no explicit call-site default
+        %% {ae_contract_query_fallback_onchain, true}, %% default: true
+        %% {ae_contract_reject_dry_run_revert, false}, %% default: false
+        %% {ae_contract_validation_attempts, 8}, %% default: 8
+        %% {ae_contract_validation_delay_ms, 500}, %% default: 500
+        %% {ae_dry_run_capability_ttl_ms, 30000}, %% default: required/no explicit call-site default
+        %% {ae_dry_run_enabled, true}, %% default: true
+        %% {ae_dry_run_fund_caller, true}, %% default: true
+        %% {ae_dynamic_gas_price, true}, %% default: true
+        %% ae_fee_multiplier: configured above. Code default: required/no explicit call-site default
+        %% {ae_gas_max, undefined}, %% default: ?PROTOCOL_GAS_MAX
+        %% ae_gas_multiplier: configured above. Code default: required/no explicit call-site default
+        %% {ae_gas_price_cache_ttl_ms, 30000}, %% default: required/no explicit call-site default
+        %% ae_gas_price_multiplier: configured above. Code default: required/no explicit call-site default
+        %% {ae_get_spend_timeout_ms, 2000}, %% default: 2000
+        %% ae_mdw_nodes: configured above. Code default: required/no explicit call-site default
+        %% ae_mdw_ws_nodes: configured above. Code default: required/no explicit call-site default
+        %% ae_network_id: configured above. Code default: required/no explicit call-site default
+        %% {ae_node_pool_connect_timeout_ms, 5000}, %% default: 5000
+        %% {ae_node_pool_reconnect_max_ms, 30000}, %% default: 30000
+        %% {ae_node_pool_reconnect_min_ms, 1000}, %% default: 1000
+        %% {ae_node_pool_request_timeout_ms, 30000}, %% default: 30000
+        %% ae_nodes: configured above. Code default: required/no explicit call-site default
+        %% {ae_nonce_retry_attempts, undefined}, %% default: required/no explicit call-site default
+        %% {ae_nonce_retry_delay_ms, 30000}, %% default: required/no explicit call-site default
+        %% ae_nonce_strategy: configured above. Code default: required/no explicit call-site default
+        %% {ae_paying_for_gas_multiplier, undefined}, %% default: required/no explicit call-site default
+        %% {ae_serialize_until_mined, true}, %% default: true
+        %% ae_tls: configured above. Code default: required/no explicit call-site default
+        %% {ae_top_header_cache_ttl_ms, 30000}, %% default: required/no explicit call-site default
+        %% {ae_tx_poll_interval_ms, 2000}, %% default: 2000
+        %% {ae_tx_post_timeout_ms, 30000}, %% default: required/no explicit call-site default
+        %% {ae_tx_wait_timeout_ms, 180000}, %% default: 180000
+        %% allowance: configured above. Code default: required/no explicit call-site default
+        %% api_url: configured above. Code default: required/no explicit call-site default
+        %% {app_dir, "/opt/workspace/"}, %% default: "/opt/workspace/"
+        %% {balance_cache_fresh_ms, 5000}, %% default: 5000
+        %% {balance_cache_hard_ms, 300000}, %% default: 300000
+        %% {balance_cache_mdw_top, false}, %% default: false
+        %% {balance_cache_refresh_delay_ms, 2500}, %% default: 2500
+        %% {balance_cache_request_timeout_ms, 60000}, %% default: 60000
+        %% {bitcoin_http_enable_send, false}, %% default: false
+        %% {bitcoin_http_send_max_btc, 0.01}, %% default: 0.01
+        %% bitcoin_rpc_host: configured above. Code default: "localhost"
+        %% bitcoin_rpc_port: configured above. Code default: required/no explicit call-site default
+        %% {bitcoin_rpc_timeout, 60000}, %% default: 60000
+        %% {bitcoin_rpc_transport, tcp}, %% default: tcp
+        %% bitcoin_rpc_user: configured above. Code default: required/no explicit call-site default
+        %% bitcoin_wallet: configured above. Code default: required/no explicit call-site default
+        %% blossom_allow_octet_stream: configured above. Code default: false
+        %% blossom_allowed_content_types: configured above. Code default: required/no explicit call-site default
+        %% blossom_auth_clock_skew_seconds: configured above. Code default: 5
+        %% blossom_auth_max_age_seconds: configured above. Code default: 300
+        %% blossom_auth_max_ttl_seconds: configured above. Code default: 3600
+        %% blossom_delete_ip_requests_per_minute: configured above. Code default: 60
+        %% blossom_delete_pubkey_requests_per_minute: configured above. Code default: 30
+        %% blossom_download_ip_requests_per_minute: configured above. Code default: 600
+        %% {blossom_list_allow_others, true}, %% default: true
+        %% {blossom_list_enabled, false}, %% default: false
+        %% blossom_list_ip_requests_per_minute: configured above. Code default: 60
+        %% {blossom_list_require_auth, false}, %% default: false
+        %% blossom_max_bytes: configured above. Code default: required/no explicit call-site default
+        %% blossom_max_serve_bytes: configured above. Code default: required/no explicit call-site default
+        %% blossom_pin_uploads: configured above. Code default: application:get_env(damage, nip96_pin_uploads, true)
+        %% blossom_public_base_url: configured above. Code default: required/no explicit call-site default
+        %% blossom_rate_max_keys: configured above. Code default: 100000
+        %% {blossom_unpin_on_delete, false}, %% default: false
+        %% blossom_upload_ip_requests_per_minute: configured above. Code default: 60
+        %% blossom_upload_pubkey_requests_per_minute: configured above. Code default: 20
+        %% blossom_upload_timeout_ms: configured above. Code default: required/no explicit call-site default
+        %% {build_release_announce_oracle, false}, %% default: false
+        %% {build_release_ipfs_gateway, "https://ipfs.io/ipfs"}, %% default: "https://ipfs.io/ipfs"
+        %% {build_release_nft_asset_gateway, undefined}, %% default: required/no explicit call-site default
+        %% {build_release_nft_checkout_store, undefined}, %% default: required/no explicit call-site default
+        %% {build_release_nft_contract, "ct_REPLACE_ME"}, %% default: required/no explicit call-site default
+        %% {build_release_nft_image_gateway, undefined}, %% default: required/no explicit call-site default
+        %% {build_release_nft_invoice_expiry_seconds, 300}, %% default: 5 * 60
+        %% {build_release_nft_price_max_age_ms, 120000}, %% default: 2 * 60 * 1000
+        %% {build_release_oracle_query_ttl, 100}, %% default: 100
+        %% {build_release_oracle_response_ttl, 50000}, %% default: 50000
+        %% {build_release_oracle_ttl, 500000}, %% default: 500000
+        %% {build_release_platform, undefined}, %% default: required/no explicit call-site default
+        %% {build_release_publish_timeout, 300000}, %% default: 300000
+        %% {build_release_query_timeout, 10000}, %% default: 10000
+        %% {build_release_reader_account, "ak_REPLACE_ME"}, %% default: required/no explicit call-site default
+        %% {build_release_require_installation, false}, %% default: false
+        %% {chromedriver, "chromedriver"}, %% default: "chromedriver"
+        %% cln_cacertfile: configured above. Code default: undefined
+        %% cln_certfile: configured above. Code default: undefined
+        %% cln_enabled: configured above. Code default: required/no explicit call-site default
+        %% {cln_hold_invoice_cltv, undefined}, %% default: required/no explicit call-site default
+        %% cln_host: configured above. Code default: undefined
+        %% cln_keyfile: configured above. Code default: undefined
+        %% {cln_pool, undefined}, %% default: required/no explicit call-site default
+        %% cln_port: configured above. Code default: undefined
+        %% cln_restart_backoff_ms: configured above. Code default: 30000
+        %% cln_websocket_enabled: configured above. Code default: true
+        %% cln_wspath: configured above. Code default: undefined
+        %% cmd_allowed: configured above. Code default: required/no explicit call-site default
+        %% code_reload: configured above. Code default: []
+        %% {context_data_dir, "/path/to/REPLACE_ME"}, %% default: required/no explicit call-site default
+        %% {context_max_bytes, 1048576}, %% default: 1048576
+        %% {context_max_proof_view_bytes, 8388608}, %% default: 8388608
+        %% {context_max_request_bytes, 1048576}, %% default: 1048576
+        %% {context_redaction_ttl_seconds, 86400}, %% default: 86400
+        %% {context_store_file, "/path/to/REPLACE_ME"}, %% default: required/no explicit call-site default
+        %% {context_store_master_key, undefined}, %% SENSITIVE; default: required/no explicit call-site default
+        %% {context_sync_writes, true}, %% default: true
+        %% contracts_dir: configured above. Code default: "apps/damage/priv/contracts"
+        %% cookie_secure: configured above. Code default: true
+        %% {damage_token_contract, "ct_REPLACE_ME"}, %% default: required/no explicit call-site default
+        %% {discord_bot_token, undefined}, %% SENSITIVE; default: required/no explicit call-site default
+        %% {discord_default_channel, undefined}, %% default: required/no explicit call-site default
+        %% {ecai_log_capture_level, warning}, %% default: warning
+        %% {ecai_log_flush_batch, 8}, %% default: 8
+        %% {ecai_log_flush_interval_ms, 1000}, %% default: 1000
+        %% {ecai_log_handler_max_queue, 1000}, %% default: 1000
+        %% {ecai_log_learning_apps, [damage, ecai, erm]}, %% default: [damage, ecai, erm]
+        %% {ecai_log_learning_cooldown_ms, 300000}, %% default: 300000
+        %% {ecai_log_learning_enabled, true}, %% default: true
+        %% {ecai_log_learning_level, error}, %% default: error
+        %% {ecai_log_max_text_bytes, 4096}, %% default: 4096
+        %% {ecai_log_pending_limit, 256}, %% default: 256
+        %% {ecai_log_recent_limit, 64}, %% default: 64
+        %% {email_registry_ct, "ct_REPLACE_ME"}, %% default: % staging "ct_9arW6cnYKGoioHceaJ3v9rBWXpVXYP6VjKD19JEa5FosFGPBo" "ct_BJi1Lg4JmpPZqY5Pt1JB4PoRiTNphMvkuxTzCk2kNLimKMHvB"
+        %% feature_dirs: configured above. Code default: ["./features/"]
+        %% {http_stream_heartbeat_ms, 10000}, %% default: 10000
+        %% ip: configured above. Code default: {127, 0, 0, 1}
+        %% ipfs: configured above. Code default: []
+        %% ipfs_runtime: configured above. Code default: required/no explicit call-site default
+        %% {job_registry_ct, "ct_REPLACE_ME"}, %% default: required/no explicit call-site default
+        %% {keystore, undefined}, %% default: required/no explicit call-site default
+        %% {knowledge_contract, "ct_REPLACE_ME"}, %% default: required/no explicit call-site default
+        %% {l402_account, "ak_REPLACE_ME"}, %% default: required/no explicit call-site default
+        %% l402_invoice_expiry: configured above. Code default: 600
+        %% l402_min_sats: configured above. Code default: 1
+        %% l402_price_msat: configured above. Code default: 1000
+        %% l402_uses: configured above. Code default: 1
+        %% {lightpanda_path, "/path/to/REPLACE_ME"}, %% default: DefaultPath
+        %% {lnd_certfile, undefined}, %% default: required/no explicit call-site default
+        %% {lnd_host, "127.0.0.1"}, %% default: required/no explicit call-site default
+        %% {lnd_keyfile, undefined}, %% default: required/no explicit call-site default
+        %% {lnd_port, 0}, %% default: required/no explicit call-site default
+        %% {lnd_wspath, undefined}, %% default: required/no explicit call-site default
+        %% {lnpay_host, "127.0.0.1"}, %% default: required/no explicit call-site default
+        %% {logo_image, undefined}, %% default: required/no explicit call-site default
+        %% {market_rules, undefined}, %% default: required/no explicit call-site default
+        %% monero_account_index: configured above. Code default: 0
+        %% monero_allow_spend: configured above. Code default: false
+        %% monero_do_not_relay: configured above. Code default: false
+        %% monero_min_confirmations: configured above. Code default: 10
+        %% monero_poll_interval_ms: configured above. Code default: 10000
+        %% monero_steps_require_admin: configured above. Code default: true
+        %% monero_store_after_invoice: configured above. Code default: true
+        %% monero_transfer_priority: configured above. Code default: 0
+        %% monero_wallet_rpc_allow_remote: configured above. Code default: false
+        %% monero_wallet_rpc_host: configured above. Code default: "127.0.0.1"
+        %% monero_wallet_rpc_port: configured above. Code default: 18083
+        %% monero_wallet_rpc_timeout: configured above. Code default: 120000
+        %% monero_wallet_rpc_transport: configured above. Code default: tcp
+        %% nip96_max_bytes: configured above. Code default: required/no explicit call-site default
+        %% {nip96_max_records, undefined}, %% default: maps:get(max_intents, C, 100000)
+        %% nip96_pin_uploads: configured above. Code default: true
+        %% nip96_public_base_url: configured above. Code default: required/no explicit call-site default
+        %% {nip96_unpin_on_delete, false}, %% default: false
+        %% nip96_upload_timeout_ms: configured above. Code default: required/no explicit call-site default
+        %% {nip98_skew_seconds, 60}, %% default: 60
+        %% node_admins: configured above. Code default: []
+        %% {node_name_domain, auto}, %% default: auto
+        %% {nostr_npub, undefined}, %% default: required/no explicit call-site default
+        %% nostr_relay_proxy_policy: configured above. Code default: required/no explicit call-site default
+        %% nostr_relays: configured above. Code default: required/no explicit call-site default
+        %% {nostr_viewer, "https://nostr.ae/e/"}, %% default: "https://nostr.ae/e/"
+        %% {nostr_zap_pool_overflow, 16}, %% default: 16
+        %% {nostr_zap_pool_size, 8}, %% default: 8
+        %% {npub_registry_ct, "ct_qaySvWmzF848xUaHoCm1igJBFkNCgyecwefnyaBq22GLQWnc6"}, %% default: "ct_qaySvWmzF848xUaHoCm1igJBFkNCgyecwefnyaBq22GLQWnc6"
+        %% nsecbunker: configured above. Code default: required/no explicit call-site default
+        %% nwc_balance_cache_ttl_ms: configured above. Code default: required/no explicit call-site default
+        %% nwc_ledger_mode: configured above. Code default: required/no explicit call-site default
+        %% {nwc_min_connected_relays, 2}, %% default: 2
+        %% {nwc_relay_circuit_open_ms, 900000}, %% default: 900000
+        %% {nwc_relay_max_retries, 8}, %% default: 8
+        %% nwc_relays: configured above. Code default: required/no explicit call-site default
+        %% {openai_bdd_api_host, "127.0.0.1"}, %% default: required/no explicit call-site default
+        %% {openai_bdd_api_path, "/path/to/REPLACE_ME"}, %% default: required/no explicit call-site default
+        %% {openai_bdd_api_port, 0}, %% default: required/no explicit call-site default
+        %% {openai_bdd_functions_yaml, undefined}, %% default: required/no explicit call-site default
+        %% {openai_bdd_messages_yaml, undefined}, %% default: required/no explicit call-site default
+        %% {openai_bdd_model, "REPLACE_ME"}, %% default: required/no explicit call-site default
+        %% operator_hotcode: configured above. Code default: []
+        %% operator_source_dir: configured above. Code default: required/no explicit call-site default
+        %% {parental_control_min_uid, undefined}, %% default: required/no explicit call-site default
+        %% pools: configured above. Code default: []
+        %% port: configured above. Code default: 4888
+        %% {pqc_backend_module, undefined}, %% default: required/no explicit call-site default
+        %% proxy: configured above. Code default: required/no explicit call-site default
+        %% proxy_exclude: configured above. Code default: required/no explicit call-site default
+        %% {release_provenance_file, "/path/to/REPLACE_ME"}, %% default: required/no explicit call-site default
+        %% run_user: configured above. Code default: "damage"
+        %% runs_dir: configured above. Code default: required/no explicit call-site default
+        %% runtime_data_dir: configured above. Code default: "/var/lib/damage"
+        %% {sale_webhook, undefined}, %% default: required/no explicit call-site default
+        %% {schedule_auto_migrate, true}, %% default: true
+        %% {schedules_ct, "ct_hCcHw4hNAkvbadmVrkCRQJxEqvx825hA4gL3gbf4Kh9hpRrwS"}, %% default: "ct_hCcHw4hNAkvbadmVrkCRQJxEqvx825hA4gL3gbf4Kh9hpRrwS"
+        %% {secrets_dets_file, "/path/to/REPLACE_ME"}, %% default: required/no explicit call-site default
+        %% secrets_state_dir: configured above. Code default: required/no explicit call-site default
+        %% smtp_from: configured above. Code default: required/no explicit call-site default
+        %% smtp_host: configured above. Code default: required/no explicit call-site default
+        %% smtp_hostname: configured above. Code default: required/no explicit call-site default
+        %% smtp_port: configured above. Code default: required/no explicit call-site default
+        %% smtp_user: configured above. Code default: required/no explicit call-site default
+        %% ssh_git: configured above. Code default: required/no explicit call-site default
+        %% ssh_subsystems: configured above. Code default: required/no explicit call-site default
+        %% ssh_tunnel: configured above. Code default: required/no explicit call-site default
+        %% state_dir: configured above. Code default: required/no explicit call-site default
+        %% strict_no_catchall: configured above. Code default: true
+        %% {systemd, undefined}, %% default: required/no explicit call-site default
+        %% {test_user, "damage"}, %% default: required/no explicit call-site default
+        %% {tor_control_cookie_file, undefined}, %% default: undefined
+        %% {tor_control_host, "127.0.0.1"}, %% default: "127.0.0.1"
+        %% {tor_control_password, undefined}, %% SENSITIVE; default: undefined
+        %% {tor_control_port, 9051}, %% default: 9051
+        %% {tor_control_timeout, 5000}, %% default: 5000
+        %% {tor_hidden_service_hostname_file, "/var/lib/damage/tor/hostname"}, %% default: "/var/lib/damage/tor/hostname"
+        %% {tor_socks_host, "127.0.0.1"}, %% default: "127.0.0.1"
+        %% {tor_socks_port, 9050}, %% default: 9050
+    ]},
+
+    {ecai, [
+        {api_url, "http://127.0.0.1:9003"},
+        {ip, {127, 0, 0, 1}},
+        {port, 9003},
+        {contracts_dir, "apps/ecai/priv/contracts"},
+        {state_dir, "~/.local/state/damage/ecai"},
+        {pools, [
+            {ecai_chat, [{size, 1}, {max_overflow, 0}], [
+                {ollama_host, "127.0.0.1"},
+                {ollama_port, 11434},
+                {ollama_model, "qwen3-coder:30b"},
+                {top_k, 8}
+            ]}
+        ]},
+
+        %% Durable indexing / WAL
+        {index_jobs_enabled, true},
+        {index_jobs_dir, "/var/lib/damage/ecai/index-jobs"},
+        {index_jobs_artifact_dir, "/var/lib/damage/ecai/index-job-artifacts"},
+        {index_jobs_max_concurrency, 1},
+        {index_jobs_max_pending, 1000},
+        {index_jobs_max_pending_per_owner, 100},
+        {index_job_max_manifest_documents, 100000},
+        {index_job_max_manifest_bytes, 67108864},
+        {ipfs_index_dir, "/var/lib/damage/ecai/ipfs-index"},
+        {ingest_wal_enabled, true},
+        {ingest_wal_max_batch_events, 4096},
+        {ingest_wal_max_batch_bytes, 67108864},
+        {ingest_max_source_bytes, 67108864},
+        {ingest_max_source_chunks, 4096},
+
+        %% Wikimedia indexing and managed fixture
+        {wikimedia_index_dir, "/var/lib/damage/ecai/wikimedia"},
+        {wikimedia_genesis_limit, 10},
+        {wikimedia_activity_block_bytes, 4096},
+        {wikimedia_fixture_server_enabled, false},
+        {wikimedia_fixture_ip, {127, 0, 0, 1}},
+        {wikimedia_fixture_port, 9876},
+        {wikimedia_fixture_public_host, "127.0.0.1"},
+        {wikimedia_fixture_allow_non_loopback, false},
+        {wikimedia_fixture_runtime_dir, "/tmp/ecai-wikimedia-fixture"},
+        {wikimedia_fixture_project, "enwiki"},
+        {wikimedia_fixture_pageview_project, "en.wikipedia"},
+        {wikimedia_fixture_idle_timeout_ms, 60000},
+        {wikimedia_index_presets, []},
+        %% {wikimedia_index_presets, [
+        %%     [{id, "enwiki"}, {label, "English Wikipedia"},
+        %%      {description, "English Wikipedia"}, {project, "enwiki"},
+        %%      {pageview_project, "en.wikipedia"}, {namespace, "org.damagebdd.wikimedia.en"},
+        %%      {content_release, "latest"}, {pageview_months, []},
+        %%      {index_id, "ecai-wikimedia-enwiki"},
+        %%      {base_dir, "/var/lib/damage/ecai/wikimedia/enwiki"},
+        %%      {limit, 250000}, {minimum_active_months, 6}, {priority, 100},
+        %%      {publish_activity_ipfs, false}, {publish_ipfs, false}]
+        %% ]},
+
+        %% Code learning / repair
+        {code_security_enabled, false},
+        {code_repo_root, "."},
+        {code_learning_interval_ms, 300000},
+        {code_patch_scan_interval_ms, 60000},
+        {code_patch_require_global_learning, true},
+        {code_patch_verify, true},
+        {code_patch_run_eunit, true},
+        {code_patch_max_attempts, 3},
+        {code_patch_keep_worktree, false},
+        {code_patch_command_timeout_ms, 300000},
+        {code_patch_max_concurrent, 2},
+        {code_patch_retry_tick_ms, 15000},
+        {code_patch_retry_base_ms, 30000},
+        {code_patch_retry_max_ms, 900000},
+        {code_patch_retry_max_attempts, 12},
+        {code_integration_interval_ms, 60000},
+        {code_integration_base_commit, "HEAD"},
+        {code_integration_run_eunit, true},
+        {code_integration_run_ct, false},
+        {code_integration_command_timeout_ms, 600000},
+
+        %% Provider-neutral inference pool. Direct code_ollama_* values configure
+        %% the fallback/local client; code_model_* controls the pool itself.
+        {code_learning_parallelism, auto},
+        {code_model_health_interval_ms, 30000},
+        {code_model_health_timeout_ms, 5000},
+        {code_model_failure_threshold, 2},
+        {code_model_cluster_attempts, 3},
+        {code_model_queue_timeout_ms, 300000},
+        {code_ollama_host, "127.0.0.1"},
+        {code_ollama_port, 11434},
+        {code_ollama_model, "qwen3-coder:30b"},
+        {code_ollama_timeout_ms, 180000},
+        {code_ollama_connect_timeout_ms, 5000},
+        {code_model_nodes, []},
+        %% {code_model_nodes, [
+        %%     [{id, local_ollama}, {provider, ollama}, {host, "127.0.0.1"},
+        %%      {port, 11434}, {transport, tcp}, {proxy, direct},
+        %%      {roles, [learning, synthesis, audit, patch]}, {max_inflight, 1},
+        %%      {weight, 1}, {models, ["qwen3-coder:30b"]},
+        %%      {default_model, "qwen3-coder:30b"}, {model_digests, []},
+        %%      {billing_sensitive, false}, {base_path, "/api"},
+        %%      {organization, undefined}, {organization_env, undefined},
+        %%      {project, undefined}, {project_env, undefined}, {store, false},
+        %%      {timeout, 180000}, {connect_timeout, 5000}, {tls_opts, []},
+        %%      {reasoning_effort, undefined}, {max_output_tokens, undefined},
+        %%      {temperature, undefined}, {api_key_env, "OPENAI_API_KEY"},
+        %%      {api_key_file, undefined}, {api_key_secret, undefined}]
+        %% ]},
+
+        %% Private corpus policy. The runtime accepts these tuple/proplist forms.
+        {private_corpora, []},
+        %% {private_corpora, [
+        %%     {<<"engineering">>, [
+        %%         {owner, <<"operator">>}, {readers, []}, {writers, []},
+        %%         {base_dir, "/var/lib/damage/ecai/private/engineering"},
+        %%         {key_id, <<"engineering-key">>}, {key_name, <<"engineering-key">>},
+        %%         {llm_destinations, [<<"local">>]}, {allow_remote_llm, false}
+        %%     ]}
+        %% ]},
+        {private_llm_destinations, []}
+        %% {private_llm_destinations, [
+        %%     {<<"local">>, [
+        %%         {trust, local},
+        %%         {options, [{provider, ollama}, {host, "127.0.0.1"}, {port, 11434},
+        %%                     {model, "qwen3-coder:30b"}]}
+        %%     ]}
+        %% ]},
+
+        %% ------------------------------------------------------------------
+        %% COMPLETE TOP-LEVEL OPTION REFERENCE
+        %% Every current canonical application-env key consumed by this app
+        %% is listed below. Entries are commented because the code default is
+        %% normally preferable. Uncomment only when overriding it.
+        %% ------------------------------------------------------------------
+        %% api_url: configured above. Code default: required/no explicit call-site default
+        %% {code_dev_overlay, inspect_only}, %% default: inspect_only
+        %% {code_health_cluster_attempts, 2}, %% default: 2
+        %% {code_health_connect_timeout_ms, 5000}, %% default: 5000
+        %% {code_health_initial_delay_ms, 15000}, %% default: 15000
+        %% {code_health_interval_ms, 300000}, %% default: 300000
+        %% {code_health_max_prompt_bytes, 65536}, %% default: 65536
+        %% {code_health_model, undefined}, %% default: undefined
+        %% {code_health_model_statuses, [degraded, fail]}, %% default: [degraded, fail]
+        %% {code_health_monitor_enabled, true}, %% default: true
+        %% {code_health_provider, ollama}, %% default: ollama
+        %% {code_health_queue_timeout_ms, 15000}, %% default: 15000
+        %% {code_health_recent_log_limit, 12}, %% default: 12
+        %% {code_health_request_timeout_ms, 30000}, %% default: 30000
+        %% code_integration_base_commit: configured above. Code default: required/no explicit call-site default
+        %% code_integration_command_timeout_ms: configured above. Code default: 600000
+        %% code_integration_interval_ms: configured above. Code default: 60000
+        %% code_integration_run_ct: configured above. Code default: false
+        %% code_integration_run_eunit: configured above. Code default: true
+        %% {code_learning_capacity_reserve, 1}, %% default: 1
+        %% {code_learning_dirty_allowlist, []}, %% default: []
+        %% {code_learning_include_dirty_files, false}, %% default: false
+        %% code_learning_interval_ms: configured above. Code default: 300000
+        %% code_learning_parallelism: configured above. Code default: auto
+        %% {code_log_learning_cluster_attempts, 2}, %% default: 2
+        %% {code_log_learning_connect_timeout_ms, 5000}, %% default: 5000
+        %% {code_log_learning_enabled, true}, %% default: true
+        %% {code_log_learning_max_prompt_bytes, 65536}, %% default: 65536
+        %% {code_log_learning_max_queue, 256}, %% default: 256
+        %% {code_log_learning_model, undefined}, %% default: undefined
+        %% {code_log_learning_provider, ollama}, %% default: ollama
+        %% {code_log_learning_queue_timeout_ms, 30000}, %% default: 30000
+        %% {code_log_learning_request_timeout_ms, 60000}, %% default: 60000
+        %% {code_log_learning_retry_delay_ms, 30000}, %% default: 30000
+        %% {code_log_learning_retry_limit, 5}, %% default: 5
+        %% code_model_cluster_attempts: configured above. Code default: application:get_env(ecai, code_ollama_cluster_attempts, ?DEFAULT_CLUSTER_ATTEMPTS)
+        %% code_model_failure_threshold: configured above. Code default: application:get_env( ecai, code_ollama_failure_threshold, ?DEFAULT_FAILURE_THRESHOLD )
+        %% code_model_health_interval_ms: configured above. Code default: application:get_env( ecai, code_ollama_health_interval_ms, ?DEFAULT_HEALTH_INTERVAL_MS )
+        %% code_model_health_timeout_ms: configured above. Code default: application:get_env( ecai, code_ollama_health_timeout_ms, ?DEFAULT_HEALTH_TIMEOUT_MS )
+        %% code_model_nodes: configured above. Code default: application:get_env(ecai, code_ollama_nodes, [])
+        %% code_model_queue_timeout_ms: configured above. Code default: application:get_env(ecai, code_ollama_queue_timeout_ms, ?DEFAULT_QUEUE_TIMEOUT_MS)
+        %% code_ollama_connect_timeout_ms: configured above. Code default: 5000
+        %% code_ollama_host: configured above. Code default: "localhost"
+        %% code_ollama_model: configured above. Code default: "qwen3-coder:30b"
+        %% code_ollama_port: configured above. Code default: 11434
+        %% code_ollama_timeout_ms: configured above. Code default: 180000 | 120000
+        %% {code_openai_connect_timeout_ms, 5000}, %% default: 5000
+        %% {code_openai_model, "gpt-5.6-sol"}, %% default: "gpt-5.6-sol"
+        %% {code_openai_timeout_ms, 180000}, %% default: 180000
+        %% code_patch_command_timeout_ms: configured above. Code default: 30000 | 300000
+        %% {code_patch_format_extra_attempts, 1}, %% default: 1
+        %% {code_patch_include_info, false}, %% default: false
+        %% {code_patch_inference, undefined}, %% default: required/no explicit call-site default
+        %% code_patch_keep_worktree: configured above. Code default: false
+        %% code_patch_max_attempts: configured above. Code default: 3
+        %% code_patch_max_concurrent: configured above. Code default: 2
+        %% {code_patch_orphan_preflight_batch, 8}, %% default: 8
+        %% {code_patch_preflight_source_snapshot, true}, %% default: true
+        %% {code_patch_reconcile_interval_ms, 15000}, %% default: 15000
+        %% code_patch_require_global_learning: configured above. Code default: true
+        %% code_patch_retry_base_ms: configured above. Code default: 30000
+        %% code_patch_retry_max_attempts: configured above. Code default: 12
+        %% code_patch_retry_max_ms: configured above. Code default: 900000
+        %% code_patch_retry_tick_ms: configured above. Code default: 15000
+        %% {code_patch_run_ct, false}, %% default: false
+        %% code_patch_run_eunit: configured above. Code default: true
+        %% {code_patch_running_grace_ms, 120000}, %% default: 120000
+        %% code_patch_scan_interval_ms: configured above. Code default: 60000
+        %% {code_patch_source_snapshot_retry_ms, 60000}, %% default: 60000
+        %% code_patch_verify: configured above. Code default: true
+        %% code_repo_root: configured above. Code default: "."
+        %% code_security_enabled: configured above. Code default: true
+        %% {code_source_allow_runtime_fallback, false}, %% default: false
+        %% {code_source_git_timeout_ms, 30000}, %% default: 30000
+        %% {code_source_mode, committed}, %% default: committed
+        %% {content_auto_generate, false}, %% default: false
+        %% {content_auto_publish, false}, %% default: false
+        %% {content_blossom_auth_ttl_seconds, 300}, %% default: 300
+        %% {content_blossom_server, "https://media.damagebdd.com"}, %% default: "https://media.damagebdd.com"
+        %% {content_image_backend, a1111}, %% default: a1111
+        %% {content_image_cfg_scale, 6.5}, %% default: 6.5
+        %% {content_image_host, "127.0.0.1"}, %% default: "127.0.0.1"
+        %% {content_image_model, "local-image-model"}, %% default: "local-image-model"
+        %% {content_image_path, "/sdapi/v1/txt2img"}, %% default: "/sdapi/v1/txt2img"
+        %% {content_image_port, 7860}, %% default: 7860
+        %% {content_image_steps, 28}, %% default: 28
+        %% {content_image_tls, false}, %% default: false
+        %% {content_image_url, "http://127.0.0.1:8080/v1/images/generations"}, %% default: "http://127.0.0.1:8080/v1/images/generations"
+        %% {content_linkedin_author, undefined}, %% default: undefined
+        %% {content_linkedin_enabled, false}, %% default: false
+        %% {content_linkedin_token_env, "LINKEDIN_ACCESS_TOKEN"}, %% default: "LINKEDIN_ACCESS_TOKEN"
+        %% {content_linkedin_version, "202609"}, %% default: "202609"
+        %% {content_nostr_enabled, true}, %% default: true
+        %% {content_nostr_requester_pubkey, undefined}, %% default: undefined
+        %% {content_ollama_model, "REPLACE_ME"}, %% default: application:get_env(ecai, code_ollama_model, "qwen3-coder:30b")
+        %% {content_retry_interval_ms, 60000}, %% default: 60000
+        %% contracts_dir: configured above. Code default: "apps/ecai/priv/contracts"
+        %% {default_page, "ecai_search.mustache"}, %% default: "ecai_search.mustache"
+        %% {ecai_chat_enabled, true}, %% default: true
+        %% {ecai_chat_max_body, 8388608}, %% default: 8388608
+        %% {ecai_chat_ollama_host, "localhost"}, %% default: "localhost"
+        %% {ecai_chat_ollama_model, <<"qwen3-coder:30b">>}, %% default: <<"qwen3-coder:30b">>
+        %% {ecai_chat_ollama_port, 11434}, %% default: 11434
+        %% {ecai_chat_top_k, 8}, %% default: 8
+        %% {ecai_health_call_timeout_ms, 5000}, %% default: 5000
+        %% index_job_max_manifest_bytes: configured above. Code default: 67108864
+        %% index_job_max_manifest_documents: configured above. Code default: 100000
+        %% index_jobs_artifact_dir: configured above. Code default: "/var/lib/damage/ecai/index-job-artifacts"
+        %% index_jobs_dir: configured above. Code default: "/var/lib/damage/ecai/index-jobs"
+        %% index_jobs_enabled: configured above. Code default: false
+        %% index_jobs_max_concurrency: configured above. Code default: 1
+        %% index_jobs_max_pending: configured above. Code default: 10000
+        %% index_jobs_max_pending_per_owner: configured above. Code default: 1000
+        %% {index_registry_ct, "ct_REPLACE_ME"}, %% default: required/no explicit call-site default
+        %% {index_snapshot_ms, 60000}, %% default: 60000
+        %% {index_snapshot_path, "/path/to/REPLACE_ME"}, %% default: required/no explicit call-site default
+        %% ingest_max_source_bytes: configured above. Code default: 67108864
+        %% ingest_max_source_chunks: configured above. Code default: 4096
+        %% ingest_wal_enabled: configured above. Code default: false
+        %% ingest_wal_max_batch_bytes: configured above. Code default: 67108864
+        %% ingest_wal_max_batch_events: configured above. Code default: 4096
+        %% ip: configured above. Code default: {127, 0, 0, 1}
+        %% ipfs_index_dir: configured above. Code default: required/no explicit call-site default
+        %% {knowledge_registry_ct, "ct_REPLACE_ME"}, %% default: required/no explicit call-site default
+        %% pools: configured above. Code default: []
+        %% port: configured above. Code default: 9003
+        %% private_corpora: configured above. Code default: #{}
+        %% {private_key_provider_module, undefined}, %% default: ?MODULE
+        %% {private_llm_client_module, ecai_ollama_client}, %% default: ecai_ollama_client
+        %% private_llm_destinations: configured above. Code default: #{}
+        %% {relation_benchmark_enabled, true}, %% default: true
+        %% {relation_benchmark_holdout, 1000}, %% default: 1000
+        %% {search_context_file, "/path/to/REPLACE_ME"}, %% default: required/no explicit call-site default
+        %% {shipping_commitment_key, undefined}, %% default: required/no explicit call-site default
+        %% state_dir: configured above. Code default: undefined
+        %% {state_root, undefined}, %% default: required/no explicit call-site default
+        %% {vulnerability_rescan_unchanged, false}, %% default: false
+        %% {vulnerability_scan_interval_ms, 60000}, %% default: 60000
+        %% {wikimedia_active_search_state_path, "/var/lib/damage/ecai/state/wikimedia-active-search.etf"}, %% default: "/var/lib/damage/ecai/state/wikimedia-active-search.etf"
+        %% wikimedia_activity_block_bytes: configured above. Code default: 1048576
+        %% wikimedia_fixture_allow_non_loopback: configured above. Code default: false
+        %% {wikimedia_fixture_dir, "/path/to/REPLACE_ME"}, %% default: default_fixture_dir()
+        %% wikimedia_fixture_idle_timeout_ms: configured above. Code default: 60000
+        %% wikimedia_fixture_ip: configured above. Code default: {127, 0, 0, 1}
+        %% wikimedia_fixture_pageview_project: configured above. Code default: <<"en.wikipedia">>
+        %% wikimedia_fixture_port: configured above. Code default: 9876
+        %% wikimedia_fixture_project: configured above. Code default: <<"enwiki">>
+        %% wikimedia_fixture_public_host: configured above. Code default: ip_to_binary(Ip)
+        %% wikimedia_fixture_runtime_dir: configured above. Code default: default_runtime_dir()
+        %% wikimedia_fixture_server_enabled: configured above. Code default: false
+        %% wikimedia_genesis_limit: configured above. Code default: 250000
+        %% wikimedia_index_dir: configured above. Code default: <<"/var/lib/damage/ecai/wikimedia/enwiki">>
+        %% wikimedia_index_presets: configured above. Code default: required/no explicit call-site default
+        %% {wikimedia_index_root, <<"/var/lib/damage/ecai/wikimedia">>}, %% default: <<"/var/lib/damage/ecai/wikimedia">>
+        %% {wikimedia_loader_checkpoint_every, 100}, %% default: 100
+        %% {wikimedia_mem_profile, conservative}, %% default: conservative
+        %% {wikimedia_preset_limit, undefined}, %% default: env_int(wikimedia_genesis_limit, 250000)
+        %% {wikimedia_preset_publish_ipfs, false}, %% default: false
+        %% {wikimedia_source_allowed_hosts, []}, %% default: []
+        %% {wikimedia_user_agent, undefined}, %% default: <<"DamageBDD-ECAI/1.0 (https://damagebdd.com; contact: operator@damagebdd.com)">>
+    ]},
+
+    {erm, [
+        {enabled, false},
+        {ip, {127, 0, 0, 1}},
+        {port, 9000},
+        {pools, []},
+        {media_enabled, auto},
+
+        %% Display discovery
+        {display, [
+            {enabled, true}, {backend, x11}, {refresh_ms, 5000},
+            {failure_threshold, 3}, {environment_fallback, false},
+            {x11, [
+                {socket_dir, "/tmp/.X11-unix"}, {probe_timeout_ms, 1500},
+                {probe_commands, ["xdpyinfo", "xset", "xprop"]},
+                {authority_paths, [
+                    "/run/user/%UID%/xauth_*", "/run/user/%UID%/Xauthority*",
+                    "/run/user/%UID%/gdm/Xauthority", "%HOME%/.Xauthority"
+                ]}
+            ]}
+        ]},
+
+        %% DPMS/screensaver integration
+        {dpms, [
+            {enabled, false}, {poll_ms, 100}, {screensaver_timeout, keep},
+            {dpms_timeouts, keep}, {dpms_on_saver, off},
+            {on_start_delay, 0}, {on_start, undefined}, {on_stop, undefined}
+        ]},
+
+        %% Managed TTS model catalog. Custom manifests are proplist based.
+        {model_pull, [
+            {cache_dir, "/var/lib/damage/models"}, {timeout_ms, 600000},
+            {manifests, []}
+        ]},
+        %% {model_pull, [
+        %%   {manifests, [
+        %%     {custom_voice, [{files, [
+        %%       [{name, "model.onnx"}, {role, model}, {url, "https://example.invalid/model.onnx"},
+        %%        {sha256, "REPLACE_WITH_64_HEX_SHA256"}, {bytes, 1}]
+        %%     ]}]}
+        %%   ]}
+        %% ]},
+
+        {tts, [
+            {enabled, false}, {startup_timeout_ms, 30000}, {auto_pull, true},
+            {voice, lessac_low}, {speech_timeout_ms, 30000}, {echo_guard_ms, 6000},
+            {personality, plain}, {volume, 120}, {volume_step, 10},
+            {volume_max, 150}, {model_source, auto},
+            %% Explicit auto-source overrides:
+            %% {binary, "/opt/damage/lib/erm/priv/erm_tts_port"},
+            %% {model, "/opt/piper/voices/en_US-lessac-low.onnx"},
+            %% {config, "/opt/piper/voices/en_US-lessac-low.onnx.json"},
+            %% {espeak_data, "/opt/piper/share/espeak-ng-data"},
+            %% {player, "/usr/bin/mpv"}
+            {binary, undefined}, {model, undefined}, {config, undefined},
+            {espeak_data, undefined}, {player, undefined}
+        ]},
+
+        {whisper_trigger, [
+            {enabled, false}, {backend, native}, {bin, auto}, {model, auto},
+            {auto_start, true}, {echo_output, true}, {cleanup_existing, true},
+            {output_dedupe_ms, 3000}, {capture, -1}, {hostname, "damage"},
+            {trigger_phrases, ["bob"]}, {debounce_ms, 3000},
+            {step_ms, 500}, {length_ms, 5000}, {keep_ms, 200},
+            {threads, 4}, {max_tokens, 32}, {audio_ctx, 0}, {beam_size, 5},
+            {vad_threshold, 0.60}, {freq_threshold, 100.0}, {language, "en"},
+            {use_gpu, true}, {flash_attention, true}, {temperature_fallback, true},
+            {extra_args, []},
+            %% trigger_handler may be a fun in runtime API; static sys.config normally
+            %% leaves it unset to use the built-in handler.
+            {voice, [
+                {enabled, false}, {require_final, false}, {settle_ms, 1100},
+                {urgent_settle_ms, 300}, {command_window_ms, 8000},
+                {rearm_silence_ms, 6000}, {command_dedupe_ms, 6000},
+                {max_command_bytes, 512}, {planning_timeout_ms, 30000},
+                {action_timeout_ms, 30000}, {ollama_timeout_ms, 12000},
+                {ecai_timeout_ms, 4000}, {auto_pull_model, true},
+                {model_pull_timeout_ms, 600000}, {actions, []},
+                {model, "qwen3:1.7b"}, {keep_alive, "10m"},
+                {ollama_host, "127.0.0.1"}, {ollama_port, 11434},
+                {ecai_base_dir, undefined}, {model_pull_notify, true},
+                {debug_utterances, false}
+            ]},
+            {native, [
+                {binary, "/opt/damage/lib/erm/priv/erm_native_voice"},
+                {whisper_model, "/opt/models/whisper/ggml-base.en.bin"},
+                {vad_model, "/opt/models/silero_vad.onnx"},
+                {speaker_model, "/opt/models/speaker.onnx"},
+                {arecord, "/usr/bin/arecord"}, {profile_file, "/var/lib/damage/voice/owner.profile"},
+                {device, "default"}, {language, "en"}, {threads, 4},
+                {silence_ms, 700}, {max_segment_ms, 8000}, {min_speaker_ms, 1200},
+                {require_speaker, true}, {startup_timeout_ms, 120000},
+                {inference_timeout_ms, 30000}, {trigger_phrases, ["bob"]},
+                {debug_utterances, false}, {observe_only, true}, {speaker_threshold, 0.7}
+            ]}
+        ]},
+
+        %% ERM Lens
+        {lens, [
+            {enabled, false}, {show_on_start, false},
+            {relays, ["wss://bucket.coracle.social", "wss://relay.nsec.app"]},
+            {window_seconds, 172800}, {refresh_ms, 60000}, {max_events, 4000},
+            {max_store_bytes, 67108864}, {relay_backoff_ms, 30000},
+            {relay_backoff_max_ms, 300000}, {media_script, undefined},
+            {cache_dir, "~/.cache/erm-lens"}, {load_images, true}, {media_hosts, []},
+            {page_size, 6}, {nostr_pubkey, undefined}, {signer, undefined},
+            {wallet_adapter, undefined}, {network, "ae_uat"}, {registry, undefined},
+            {tokens, []}, {allow_mainnet, false}, {muted, []}, {following, []}
+        ]},
+
+        %% GTK4 C-node/fake backend. All application-owned nesting uses proplists.
+        {gtknode4, [
+            {enabled, false}, {allow_headless, false}, {supervisor_restart, temporary},
+            {mode, local_cnode}, {restart_intensity, 5}, {restart_period, 10},
+            {port_shutdown, 5000}, {backend, gtknode4_fake}, {backend_opts, []},
+            {controller, []},
+            {port, [
+                {executable, undefined}, {cnode_node, undefined}, {cnode_regname, gtknode4},
+                {controller_regname, gtknode4}, {cookie_env, "GTKNODE4_COOKIE"},
+                {line_length, 16384}, {cd, undefined}, {handshake_timeout, 10000},
+                {args, undefined}, {protocol_version, 1}, {test_mode, false},
+                {env, []}, {use_erm_display, true}, {retry_initial_ms, 1000},
+                {retry_max_ms, 30000}
+            ]},
+            {gs, [
+                {test_mode, false}, {backend_timeout, 5000}, {dialog_timeout, infinity},
+                {event_log_limit, 1000}, {max_stylesheet_bytes, 1048576}
+            ]}
+        ]}
+
+        %% ------------------------------------------------------------------
+        %% COMPLETE TOP-LEVEL OPTION REFERENCE
+        %% Every current canonical application-env key consumed by this app
+        %% is listed below. Entries are commented because the code default is
+        %% normally preferable. Uncomment only when overriding it.
+        %% ------------------------------------------------------------------
+        %% display: configured above. Code default: []
+        %% dpms: configured above. Code default: []
+        %% enabled: configured above. Code default: true
+        %% {erm_mpv_layout, classic}, %% default: classic
+        %% {erm_mpv_resource_dir, "/path/to/REPLACE_ME"}, %% default: required/no explicit call-site default
+        %% {erm_mpv_theme, "cyberpunk"}, %% default: "cyberpunk"
+        %% gtknode4: configured above. Code default: #{}
+        %% {gtknode4_cnode_executable, undefined}, %% default: default_executable()
+        %% {http_enabled, true}, %% default: true
+        %% {http_required, false}, %% default: false
+        %% ip: configured above. Code default: {127, 0, 0, 1}
+        %% lens: configured above. Code default: #{}
+        %% {log_file, "/path/to/REPLACE_ME"}, %% default: required/no explicit call-site default
+        %% {log_filesync_repeat_interval, 5000}, %% default: 5000
+        %% {log_handler, erm_file}, %% default: erm_file
+        %% {log_level, debug}, %% default: debug
+        %% {log_max_no_bytes, 10485760}, %% default: 10485760
+        %% {log_max_no_files, 5}, %% default: 5
+        %% {log_to_file, true}, %% default: true
+        %% {media_dirs, undefined}, %% default: required/no explicit call-site default
+        %% media_enabled: configured above. Code default: required/no explicit call-site default
+        %% {media_playlist_mode, shuffle}, %% default: shuffle
+        %% model_pull: configured above. Code default: []
+        %% {mpv_log_file, "/path/to/REPLACE_ME"}, %% default: required/no explicit call-site default
+        %% {mpv_pid_file, "/path/to/REPLACE_ME"}, %% default: required/no explicit call-site default
+        %% {mpv_survive_beam, true}, %% default: true
+        %% {mpv_takeover_external, false}, %% default: false
+        %% {org_calendar_path, "/path/to/REPLACE_ME"}, %% default: required/no explicit call-site default
+        %% {playlist_latest_window, 100}, %% default: 100
+        %% {playlist_state_file, "/path/to/REPLACE_ME"}, %% default: required/no explicit call-site default
+        %% pools: configured above. Code default: []
+        %% port: configured above. Code default: 9000
+        %% {tray_logs, undefined}, %% default: required/no explicit call-site default
+        %% tts: configured above. Code default: []
+        %% whisper_trigger: configured above. Code default: []
+    ]},
+
+    {erm_pay, [
+        {max_auto_pay_msat, 100000},
+        {require_amount_metadata, false},
+        {store_path, "~/.local/state/erm/payments.dets"}
+        %% ------------------------------------------------------------------
+        %% COMPLETE TOP-LEVEL OPTION REFERENCE
+        %% Every current canonical application-env key consumed by this app
+        %% is listed below. Entries are commented because the code default is
+        %% normally preferable. Uncomment only when overriding it.
+        %% ------------------------------------------------------------------
+        %% max_auto_pay_msat: configured above. Code default: 100000
+        %% require_amount_metadata: configured above. Code default: false
+        %% store_path: configured above. Code default: required/no explicit call-site default
+    ]},
+
+    {nosternity, [
+        {ip, {127, 0, 0, 1}},
+        {port, 9001},
+        {pools, []},
+        {relays, ["wss://nos.lol"]},
+        %% SENSITIVE legacy key; prefer encrypted secret handling where possible.
+        %% {nostr_private_key_hex, "DO_NOT_COMMIT_PRIVATE_KEYS"},
+        {ae_event_store_enabled, false},
+        {ae_event_store_contract, undefined},
+        {ae_event_store_auto_deploy, false},
+        {ae_event_store_contract_file, "contracts/NostrEventStore.aes"},
+        {ae_event_store_kinds, [1, 7, 30023]},
+        {ae_event_store_pubkeys, all},
+        {ae_event_store_max_event_bytes, 65536},
+        {ae_event_store_queue_max, 5000},
+        {ae_event_store_batch_size, 10},
+        {ae_event_store_flush_ms, 2000},
+        {ae_event_store_retry_ms, 5000},
+        {ae_event_store_rehydrate, true},
+        {ae_event_store_hydrate_page_size, 25},
+        {ae_event_store_confirm_writes, true}
+
+        %% ------------------------------------------------------------------
+        %% COMPLETE TOP-LEVEL OPTION REFERENCE
+        %% Every current canonical application-env key consumed by this app
+        %% is listed below. Entries are commented because the code default is
+        %% normally preferable. Uncomment only when overriding it.
+        %% ------------------------------------------------------------------
+        %% ae_event_store_auto_deploy: configured above. Code default: false
+        %% ae_event_store_batch_size: configured above. Code default: 10
+        %% ae_event_store_confirm_writes: configured above. Code default: true
+        %% ae_event_store_contract: configured above. Code default: undefined
+        %% ae_event_store_contract_file: configured above. Code default: "contracts/NostrEventStore.aes"
+        %% ae_event_store_enabled: configured above. Code default: false
+        %% ae_event_store_flush_ms: configured above. Code default: 2000
+        %% ae_event_store_hydrate_page_size: configured above. Code default: 25
+        %% ae_event_store_kinds: configured above. Code default: [1, 7, 30023]
+        %% ae_event_store_max_event_bytes: configured above. Code default: 65536
+        %% ae_event_store_pubkeys: configured above. Code default: all
+        %% ae_event_store_queue_max: configured above. Code default: 5000
+        %% ae_event_store_rehydrate: configured above. Code default: true
+        %% ae_event_store_retry_ms: configured above. Code default: 5000
+        %% ip: configured above. Code default: {127, 0, 0, 1}
+        %% {nostr_private_key_hex, undefined}, %% SENSITIVE; default: required/no explicit call-site default
+        %% pools: configured above. Code default: []
+        %% port: configured above. Code default: 9001
+        %% relays: configured above. Code default: required/no explicit call-site default
+    ]},
+
+    {bop, [
+        {ip, {127, 0, 0, 1}},
+        {port, 9002},
+        {keystore, "bop.key"},
+        {pools, [{bop, [{size, 1}, {max_overflow, 10}], []}]},
+        {nostr_npub, "npub1_REPLACE_ME"}
+
+        %% ------------------------------------------------------------------
+        %% COMPLETE TOP-LEVEL OPTION REFERENCE
+        %% Every current canonical application-env key consumed by this app
+        %% is listed below. Entries are commented because the code default is
+        %% normally preferable. Uncomment only when overriding it.
+        %% ------------------------------------------------------------------
+        %% ip: configured above. Code default: {127, 0, 0, 1}
+        %% keystore: configured above. Code default: "bop.key"
+        %% nostr_npub: configured above. Code default: required/no explicit call-site default
+        %% pools: configured above. Code default: [ {bop, [{size, 1}, {max_overflow, 10}], []} ]
+        %% port: configured above. Code default: 9002
+    ]},
+
+    {throttle, [
+        {ip_whitelist, [{127, 0, 0, 1}]},
+        {rates, [
+            {public_read, 60, per_minute},
+            {auth_read, 120, per_minute},
+            {write_light, 30, per_minute},
+            {heavy_query, 10, per_minute},
+            {file_upload, 6, per_minute},
+            {login_per_identity, 5, per_5minutes},
+            {login_per_ip, 20, per_hour},
+            {password_reset_per_identity, 3, per_hour},
+            {signup_per_ip, 3, per_day},
+            {damage_nostr_mention_reward, 10, per_day}
+        ]}
+    ]},
+
+    {cowboy_swagger, [
+        {static_files, "./_build/default/lib/cowboy_swagger/priv/swagger"},
+        {global_spec, #{swagger => "2.0", info => #{title => "DamageBDD API"}, basePath => "/api-docs"}}
+    ]},
     {mustache, [{templates_dir, "priv/templates"}]},
     {erlexec, [{user, "damage"}, {limit_users, ["damage"]}]},
     {bcrypt, [{mechanism, "port"}]},
-    {sync, [{src_dirs, {replace, [{"./src"}]}}]}
+    {eunit_opts, [exact_execution]}
 ].
+
+%% ---------------------------------------------------------------------------
+%% Compatibility aliases intentionally omitted from the canonical sample
+%% ---------------------------------------------------------------------------
+%% damage IPFS migration aliases:
+%%   ipfs_managed, ipfs_kubo_api_port, ipfs_kubo_gateway_port,
+%%   ipfs_kubo_swarm_port, ipfs_kubo_binary, ipfs_api, ipfs_peers,
+%%   ipfs_peer_retry_interval. Put these values under damage.ipfs_runtime.
+%%
+%% damage.data_dir no longer controls run/report storage. Use state_dir,
+%% runtime_data_dir and runs_dir.
+%%
+%% ECAI inference-pool aliases:
+%%   code_ollama_nodes, code_ollama_health_interval_ms,
+%%   code_ollama_health_timeout_ms, code_ollama_failure_threshold,
+%%   code_ollama_cluster_attempts, code_ollama_queue_timeout_ms.
+%% Use provider-neutral code_model_* keys instead.
+%%
+%% Nsecbunker compatibility aliases intentionally not shown:
+%%   bunker_pubkey, bdd_contract_sha, aws_secret_bootstrap, rate_limit_backend,
+%%   limits.created_at_window_seconds, limits.rate_limit_per_minute,
+%%   limits.rate_limit_window_seconds.
+%% The old phase4a_dev_key_script fragment entry is not consumed by runtime
+%% code; Phase 4A operations use phase4a_dev_vault_path/report_dir directly.
+%%
+%% The old build_release_ipfs_api fragment key is not consumed by current
+%% runtime code. build_release_ipfs_gateway remains the canonical public fetch
+%% configuration and local validating Kubo access is configured by ipfs_runtime.
+%%
+%% The old top-level `sync` application configuration is removed. Use
+%% damage.code_reload; DamageBDD now uses fs for development reloads.

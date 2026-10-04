@@ -61,7 +61,8 @@ init([]) ->
     {ok, SystemDir0} = app_env(system_dir, filename:join([StateDir, "ssh", "git", "system"])),
     {ok, UserDir0} = app_env(user_dir, filename:join([StateDir, "ssh", "git", "user"])),
     {ok, Repos0} = app_env(repos_root, filename:join(StateDir, "git")),
-    {ok, AllowPush} = app_env(allow_push, #{}),
+    {ok, AllowPush0} = app_env(allow_push, []),
+    AllowPush = config_map(AllowPush0),
 
     SystemDir = normalize_path(SystemDir0),
     UserDir = normalize_path(UserDir0),
@@ -177,6 +178,10 @@ normalize_path("~/" ++ Rest) ->
     filename:join(home_dir(), Rest);
 normalize_path(Path) when is_list(Path) ->
     Path.
+
+config_map(M) when is_map(M) -> M;
+config_map(L) when is_list(L) -> maps:from_list(L);
+config_map(_) -> #{}.
 
 home_dir() ->
     case os:getenv("HOME") of
