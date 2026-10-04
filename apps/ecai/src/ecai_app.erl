@@ -52,9 +52,12 @@ ensure_index_jobs_retry_worker(SupPid) ->
             ok;
         {error, already_present} ->
             case supervisor:restart_child(SupPid, ecai_index_jobs_bootstrap) of
-                {ok, _Pid} -> ok;
-                {ok, _Pid, _Info} -> ok;
-                {error, running} -> ok;
+                {ok, _Pid} ->
+                    ok;
+                {ok, _Pid, _Info} ->
+                    ok;
+                {error, running} ->
+                    ok;
                 {error, Reason} ->
                     ?LOG_ERROR(
                         "ECAI index-jobs retry worker could not restart reason=~p",

@@ -20,17 +20,19 @@ blocked_preflight_clears_worker_lifecycle_test() ->
         stage => source_snapshot_blocked,
         retryable => false,
         failure_class => source_snapshot_blocked,
-        last_error => {source_snapshot_blocked,
-                       #{kind => source_base_mismatch}},
+        last_error => {source_snapshot_blocked, #{kind => source_base_mismatch}},
         updated_at => <<"blocked-at">>
     },
     Result =
         ecai_patch_manager:normalize_preflight_terminal(
-            blocked, Blocked, Running),
+            blocked, Blocked, Running
+        ),
     ?assertEqual(blocked, maps:get(status, Result)),
     ?assertEqual(false, maps:get(retryable, Result)),
-    ?assertEqual(source_snapshot_blocked,
-                 maps:get(stage, Result)),
+    ?assertEqual(
+        source_snapshot_blocked,
+        maps:get(stage, Result)
+    ),
     ?assertEqual(2, maps:get(retry_count, Result)),
     ?assertNot(maps:is_key(worker_pid, Result)),
     ?assertNot(maps:is_key(worker_started_at, Result)),
@@ -56,12 +58,17 @@ superseded_preflight_clears_orphan_retry_state_test() ->
     },
     Result =
         ecai_patch_manager:normalize_preflight_terminal(
-            superseded, Superseded, Running),
+            superseded, Superseded, Running
+        ),
     ?assertEqual(superseded, maps:get(status, Result)),
-    ?assertEqual(preflight_superseded,
-                 maps:get(stage, Result)),
-    ?assertEqual(stale_finding_version,
-                 maps:get(failure_class, Result)),
+    ?assertEqual(
+        preflight_superseded,
+        maps:get(stage, Result)
+    ),
+    ?assertEqual(
+        stale_finding_version,
+        maps:get(failure_class, Result)
+    ),
     ?assertEqual(false, maps:get(retryable, Result)),
     ?assertNot(maps:is_key(worker_started_at, Result)),
     ?assertNot(maps:is_key(next_retry_at_ms, Result)).

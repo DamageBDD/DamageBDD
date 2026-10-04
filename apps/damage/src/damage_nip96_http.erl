@@ -133,18 +133,24 @@ handle_upload(Req0, State) ->
             MaxBytes = max_upload_bytes(),
             case declared_request_too_large(Req0, MaxBytes) of
                 true ->
-                    {ok, reply_json(413, error_body(<<"File exceeds server upload limit.">>), Req0), State};
+                    {ok, reply_json(413, error_body(<<"File exceeds server upload limit.">>), Req0),
+                        State};
                 false ->
                     case read_upload(Req0, MaxBytes) of
                         {ok, Upload, Req1} ->
                             finish_upload(Auth, Upload, Req1, State);
                         {error, too_large, Req1} ->
-                            {ok, reply_json(413, error_body(<<"File exceeds server upload limit.">>), Req1), State};
+                            {ok,
+                                reply_json(
+                                    413, error_body(<<"File exceeds server upload limit.">>), Req1
+                                ),
+                                State};
                         {error, upload_timeout, Req1} ->
                             {ok, reply_json(408, error_body(<<"Upload timed out.">>), Req1), State};
                         {error, Reason, Req1} ->
                             ?LOG_WARNING("NIP-96 multipart upload rejected: ~p", [Reason]),
-                            {ok, reply_json(400, error_body(<<"Invalid multipart upload.">>), Req1), State}
+                            {ok, reply_json(400, error_body(<<"Invalid multipart upload.">>), Req1),
+                                State}
                     end
             end;
         {error, Reason} ->
@@ -182,10 +188,17 @@ finish_upload(Auth, #{file := File, fields := Fields}, Req, State) ->
                         store_upload(HashHex, Pubkey, TempPath, ObjectMeta0, OwnerMeta, Req, State);
                     {error, Reason} ->
                         ?LOG_WARNING("NIP-96 upload metadata rejected: ~p", [Reason]),
-                        {ok, reply_json(400, error_body(<<"Invalid upload metadata.">>), Req), State}
+                        {ok, reply_json(400, error_body(<<"Invalid upload metadata.">>), Req),
+                            State}
                 end;
             {error, payload_mismatch} ->
-                {ok, reply_json(403, error_body(<<"Authorization payload does not match uploaded file.">>), Req), State}
+                {ok,
+                    reply_json(
+                        403,
+                        error_body(<<"Authorization payload does not match uploaded file.">>),
+                        Req
+                    ),
+                    State}
         end
     after
         _ = file:delete(TempPath)
@@ -205,8 +218,14 @@ store_upload(Hash, Pubkey, TempPath, ObjectMeta0, OwnerMeta, Req, State) ->
                         ok ->
                             claim_and_reply(Hash, Pubkey, ObjectMeta, OwnerMeta, new, Req, State);
                         {error, Reason} ->
-                            ?LOG_ERROR("NIP-96 failed to register IPFS pin cid=~p reason=~p", [Cid, Reason]),
-                            {ok, reply_json(503, error_body(<<"IPFS persistence unavailable.">>), Req), State}
+                            ?LOG_ERROR("NIP-96 failed to register IPFS pin cid=~p reason=~p", [
+                                Cid, Reason
+                            ]),
+                            {ok,
+                                reply_json(
+                                    503, error_body(<<"IPFS persistence unavailable.">>), Req
+                                ),
+                                State}
                     end;
                 {error, Reason} ->
                     ?LOG_ERROR("NIP-96 IPFS add failed hash=~p reason=~p", [Hash, Reason]),
@@ -228,12 +247,21 @@ claim_and_reply(Hash, Pubkey, ObjectMeta, OwnerMeta, ExpectedNewness, Req, State
                     {_, existing} -> existing;
                     _ -> new
                 end,
-            Status = case Newness of new -> 201; existing -> 200 end,
-            Message = case Newness of new -> <<"Upload successful.">>; existing -> <<"File already exists.">> end,
+            Status =
+                case Newness of
+                    new -> 201;
+                    existing -> 200
+                end,
+            Message =
+                case Newness of
+                    new -> <<"Upload successful.">>;
+                    existing -> <<"File already exists.">>
+                end,
             Response = success_upload_body(Hash, StoredObject, OwnerMeta, Message, Req),
             {ok, reply_json(Status, Response, Req), State};
         {error, hash_cid_conflict} ->
-            {ok, reply_json(409, error_body(<<"Stored hash conflicts with IPFS object.">>), Req), State};
+            {ok, reply_json(409, error_body(<<"Stored hash conflicts with IPFS object.">>), Req),
+                State};
         {error, Reason} ->
             ?LOG_ERROR("NIP-96 ownership persistence failed hash=~p reason=~p", [Hash, Reason]),
             {ok, reply_json(503, error_body(<<"NIP-96 metadata store unavailable.">>), Req), State}
@@ -260,33 +288,60 @@ handle_download(Req0, State) ->
                         {ok, Data} ->
                             case lower_hex(crypto:hash(sha256, Data)) of
                                 Hash ->
-                                    CType = maps:get(content_type, Object, <<"application/octet-stream">>),
+                                    CType = maps:get(
+                                        content_type, Object, <<"application/octet-stream">>
+                                    ),
                                     Headers = cors_headers(#{
                                         <<"content-type">> => CType,
                                         <<"content-length">> => integer_to_binary(byte_size(Data)),
                                         <<"etag">> => <<"\"", Hash/binary, "\"">>,
-                                        <<"cache-control">> => <<"public, max-age=31536000, immutable">>,
+                                        <<"cache-control">> =>
+                                            <<"public, max-age=31536000, immutable">>,
                                         <<"x-content-type-options">> => <<"nosniff">>,
-                                        <<"content-security-policy">> => <<"sandbox; default-src 'none'">>,
-                                        <<"content-disposition">> => download_content_disposition(Hash, Object),
+                                        <<"content-security-policy">> =>
+                                            <<"sandbox; default-src 'none'">>,
+                                        <<"content-disposition">> => download_content_disposition(
+                                            Hash, Object
+                                        ),
                                         <<"x-ipfs-cid">> => Cid
                                     }),
                                     {ok, cowboy_req:reply(200, Headers, Data, Req0), State};
                                 _ ->
-                                    ?LOG_ERROR("NIP-96 IPFS integrity mismatch hash=~p cid=~p", [Hash, Cid]),
-                                    {ok, reply_json(502, error_body(<<"Stored object failed integrity verification.">>), Req0), State}
+                                    ?LOG_ERROR("NIP-96 IPFS integrity mismatch hash=~p cid=~p", [
+                                        Hash, Cid
+                                    ]),
+                                    {ok,
+                                        reply_json(
+                                            502,
+                                            error_body(
+                                                <<"Stored object failed integrity verification.">>
+                                            ),
+                                            Req0
+                                        ),
+                                        State}
                             end;
                         {error, ipfs_object_too_large} ->
-                            {ok, reply_json(502, error_body(<<"Stored object exceeds recorded size.">>), Req0), State};
+                            {ok,
+                                reply_json(
+                                    502,
+                                    error_body(<<"Stored object exceeds recorded size.">>),
+                                    Req0
+                                ),
+                                State};
                         {error, Reason} ->
-                            ?LOG_WARNING("NIP-96 IPFS read failed hash=~p cid=~p reason=~p", [Hash, Cid, Reason]),
-                            {ok, reply_json(503, error_body(<<"IPFS object unavailable.">>), Req0), State}
+                            ?LOG_WARNING("NIP-96 IPFS read failed hash=~p cid=~p reason=~p", [
+                                Hash, Cid, Reason
+                            ]),
+                            {ok, reply_json(503, error_body(<<"IPFS object unavailable.">>), Req0),
+                                State}
                     end;
                 {error, not_found} ->
                     {ok, reply_json(404, error_body(<<"File not found.">>), Req0), State};
                 {error, Reason} ->
                     ?LOG_ERROR("NIP-96 metadata lookup failed hash=~p reason=~p", [Hash, Reason]),
-                    {ok, reply_json(503, error_body(<<"NIP-96 metadata store unavailable.">>), Req0), State}
+                    {ok,
+                        reply_json(503, error_body(<<"NIP-96 metadata store unavailable.">>), Req0),
+                        State}
             end;
         error ->
             {ok, reply_json(404, error_body(<<"File not found.">>), Req0), State}
@@ -305,20 +360,42 @@ handle_delete(Req0, State) ->
                     case damage_nip96_store:release(Hash, Pubkey) of
                         {ok, last_owner, Object} ->
                             maybe_unpin_last_owner(Object),
-                            {ok, reply_json(200, #{
-                                <<"status">> => <<"success">>,
-                                <<"message">> => <<"File deleted.">>
-                            }, Req0), State};
+                            {ok,
+                                reply_json(
+                                    200,
+                                    #{
+                                        <<"status">> => <<"success">>,
+                                        <<"message">> => <<"File deleted.">>
+                                    },
+                                    Req0
+                                ),
+                                State};
                         {ok, shared, _Object} ->
-                            {ok, reply_json(200, #{
-                                <<"status">> => <<"success">>,
-                                <<"message">> => <<"File deleted.">>
-                            }, Req0), State};
+                            {ok,
+                                reply_json(
+                                    200,
+                                    #{
+                                        <<"status">> => <<"success">>,
+                                        <<"message">> => <<"File deleted.">>
+                                    },
+                                    Req0
+                                ),
+                                State};
                         {error, not_owner} ->
-                            {ok, reply_json(403, error_body(<<"Authenticated pubkey does not own this file.">>), Req0), State};
+                            {ok,
+                                reply_json(
+                                    403,
+                                    error_body(<<"Authenticated pubkey does not own this file.">>),
+                                    Req0
+                                ),
+                                State};
                         {error, Reason} ->
                             ?LOG_ERROR("NIP-96 delete failed hash=~p reason=~p", [Hash, Reason]),
-                            {ok, reply_json(503, error_body(<<"NIP-96 metadata store unavailable.">>), Req0), State}
+                            {ok,
+                                reply_json(
+                                    503, error_body(<<"NIP-96 metadata store unavailable.">>), Req0
+                                ),
+                                State}
                     end;
                 {error, Reason} ->
                     ?LOG_WARNING("NIP-96 delete NIP-98 authorization failed: ~p", [Reason]),
@@ -339,7 +416,10 @@ handle_list(Req0, State) ->
             {Page, Count} = page_args(Req0),
             case damage_nip96_store:list(Pubkey, Page, Count) of
                 {ok, #{page := Page0, count := Count0, total := Total, files := Rows}} ->
-                    Files = [nip94_listing_event(Hash, Object, Owner, Req0) || {Hash, Object, Owner} <- Rows],
+                    Files = [
+                        nip94_listing_event(Hash, Object, Owner, Req0)
+                     || {Hash, Object, Owner} <- Rows
+                    ],
                     Body = #{
                         <<"count">> => Count0,
                         <<"total">> => Total,
@@ -349,7 +429,9 @@ handle_list(Req0, State) ->
                     {ok, reply_json(200, Body, Req0), State};
                 {error, Reason} ->
                     ?LOG_ERROR("NIP-96 list failed pubkey=~p reason=~p", [Pubkey, Reason]),
-                    {ok, reply_json(503, error_body(<<"NIP-96 metadata store unavailable.">>), Req0), State}
+                    {ok,
+                        reply_json(503, error_body(<<"NIP-96 metadata store unavailable.">>), Req0),
+                        State}
             end;
         {error, Reason} ->
             ?LOG_WARNING("NIP-96 list NIP-98 authorization failed: ~p", [Reason]),
@@ -403,53 +485,54 @@ read_parts_with_period(Req0, MaxBytes, Acc0, Deadline, Period) ->
 
 read_part(Headers, Req1, MaxBytes, Acc0, Deadline) ->
     case parse_part(Headers) of
-                {file, <<"file">>, Filename, CType} ->
-                    case maps:is_key(file, Acc0) of
-                        true ->
-                            multipart_error(duplicate_file_field, Req1, Acc0);
-                        false ->
-                            case stream_file_part(Req1, MaxBytes, Deadline) of
-                                {ok, TempPath, Size, HashHex, Req2} ->
-                                    File = #{
-                                        filename => safe_filename(Filename),
-                                        content_type => normalize_content_type(CType),
-                                        temp_path => TempPath,
-                                        size => Size,
-                                        sha256 => HashHex
-                                    },
-                                    read_parts(Req2, MaxBytes, Acc0#{file => File}, Deadline);
-                                {error, too_large, Req2} ->
-                                    multipart_error(too_large, Req2, Acc0);
-                                {error, Reason, Req2} ->
-                                    multipart_error(Reason, Req2, Acc0)
-                            end
-                    end;
+        {file, <<"file">>, Filename, CType} ->
+            case maps:is_key(file, Acc0) of
+                true ->
+                    multipart_error(duplicate_file_field, Req1, Acc0);
+                false ->
+                    case stream_file_part(Req1, MaxBytes, Deadline) of
+                        {ok, TempPath, Size, HashHex, Req2} ->
+                            File = #{
+                                filename => safe_filename(Filename),
+                                content_type => normalize_content_type(CType),
+                                temp_path => TempPath,
+                                size => Size,
+                                sha256 => HashHex
+                            },
+                            read_parts(Req2, MaxBytes, Acc0#{file => File}, Deadline);
+                        {error, too_large, Req2} ->
+                            multipart_error(too_large, Req2, Acc0);
+                        {error, Reason, Req2} ->
+                            multipart_error(Reason, Req2, Acc0)
+                    end
+            end;
         {file, _OtherName, _Filename, _CType} ->
             %% NIP-96 defines one file field named "file". Reject unexpected
             %% file parts immediately instead of draining attacker-controlled data.
             multipart_error(unexpected_file_field, Req1, Acc0);
-                {data, Name} ->
-                    case read_part_body_limited(Req1, ?MAX_FORM_FIELD_BYTES, Deadline) of
-                        {ok, Value, Req2} ->
-                            FieldBytes = maps:get(field_bytes, Acc0, 0) + byte_size(Name) + byte_size(Value),
-                            case FieldBytes =< ?MAX_FORM_FIELDS_BYTES of
-                                true ->
-                                    Fields0 = maps:get(fields, Acc0),
-                                    Fields = maps:put(Name, Value, Fields0),
-                                    read_parts(
-                                        Req2,
-                                        MaxBytes,
-                                        Acc0#{fields => Fields, field_bytes => FieldBytes},
-                                        Deadline
-                                    );
-                                false ->
-                                    multipart_error(form_fields_too_large, Req2, Acc0)
-                            end;
-                        {error, too_large, Req2} ->
-                            multipart_error(form_field_too_large, Req2, Acc0);
-                        {error, upload_timeout, Req2} ->
-                            multipart_error(upload_timeout, Req2, Acc0)
+        {data, Name} ->
+            case read_part_body_limited(Req1, ?MAX_FORM_FIELD_BYTES, Deadline) of
+                {ok, Value, Req2} ->
+                    FieldBytes =
+                        maps:get(field_bytes, Acc0, 0) + byte_size(Name) + byte_size(Value),
+                    case FieldBytes =< ?MAX_FORM_FIELDS_BYTES of
+                        true ->
+                            Fields0 = maps:get(fields, Acc0),
+                            Fields = maps:put(Name, Value, Fields0),
+                            read_parts(
+                                Req2,
+                                MaxBytes,
+                                Acc0#{fields => Fields, field_bytes => FieldBytes},
+                                Deadline
+                            );
+                        false ->
+                            multipart_error(form_fields_too_large, Req2, Acc0)
                     end;
+                {error, too_large, Req2} ->
+                    multipart_error(form_field_too_large, Req2, Acc0);
+                {error, upload_timeout, Req2} ->
+                    multipart_error(upload_timeout, Req2, Acc0)
+            end;
         error ->
             multipart_error(invalid_part_headers, Req1, Acc0)
     end.
@@ -518,7 +601,9 @@ stream_file_part_read(Req0, Limit, Size0, Hash0, Fd, Deadline, ReadLen, Period) 
             case Size =< Limit of
                 true ->
                     ok = file:write(Fd, Data),
-                    stream_file_part(Req1, Limit, Size, crypto:hash_update(Hash0, Data), Fd, Deadline);
+                    stream_file_part(
+                        Req1, Limit, Size, crypto:hash_update(Hash0, Data), Fd, Deadline
+                    );
                 false ->
                     {error, too_large, Req1}
             end;
@@ -556,8 +641,10 @@ read_part_body_limited(Req0, Limit, Size0, Chunks, Deadline) ->
                 {more, Data, Req1} ->
                     Size = Size0 + byte_size(Data),
                     case Size =< Limit of
-                        true -> read_part_body_limited(Req1, Limit, Size, [Data | Chunks], Deadline);
-                        false -> {error, too_large, Req1}
+                        true ->
+                            read_part_body_limited(Req1, Limit, Size, [Data | Chunks], Deadline);
+                        false ->
+                            {error, too_large, Req1}
                     end;
                 {ok, Data, Req1} ->
                     Size = Size0 + byte_size(Data),
@@ -567,7 +654,6 @@ read_part_body_limited(Req0, Limit, Size0, Chunks, Deadline) ->
                     end
             end
     end.
-
 
 validate_upload_fields(Fields) ->
     Exp0 = maps:get(<<"expiration">>, Fields, <<>>),
@@ -586,7 +672,8 @@ validate_upload_fields(Fields) ->
             {error, invalid_fields}
     end.
 
-parse_expiration(<<>>) -> {ok, 0};
+parse_expiration(<<>>) ->
+    {ok, 0};
 parse_expiration(B) when is_binary(B) ->
     Now = erlang:system_time(second),
     try binary_to_integer(B) of
@@ -611,13 +698,18 @@ choose_content_type(File, Fields) ->
     PartType = maps:get(content_type, File, <<>>),
     ClaimedType = maps:get(<<"content_type">>, Fields, <<>>),
     case PartType of
-        <<>> -> normalize_content_type(ClaimedType);
-        <<"application/octet-stream">> when ClaimedType =/= <<>> -> normalize_content_type(ClaimedType);
-        _ -> PartType
+        <<>> ->
+            normalize_content_type(ClaimedType);
+        <<"application/octet-stream">> when ClaimedType =/= <<>> ->
+            normalize_content_type(ClaimedType);
+        _ ->
+            PartType
     end.
 
-normalize_content_type(undefined) -> <<"application/octet-stream">>;
-normalize_content_type(<<>>) -> <<"application/octet-stream">>;
+normalize_content_type(undefined) ->
+    <<"application/octet-stream">>;
+normalize_content_type(<<>>) ->
+    <<"application/octet-stream">>;
 normalize_content_type({Type, SubType, _Params}) ->
     <<(to_bin(Type))/binary, "/", (to_bin(SubType))/binary>>;
 normalize_content_type(B) when is_binary(B) ->
@@ -632,7 +724,8 @@ normalize_content_type(B) when is_binary(B) ->
         false -> <<"application/octet-stream">>
     end;
 normalize_content_type(L) when is_list(L) -> normalize_content_type(to_bin(L));
-normalize_content_type(_) -> <<"application/octet-stream">>.
+normalize_content_type(_) ->
+    <<"application/octet-stream">>.
 
 valid_mime_type(Mime) when is_binary(Mime), byte_size(Mime) =< 255 ->
     re:run(
@@ -640,7 +733,8 @@ valid_mime_type(Mime) when is_binary(Mime), byte_size(Mime) =< 255 ->
         <<"\\A[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+\\z">>,
         [{capture, none}]
     ) =:= match;
-valid_mime_type(_) -> false.
+valid_mime_type(_) ->
+    false.
 
 %% ------------------------------------------------------------------
 %% NIP-94 response helpers
@@ -671,8 +765,10 @@ nip94_tags(Hash, Object, Owner, Req) ->
     WithAlt = maybe_tag(<<"alt">>, maps:get(alt, Owner, <<>>), Base),
     WithExpiration =
         case maps:get(expiration, Owner, 0) of
-            Exp when is_integer(Exp), Exp > 0 -> WithAlt ++ [[<<"expiration">>, integer_to_binary(Exp)]];
-            _ -> WithAlt
+            Exp when is_integer(Exp), Exp > 0 ->
+                WithAlt ++ [[<<"expiration">>, integer_to_binary(Exp)]];
+            _ ->
+                WithAlt
         end,
     WithExpiration ++ [[<<"service">>, <<"nip96">>]].
 
@@ -683,20 +779,27 @@ maybe_tag(Name, Value, Tags) -> Tags ++ [[Name, to_bin(Value)]].
 %% IPFS helpers
 %% ------------------------------------------------------------------
 
-extract_cid({ok, Value}) -> extract_cid(Value);
-extract_cid(#{<<"Hash">> := Cid}) -> valid_cid_result(Cid);
-extract_cid(#{hash := Cid}) -> valid_cid_result(Cid);
-extract_cid(#{<<"hash">> := Cid}) -> valid_cid_result(Cid);
+extract_cid({ok, Value}) ->
+    extract_cid(Value);
+extract_cid(#{<<"Hash">> := Cid}) ->
+    valid_cid_result(Cid);
+extract_cid(#{hash := Cid}) ->
+    valid_cid_result(Cid);
+extract_cid(#{<<"hash">> := Cid}) ->
+    valid_cid_result(Cid);
 extract_cid(List) when is_list(List), List =/= [] ->
     case lists:all(fun erlang:is_integer/1, List) of
         true -> valid_cid_result(List);
         false -> extract_cid_from_results(lists:reverse(List))
     end;
 extract_cid(Cid) when is_binary(Cid) -> valid_cid_result(Cid);
-extract_cid({error, _} = Error) -> Error;
-extract_cid(Other) -> {error, {invalid_ipfs_add_response, Other}}.
+extract_cid({error, _} = Error) ->
+    Error;
+extract_cid(Other) ->
+    {error, {invalid_ipfs_add_response, Other}}.
 
-extract_cid_from_results([]) -> {error, missing_ipfs_cid};
+extract_cid_from_results([]) ->
+    {error, missing_ipfs_cid};
 extract_cid_from_results([H | T]) ->
     case extract_cid(H) of
         {ok, _} = Ok -> Ok;
@@ -712,7 +815,8 @@ valid_cid_result(Cid0) ->
 
 ensure_pin(Cid) ->
     case application:get_env(damage, nip96_pin_uploads, true) of
-        false -> ok;
+        false ->
+            ok;
         _ ->
             case damage_ipfs:pin_async(Cid) of
                 ok -> ok;
@@ -732,9 +836,11 @@ maybe_unpin_last_owner(#{cid := Cid}) ->
                 {ok, _} -> ok;
                 Error -> ?LOG_WARNING("NIP-96 async unpin failed cid=~p reason=~p", [Cid, Error])
             end;
-        _ -> ok
+        _ ->
+            ok
     end;
-maybe_unpin_last_owner(_) -> ok.
+maybe_unpin_last_owner(_) ->
+    ok.
 
 %% ------------------------------------------------------------------
 %% Request / URL helpers
@@ -751,8 +857,9 @@ request_hash(Req) ->
 parse_hash_segment(Segment) ->
     Hash0 = hd(binary:split(Segment, <<".">>, [global])),
     Hash = lower_ascii(Hash0),
-    case byte_size(Hash) =:= 64 andalso
-        re:run(Hash, <<"\\A[0-9a-f]{64}\\z">>, [{capture, none}]) =:= match
+    case
+        byte_size(Hash) =:= 64 andalso
+            re:run(Hash, <<"\\A[0-9a-f]{64}\\z">>, [{capture, none}]) =:= match
     of
         true -> {ok, Hash};
         false -> error
@@ -775,7 +882,8 @@ download_url(Hash, Object, Req) ->
 
 public_base_url(Req) ->
     case application:get_env(damage, nip96_public_base_url) of
-        {ok, Value} -> trim_trailing_slash(to_bin(Value));
+        {ok, Value} ->
+            trim_trailing_slash(to_bin(Value));
         undefined ->
             case application:get_env(damage, api_url) of
                 {ok, Value} -> trim_trailing_slash(to_bin(Value));
@@ -793,7 +901,8 @@ request_origin(Req) ->
         _ -> <<Scheme/binary, "://", Host/binary, ":", (integer_to_binary(Port))/binary>>
     end.
 
-trim_trailing_slash(<<>>) -> <<>>;
+trim_trailing_slash(<<>>) ->
+    <<>>;
 trim_trailing_slash(Bin) ->
     case binary:last(Bin) of
         $/ -> trim_trailing_slash(binary:part(Bin, 0, byte_size(Bin) - 1));
@@ -808,7 +917,8 @@ page_args(Req) ->
 
 qs_nonneg_int(Key, Pairs, Default, Max) ->
     case proplists:get_value(Key, Pairs) of
-        undefined -> Default;
+        undefined ->
+            Default;
         V ->
             try binary_to_integer(V) of
                 I when I >= 0 -> min(I, Max);
@@ -893,7 +1003,9 @@ reply_auth_error(Req) ->
         <<"content-type">> => <<"application/json">>,
         <<"www-authenticate">> => <<"Nostr">>
     }),
-    cowboy_req:reply(401, Headers, jsx:encode(error_body(<<"Valid NIP-98 authorization required.">>)), Req).
+    cowboy_req:reply(
+        401, Headers, jsx:encode(error_body(<<"Valid NIP-98 authorization required.">>)), Req
+    ).
 
 reply_json(Status, Body, Req) ->
     Headers = cors_headers(#{<<"content-type">> => <<"application/json">>}),
@@ -912,13 +1024,13 @@ cors_headers(Headers) ->
     Headers#{<<"access-control-allow-origin">> => <<"*">>}.
 
 lower_hex(Bin) ->
-    << <<(hex_digit(B bsr 4)), (hex_digit(B band 15))>> || <<B>> <= Bin >>.
+    <<<<(hex_digit(B bsr 4)), (hex_digit(B band 15))>> || <<B>> <= Bin>>.
 
 hex_digit(N) when N < 10 -> $0 + N;
 hex_digit(N) -> $a + (N - 10).
 
 lower_ascii(B) ->
-    << <<(lower_char(C))>> || <<C>> <= B >>.
+    <<<<(lower_char(C))>> || <<C>> <= B>>.
 lower_char(C) when C >= $A, C =< $Z -> C + 32;
 lower_char(C) -> C.
 

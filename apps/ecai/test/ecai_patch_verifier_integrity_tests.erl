@@ -18,10 +18,9 @@ stable_candidate_state_is_accepted_test() ->
         ),
         ?assertEqual(
             ok,
-            ecai_patch_verifier:
-                compare_integrity_snapshots(
-                    Before, After
-                )
+            ecai_patch_verifier:compare_integrity_snapshots(
+                Before, After
+            )
         )
     end).
 
@@ -47,10 +46,9 @@ extra_tracked_mutation_is_rejected_test() ->
                     repository_mutated_during_validation,
                 unexpected_paths := [<<"rebar.lock">>]
             }},
-            ecai_patch_verifier:
-                compare_integrity_snapshots(
-                    Before, After
-                )
+            ecai_patch_verifier:compare_integrity_snapshots(
+                Before, After
+            )
         )
     end).
 
@@ -76,10 +74,9 @@ candidate_file_mutation_is_rejected_test() ->
                 modified_paths :=
                     [<<"apps/ecai/src/sample.erl">>]
             }},
-            ecai_patch_verifier:
-                compare_integrity_snapshots(
-                    Before, After
-                )
+            ecai_patch_verifier:compare_integrity_snapshots(
+                Before, After
+            )
         )
     end).
 
@@ -106,10 +103,9 @@ extra_untracked_file_is_rejected_test() ->
                 reason :=
                     repository_mutated_during_validation
             }},
-            ecai_patch_verifier:
-                compare_integrity_snapshots(
-                    Before, After
-                )
+            ecai_patch_verifier:compare_integrity_snapshots(
+                Before, After
+            )
         )
     end).
 
@@ -147,8 +143,11 @@ with_repo(Fun) ->
     ok = git(Base, ["init", "-q"]),
     ok = git(
         Base,
-        ["config", "user.email",
-         "ecai-test@example.invalid"]
+        [
+            "config",
+            "user.email",
+            "ecai-test@example.invalid"
+        ]
     ),
     ok = git(
         Base,
@@ -158,9 +157,13 @@ with_repo(Fun) ->
     ok = git(
         Base,
         [
-            "-c", "commit.gpgsign=false",
-            "-c", "core.hooksPath=/dev/null",
-            "commit", "-qm", "base"
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-qm",
+            "base"
         ]
     ),
     try
@@ -220,7 +223,8 @@ collect_git(Port, Acc) ->
                 exit_status, Status, Acc
             }}
     after 30000 ->
-        try port_close(Port)
+        try
+            port_close(Port)
         catch
             _:_ -> ok
         end,

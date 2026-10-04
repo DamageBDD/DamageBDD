@@ -88,10 +88,11 @@ request(Prompt0, JsonMode, Opts0) ->
 
 provider_defaults(Opts0) ->
     Provider = normalize_provider(maps:get(provider, Opts0, ollama)),
-    Base = case Provider of
-        ollama -> defaults();
-        openai -> openai_defaults()
-    end,
+    Base =
+        case Provider of
+            ollama -> defaults();
+            openai -> openai_defaults()
+        end,
     maps:merge(Base, Opts0#{provider => Provider}).
 
 openai_defaults() ->
@@ -124,15 +125,18 @@ ollama_probe(Opts) ->
             Error;
         {ok, AuthHeaders} ->
             Headers = [{<<"accept">>, <<"application/json">>} | AuthHeaders],
-            case damage_gun:get(
-                maps:get(host, Opts),
-                maps:get(port, Opts),
-                "/api/tags",
-                Headers,
-                request_opts(Opts, maps:get(health_timeout, Opts, 5000))
-            ) of
-                {ok, #{status := Status, json := Json, body := RawBody}}
-                  when Status >= 200, Status < 300 ->
+            case
+                damage_gun:get(
+                    maps:get(host, Opts),
+                    maps:get(port, Opts),
+                    "/api/tags",
+                    Headers,
+                    request_opts(Opts, maps:get(health_timeout, Opts, 5000))
+                )
+            of
+                {ok, #{status := Status, json := Json, body := RawBody}} when
+                    Status >= 200, Status < 300
+                ->
                     decode_ollama_tags(Json, RawBody);
                 {ok, #{status := Status, json := Json, body := RawBody}} ->
                     {error, {ollama_http_status, Status, provider_error(Json, RawBody)}};
@@ -145,19 +149,23 @@ ollama_probe(Opts) ->
 
 openai_probe(Opts) ->
     case auth_headers(Opts) of
-        {error, _} = Error -> Error;
+        {error, _} = Error ->
+            Error;
         {ok, Headers0} ->
             Headers = [{<<"accept">>, <<"application/json">>} | Headers0],
             Path = api_path(Opts, "/models"),
-            case damage_gun:get(
-                maps:get(host, Opts),
-                maps:get(port, Opts),
-                Path,
-                Headers,
-                request_opts(Opts, maps:get(health_timeout, Opts, 5000))
-            ) of
-                {ok, #{status := Status, json := Json, body := RawBody}}
-                  when Status >= 200, Status < 300 ->
+            case
+                damage_gun:get(
+                    maps:get(host, Opts),
+                    maps:get(port, Opts),
+                    Path,
+                    Headers,
+                    request_opts(Opts, maps:get(health_timeout, Opts, 5000))
+                )
+            of
+                {ok, #{status := Status, json := Json, body := RawBody}} when
+                    Status >= 200, Status < 300
+                ->
                     decode_openai_models(Json, RawBody);
                 {ok, #{status := Status, json := Json, body := RawBody}} ->
                     {error, {openai_http_status, Status, provider_error(Json, RawBody)}};
@@ -180,10 +188,11 @@ ollama_request(Prompt, JsonMode, Opts) ->
                 <<"options">> => #{<<"temperature">> => maps:get(temperature, Opts, 0)}
             },
             WithSystem = maybe_put_system(Base, <<"system">>, Opts),
-            BodyMap = case JsonMode of
-                true -> WithSystem#{<<"format">> => <<"json">>};
-                false -> WithSystem
-            end,
+            BodyMap =
+                case JsonMode of
+                    true -> WithSystem#{<<"format">> => <<"json">>};
+                    false -> WithSystem
+                end,
             Headers = [
                 {<<"content-type">>, <<"application/json">>},
                 {<<"accept">>, <<"application/json">>}
@@ -191,16 +200,19 @@ ollama_request(Prompt, JsonMode, Opts) ->
             ],
             Body = jsx:encode(BodyMap),
             Started = erlang:monotonic_time(millisecond),
-            case damage_gun:post(
-                maps:get(host, Opts),
-                maps:get(port, Opts),
-                "/api/generate",
-                Headers,
-                Body,
-                request_opts(Opts, maps:get(timeout, Opts))
-            ) of
-                {ok, #{status := Status, json := Json, body := RawBody}}
-                  when Status >= 200, Status < 300 ->
+            case
+                damage_gun:post(
+                    maps:get(host, Opts),
+                    maps:get(port, Opts),
+                    "/api/generate",
+                    Headers,
+                    Body,
+                    request_opts(Opts, maps:get(timeout, Opts))
+                )
+            of
+                {ok, #{status := Status, json := Json, body := RawBody}} when
+                    Status >= 200, Status < 300
+                ->
                     decode_ollama_response(JsonMode, Json, RawBody, elapsed_ms(Started));
                 {ok, #{status := Status, json := Json, body := RawBody}} ->
                     {error, {ollama_http_status, Status, provider_error(Json, RawBody)}};
@@ -213,7 +225,8 @@ ollama_request(Prompt, JsonMode, Opts) ->
 
 openai_request(Prompt, JsonMode, Opts) ->
     case auth_headers(Opts) of
-        {error, _} = Error -> Error;
+        {error, _} = Error ->
+            Error;
         {ok, AuthHeaders} ->
             Base0 = #{
                 <<"model">> => to_binary(maps:get(model, Opts)),
@@ -224,14 +237,17 @@ openai_request(Prompt, JsonMode, Opts) ->
             Base1 = maybe_put_openai_reasoning(WithSystem, Opts),
             Base2 = maybe_put_openai_max_output(Base1, Opts),
             Base3 = maybe_put_openai_temperature(Base2, Opts),
-            BodyMap = case JsonMode of
-                true -> Base3#{
-                    <<"text">> => #{
-                        <<"format">> => #{<<"type">> => <<"json_object">>}
-                    }
-                };
-                false -> Base3
-            end,
+            BodyMap =
+                case JsonMode of
+                    true ->
+                        Base3#{
+                            <<"text">> => #{
+                                <<"format">> => #{<<"type">> => <<"json_object">>}
+                            }
+                        };
+                    false ->
+                        Base3
+                end,
             Headers = [
                 {<<"content-type">>, <<"application/json">>},
                 {<<"accept">>, <<"application/json">>}
@@ -239,16 +255,19 @@ openai_request(Prompt, JsonMode, Opts) ->
             ],
             Body = jsx:encode(BodyMap),
             Started = erlang:monotonic_time(millisecond),
-            case damage_gun:post(
-                maps:get(host, Opts),
-                maps:get(port, Opts),
-                api_path(Opts, "/responses"),
-                Headers,
-                Body,
-                request_opts(Opts, maps:get(timeout, Opts))
-            ) of
-                {ok, #{status := Status, json := Json, body := RawBody} = HttpResult}
-                  when Status >= 200, Status < 300 ->
+            case
+                damage_gun:post(
+                    maps:get(host, Opts),
+                    maps:get(port, Opts),
+                    api_path(Opts, "/responses"),
+                    Headers,
+                    Body,
+                    request_opts(Opts, maps:get(timeout, Opts))
+                )
+            of
+                {ok, #{status := Status, json := Json, body := RawBody} = HttpResult} when
+                    Status >= 200, Status < 300
+                ->
                     decode_openai_response(
                         JsonMode, Json, RawBody, elapsed_ms(Started), HttpResult
                     );
@@ -264,7 +283,8 @@ openai_request(Prompt, JsonMode, Opts) ->
 %% Preserve a distinct system/instructions channel for permissioned RAG.
 maybe_put_system(Body, Key, Opts) ->
     case maps:get(system, Opts, undefined) of
-        undefined -> Body;
+        undefined ->
+            Body;
         System when is_binary(System); is_list(System) ->
             Body#{Key => to_binary(System)}
     end.
@@ -312,15 +332,16 @@ auth_headers(Opts) ->
     Auth = maps:get(auth, Opts, default_auth(maps:get(provider, Opts, ollama))),
     case resolve_auth(Auth) of
         {error, _} = Error -> Error;
-        {ok, AuthHeaders} ->
-            {ok, AuthHeaders ++ optional_openai_headers(Opts)}
+        {ok, AuthHeaders} -> {ok, AuthHeaders ++ optional_openai_headers(Opts)}
     end.
 
 default_auth(openai) -> #{type => bearer_env, env => "OPENAI_API_KEY"};
 default_auth(_) -> none.
 
-resolve_auth(none) -> {ok, []};
-resolve_auth(undefined) -> {ok, []};
+resolve_auth(none) ->
+    {ok, []};
+resolve_auth(undefined) ->
+    {ok, []};
 resolve_auth(#{type := bearer_env, env := Env0}) ->
     Env = path_to_list(Env0),
     case os:getenv(Env) of
@@ -337,7 +358,8 @@ resolve_auth(#{type := bearer_file, path := Path0}) ->
                 <<>> -> {error, {empty_auth_file, Path}};
                 _ -> bearer_header(Token)
             end;
-        {error, Reason} -> {error, {cannot_read_auth_file, Path, Reason}}
+        {error, Reason} ->
+            {error, {cannot_read_auth_file, Path, Reason}}
     end;
 resolve_auth(#{type := bearer_secret, scope := node, name := Name}) ->
     resolve_node_secret_auth(Name);
@@ -345,13 +367,16 @@ resolve_auth(#{type := bearer_secret, scope := Scope}) ->
     {error, {unsupported_auth_secret_scope, Scope}};
 resolve_auth(#{type := bearer, token := Token}) ->
     bearer_header(Token);
-resolve_auth({bearer_env, Env}) -> resolve_auth(#{type => bearer_env, env => Env});
-resolve_auth({bearer_file, Path}) -> resolve_auth(#{type => bearer_file, path => Path});
+resolve_auth({bearer_env, Env}) ->
+    resolve_auth(#{type => bearer_env, env => Env});
+resolve_auth({bearer_file, Path}) ->
+    resolve_auth(#{type => bearer_file, path => Path});
 resolve_auth({bearer_secret, node, Name}) ->
     resolve_auth(#{type => bearer_secret, scope => node, name => Name});
-resolve_auth({bearer, Token}) -> resolve_auth(#{type => bearer, token => Token});
-resolve_auth(Other) -> {error, {unsupported_auth_configuration, public_auth(Other)}}.
-
+resolve_auth({bearer, Token}) ->
+    resolve_auth(#{type => bearer, token => Token});
+resolve_auth(Other) ->
+    {error, {unsupported_auth_configuration, public_auth(Other)}}.
 
 resolve_node_secret_auth(Name) ->
     try secrets:retrieve_decrypt(node, Name) of
@@ -417,7 +442,8 @@ optional_header(Name, DirectKey, EnvKey, Opts) ->
     case maps:get(DirectKey, Opts, undefined) of
         undefined ->
             case maps:get(EnvKey, Opts, undefined) of
-                undefined -> [];
+                undefined ->
+                    [];
                 Env0 ->
                     Env = path_to_list(Env0),
                     case os:getenv(Env) of
@@ -426,30 +452,42 @@ optional_header(Name, DirectKey, EnvKey, Opts) ->
                         Value -> [{Name, to_binary(Value)}]
                     end
             end;
-        Value -> [{Name, to_binary(Value)}]
+        Value ->
+            [{Name, to_binary(Value)}]
     end.
 
-public_auth(#{type := bearer, token := _}) -> #{type => bearer, token => redacted};
-public_auth(#{type := bearer_env} = Auth) -> maps:without([token], Auth);
-public_auth(#{type := bearer_file} = Auth) -> maps:without([token], Auth);
+public_auth(#{type := bearer, token := _}) ->
+    #{type => bearer, token => redacted};
+public_auth(#{type := bearer_env} = Auth) ->
+    maps:without([token], Auth);
+public_auth(#{type := bearer_file} = Auth) ->
+    maps:without([token], Auth);
 public_auth(#{type := bearer_secret, scope := node, name := Name}) ->
     #{type => bearer_secret, scope => node, name => normalize_secret_ref(Name)};
-public_auth({bearer, _}) -> #{type => bearer, token => redacted};
-public_auth({bearer_env, Env}) -> #{type => bearer_env, env => Env};
-public_auth({bearer_file, Path}) -> #{type => bearer_file, path => Path};
+public_auth({bearer, _}) ->
+    #{type => bearer, token => redacted};
+public_auth({bearer_env, Env}) ->
+    #{type => bearer_env, env => Env};
+public_auth({bearer_file, Path}) ->
+    #{type => bearer_file, path => Path};
 public_auth({bearer_secret, node, Name}) ->
     #{type => bearer_secret, scope => node, name => normalize_secret_ref(Name)};
-public_auth(none) -> none;
-public_auth(undefined) -> undefined;
-public_auth(Other) -> #{type => unknown, value => to_binary(io_lib:format("~p", [Other]))}.
+public_auth(none) ->
+    none;
+public_auth(undefined) ->
+    undefined;
+public_auth(Other) ->
+    #{type => unknown, value => to_binary(io_lib:format("~p", [Other]))}.
 
 decode_ollama_response(JsonMode, Json, RawBody, WallMs) when is_map(Json) ->
     case mget(<<"response">>, Json, undefined) of
         Response when is_binary(Response) ->
             Meta = ollama_response_meta(Json, WallMs),
             finish_decoded_response(JsonMode, Response, Meta);
-        undefined -> {error, {missing_ollama_response, Json, RawBody}};
-        Other -> {error, {bad_ollama_response, Other, Json}}
+        undefined ->
+            {error, {missing_ollama_response, Json, RawBody}};
+        Other ->
+            {error, {bad_ollama_response, Other, Json}}
     end;
 decode_ollama_response(_JsonMode, Json, RawBody, _WallMs) ->
     {error, {bad_ollama_generate_json, Json, RawBody}}.
@@ -465,7 +503,8 @@ decode_openai_response(JsonMode, Json, RawBody, WallMs, HttpResult) when is_map(
 decode_openai_response(_JsonMode, Json, RawBody, _WallMs, _HttpResult) ->
     {error, {bad_openai_response_json, Json, RawBody}}.
 
-finish_decoded_response(false, Response, Meta) -> {ok, Response, Meta};
+finish_decoded_response(false, Response, Meta) ->
+    {ok, Response, Meta};
 finish_decoded_response(true, Response, Meta) ->
     case decode_json(Response) of
         {ok, Value} -> {ok, Value, Meta};
@@ -531,7 +570,8 @@ response_header(Name, #{headers := Headers}) when is_list(Headers) ->
         [V | _] -> to_binary(V);
         [] -> undefined
     end;
-response_header(_Name, _HttpResult) -> undefined.
+response_header(_Name, _HttpResult) ->
+    undefined.
 
 decode_ollama_tags(Json, _RawBody) when is_map(Json) ->
     Models0 = mget(<<"models">>, Json, []),
@@ -655,7 +695,8 @@ provider_error(Json, RawBody) when is_map(Json) ->
         undefined -> RawBody;
         Error -> Error
     end;
-provider_error(_Json, RawBody) -> RawBody.
+provider_error(_Json, RawBody) ->
+    RawBody.
 
 elapsed_ms(Started) ->
     max(0, erlang:monotonic_time(millisecond) - Started).
@@ -668,7 +709,8 @@ ensure_list(_) -> [].
 
 mget(Key, Map, Default) when is_map(Map) ->
     case maps:find(Key, Map) of
-        {ok, Value} -> Value;
+        {ok, Value} ->
+            Value;
         error ->
             try binary_to_existing_atom(Key, utf8) of
                 AtomKey -> maps:get(AtomKey, Map, Default)
@@ -676,7 +718,8 @@ mget(Key, Map, Default) when is_map(Map) ->
                 error:badarg -> Default
             end
     end;
-mget(_Key, _Map, Default) -> Default.
+mget(_Key, _Map, Default) ->
+    Default.
 
 path_to_list(B) when is_binary(B) -> binary_to_list(B);
 path_to_list(L) when is_list(L) -> L;

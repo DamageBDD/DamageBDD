@@ -158,14 +158,17 @@ handle_upload_preflight(Req0, State) ->
                 {ok, Hash, Size, _ContentType} ->
                     case Size =< max_upload_bytes() of
                         false ->
-                            {ok, reply_head_error(413, <<"Blob exceeds server size limit">>, Req0), State};
+                            {ok, reply_head_error(413, <<"Blob exceeds server size limit">>, Req0),
+                                State};
                         true ->
                             case damage_blossom_auth:verify(Req0, <<"upload">>, Hash) of
                                 {ok, _Auth} ->
                                     Headers = cors_headers(#{}),
                                     {ok, cowboy_req:reply(200, Headers, <<>>, Req0), State};
                                 {error, Reason} ->
-                                    ?LOG_WARNING("Blossom upload preflight auth failed: ~p", [Reason]),
+                                    ?LOG_WARNING("Blossom upload preflight auth failed: ~p", [
+                                        Reason
+                                    ]),
                                     {ok, reply_head_auth_error(Req0), State}
                             end
                     end;
@@ -187,7 +190,8 @@ handle_upload(Req0, State) ->
                 {ok, HeaderHash, DeclaredSize, ContentType} ->
                     case DeclaredSize =< max_upload_bytes() of
                         false ->
-                            {ok, reply_error(413, <<"Blob exceeds server size limit">>, Req0), State};
+                            {ok, reply_error(413, <<"Blob exceeds server size limit">>, Req0),
+                                State};
                         true ->
                             handle_upload_authorized(
                                 Req0, State, HeaderHash, DeclaredSize, ContentType
@@ -241,11 +245,13 @@ handle_upload_authorized(Req0, State, undefined, DeclaredSize, ContentType) ->
                                 _ = file:delete(TempPath)
                             end;
                         {error, too_large, Req1} ->
-                            {ok, reply_error(
-                                413,
-                                <<"Blob exceeds declared or server size limit">>,
-                                Req1
-                            ), State};
+                            {ok,
+                                reply_error(
+                                    413,
+                                    <<"Blob exceeds declared or server size limit">>,
+                                    Req1
+                                ),
+                                State};
                         {error, upload_timeout, Req1} ->
                             {ok, reply_error(408, <<"Upload timed out">>, Req1), State};
                         {error, Reason, Req1} ->
@@ -281,21 +287,25 @@ handle_upload_authorized(Req0, State, HeaderHash, DeclaredSize, ContentType) ->
                                             State
                                         );
                                     false ->
-                                        {ok, reply_error(
-                                            409,
-                                            <<"X-SHA-256 does not match request body">>,
-                                            Req1
-                                        ), State}
+                                        {ok,
+                                            reply_error(
+                                                409,
+                                                <<"X-SHA-256 does not match request body">>,
+                                                Req1
+                                            ),
+                                            State}
                                 end
                             after
                                 _ = file:delete(TempPath)
                             end;
                         {error, too_large, Req1} ->
-                            {ok, reply_error(
-                                413,
-                                <<"Blob exceeds declared or server size limit">>,
-                                Req1
-                            ), State};
+                            {ok,
+                                reply_error(
+                                    413,
+                                    <<"Blob exceeds declared or server size limit">>,
+                                    Req1
+                                ),
+                                State};
                         {error, upload_timeout, Req1} ->
                             {ok, reply_error(408, <<"Upload timed out">>, Req1), State};
                         {error, Reason, Req1} ->
@@ -371,8 +381,10 @@ read_upload_body(Req0, DeclaredSize) ->
                         ok ->
                             Hash0 = crypto:hash_init(sha256),
                             Result =
-                                try stream_body(Req0, Limit, 0, Hash0, Fd, Deadline)
-                                after file:close(Fd)
+                                try
+                                    stream_body(Req0, Limit, 0, Hash0, Fd, Deadline)
+                                after
+                                    file:close(Fd)
                                 end,
                             case Result of
                                 {ok, DeclaredSize, HashState, Req1} ->
@@ -409,8 +421,17 @@ stream_body(Req0, Limit, Size0, Hash0, Fd, Deadline) ->
                     case Size =< Limit of
                         true ->
                             case file:write(Fd, Data) of
-                                ok -> stream_body(Req1, Limit, Size, crypto:hash_update(Hash0, Data), Fd, Deadline);
-                                {error, Reason} -> {error, {temp_write_failed, Reason}, Req1}
+                                ok ->
+                                    stream_body(
+                                        Req1,
+                                        Limit,
+                                        Size,
+                                        crypto:hash_update(Hash0, Data),
+                                        Fd,
+                                        Deadline
+                                    );
+                                {error, Reason} ->
+                                    {error, {temp_write_failed, Reason}, Req1}
                             end;
                         false ->
                             {error, too_large, Req1}
@@ -474,11 +495,16 @@ validate_uploaded_file(TempPath, Size, ContentType) ->
             end
     end.
 
-validate_content_signature(<<"image/jpeg">>, <<16#FF, 16#D8, 16#FF, _/binary>>) -> ok;
-validate_content_signature(<<"image/png">>, <<137, 80, 78, 71, 13, 10, 26, 10, _/binary>>) -> ok;
-validate_content_signature(<<"image/gif">>, <<"GIF87a", _/binary>>) -> ok;
-validate_content_signature(<<"image/gif">>, <<"GIF89a", _/binary>>) -> ok;
-validate_content_signature(<<"image/webp">>, <<"RIFF", _Size:32/little, "WEBP", _/binary>>) -> ok;
+validate_content_signature(<<"image/jpeg">>, <<16#FF, 16#D8, 16#FF, _/binary>>) ->
+    ok;
+validate_content_signature(<<"image/png">>, <<137, 80, 78, 71, 13, 10, 26, 10, _/binary>>) ->
+    ok;
+validate_content_signature(<<"image/gif">>, <<"GIF87a", _/binary>>) ->
+    ok;
+validate_content_signature(<<"image/gif">>, <<"GIF89a", _/binary>>) ->
+    ok;
+validate_content_signature(<<"image/webp">>, <<"RIFF", _Size:32/little, "WEBP", _/binary>>) ->
+    ok;
 validate_content_signature(<<"image/avif">>, Head) ->
     validate_isobmff_brand(Head, [<<"avif">>, <<"avis">>]);
 validate_content_signature(<<"image/heic">>, Head) ->
@@ -492,18 +518,34 @@ validate_content_signature(<<"video/mp4">>, Head) ->
     validate_isobmff_brand(
         Head,
         [
-            <<"isom">>, <<"iso2">>, <<"mp41">>, <<"mp42">>, <<"avc1">>,
-            <<"dash">>, <<"M4V ">>, <<"MSNV">>, <<"3gp4">>, <<"3gp5">>
+            <<"isom">>,
+            <<"iso2">>,
+            <<"mp41">>,
+            <<"mp42">>,
+            <<"avc1">>,
+            <<"dash">>,
+            <<"M4V ">>,
+            <<"MSNV">>,
+            <<"3gp4">>,
+            <<"3gp5">>
         ]
     );
 validate_content_signature(<<"video/quicktime">>, Head) ->
     validate_isobmff_brand(Head, [<<"qt  ">>]);
-validate_content_signature(<<"video/webm">>, <<16#1A, 16#45, 16#DF, 16#A3, _/binary>>) -> ok;
-validate_content_signature(<<"audio/mpeg">>, <<"ID3", _/binary>>) -> ok;
-validate_content_signature(<<"audio/mpeg">>, <<16#FF, B, _/binary>>) when (B band 16#E0) =:= 16#E0 -> ok;
-validate_content_signature(<<"audio/ogg">>, <<"OggS", _/binary>>) -> ok;
-validate_content_signature(<<"audio/wav">>, <<"RIFF", _Size:32/little, "WAVE", _/binary>>) -> ok;
-validate_content_signature(<<"application/pdf">>, <<"%PDF-", _/binary>>) -> ok;
+validate_content_signature(<<"video/webm">>, <<16#1A, 16#45, 16#DF, 16#A3, _/binary>>) ->
+    ok;
+validate_content_signature(<<"audio/mpeg">>, <<"ID3", _/binary>>) ->
+    ok;
+validate_content_signature(<<"audio/mpeg">>, <<16#FF, B, _/binary>>) when
+    (B band 16#E0) =:= 16#E0
+->
+    ok;
+validate_content_signature(<<"audio/ogg">>, <<"OggS", _/binary>>) ->
+    ok;
+validate_content_signature(<<"audio/wav">>, <<"RIFF", _Size:32/little, "WAVE", _/binary>>) ->
+    ok;
+validate_content_signature(<<"application/pdf">>, <<"%PDF-", _/binary>>) ->
+    ok;
 validate_content_signature(<<"application/octet-stream">>, _Head) ->
     case application:get_env(damage, blossom_allow_octet_stream, false) of
         true -> ok;
@@ -550,9 +592,12 @@ store_upload(Hash, Pubkey, TempPath, Size, ContentType, Req, State) ->
                         created_at => CreatedAt
                     },
                     case ensure_pin(Cid) of
-                        ok -> claim_and_reply(Hash, Pubkey, ObjectMeta, OwnerMeta, new, Req, State);
+                        ok ->
+                            claim_and_reply(Hash, Pubkey, ObjectMeta, OwnerMeta, new, Req, State);
                         {error, Reason} ->
-                            ?LOG_ERROR("Blossom failed to register IPFS pin cid=~p reason=~p", [Cid, Reason]),
+                            ?LOG_ERROR("Blossom failed to register IPFS pin cid=~p reason=~p", [
+                                Cid, Reason
+                            ]),
                             {ok, reply_error(503, <<"IPFS persistence unavailable">>, Req), State}
                     end;
                 {error, Reason} ->
@@ -573,7 +618,11 @@ claim_and_reply(Hash, Pubkey, Object, Owner, ExpectedNewness, Req, State) ->
                     {_, existing} -> existing;
                     _ -> new
                 end,
-            Status = case Newness of new -> 201; existing -> 200 end,
+            Status =
+                case Newness of
+                    new -> 201;
+                    existing -> 200
+                end,
             {ok, reply_json(Status, blob_descriptor(Hash, StoredObject, Owner, Req), Req), State};
         {error, hash_cid_conflict} ->
             {ok, reply_error(409, <<"SHA-256 conflicts with stored IPFS object">>, Req), State};
@@ -616,9 +665,15 @@ serve_blob(Method, Hash, Req0, State) ->
                     serve_verified_blob(Method, Hash, Cid, Object, Data, Req0, State);
                 {error, integrity_mismatch} ->
                     ?LOG_ERROR("Blossom IPFS integrity mismatch hash=~p cid=~p", [Hash, Cid]),
-                    {ok, method_error(Method, 502, <<"Stored blob failed integrity verification">>, Req0), State};
+                    {ok,
+                        method_error(
+                            Method, 502, <<"Stored blob failed integrity verification">>, Req0
+                        ),
+                        State};
                 {error, Reason} ->
-                    ?LOG_WARNING("Blossom IPFS read failed hash=~p cid=~p reason=~p", [Hash, Cid, Reason]),
+                    ?LOG_WARNING("Blossom IPFS read failed hash=~p cid=~p reason=~p", [
+                        Hash, Cid, Reason
+                    ]),
                     {ok, method_error(Method, 503, <<"Blob temporarily unavailable">>, Req0), State}
             end;
         {error, not_found} ->
@@ -709,7 +764,8 @@ if_none_match(Req, ETag) ->
         _ -> false
     end.
 
-parse_byte_range(_Header, 0) -> error;
+parse_byte_range(_Header, 0) ->
+    error;
 parse_byte_range(Header, Size) when is_binary(Header), Size > 0 ->
     case Header of
         <<"bytes=", Spec/binary>> ->
@@ -717,7 +773,8 @@ parse_byte_range(Header, Size) when is_binary(Header), Size > 0 ->
                 nomatch -> parse_single_range(Spec, Size);
                 _ -> error
             end;
-        _ -> error
+        _ ->
+            error
     end.
 
 parse_single_range(Spec, Size) ->
@@ -727,7 +784,8 @@ parse_single_range(Spec, Size) ->
                 {ok, Suffix} ->
                     Length = min(Suffix, Size),
                     {ok, Size - Length, Size - 1};
-                error -> error
+                error ->
+                    error
             end;
         [Start0, <<>>] ->
             case parse_nonneg_int(Start0) of
@@ -738,14 +796,16 @@ parse_single_range(Spec, Size) ->
             case {parse_nonneg_int(Start0), parse_nonneg_int(End0)} of
                 {{ok, Start}, {ok, End0I}} when Start < Size, End0I >= Start ->
                     {ok, Start, min(End0I, Size - 1)};
-                _ -> error
+                _ ->
+                    error
             end;
-        _ -> error
+        _ ->
+            error
     end.
 
 content_range(Start, End, Size) ->
-    <<"bytes ", (integer_to_binary(Start))/binary, "-", (integer_to_binary(End))/binary,
-        "/", (integer_to_binary(Size))/binary>>.
+    <<"bytes ", (integer_to_binary(Start))/binary, "-", (integer_to_binary(End))/binary, "/",
+        (integer_to_binary(Size))/binary>>.
 
 %% ------------------------------------------------------------------
 %% BUD-12 delete/list
@@ -760,34 +820,44 @@ handle_delete(Req0, State) ->
                         {ok, #{pubkey := Pubkey}} ->
                             case rate_check_pubkey(delete_pubkey, Pubkey) of
                                 ok ->
-                                    case damage_nip96_store:release_source(
-                                        blossom, Hash, Pubkey
-                                    ) of
+                                    case
+                                        damage_nip96_store:release_source(
+                                            blossom, Hash, Pubkey
+                                        )
+                                    of
                                         {ok, last_owner, Object} ->
                                             maybe_unpin_last_owner(Object),
-                                            {ok, cowboy_req:reply(
-                                                204, cors_headers(#{}), <<>>, Req0
-                                            ), State};
+                                            {ok,
+                                                cowboy_req:reply(
+                                                    204, cors_headers(#{}), <<>>, Req0
+                                                ),
+                                                State};
                                         {ok, shared, _Object} ->
-                                            {ok, cowboy_req:reply(
-                                                204, cors_headers(#{}), <<>>, Req0
-                                            ), State};
+                                            {ok,
+                                                cowboy_req:reply(
+                                                    204, cors_headers(#{}), <<>>, Req0
+                                                ),
+                                                State};
                                         {error, not_owner} ->
-                                            {ok, reply_error(
-                                                404,
-                                                <<"Blob is not owned by authenticated pubkey">>,
-                                                Req0
-                                            ), State};
+                                            {ok,
+                                                reply_error(
+                                                    404,
+                                                    <<"Blob is not owned by authenticated pubkey">>,
+                                                    Req0
+                                                ),
+                                                State};
                                         {error, Reason} ->
                                             ?LOG_ERROR(
                                                 "Blossom delete failed hash=~p reason=~p",
                                                 [Hash, Reason]
                                             ),
-                                            {ok, reply_error(
-                                                503,
-                                                <<"Blob metadata store unavailable">>,
-                                                Req0
-                                            ), State}
+                                            {ok,
+                                                reply_error(
+                                                    503,
+                                                    <<"Blob metadata store unavailable">>,
+                                                    Req0
+                                                ),
+                                                State}
                                     end;
                                 RateError ->
                                     {ok, reply_rate_error(RateError, Req0), State}
@@ -826,13 +896,21 @@ handle_list_pubkey(Pubkey, Req0, State) ->
                 {ok, Cursor, Limit} ->
                     case damage_nip96_store:list_cursor(blossom, Pubkey, Cursor, Limit) of
                         {ok, #{files := Rows}} ->
-                            Body = [blob_descriptor(Hash, Object, Owner, Req0) || {Hash, Object, Owner} <- Rows],
+                            Body = [
+                                blob_descriptor(Hash, Object, Owner, Req0)
+                             || {Hash, Object, Owner} <- Rows
+                            ],
                             {ok, reply_json(200, Body, Req0), State};
                         {error, cursor_not_found} ->
-                            {ok, reply_error(400, <<"Cursor does not identify a blob in this list">>, Req0), State};
+                            {ok,
+                                reply_error(
+                                    400, <<"Cursor does not identify a blob in this list">>, Req0
+                                ),
+                                State};
                         {error, Reason} ->
                             ?LOG_ERROR("Blossom list failed pubkey=~p reason=~p", [Pubkey, Reason]),
-                            {ok, reply_error(503, <<"Blob metadata store unavailable">>, Req0), State}
+                            {ok, reply_error(503, <<"Blob metadata store unavailable">>, Req0),
+                                State}
                     end;
                 {error, _} ->
                     {ok, reply_error(400, <<"Malformed list cursor or limit">>, Req0), State}
@@ -876,20 +954,27 @@ blob_descriptor(Hash, Object, Owner, Req) ->
         <<"ipfs">> => <<"ipfs://", Cid/binary>>
     }.
 
-extract_cid({ok, Value}) -> extract_cid(Value);
-extract_cid(#{<<"Hash">> := Cid}) -> valid_cid_result(Cid);
-extract_cid(#{hash := Cid}) -> valid_cid_result(Cid);
-extract_cid(#{<<"hash">> := Cid}) -> valid_cid_result(Cid);
+extract_cid({ok, Value}) ->
+    extract_cid(Value);
+extract_cid(#{<<"Hash">> := Cid}) ->
+    valid_cid_result(Cid);
+extract_cid(#{hash := Cid}) ->
+    valid_cid_result(Cid);
+extract_cid(#{<<"hash">> := Cid}) ->
+    valid_cid_result(Cid);
 extract_cid(List) when is_list(List), List =/= [] ->
     case lists:all(fun erlang:is_integer/1, List) of
         true -> valid_cid_result(List);
         false -> extract_cid_from_results(lists:reverse(List))
     end;
 extract_cid(Cid) when is_binary(Cid) -> valid_cid_result(Cid);
-extract_cid({error, _} = Error) -> Error;
-extract_cid(Other) -> {error, {invalid_ipfs_add_response, Other}}.
+extract_cid({error, _} = Error) ->
+    Error;
+extract_cid(Other) ->
+    {error, {invalid_ipfs_add_response, Other}}.
 
-extract_cid_from_results([]) -> {error, missing_ipfs_cid};
+extract_cid_from_results([]) ->
+    {error, missing_ipfs_cid};
 extract_cid_from_results([H | T]) ->
     case extract_cid(H) of
         {ok, _} = Ok -> Ok;
@@ -904,12 +989,15 @@ valid_cid_result(Cid0) ->
     end.
 
 ensure_pin(Cid) ->
-    case application:get_env(
-        damage,
-        blossom_pin_uploads,
-        application:get_env(damage, nip96_pin_uploads, true)
-    ) of
-        false -> ok;
+    case
+        application:get_env(
+            damage,
+            blossom_pin_uploads,
+            application:get_env(damage, nip96_pin_uploads, true)
+        )
+    of
+        false ->
+            ok;
         _ ->
             case damage_ipfs:pin_async(Cid) of
                 ok -> ok;
@@ -929,9 +1017,11 @@ maybe_unpin_last_owner(#{cid := Cid}) ->
                 {ok, _} -> ok;
                 Error -> ?LOG_WARNING("Blossom async unpin failed cid=~p reason=~p", [Cid, Error])
             end;
-        _ -> ok
+        _ ->
+            ok
     end;
-maybe_unpin_last_owner(_) -> ok.
+maybe_unpin_last_owner(_) ->
+    ok.
 
 %% ------------------------------------------------------------------
 %% URL/path/query helpers
@@ -944,7 +1034,8 @@ request_hash(Req) ->
                 {ok, _} = Ok -> Ok;
                 _ -> error
             end;
-        _ -> error
+        _ ->
+            error
     catch
         _:_ -> error
     end.
@@ -956,7 +1047,8 @@ request_pubkey(Req) ->
                 {ok, _} = Ok -> Ok;
                 _ -> error
             end;
-        _ -> error
+        _ ->
+            error
     catch
         _:_ -> error
     end.
@@ -965,26 +1057,34 @@ parse_hash_segment(Segment) ->
     Hash0 = hd(binary:split(Segment, <<".">>, [global])),
     parse_hash(Hash0).
 
-parse_hash(undefined) -> {error, missing};
+parse_hash(undefined) ->
+    {error, missing};
 parse_hash(Hash0) ->
     Hash = lower_ascii(to_bin(Hash0)),
-    case byte_size(Hash) =:= 64 andalso
-        re:run(Hash, <<"\\A[0-9a-f]{64}\\z">>, [{capture, none}]) =:= match
+    case
+        byte_size(Hash) =:= 64 andalso
+            re:run(Hash, <<"\\A[0-9a-f]{64}\\z">>, [{capture, none}]) =:= match
     of
         true -> {ok, Hash};
         false -> {error, invalid}
     end.
 
 blob_url(Hash, Object, Req) ->
-    Ext = case maps:get(extension, Object, <<>>) of <<>> -> <<".bin">>; V -> V end,
+    Ext =
+        case maps:get(extension, Object, <<>>) of
+            <<>> -> <<".bin">>;
+            V -> V
+        end,
     <<(public_base_url(Req))/binary, "/", Hash/binary, Ext/binary>>.
 
 public_base_url(Req) ->
     case application:get_env(damage, blossom_public_base_url) of
-        {ok, Value} -> trim_trailing_slash(to_bin(Value));
+        {ok, Value} ->
+            trim_trailing_slash(to_bin(Value));
         undefined ->
             case application:get_env(damage, nip96_public_base_url) of
-                {ok, Value} -> trim_trailing_slash(to_bin(Value));
+                {ok, Value} ->
+                    trim_trailing_slash(to_bin(Value));
                 undefined ->
                     case application:get_env(damage, api_url) of
                         {ok, Value} -> trim_trailing_slash(to_bin(Value));
@@ -1003,7 +1103,8 @@ request_origin(Req) ->
         _ -> <<Scheme/binary, "://", Host/binary, ":", (integer_to_binary(Port))/binary>>
     end.
 
-trim_trailing_slash(<<>>) -> <<>>;
+trim_trailing_slash(<<>>) ->
+    <<>>;
 trim_trailing_slash(Bin) ->
     case binary:last(Bin) of
         $/ -> trim_trailing_slash(binary:part(Bin, 0, byte_size(Bin) - 1));
@@ -1022,7 +1123,8 @@ list_args(Req) ->
 parse_cursor(undefined) -> {ok, undefined};
 parse_cursor(Bin) -> parse_hash(Bin).
 
-parse_limit(undefined) -> {ok, ?DEFAULT_LIST_LIMIT};
+parse_limit(undefined) ->
+    {ok, ?DEFAULT_LIST_LIMIT};
 parse_limit(Bin) ->
     case parse_positive_int(Bin) of
         {ok, I} -> {ok, min(I, ?MAX_LIST_LIMIT)};
@@ -1036,7 +1138,8 @@ parse_size(Bin) when is_binary(Bin) ->
     catch
         _:_ -> {error, invalid}
     end;
-parse_size(_) -> {error, invalid}.
+parse_size(_) ->
+    {error, invalid}.
 
 parse_nonneg_int(Bin) when is_binary(Bin), byte_size(Bin) > 0 ->
     try binary_to_integer(Bin) of
@@ -1045,7 +1148,8 @@ parse_nonneg_int(Bin) when is_binary(Bin), byte_size(Bin) > 0 ->
     catch
         _:_ -> error
     end;
-parse_nonneg_int(_) -> error.
+parse_nonneg_int(_) ->
+    error.
 
 parse_positive_int(Bin) ->
     case parse_nonneg_int(Bin) of
@@ -1053,8 +1157,10 @@ parse_positive_int(Bin) ->
         _ -> error
     end.
 
-normalize_content_type(undefined) -> {error, missing};
-normalize_content_type(<<>>) -> {error, missing};
+normalize_content_type(undefined) ->
+    {error, missing};
+normalize_content_type(<<>>) ->
+    {error, missing};
 normalize_content_type(Bin0) ->
     Bin = to_bin(Bin0),
     Mime0 = hd(binary:split(Bin, <<";">>, [global])),
@@ -1114,7 +1220,8 @@ allowed_content_types() ->
 
 valid_mime_type(Mime) when is_binary(Mime), byte_size(Mime) =< 255 ->
     re:run(Mime, <<"\\A[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+\\z">>, [{capture, none}]) =:= match;
-valid_mime_type(_) -> false.
+valid_mime_type(_) ->
+    false.
 
 blossom_list_enabled() ->
     application:get_env(damage, blossom_list_enabled, false) =:= true.
@@ -1126,11 +1233,12 @@ max_upload_bytes() ->
             _ ->
                 case application:get_env(damage, nip96_max_bytes) of
                     {ok, I} when is_integer(I), I > 0 -> I;
-                    _ -> maps:get(
-                        max_request_bytes,
-                        damage_ipfs_config:load(),
-                        ?DEFAULT_MAX_BYTES
-                    )
+                    _ ->
+                        maps:get(
+                            max_request_bytes,
+                            damage_ipfs_config:load(),
+                            ?DEFAULT_MAX_BYTES
+                        )
                 end
         end,
     min(max(1, Configured), ?ABSOLUTE_MAX_BYTES).
@@ -1173,7 +1281,11 @@ temp_upload_path() ->
     end.
 
 content_disposition(Hash, Object) ->
-    Ext = case maps:get(extension, Object, <<>>) of <<>> -> <<".bin">>; V -> V end,
+    Ext =
+        case maps:get(extension, Object, <<>>) of
+            <<>> -> <<".bin">>;
+            V -> V
+        end,
     ContentType = maps:get(content_type, Object, <<"application/octet-stream">>),
     Disposition =
         case safe_inline_content_type(ContentType) of
@@ -1231,7 +1343,8 @@ rate_check_pubkey(Scope, Pubkey) ->
 
 rate_check(Scope, Subject, Limit, Window) ->
     try damage_blossom_rate:check(Scope, Subject, Limit, Window) of
-        ok -> ok;
+        ok ->
+            ok;
         {error, {rate_limited, RetryAfter}} ->
             ?LOG_WARNING(
                 "Blossom rate limit exceeded scope=~p retry_after=~p",
@@ -1382,13 +1495,13 @@ cors_headers(Headers) ->
     }.
 
 lower_hex(Bin) ->
-    << <<(hex_digit(B bsr 4)), (hex_digit(B band 15))>> || <<B>> <= Bin >>.
+    <<<<(hex_digit(B bsr 4)), (hex_digit(B band 15))>> || <<B>> <= Bin>>.
 
 hex_digit(N) when N < 10 -> $0 + N;
 hex_digit(N) -> $a + (N - 10).
 
 lower_ascii(B) ->
-    << <<(lower_char(C))>> || <<C>> <= B >>.
+    <<<<(lower_char(C))>> || <<C>> <= B>>.
 lower_char(C) when C >= $A, C =< $Z -> C + 32;
 lower_char(C) -> C.
 

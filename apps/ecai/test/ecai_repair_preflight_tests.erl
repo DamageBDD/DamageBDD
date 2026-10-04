@@ -12,10 +12,9 @@ structural_snapshot_failures_are_blocked_test() ->
     lists:foreach(
         fun(Kind) ->
             ?assert(
-                ecai_repair_preflight:
-                    structural_snapshot_failure(
-                        #{kind => Kind}
-                    )
+                ecai_repair_preflight:structural_snapshot_failure(
+                    #{kind => Kind}
+                )
             )
         end,
         Kinds
@@ -31,10 +30,9 @@ transient_snapshot_failures_are_not_structural_test() ->
     lists:foreach(
         fun(Kind) ->
             ?assertNot(
-                ecai_repair_preflight:
-                    structural_snapshot_failure(
-                        #{kind => Kind}
-                    )
+                ecai_repair_preflight:structural_snapshot_failure(
+                    #{kind => Kind}
+                )
             )
         end,
         Kinds

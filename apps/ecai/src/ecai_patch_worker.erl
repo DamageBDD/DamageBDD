@@ -2,8 +2,15 @@
 -behaviour(gen_server).
 
 -export([start_link/1, run/1]).
--export([init/1, handle_continue/2, handle_call/3, handle_cast/2, handle_info/2,
-         terminate/2, code_change/3]).
+-export([
+    init/1,
+    handle_continue/2,
+    handle_call/3,
+    handle_cast/2,
+    handle_info/2,
+    terminate/2,
+    code_change/3
+]).
 
 -ifdef(TEST).
 -export([
@@ -31,8 +38,11 @@ start_link(Args) -> gen_server:start_link(?MODULE, Args, []).
 run(#{app := App, module := Module, finding := Finding} = Args) ->
     Opts = maps:get(opts, Args, #{}),
     ContextOpts = maps:get(context, Opts, #{}),
-    case ecai_code_context:for_vulnerability(
-             App, Module, Finding, ContextOpts) of
+    case
+        ecai_code_context:for_vulnerability(
+            App, Module, Finding, ContextOpts
+        )
+    of
         {error, _} = Error ->
             Error;
         {ok, Context0} ->
@@ -43,17 +53,27 @@ run(#{app := App, module := Module, finding := Finding} = Args) ->
                 {error, SnapshotError} ->
                     Context = snapshot_error_context(Context0, SnapshotError),
                     source_snapshot_retry(
-                        Fingerprint, Version, Context, SnapshotError, Opts);
+                        Fingerprint, Version, Context, SnapshotError, Opts
+                    );
                 {ok, Context} ->
-                    MaxAttempts = maps:get(max_attempts, Opts,
-                        application:get_env(ecai, code_patch_max_attempts, 3)),
+                    MaxAttempts = maps:get(
+                        max_attempts,
+                        Opts,
+                        application:get_env(ecai, code_patch_max_attempts, 3)
+                    ),
                     ResumeRepair = maps:get(resume_repair, Opts, #{}),
                     {Attempt0, Diagnostic0} =
                         resume_position(ResumeRepair),
                     RunOpts = resume_inference_state(ResumeRepair, Opts),
                     generate_attempt(
-                        Attempt0, MaxAttempts, Fingerprint, Version,
-                        Context, Diagnostic0, RunOpts)
+                        Attempt0,
+                        MaxAttempts,
+                        Fingerprint,
+                        Version,
+                        Context,
+                        Diagnostic0,
+                        RunOpts
+                    )
             end
     end.
 
@@ -65,9 +85,12 @@ handle_continue(run, Args) ->
         {ok, Repair} ->
             logger:notice(
                 "ECAI patch worker complete fingerprint=~p status=~p stage=~p",
-                [maps:get(fingerprint, Repair, undefined),
-                 maps:get(status, Repair, undefined),
-                 maps:get(stage, Repair, undefined)]);
+                [
+                    maps:get(fingerprint, Repair, undefined),
+                    maps:get(status, Repair, undefined),
+                    maps:get(stage, Repair, undefined)
+                ]
+            );
         {error, Reason} ->
             logger:error("ECAI patch worker failed reason=~p", [Reason])
     end,
@@ -79,8 +102,15 @@ handle_info(_Info, State) -> {noreply, State}.
 terminate(_Reason, _State) -> ok.
 code_change(_Old, State, _Extra) -> {ok, State}.
 
-generate_attempt(Attempt, MaxAttempts, Fingerprint, Version,
-                 Context, Diagnostic, Opts) ->
+generate_attempt(
+    Attempt,
+    MaxAttempts,
+    Fingerprint,
+    Version,
+    Context,
+    Diagnostic,
+    Opts
+) ->
     Prompt = patch_prompt(Context, Diagnostic, Attempt, Opts),
     InferenceOpts = patch_inference_opts(Opts),
     case patch_inference(Prompt, InferenceOpts) of
@@ -88,97 +118,192 @@ generate_attempt(Attempt, MaxAttempts, Fingerprint, Version,
             case ecai_patch_retry:is_retryable(Reason) of
                 true ->
                     schedule_retry(
-                        Fingerprint, Version, Context, Attempt,
-                        inference_error(Reason), Diagnostic, Opts);
+                        Fingerprint,
+                        Version,
+                        Context,
+                        Attempt,
+                        inference_error(Reason),
+                        Diagnostic,
+                        Opts
+                    );
                 false ->
                     final_failure(
-                        Fingerprint, Version, Context, Attempt,
-                        {ollama_failed, Reason}, Opts)
+                        Fingerprint,
+                        Version,
+                        Context,
+                        Attempt,
+                        {ollama_failed, Reason},
+                        Opts
+                    )
             end;
         {ok, Proposal, Meta} ->
             log_inference_selection(Meta),
             Meta1 = maps:merge(
-                Meta, prompt_provenance(Context, Prompt, Opts)),
+                Meta, prompt_provenance(Context, Prompt, Opts)
+            ),
             AttemptOpts = record_inference_attempt(Attempt, Meta1, Opts),
             handle_proposal(
-                Proposal, Attempt, MaxAttempts, Fingerprint, Version,
-                Context, AttemptOpts);
+                Proposal,
+                Attempt,
+                MaxAttempts,
+                Fingerprint,
+                Version,
+                Context,
+                AttemptOpts
+            );
         {ok, Proposal} ->
             Meta = prompt_provenance(Context, Prompt, Opts),
             AttemptOpts = record_inference_attempt(Attempt, Meta, Opts),
             handle_proposal(
-                Proposal, Attempt, MaxAttempts, Fingerprint, Version,
-                Context, AttemptOpts)
+                Proposal,
+                Attempt,
+                MaxAttempts,
+                Fingerprint,
+                Version,
+                Context,
+                AttemptOpts
+            )
     end.
 
-handle_proposal(Proposal, Attempt, MaxAttempts, Fingerprint, Version,
-                Context, Opts0) ->
+handle_proposal(
+    Proposal,
+    Attempt,
+    MaxAttempts,
+    Fingerprint,
+    Version,
+    Context,
+    Opts0
+) ->
     ProposalShape = proposal_shape(Proposal),
     Opts = record_inference_response(ProposalShape, Opts0),
     case proposal_model_error(Proposal) of
         {ok, ModelError} when Attempt < MaxAttempts ->
             NextDiag = model_error_diagnostic(ModelError, ProposalShape, Opts),
             generate_attempt(
-                Attempt + 1, MaxAttempts, Fingerprint, Version,
-                Context, NextDiag, Opts);
+                Attempt + 1,
+                MaxAttempts,
+                Fingerprint,
+                Version,
+                Context,
+                NextDiag,
+                Opts
+            );
         {ok, ModelError} ->
             final_failure(
-                Fingerprint, Version, Context, Attempt,
+                Fingerprint,
+                Version,
+                Context,
+                Attempt,
                 {model_response_error, ModelError},
                 #{
                     diagnostic =>
                         model_error_diagnostic(
-                            ModelError, ProposalShape, Opts),
+                            ModelError, ProposalShape, Opts
+                        ),
                     proposal_shape => ProposalShape
                 },
-                Opts);
+                Opts
+            );
         none ->
             handle_patch_proposal(
-                Proposal, ProposalShape, Attempt, MaxAttempts,
-                Fingerprint, Version, Context, Opts)
+                Proposal,
+                ProposalShape,
+                Attempt,
+                MaxAttempts,
+                Fingerprint,
+                Version,
+                Context,
+                Opts
+            )
     end.
 
 handle_patch_proposal(
-    Proposal, ProposalShape, Attempt, MaxAttempts,
-    Fingerprint, Version, Context, Opts
+    Proposal,
+    ProposalShape,
+    Attempt,
+    MaxAttempts,
+    Fingerprint,
+    Version,
+    Context,
+    Opts
 ) ->
     RawPatch = proposal_patch_value(Proposal),
     case normalize_proposal_patch(RawPatch) of
         {error, Reason} ->
             invalid_patch_or_retry(
-                Reason, ProposalShape, Attempt, MaxAttempts,
-                Fingerprint, Version, Context, Opts);
+                Reason,
+                ProposalShape,
+                Attempt,
+                MaxAttempts,
+                Fingerprint,
+                Version,
+                Context,
+                Opts
+            );
         {ok, Patch} ->
             case ecai_patch_verifier:validate_patch(Patch) of
                 {error, Reason} ->
                     invalid_patch_or_retry(
-                        Reason, ProposalShape, Attempt, MaxAttempts,
-                        Fingerprint, Version, Context, Opts);
+                        Reason,
+                        ProposalShape,
+                        Attempt,
+                        MaxAttempts,
+                        Fingerprint,
+                        Version,
+                        Context,
+                        Opts
+                    );
                 ok ->
-                    case write_patch(
-                             Fingerprint, Version, Patch, Opts) of
+                    case
+                        write_patch(
+                            Fingerprint, Version, Patch, Opts
+                        )
+                    of
                         {error, Reason} ->
                             final_failure(
-                                Fingerprint, Version, Context, Attempt,
-                                {cannot_write_patch, Reason}, Opts);
+                                Fingerprint,
+                                Version,
+                                Context,
+                                Attempt,
+                                {cannot_write_patch, Reason},
+                                Opts
+                            );
                         {ok, PatchFile} ->
                             Verify = maps:get(
-                                verify, Opts,
+                                verify,
+                                Opts,
                                 application:get_env(
-                                    ecai, code_patch_verify, true)),
+                                    ecai, code_patch_verify, true
+                                )
+                            ),
                             case Verify of
                                 false ->
                                     Repair = repair_record(
-                                        proposed, Fingerprint, Version,
-                                        Context, Proposal, Patch, PatchFile,
-                                        Attempt, undefined),
+                                        proposed,
+                                        Fingerprint,
+                                        Version,
+                                        Context,
+                                        Proposal,
+                                        Patch,
+                                        PatchFile,
+                                        Attempt,
+                                        undefined
+                                    ),
                                     persist_repair(
-                                        Repair#{stage => terminal}, Opts);
+                                        Repair#{stage => terminal}, Opts
+                                    );
                                 true ->
                                     verify_or_retry(
-                                        Attempt, MaxAttempts,
-                                        Fingerprint, Version, Context,
-                                        Proposal, Patch, PatchFile, Opts)
+                                        Attempt,
+                                        MaxAttempts,
+                                        Fingerprint,
+                                        Version,
+                                        Context,
+                                        Proposal,
+                                        Patch,
+                                        PatchFile,
+                                        Opts
+                                    )
                             end
                     end
             end
@@ -305,10 +430,8 @@ fallback_patch_candidates(_Value, _Depth) ->
 
 looks_like_patch(Bin) ->
     binary:match(Bin, <<"diff --git ">>) =/= nomatch orelse
-    (
-        binary:match(Bin, <<"--- a/">>) =/= nomatch andalso
-        binary:match(Bin, <<"+++ b/">>) =/= nomatch
-    ).
+        (binary:match(Bin, <<"--- a/">>) =/= nomatch andalso
+            binary:match(Bin, <<"+++ b/">>) =/= nomatch).
 
 join_patch_candidates([Candidate]) ->
     Candidate;
@@ -342,8 +465,11 @@ maybe_add_single_file_git_header(Patch) ->
             case single_file_unified_paths(Patch) of
                 {ok, OldPath, NewPath} ->
                     Header = <<
-                        "diff --git a/", OldPath/binary,
-                        " b/", NewPath/binary, "\n"
+                        "diff --git a/",
+                        OldPath/binary,
+                        " b/",
+                        NewPath/binary,
+                        "\n"
                     >>,
                     <<Header/binary, Patch/binary>>;
                 error ->
@@ -364,8 +490,9 @@ single_file_unified_paths(Patch) ->
      || <<"+++ b/", Rest/binary>> <- Lines
     ],
     case {OldPaths, NewPaths} of
-        {[OldPath], [NewPath]}
-          when byte_size(OldPath) > 0, byte_size(NewPath) > 0 ->
+        {[OldPath], [NewPath]} when
+            byte_size(OldPath) > 0, byte_size(NewPath) > 0
+        ->
             {ok, OldPath, NewPath};
         _ ->
             error
@@ -411,39 +538,63 @@ model_error_diagnostic(ModelError, ProposalShape, Opts) ->
             diagnostic_json(Base#{
                 retry_kind => verifier_rejected_patch,
                 required_response =>
-                    <<"The previous response incorrectly returned an error after deterministic verification rejected an earlier diff. "
-                      "Do not return another error object. Regenerate a NEW COMPLETE git unified diff from the original SOURCE. "
-                      "Return ONLY summary, security_property, tests, and patch; patch must begin with 'diff --git '.">>
+                    <<
+                        "The previous response incorrectly returned an error after deterministic verification rejected an earlier diff. "
+                        "Do not return another error object. Regenerate a NEW COMPLETE git unified diff from the original SOURCE. "
+                        "Return ONLY summary, security_property, tests, and patch; patch must begin with 'diff --git '."
+                    >>
             });
         _ ->
             diagnostic_json(Base#{
                 required_response =>
-                    <<"Return the requested JSON object with patch as one JSON string containing a git unified diff beginning with 'diff --git '. "
-                      "Do not return an error object unless the request is genuinely impossible from the supplied source.">>
+                    <<
+                        "Return the requested JSON object with patch as one JSON string containing a git unified diff beginning with 'diff --git '. "
+                        "Do not return an error object unless the request is genuinely impossible from the supplied source."
+                    >>
             })
     end.
 
 invalid_patch_or_retry(
-    Reason, ProposalShape, Attempt, MaxAttempts,
-    Fingerprint, Version, Context, Opts
+    Reason,
+    ProposalShape,
+    Attempt,
+    MaxAttempts,
+    Fingerprint,
+    Version,
+    Context,
+    Opts
 ) ->
-    case should_retry_invalid_patch(
-             Attempt, MaxAttempts, Reason, Opts) of
+    case
+        should_retry_invalid_patch(
+            Attempt, MaxAttempts, Reason, Opts
+        )
+    of
         true ->
             NextDiag = invalid_patch_diagnostic(Reason, ProposalShape),
             generate_attempt(
-                Attempt + 1, MaxAttempts, Fingerprint, Version,
-                Context, NextDiag, Opts);
+                Attempt + 1,
+                MaxAttempts,
+                Fingerprint,
+                Version,
+                Context,
+                NextDiag,
+                Opts
+            );
         false ->
             final_failure(
-                Fingerprint, Version, Context, Attempt,
+                Fingerprint,
+                Version,
+                Context,
+                Attempt,
                 {invalid_patch, Reason},
                 invalid_patch_failure_state(Reason, ProposalShape),
-                Opts)
+                Opts
+            )
     end.
 
-should_retry_invalid_patch(Attempt, MaxAttempts, _Reason, _Opts)
-  when Attempt < MaxAttempts ->
+should_retry_invalid_patch(Attempt, MaxAttempts, _Reason, _Opts) when
+    Attempt < MaxAttempts
+->
     true;
 should_retry_invalid_patch(Attempt, MaxAttempts, Reason, Opts) ->
     structural_patch_error(Reason) andalso
@@ -453,11 +604,13 @@ format_retry_limit(MaxAttempts, Opts) ->
     Extra0 = maps:get(
         format_extra_attempts,
         Opts,
-        application:get_env(ecai, code_patch_format_extra_attempts, 1)),
-    Extra = case Extra0 of
-        N when is_integer(N), N >= 0 -> erlang:min(N, 2);
-        _ -> 1
-    end,
+        application:get_env(ecai, code_patch_format_extra_attempts, 1)
+    ),
+    Extra =
+        case Extra0 of
+            N when is_integer(N), N >= 0 -> erlang:min(N, 2);
+            _ -> 1
+        end,
     MaxAttempts + Extra.
 
 structural_patch_error(missing_git_diff_header) -> true;
@@ -474,12 +627,14 @@ invalid_patch_diagnostic(Reason, ProposalShape) ->
         patch_validation_error => Reason,
         proposal_shape => ProposalShape,
         expected_patch =>
-            <<"Return ONLY JSON with keys summary, security_property, tests, patch. "
-              "patch MUST be one JSON string containing a git unified diff whose first bytes are 'diff --git '. "
-              "Every diff section MUST include matching ---/+++ file headers, at least one syntactically valid @@ hunk header, and at least one +/- changed line. "
-              "If an index line is present, both object IDs MUST contain only hexadecimal characters. "
-              "Regenerate the complete diff from the supplied SOURCE; do not return a header-only diff. "
-              "Do not return details/risks analysis objects, JSON Patch operations, prose, or markdown fences.">>
+            <<
+                "Return ONLY JSON with keys summary, security_property, tests, patch. "
+                "patch MUST be one JSON string containing a git unified diff whose first bytes are 'diff --git '. "
+                "Every diff section MUST include matching ---/+++ file headers, at least one syntactically valid @@ hunk header, and at least one +/- changed line. "
+                "If an index line is present, both object IDs MUST contain only hexadecimal characters. "
+                "Regenerate the complete diff from the supplied SOURCE; do not return a header-only diff. "
+                "Do not return details/risks analysis objects, JSON Patch operations, prose, or markdown fences."
+            >>
     }).
 
 invalid_patch_failure_state(Reason, ProposalShape) ->
@@ -520,7 +675,8 @@ proposal_shape_entries(Map, Depth, Path) when is_map(Map) ->
             [
                 #{path => NextPath, type => patch_value_type(Val)}
                 | proposal_shape_entries(
-                    Val, Depth + 1, NextPath)
+                    Val, Depth + 1, NextPath
+                )
             ]
         end
      || {Key, Val} <- Pairs
@@ -534,7 +690,8 @@ proposal_shape_entries(List, Depth, Path) when is_list(List) ->
             [
                 #{path => NextPath, type => patch_value_type(Val)}
                 | proposal_shape_entries(
-                    Val, Depth + 1, NextPath)
+                    Val, Depth + 1, NextPath
+                )
             ]
         end
      || {Index, Val} <- Indexed
@@ -606,12 +763,22 @@ log_inference_selection(Meta) when is_map(Meta) ->
             maps:get(provider, Meta, undefined),
             maps:get(node_id, Meta, undefined),
             maps:get(model, Meta, undefined)
-        ]);
+        ]
+    );
 log_inference_selection(_) ->
     ok.
 
-verify_or_retry(Attempt, MaxAttempts, Fingerprint, Version, Context,
-                Proposal, Patch, PatchFile, Opts) ->
+verify_or_retry(
+    Attempt,
+    MaxAttempts,
+    Fingerprint,
+    Version,
+    Context,
+    Proposal,
+    Patch,
+    PatchFile,
+    Opts
+) ->
     VerifyOpts0 = maps:merge(Opts, maps:get(verifier, Opts, #{})),
     VerifyOpts =
         case maps:get(base_commit, Context, undefined) of
@@ -621,19 +788,44 @@ verify_or_retry(Attempt, MaxAttempts, Fingerprint, Version, Context,
     case ecai_patch_verifier:verify(PatchFile, VerifyOpts) of
         {ok, #{status := validated} = Verification} ->
             Repair = repair_record(
-                validated, Fingerprint, Version, Context,
-                Proposal, Patch, PatchFile, Attempt, Verification),
+                validated,
+                Fingerprint,
+                Version,
+                Context,
+                Proposal,
+                Patch,
+                PatchFile,
+                Attempt,
+                Verification
+            ),
             persist_repair(Repair#{stage => terminal}, Opts);
         {ok, Verification} when Attempt < MaxAttempts ->
             Diagnostic = verification_retry_diagnostic(Verification, Attempt),
             checkpoint_and_generate(
-                Attempt + 1, MaxAttempts, Fingerprint, Version,
-                Context, Proposal, Patch, PatchFile,
-                Verification, Diagnostic, Opts);
+                Attempt + 1,
+                MaxAttempts,
+                Fingerprint,
+                Version,
+                Context,
+                Proposal,
+                Patch,
+                PatchFile,
+                Verification,
+                Diagnostic,
+                Opts
+            );
         {ok, Verification} ->
             Repair = repair_record(
-                failed, Fingerprint, Version, Context,
-                Proposal, Patch, PatchFile, Attempt, Verification),
+                failed,
+                Fingerprint,
+                Version,
+                Context,
+                Proposal,
+                Patch,
+                PatchFile,
+                Attempt,
+                Verification
+            ),
             persist_repair(
                 Repair#{
                     stage => terminal,
@@ -642,27 +834,48 @@ verify_or_retry(Attempt, MaxAttempts, Fingerprint, Version, Context,
                     diagnostic =>
                         diagnostic_json(
                             compact_verification_diagnostic(
-                                Verification))
+                                Verification
+                            )
+                        )
                 },
-                Opts);
+                Opts
+            );
         {error, Reason} when Attempt < MaxAttempts ->
             Verification = #{status => verifier_error, error => Reason},
             Diagnostic = diagnostic_json(#{
                 verifier_error => Reason,
                 retry_instruction =>
-                    <<"The verifier itself failed before it could validate the patch. "
-                      "Keep the repair grounded in the original SOURCE and return a complete replacement diff; "
-                      "do not describe the verifier failure as the repair result.">>
+                    <<
+                        "The verifier itself failed before it could validate the patch. "
+                        "Keep the repair grounded in the original SOURCE and return a complete replacement diff; "
+                        "do not describe the verifier failure as the repair result."
+                    >>
             }),
             checkpoint_and_generate(
-                Attempt + 1, MaxAttempts, Fingerprint, Version,
-                Context, Proposal, Patch, PatchFile,
-                Verification, Diagnostic, Opts);
+                Attempt + 1,
+                MaxAttempts,
+                Fingerprint,
+                Version,
+                Context,
+                Proposal,
+                Patch,
+                PatchFile,
+                Verification,
+                Diagnostic,
+                Opts
+            );
         {error, Reason} ->
             Repair = repair_record(
-                failed, Fingerprint, Version, Context,
-                Proposal, Patch, PatchFile, Attempt,
-                #{status => verifier_error, error => Reason}),
+                failed,
+                Fingerprint,
+                Version,
+                Context,
+                Proposal,
+                Patch,
+                PatchFile,
+                Attempt,
+                #{status => verifier_error, error => Reason}
+            ),
             persist_repair(
                 Repair#{
                     stage => terminal,
@@ -671,11 +884,13 @@ verify_or_retry(Attempt, MaxAttempts, Fingerprint, Version, Context,
                     diagnostic =>
                         diagnostic_json(#{verifier_error => Reason})
                 },
-                Opts)
+                Opts
+            )
     end.
 
-compact_verification_diagnostic(Verification)
-  when is_map(Verification) ->
+compact_verification_diagnostic(Verification) when
+    is_map(Verification)
+->
     Steps = maps:get(steps, Verification, []),
     FailedStep = first_failed_step(Steps),
     Base = maps:with(
@@ -704,11 +919,13 @@ verification_retry_diagnostic(Verification, Attempt) ->
         previous_attempt => Attempt,
         verifier => compact_verification_diagnostic(Verification),
         retry_instruction =>
-            <<"A previous candidate diff was generated, but the verifier rejected that diff. "
-              "This is corrective feedback, not evidence that the requested repair is impossible. "
-              "Regenerate a NEW COMPLETE unified diff from the original SOURCE bytes. "
-              "Do not reuse, append to, quote, or explain the previous diff. "
-              "Do not return an error object. The response MUST contain summary, security_property, tests, and patch.">>
+            <<
+                "A previous candidate diff was generated, but the verifier rejected that diff. "
+                "This is corrective feedback, not evidence that the requested repair is impossible. "
+                "Regenerate a NEW COMPLETE unified diff from the original SOURCE bytes. "
+                "Do not reuse, append to, quote, or explain the previous diff. "
+                "Do not return an error object. The response MUST contain summary, security_property, tests, and patch."
+            >>
     }).
 
 first_failed_step([]) ->
@@ -777,14 +994,30 @@ truncate_diagnostic_value(Value) when is_binary(Value), byte_size(Value) > 8192 
 truncate_diagnostic_value(Value) ->
     Value.
 
-checkpoint_and_generate(NextAttempt, MaxAttempts,
-                        Fingerprint, Version, Context,
-                        Proposal, Patch, PatchFile,
-                        Verification, Diagnostic, Opts) ->
+checkpoint_and_generate(
+    NextAttempt,
+    MaxAttempts,
+    Fingerprint,
+    Version,
+    Context,
+    Proposal,
+    Patch,
+    PatchFile,
+    Verification,
+    Diagnostic,
+    Opts
+) ->
     Checkpoint = repair_record(
-        running, Fingerprint, Version, Context,
-        Proposal, Patch, PatchFile,
-        NextAttempt, Verification),
+        running,
+        Fingerprint,
+        Version,
+        Context,
+        Proposal,
+        Patch,
+        PatchFile,
+        NextAttempt,
+        Verification
+    ),
     RetrySources = verifier_retry_sources(Verification),
     RetryContext = #{
         kind => verifier_rejected_patch,
@@ -797,18 +1030,27 @@ checkpoint_and_generate(NextAttempt, MaxAttempts,
         repair_retry => RetryContext,
         repair_retry_sources => RetrySources
     },
-    case persist_repair(
-             Checkpoint#{
-                 stage => awaiting_inference,
-                 diagnostic => Diagnostic,
-                 attempt => NextAttempt,
-                 repair_retry => RetryContext
-             },
-             RetryOpts) of
+    case
+        persist_repair(
+            Checkpoint#{
+                stage => awaiting_inference,
+                diagnostic => Diagnostic,
+                attempt => NextAttempt,
+                repair_retry => RetryContext
+            },
+            RetryOpts
+        )
+    of
         {ok, _} ->
             generate_attempt(
-                NextAttempt, MaxAttempts, Fingerprint, Version,
-                Context, Diagnostic, RetryOpts);
+                NextAttempt,
+                MaxAttempts,
+                Fingerprint,
+                Version,
+                Context,
+                Diagnostic,
+                RetryOpts
+            );
         {error, _} = Error ->
             Error
     end.
@@ -832,10 +1074,12 @@ source_snapshot_retry(Fingerprint, Version, Context, Error, Opts) ->
     case source_snapshot_block_kind(Error) of
         true ->
             source_snapshot_block(
-                Fingerprint, Version, Context, Error, Opts);
+                Fingerprint, Version, Context, Error, Opts
+            );
         false ->
             source_snapshot_retry_wait(
-                Fingerprint, Version, Context, Error, Opts)
+                Fingerprint, Version, Context, Error, Opts
+            )
     end.
 
 source_snapshot_block(Fingerprint, Version, Context, Error, Opts) ->
@@ -943,8 +1187,15 @@ source_snapshot_retry_ms(Opts) ->
         _ -> 60000
     end.
 
-schedule_retry(Fingerprint, Version, Context, Attempt,
-               Error, Diagnostic, Opts) ->
+schedule_retry(
+    Fingerprint,
+    Version,
+    Context,
+    Attempt,
+    Error,
+    Diagnostic,
+    Opts
+) ->
     Existing = current_repair(Fingerprint, Version),
     RetryCount = maps:get(retry_count, Existing, 0) + 1,
     Limit = ecai_patch_retry:retry_limit(Opts),
@@ -955,7 +1206,9 @@ schedule_retry(Fingerprint, Version, Context, Attempt,
             Exhausted0 = maps:merge(
                 Existing,
                 base_repair(
-                    Fingerprint, Version, Context, Attempt)),
+                    Fingerprint, Version, Context, Attempt
+                )
+            ),
             Exhausted = Exhausted0#{
                 status => failed,
                 stage => terminal,
@@ -973,10 +1226,13 @@ schedule_retry(Fingerprint, Version, Context, Attempt,
             Retry0 = maps:merge(
                 Existing,
                 base_repair(
-                    Fingerprint, Version, Context, Attempt)),
+                    Fingerprint, Version, Context, Attempt
+                )
+            ),
             Retry1 = maps:without(
                 [completed_at, worker_pid, worker_started_at],
-                Retry0),
+                Retry0
+            ),
             Retry = Retry1#{
                 status => retry_wait,
                 stage => inference_wait,
@@ -988,7 +1244,8 @@ schedule_retry(Fingerprint, Version, Context, Attempt,
                 diagnostic => Diagnostic,
                 next_retry_at_ms =>
                     ecai_patch_retry:next_retry_at_ms(
-                        RetryCount, NowMs, Opts),
+                        RetryCount, NowMs, Opts
+                    ),
                 updated_at => Now
             },
             persist_repair(Retry, Opts)
@@ -996,13 +1253,27 @@ schedule_retry(Fingerprint, Version, Context, Attempt,
 
 final_failure(Fingerprint, Version, Context, Attempt, Reason, Opts) ->
     final_failure(
-        Fingerprint, Version, Context, Attempt,
-        Reason, #{}, Opts).
+        Fingerprint,
+        Version,
+        Context,
+        Attempt,
+        Reason,
+        #{},
+        Opts
+    ).
 
-final_failure(Fingerprint, Version, Context, Attempt,
-              Reason, ExtraState, Opts) ->
+final_failure(
+    Fingerprint,
+    Version,
+    Context,
+    Attempt,
+    Reason,
+    ExtraState,
+    Opts
+) ->
     Repair0 = (base_repair(
-        Fingerprint, Version, Context, Attempt))#{
+        Fingerprint, Version, Context, Attempt
+    ))#{
         status => failed,
         stage => terminal,
         retryable => false,
@@ -1036,7 +1307,8 @@ base_repair(Fingerprint, Version, Context, Attempt) ->
             maps:get(
                 source_sha256,
                 maps:get(analysis, Context, #{}),
-                <<>>),
+                <<>>
+            ),
         base_commit => maps:get(base_commit, Context, undefined),
         source_path => maps:get(source_path, Context, undefined),
         attempt => Attempt,
@@ -1051,8 +1323,10 @@ persist_repair(Repair00, Opts) ->
     Existing = current_repair(Fingerprint, Version),
     Now = now_iso8601(),
     CreatedAt = maps:get(
-        created_at, Existing,
-        maps:get(created_at, Repair0, Now)),
+        created_at,
+        Existing,
+        maps:get(created_at, Repair0, Now)
+    ),
     Merged0 = maps:merge(Existing, Repair0),
     MergedFresh = clear_stale_attempt_payload(Repair0, Merged0),
     Merged1 = MergedFresh#{
@@ -1066,7 +1340,8 @@ persist_repair(Repair00, Opts) ->
             true ->
                 (maps:without(
                     [worker_pid, worker_started_at, next_retry_at_ms],
-                    MergedState))#{
+                    MergedState
+                ))#{
                     completed_at =>
                         maps:get(completed_at, Repair0, Now)
                 };
@@ -1077,11 +1352,15 @@ persist_repair(Repair00, Opts) ->
                     _ ->
                         maps:without(
                             [completed_at, worker_pid],
-                            MergedState)
+                            MergedState
+                        )
                 end
         end,
-    case ecai_learning_store:put_repair(
-             Fingerprint, Version, Merged2) of
+    case
+        ecai_learning_store:put_repair(
+            Fingerprint, Version, Merged2
+        )
+    of
         ok ->
             _ = ecai_learning_snapshot:write(Opts),
             {ok, Merged2};
@@ -1091,10 +1370,11 @@ persist_repair(Repair00, Opts) ->
             {error, {repair_store_failed, Other}}
     end.
 
-clear_stale_failure_state(Status, Repair)
-  when Status =:= validated;
-       Status =:= proposed;
-       Status =:= running ->
+clear_stale_failure_state(Status, Repair) when
+    Status =:= validated;
+    Status =:= proposed;
+    Status =:= running
+->
     maps:without(
         [
             error,
@@ -1111,12 +1391,14 @@ clear_stale_failure_state(_Status, Repair) ->
 %% Keep provider provenance with the repair record without persisting
 %% credentials or arbitrary provider response metadata. History is bounded so
 %% repeated retries cannot grow DETS records without limit.
-record_inference_attempt(Attempt, Meta0, Opts)
-  when is_integer(Attempt), Attempt > 0, is_map(Opts) ->
-    Meta = case Meta0 of
-        M when is_map(M) -> M;
-        _ -> #{}
-    end,
+record_inference_attempt(Attempt, Meta0, Opts) when
+    is_integer(Attempt), Attempt > 0, is_map(Opts)
+->
+    Meta =
+        case Meta0 of
+            M when is_map(M) -> M;
+            _ -> #{}
+        end,
     SafeMeta = maps:with(
         [
             provider,
@@ -1160,8 +1442,9 @@ bounded_inference_history(History) when is_list(History) ->
 bounded_inference_history(_) ->
     [].
 
-record_inference_response(ProposalShape, Opts)
-  when is_map(ProposalShape), is_map(Opts) ->
+record_inference_response(ProposalShape, Opts) when
+    is_map(ProposalShape), is_map(Opts)
+->
     case maps:get(inference_meta, Opts, undefined) of
         Meta0 when is_map(Meta0) ->
             Meta = Meta0#{response_shape => ProposalShape},
@@ -1180,14 +1463,16 @@ replace_last_inference_entry([], Meta) ->
 replace_last_inference_entry(History, Meta) when is_list(History) ->
     lists:sublist(History, length(History) - 1) ++ [Meta].
 
-resume_inference_state(Repair, Opts)
-  when is_map(Repair), is_map(Opts) ->
-    Opts1 = case maps:get(inference_history, Repair, undefined) of
-        History when is_list(History), History =/= [] ->
-            Opts#{inference_history => bounded_inference_history(History)};
-        _ ->
-            Opts
-    end,
+resume_inference_state(Repair, Opts) when
+    is_map(Repair), is_map(Opts)
+->
+    Opts1 =
+        case maps:get(inference_history, Repair, undefined) of
+            History when is_list(History), History =/= [] ->
+                Opts#{inference_history => bounded_inference_history(History)};
+            _ ->
+                Opts
+        end,
     case maps:get(inference_meta, Repair, undefined) of
         Meta when is_map(Meta), map_size(Meta) > 0 ->
             Opts1#{inference_meta => Meta};
@@ -1202,12 +1487,13 @@ attach_inference_state(A1, A2) ->
     attach_inference_state_without_ecai_capsule(E1, E2).
 
 attach_inference_state_without_ecai_capsule(Repair, Opts) when is_map(Repair), is_map(Opts) ->
-    Repair1 = case maps:get(inference_meta, Opts, undefined) of
-        Meta when is_map(Meta), map_size(Meta) > 0 ->
-            Repair#{inference_meta => Meta};
-        _ ->
-            Repair
-    end,
+    Repair1 =
+        case maps:get(inference_meta, Opts, undefined) of
+            Meta when is_map(Meta), map_size(Meta) > 0 ->
+                Repair#{inference_meta => Meta};
+            _ ->
+                Repair
+        end,
     case maps:get(inference_history, Opts, undefined) of
         History when is_list(History), History =/= [] ->
             Repair1#{inference_history => bounded_inference_history(History)};
@@ -1278,8 +1564,17 @@ current_repair(Fingerprint, Version) ->
             #{}
     end.
 
-repair_record(Status, Fingerprint, Version, Context, Proposal, Patch,
-              PatchFile, Attempt, Verification) ->
+repair_record(
+    Status,
+    Fingerprint,
+    Version,
+    Context,
+    Proposal,
+    Patch,
+    PatchFile,
+    Attempt,
+    Verification
+) ->
     #{
         status => Status,
         fingerprint => Fingerprint,
@@ -1291,7 +1586,8 @@ repair_record(Status, Fingerprint, Version, Context, Proposal, Patch,
             maps:get(
                 source_sha256,
                 maps:get(analysis, Context, #{}),
-                <<>>),
+                <<>>
+            ),
         base_commit => maps:get(base_commit, Context, undefined),
         source_path => maps:get(source_path, Context, undefined),
         summary => mget(<<"summary">>, Proposal, <<>>),
@@ -1314,18 +1610,19 @@ write_patch(Fingerprint, Version, Patch, Opts) ->
         {ok, Root} ->
             Dir = filename:join(
                 ecai_code_paths:patch_root(Root),
-                binary_to_list(Fingerprint)),
+                binary_to_list(Fingerprint)
+            ),
             Dummy = filename:join(Dir, ".keep"),
             case filelib:ensure_dir(Dummy) of
                 {error, Reason} ->
                     {error, {cannot_create_patch_dir, Dir, Reason}};
                 ok ->
                     File = filename:join(
-                        Dir, binary_to_list(Version) ++ ".patch"),
+                        Dir, binary_to_list(Version) ++ ".patch"
+                    ),
                     case file:write_file(File, Patch) of
                         ok -> {ok, File};
-                        {error, Reason} ->
-                            {error, {write_failed, File, Reason}}
+                        {error, Reason} -> {error, {write_failed, File, Reason}}
                     end
             end
     end.
@@ -1346,21 +1643,40 @@ patch_prompt(Context, Diagnostic, Attempt, Opts) ->
         <<"Do not modify generated files, dependencies, .git, release state, credentials, keys, wallets, or unrelated modules.\n">>,
         <<"Every modified file MUST have diff --git, ---, +++, and valid @@ hunk headers.\n">>,
         <<"Prefer the smallest fix that preserves documented invariants. Never weaken tests or suppress warnings merely to pass verification.\n\n">>,
-        <<"TARGET_SOURCE_PATH: ">>, SourcePath, <<"\n">>,
-        <<"BASE_COMMIT: ">>, to_binary(maps:get(base_commit, Context, <<"unknown">>)), <<"\n">>,
-        <<"ATTEMPT: ">>, integer_to_binary(Attempt), <<"\n">>,
-        <<"AUXILIARY_CONTEXT_JSON:\n">>, ContextJson, <<"\n\n">>,
+        <<"TARGET_SOURCE_PATH: ">>,
+        SourcePath,
+        <<"\n">>,
+        <<"BASE_COMMIT: ">>,
+        to_binary(maps:get(base_commit, Context, <<"unknown">>)),
+        <<"\n">>,
+        <<"ATTEMPT: ">>,
+        integer_to_binary(Attempt),
+        <<"\n">>,
+        <<"AUXILIARY_CONTEXT_JSON:\n">>,
+        ContextJson,
+        <<"\n\n">>,
         case Diagnostic of
-            <<>> -> <<>>;
+            <<>> ->
+                <<>>;
             _ ->
-                [<<"PREVIOUS_ATTEMPT_DIAGNOSTIC:\n">>,
-                 Diagnostic, <<"\n\n">>]
+                [
+                    <<"PREVIOUS_ATTEMPT_DIAGNOSTIC:\n">>,
+                    Diagnostic,
+                    <<"\n\n">>
+                ]
         end,
         <<"AUTHORITATIVE_TARGET_SOURCE:\n">>,
-        <<"SOURCE_ORIGIN: ">>, atom_to_binary(SourceOrigin, utf8), <<"\n">>,
-        <<"SOURCE_PATH: ">>, SourcePath, <<"\n">>,
-        <<"SOURCE_SHA256: ">>, SourceSha256, <<"\n">>,
-        <<"SOURCE_BEGIN\n">>, TargetSource,
+        <<"SOURCE_ORIGIN: ">>,
+        atom_to_binary(SourceOrigin, utf8),
+        <<"\n">>,
+        <<"SOURCE_PATH: ">>,
+        SourcePath,
+        <<"\n">>,
+        <<"SOURCE_SHA256: ">>,
+        SourceSha256,
+        <<"\n">>,
+        <<"SOURCE_BEGIN\n">>,
+        TargetSource,
         ensure_prompt_source_newline(TargetSource),
         <<"SOURCE_END\n\n">>,
         <<"Build every hunk against AUTHORITATIVE_TARGET_SOURCE exactly. ">>,
@@ -1375,25 +1691,27 @@ patch_prompt(Context, Diagnostic, Attempt, Opts) ->
 %% preferentially discard the exact bytes that git apply must match.
 compact_patch_context(Context) when is_map(Context) ->
     Analysis0 = maps:get(analysis, Context, #{}),
-    Analysis = case Analysis0 of
-        A when is_map(A) ->
-            maps:with(
-                [
-                    source_sha256,
-                    analysis_sha256,
-                    exports,
-                    behaviours,
-                    records,
-                    includes,
-                    security_boundaries
-                ],
-                A
-            );
-        _ ->
-            #{}
-    end,
+    Analysis =
+        case Analysis0 of
+            A when is_map(A) ->
+                maps:with(
+                    [
+                        source_sha256,
+                        analysis_sha256,
+                        exports,
+                        behaviours,
+                        records,
+                        includes,
+                        security_boundaries
+                    ],
+                    A
+                );
+            _ ->
+                #{}
+        end,
     Related = compact_related_modules(
-        maps:get(related_modules, Context, [])),
+        maps:get(related_modules, Context, [])
+    ),
     maps:filter(
         fun(_Key, Value) -> Value =/= undefined end,
         #{
@@ -1422,11 +1740,15 @@ compact_related_modules(Related) when is_list(Related) ->
 compact_related_modules(_) ->
     [].
 
-prompt_target_source(Context, Opts)
-  when is_map(Context), is_map(Opts) ->
+prompt_target_source(Context, Opts) when
+    is_map(Context), is_map(Opts)
+->
     Path = to_binary(maps:get(source_path, Context, <<>>)),
-    case retry_source_for_path(
-             Path, maps:get(repair_retry_sources, Opts, [])) of
+    case
+        retry_source_for_path(
+            Path, maps:get(repair_retry_sources, Opts, [])
+        )
+    of
         {ok, Source} ->
             {Source, verifier_failure_source};
         not_found ->
@@ -1435,8 +1757,9 @@ prompt_target_source(Context, Opts)
 
 retry_source_for_path(_Path, []) ->
     not_found;
-retry_source_for_path(Path, [#{path := Path0, source := Source} | Rest])
-  when is_binary(Source) ->
+retry_source_for_path(Path, [#{path := Path0, source := Source} | Rest]) when
+    is_binary(Source)
+->
     case to_binary(Path0) =:= Path of
         true -> {ok, Source};
         false -> retry_source_for_path(Path, Rest)
@@ -1473,8 +1796,9 @@ retry_source_evidence(Sources) when is_list(Sources) ->
 retry_source_evidence(_) ->
     [].
 
-prompt_provenance(Context, Prompt, Opts)
-  when is_map(Context), is_binary(Prompt), is_map(Opts) ->
+prompt_provenance(Context, Prompt, Opts) when
+    is_map(Context), is_binary(Prompt), is_map(Opts)
+->
     {Source, Origin} = prompt_target_source(Context, Opts),
     #{
         prompt_bytes => byte_size(Prompt),
@@ -1483,7 +1807,8 @@ prompt_provenance(Context, Prompt, Opts)
         prompt_source_origin => Origin
     }.
 
-ensure_prompt_source_newline(<<>>) -> <<>>;
+ensure_prompt_source_newline(<<>>) ->
+    <<>>;
 ensure_prompt_source_newline(Source) when is_binary(Source) ->
     case binary:last(Source) of
         $\n -> <<>>;
@@ -1493,19 +1818,22 @@ ensure_prompt_source_newline(Source) when is_binary(Source) ->
 retry_response_contract(Opts) when is_map(Opts) ->
     case maps:get(repair_retry, Opts, undefined) of
         #{kind := verifier_rejected_patch} ->
-            <<"THIS IS A VERIFIER-CORRECTION RETRY. A previous candidate patch existed and was rejected by deterministic verification.\n"
-              "Return ONLY one JSON object with exactly these top-level keys: summary, security_property, tests, patch.\n"
-              "patch MUST be a JSON string and, after JSON decoding, MUST begin at byte 0 with: diff --git \n"
-              "Regenerate the ENTIRE diff from the original SOURCE. Do not patch the previous patch and do not repeat its malformed hunk text.\n"
-              "You MUST NOT return an error object, details/risks/relationships report, JSON Patch, AST edits, prose, or markdown fences.\n"
-              "If the prior diff had corrupt syntax or hunk structure, construct a new syntactically valid git unified diff with exact source context.\n">>;
+            <<
+                "THIS IS A VERIFIER-CORRECTION RETRY. A previous candidate patch existed and was rejected by deterministic verification.\n"
+                "Return ONLY one JSON object with exactly these top-level keys: summary, security_property, tests, patch.\n"
+                "patch MUST be a JSON string and, after JSON decoding, MUST begin at byte 0 with: diff --git \n"
+                "Regenerate the ENTIRE diff from the original SOURCE. Do not patch the previous patch and do not repeat its malformed hunk text.\n"
+                "You MUST NOT return an error object, details/risks/relationships report, JSON Patch, AST edits, prose, or markdown fences.\n"
+                "If the prior diff had corrupt syntax or hunk structure, construct a new syntactically valid git unified diff with exact source context.\n"
+            >>;
         _ ->
-            <<"For a repairable request, return ONLY one JSON object with exactly these top-level keys: summary, security_property, tests, patch.\n"
-              "patch MUST be a JSON string and, after JSON decoding, MUST begin at byte 0 with: diff --git \n"
-              "Do not return details/risks/relationships report objects. Do not return JSON Patch, AST edits, prose, or markdown fences.\n"
-              "If you genuinely cannot construct a valid unified diff from the supplied SOURCE, return ONLY {\"error\":\"concise reason\"} instead of inventing source context.\n">>
+            <<
+                "For a repairable request, return ONLY one JSON object with exactly these top-level keys: summary, security_property, tests, patch.\n"
+                "patch MUST be a JSON string and, after JSON decoding, MUST begin at byte 0 with: diff --git \n"
+                "Do not return details/risks/relationships report objects. Do not return JSON Patch, AST edits, prose, or markdown fences.\n"
+                "If you genuinely cannot construct a valid unified diff from the supplied SOURCE, return ONLY {\"error\":\"concise reason\"} instead of inventing source context.\n"
+            >>
     end.
-
 
 resume_position(Repair) when is_map(Repair) ->
     Attempt0 = maps:get(attempt, Repair, 1),
@@ -1540,13 +1868,14 @@ finding_fingerprint(Module, Finding) ->
         _ ->
             Issue = mget(<<"issue_key">>, Finding, <<"unknown">>),
             sha256_hex(
-                <<(atom_to_binary(Module, utf8))/binary,
-                  0, (to_binary(Issue))/binary>>)
+                <<(atom_to_binary(Module, utf8))/binary, 0, (to_binary(Issue))/binary>>
+            )
     end.
 
 mget(Key, Map, Default) when is_map(Map), is_binary(Key) ->
     case maps:find(Key, Map) of
-        {ok, V} -> V;
+        {ok, V} ->
+            V;
         error ->
             try binary_to_existing_atom(Key, utf8) of
                 A -> maps:get(A, Map, Default)
@@ -1554,23 +1883,30 @@ mget(Key, Map, Default) when is_map(Map), is_binary(Key) ->
                 error:badarg -> Default
             end
     end;
-mget(_Key, _Map, Default) -> Default.
+mget(_Key, _Map, Default) ->
+    Default.
 
 json_safe(Map) when is_map(Map) ->
     maps:from_list(
-        [{json_key(K), json_safe(V)} || {K, V} <- maps:to_list(Map)]);
+        [{json_key(K), json_safe(V)} || {K, V} <- maps:to_list(Map)]
+    );
 json_safe(List) when is_list(List) ->
     [json_safe(V) || V <- List];
 json_safe(Tuple) when is_tuple(Tuple) ->
     [json_safe(V) || V <- tuple_to_list(Tuple)];
-json_safe(true) -> true;
-json_safe(false) -> false;
-json_safe(null) -> null;
-json_safe(undefined) -> null;
+json_safe(true) ->
+    true;
+json_safe(false) ->
+    false;
+json_safe(null) ->
+    null;
+json_safe(undefined) ->
+    null;
 json_safe(Atom) when is_atom(Atom) -> atom_to_binary(Atom, utf8);
 json_safe(Bin) when is_binary(Bin) -> Bin;
 json_safe(Number) when is_number(Number) -> Number;
-json_safe(Other) -> to_binary(Other).
+json_safe(Other) ->
+    to_binary(Other).
 
 json_key(K) when is_binary(K) -> K;
 json_key(K) when is_atom(K) -> atom_to_binary(K, utf8);
@@ -1579,13 +1915,18 @@ json_key(K) -> to_binary(K).
 
 sha256_hex(Bin) ->
     iolist_to_binary(
-        [io_lib:format("~2.16.0b", [B]) ||
-         <<B>> <= crypto:hash(sha256, Bin)]).
+        [
+            io_lib:format("~2.16.0b", [B])
+         || <<B>> <= crypto:hash(sha256, Bin)
+        ]
+    ).
 
 now_iso8601() ->
-    to_binary(calendar:system_time_to_rfc3339(
-        erlang:system_time(second), [{unit, second}, {offset, "Z"}]
-    )).
+    to_binary(
+        calendar:system_time_to_rfc3339(
+            erlang:system_time(second), [{unit, second}, {offset, "Z"}]
+        )
+    ).
 
 to_binary(B) when is_binary(B) -> B;
 to_binary(L) when is_list(L) -> unicode:characters_to_binary(L);

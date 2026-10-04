@@ -296,8 +296,11 @@ config(Dir) ->
         {retry_max_ms, 60000}
     ]).
 with_services(F) ->
-    with_services(F, fun damage_ipfs_store:start_link/1,
-        fun damage_ipfs_client:start_link/1).
+    with_services(
+        F,
+        fun damage_ipfs_store:start_link/1,
+        fun damage_ipfs_client:start_link/1
+    ).
 
 %% Start functions are injectable only in this test fixture. They let tests
 %% exercise acquisition failures without replacing registered production code.
@@ -333,47 +336,72 @@ with_started(Start, Use) ->
     end.
 
 store_start_failure_cleans_backend_test() ->
-    Ref = make_ref(), Parent = self(),
+    Ref = make_ref(),
+    Parent = self(),
     StartStore = fun(C) ->
         Parent ! {Ref, maps:get(data_dir, C), [whereis(damage_ipfs_review_backend)]},
         {error, forced_store_start_failure}
     end,
-    ?assertError({badmatch, {error, forced_store_start_failure}},
-        with_services(fun(_) -> error(unexpected_use) end, StartStore,
-            fun damage_ipfs_client:start_link/1)),
+    ?assertError(
+        {badmatch, {error, forced_store_start_failure}},
+        with_services(
+            fun(_) -> error(unexpected_use) end,
+            StartStore,
+            fun damage_ipfs_client:start_link/1
+        )
+    ),
     assert_failed_setup_clean(Ref).
 
 client_start_failure_cleans_store_and_backend_test() ->
-    Ref = make_ref(), Parent = self(),
+    Ref = make_ref(),
+    Parent = self(),
     StartClient = fun(C) ->
-        Parent ! {Ref, maps:get(data_dir, C),
-            [whereis(damage_ipfs_review_backend), whereis(damage_ipfs_store)]},
+        Parent !
+            {Ref, maps:get(data_dir, C), [
+                whereis(damage_ipfs_review_backend), whereis(damage_ipfs_store)
+            ]},
         {error, forced_client_start_failure}
     end,
-    ?assertError({badmatch, {error, forced_client_start_failure}},
-        with_services(fun(_) -> error(unexpected_use) end,
-            fun damage_ipfs_store:start_link/1, StartClient)),
+    ?assertError(
+        {badmatch, {error, forced_client_start_failure}},
+        with_services(
+            fun(_) -> error(unexpected_use) end,
+            fun damage_ipfs_store:start_link/1,
+            StartClient
+        )
+    ),
     assert_failed_setup_clean(Ref).
 
 client_start_exception_cleans_store_and_backend_test() ->
-    Ref = make_ref(), Parent = self(),
+    Ref = make_ref(),
+    Parent = self(),
     StartClient = fun(C) ->
-        Parent ! {Ref, maps:get(data_dir, C),
-            [whereis(damage_ipfs_review_backend), whereis(damage_ipfs_store)]},
+        Parent !
+            {Ref, maps:get(data_dir, C), [
+                whereis(damage_ipfs_review_backend), whereis(damage_ipfs_store)
+            ]},
         error(forced_client_start_exception)
     end,
-    ?assertError(forced_client_start_exception,
-        with_services(fun(_) -> error(unexpected_use) end,
-            fun damage_ipfs_store:start_link/1, StartClient)),
+    ?assertError(
+        forced_client_start_exception,
+        with_services(
+            fun(_) -> error(unexpected_use) end,
+            fun damage_ipfs_store:start_link/1,
+            StartClient
+        )
+    ),
     assert_failed_setup_clean(Ref).
 
 assert_failed_setup_clean(Ref) ->
     receive
         {Ref, Dir, Pids} ->
-            lists:foreach(fun(Pid) ->
-                ?assert(is_pid(Pid)),
-                ?assertNot(is_process_alive(Pid))
-            end, Pids),
+            lists:foreach(
+                fun(Pid) ->
+                    ?assert(is_pid(Pid)),
+                    ?assertNot(is_process_alive(Pid))
+                end,
+                Pids
+            ),
             ?assertNot(filelib:is_dir(Dir)),
             ?assertEqual(undefined, whereis(damage_ipfs_review_backend)),
             ?assertEqual(undefined, whereis(damage_ipfs_store)),

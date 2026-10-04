@@ -29,8 +29,10 @@ request_adapter(Request, Opts) ->
             safe_call(fun() -> apply(Module, Function, [Request]) end, {Module, Function});
         {Module, Function, Extra} when is_atom(Module), is_atom(Function), is_list(Extra) ->
             safe_call(fun() -> apply(Module, Function, [Request | Extra]) end, {Module, Function});
-        undefined -> probe(Request);
-        Other -> {error, {invalid_inference_adapter, Other}}
+        undefined ->
+            probe(Request);
+        Other ->
+            {error, {invalid_inference_adapter, Other}}
     end.
 
 probe(Request) ->
@@ -49,14 +51,17 @@ probe_candidates([{Module, Function, Args} | Rest]) ->
                 true -> safe_call(fun() -> apply(Module, Function, Args) end, {Module, Function});
                 false -> probe_candidates(Rest)
             end;
-        _ -> probe_candidates(Rest)
+        _ ->
+            probe_candidates(Rest)
     end;
 probe_candidates([]) ->
     {error, no_inference_adapter_available}.
 
 safe_call(Fun, Adapter) ->
-    try normalize(Fun(), Adapter)
-    catch Class:Reason:Stack -> {error, {inference_failed, Adapter, Class, Reason, Stack}}
+    try
+        normalize(Fun(), Adapter)
+    catch
+        Class:Reason:Stack -> {error, {inference_failed, Adapter, Class, Reason, Stack}}
     end.
 
 -spec normalize(term(), term()) -> {ok, map()} | {error, term()}.
@@ -74,7 +79,11 @@ normalize_value(Map, Adapter) when is_map(Map) ->
         Content -> {ok, #{content => Content, backend => Adapter, raw => Map}}
     end;
 normalize_value(Value, Adapter) ->
-    {ok, #{content => iolist_to_binary(io_lib:format("~0tp", [Value])), backend => Adapter, raw => Value}}.
+    {ok, #{
+        content => iolist_to_binary(io_lib:format("~0tp", [Value])),
+        backend => Adapter,
+        raw => Value
+    }}.
 
 content(#{content := C}) -> to_binary(C);
 content(#{response := C}) -> to_binary(C);

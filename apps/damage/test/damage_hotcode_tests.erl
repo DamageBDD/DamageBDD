@@ -16,25 +16,28 @@ hardening_test_() ->
     end.
 
 hardening_cases() ->
-    {inorder, [{Name, {timeout, 60, fun() -> with_fixture(Test) end}} || {Name, Test} <- [
-        {"generator and fixture require isolated runner opt-in", fun isolation_opt_in/1},
-        {"fixture refuses an already-loaded Damage application", fun loaded_app_refused/1},
-        {"explicit allowlist and protected core", fun policy/1},
-        {"prepare never replaces operator edits", fun prepare_preserves_edit/1},
-        {"concurrent writers keep all entries", fun concurrent_writers/1},
-        {"readers cannot observe a partial managed operation", fun snapshot_lock/1},
-        {"runtime hash uses the supplied snapshot only", fun pure_snapshot_hash/1},
-        {"missing registry integrity is not pristine", fun corrupt_journal/1},
-        {"interrupted writer remains uncertain", fun interrupted_writer/1},
-        {"post-load interruption preserves actual old-code hash", fun interrupted_after_load/1},
-        {"rollback uses captured bytes despite changed file/code path", fun exact_rollback/1},
-        {"same semantic code still restores the original BEAM", fun same_code_rollback/1},
-        {"rollback retries only purge lingering old code", fun rollback_pending/1},
-        {"both active generations remain in provenance", fun old_generations/1},
-        {"on_load is refused without executing it", fun reject_on_load/1},
-        {"module name mismatch leaves code unchanged", fun name_mismatch/1},
-        {"legacy entries cannot silently disappear", fun legacy_entry/1}
-    ]]}.
+    {inorder, [
+        {Name, {timeout, 60, fun() -> with_fixture(Test) end}}
+     || {Name, Test} <- [
+            {"generator and fixture require isolated runner opt-in", fun isolation_opt_in/1},
+            {"fixture refuses an already-loaded Damage application", fun loaded_app_refused/1},
+            {"explicit allowlist and protected core", fun policy/1},
+            {"prepare never replaces operator edits", fun prepare_preserves_edit/1},
+            {"concurrent writers keep all entries", fun concurrent_writers/1},
+            {"readers cannot observe a partial managed operation", fun snapshot_lock/1},
+            {"runtime hash uses the supplied snapshot only", fun pure_snapshot_hash/1},
+            {"missing registry integrity is not pristine", fun corrupt_journal/1},
+            {"interrupted writer remains uncertain", fun interrupted_writer/1},
+            {"post-load interruption preserves actual old-code hash", fun interrupted_after_load/1},
+            {"rollback uses captured bytes despite changed file/code path", fun exact_rollback/1},
+            {"same semantic code still restores the original BEAM", fun same_code_rollback/1},
+            {"rollback retries only purge lingering old code", fun rollback_pending/1},
+            {"both active generations remain in provenance", fun old_generations/1},
+            {"on_load is refused without executing it", fun reject_on_load/1},
+            {"module name mismatch leaves code unchanged", fun name_mismatch/1},
+            {"legacy entries cannot silently disappear", fun legacy_entry/1}
+        ]
+    ]}.
 
 isolation_opt_in(_F) ->
     Saved = application:get_env(?MODULE, isolated_node),
@@ -42,8 +45,10 @@ isolation_opt_in(_F) ->
         ok = application:unset_env(?MODULE, isolated_node),
         Before = fixture_state(),
         ?assertEqual([], hardening_test_()),
-        ?assertError(hotcode_tests_require_isolated_node,
-                     with_fixture(fun(_) -> error(fixture_should_not_run) end)),
+        ?assertError(
+            hotcode_tests_require_isolated_node,
+            with_fixture(fun(_) -> error(fixture_should_not_run) end)
+        ),
         ?assertEqual(Before, fixture_state())
     after
         case Saved of
@@ -58,15 +63,21 @@ loaded_app_refused(_F) ->
     Before = fixture_state(),
     ?assertMatch({ok, _}, application:get_all_key(damage)),
     ?assertNot(lists:keymember(damage, 1, application:which_applications())),
-    ?assertError(hotcode_tests_require_unloaded_damage_application,
-                 with_fixture(fun(_) -> error(fixture_should_not_run) end)),
+    ?assertError(
+        hotcode_tests_require_unloaded_damage_application,
+        with_fixture(fun(_) -> error(fixture_should_not_run) end)
+    ),
     ?assertEqual(Before, fixture_state()).
 
 fixture_state() ->
-    {application:get_all_key(damage), application:get_all_env(damage),
-     code:get_path(), persistent_term:get(?JOURNAL, #{}),
-     [{M, code:is_loaded(M), erlang:check_old_code(M)} || M <- [?A, ?B]],
-     erlang:get(hotcode_test_workers)}.
+    {
+        application:get_all_key(damage),
+        application:get_all_env(damage),
+        code:get_path(),
+        persistent_term:get(?JOURNAL, #{}),
+        [{M, code:is_loaded(M), erlang:check_old_code(M)} || M <- [?A, ?B]],
+        erlang:get(hotcode_test_workers)
+    }.
 
 policy(_F) ->
     application:unset_env(damage, operator_hotcode),
@@ -74,9 +85,17 @@ policy(_F) ->
     enable([?A]),
     ?assertEqual(ok, damage_hotcode:allowed(?A)),
     ?assertEqual({error, {hotcode_module_not_allowed, ?B}}, damage_hotcode:allowed(?B)),
-    Core = [damage, damage_auth, damage_context, damage_build_info,
-            damage_hotcode, damage_release, damage_release_overrides,
-            steps_utils, steps_hotcode],
+    Core = [
+        damage,
+        damage_auth,
+        damage_context,
+        damage_build_info,
+        damage_hotcode,
+        damage_release,
+        damage_release_overrides,
+        steps_utils,
+        steps_hotcode
+    ],
     enable(Core ++ [?A]),
     [?assertEqual({error, {protected_hotcode_module, M}}, damage_hotcode:allowed(M)) || M <- Core],
     ?assertMatch({error, {module_not_in_damage_application, _}}, damage_hotcode:allowed(lists)),
@@ -93,8 +112,10 @@ prepare_preserves_edit(_F) ->
     ?assertEqual(changed, ?A:value()),
     ?assertEqual(sha256(Edit), maps:get(source_sha256, Meta)),
     %% The strict runner inspects abstract code at code:which(Module).
-    ?assertMatch({ok, {?A, [{abstract_code, {raw_abstract_v1, _}}]}},
-                 beam_lib:chunks(code:which(?A), [abstract_code])),
+    ?assertMatch(
+        {ok, {?A, [{abstract_code, {raw_abstract_v1, _}}]}},
+        beam_lib:chunks(code:which(?A), [abstract_code])
+    ),
     ?assertMatch({error, {overrides_still_loaded, _}}, damage_release_overrides:clear()),
     ?assertEqual({error, {override_still_loaded, ?A}}, damage_release_overrides:remove(?A)),
     %% Revocation must prevent new loads but not prevent undoing existing ones.
@@ -106,20 +127,40 @@ prepare_preserves_edit(_F) ->
 
 concurrent_writers(F) ->
     Parent = self(),
-    Workers = [spawn_worker(fun() ->
-        receive go -> ok end,
-        M = case N rem 2 of 0 -> ?A; _ -> ?B end,
-        ok = damage_release_overrides:record(meta(F, M)),
-        Parent ! {done, self()}
-    end) || N <- lists:seq(1, 8)],
+    Workers = [
+        spawn_worker(fun() ->
+            receive
+                go -> ok
+            end,
+            M =
+                case N rem 2 of
+                    0 -> ?A;
+                    _ -> ?B
+                end,
+            ok = damage_release_overrides:record(meta(F, M)),
+            Parent ! {done, self()}
+        end)
+     || N <- lists:seq(1, 8)
+    ],
     [Pid ! go || Pid <- Workers],
-    [receive {done, Pid} -> ok after 15000 -> error(writer_timeout) end || Pid <- Workers],
+    [
+        receive
+            {done, Pid} -> ok
+        after 15000 -> error(writer_timeout)
+        end
+     || Pid <- Workers
+    ],
     ?assertEqual(2, length(damage_release_overrides:list())),
     Snapshot = damage_release_overrides:snapshot(),
     ?assertEqual(recorded, maps:get(runtime_integrity_status, Snapshot)),
-    ?assert(lists:all(fun(M) ->
-        not maps:is_key(base_beam, M) andalso not maps:is_key(base_filename, M)
-    end, maps:get(overrides, Snapshot))).
+    ?assert(
+        lists:all(
+            fun(M) ->
+                not maps:is_key(base_beam, M) andalso not maps:is_key(base_filename, M)
+            end,
+            maps:get(overrides, Snapshot)
+        )
+    ).
 
 snapshot_lock(F) ->
     Parent = self(),
@@ -127,17 +168,28 @@ snapshot_lock(F) ->
         damage_release_overrides:with_lock(fun() ->
             ok = damage_release_overrides:record(meta(F, ?A)),
             Parent ! {locked, self()},
-            receive commit -> ok end,
+            receive
+                commit -> ok
+            end,
             ok = damage_release_overrides:record(meta(F, ?B))
         end)
     end),
-    receive {locked, Writer} -> ok after 2000 -> error(writer_not_ready) end,
+    receive
+        {locked, Writer} -> ok
+    after 2000 -> error(writer_not_ready)
+    end,
     Reader = spawn_worker(fun() ->
         Parent ! {reading, self()},
         Parent ! {snapshot, self(), damage_release_overrides:snapshot()}
     end),
-    receive {reading, Reader} -> ok after 2000 -> error(reader_not_ready) end,
-    receive {snapshot, Reader, _} -> error(partial_snapshot_visible) after 40 -> ok end,
+    receive
+        {reading, Reader} -> ok
+    after 2000 -> error(reader_not_ready)
+    end,
+    receive
+        {snapshot, Reader, _} -> error(partial_snapshot_visible)
+    after 40 -> ok
+    end,
     Writer ! commit,
     receive
         {snapshot, Reader, S} -> ?assertEqual(2, length(maps:get(overrides, S)))
@@ -156,7 +208,9 @@ pure_snapshot_hash(F) ->
     ?assertNotEqual(Hash, maps:get(runtime_code_hash, NewInfo)),
     ?assertEqual(2, length(maps:get(overrides, NewInfo))),
     Reverse = NewInfo#{overrides := lists:reverse(maps:get(overrides, NewInfo))},
-    ?assertEqual(maps:get(runtime_code_hash, NewInfo), damage_release_overrides:runtime_code_hash(Reverse)).
+    ?assertEqual(
+        maps:get(runtime_code_hash, NewInfo), damage_release_overrides:runtime_code_hash(Reverse)
+    ).
 
 corrupt_journal(_F) ->
     Saved = persistent_term:get(?JOURNAL, #{}),
@@ -166,7 +220,9 @@ corrupt_journal(_F) ->
         ?assertEqual(null, maps:get(runtime_modified, Info)),
         ?assertEqual(unavailable, maps:get(runtime_integrity_status, Info)),
         ?assertEqual(<<"unknown">>, maps:get(runtime_code_hash, Info))
-    after persistent_term:put(?JOURNAL, Saved) end.
+    after
+        persistent_term:put(?JOURNAL, Saved)
+    end.
 
 interrupted_writer(F) ->
     Parent = self(),
@@ -174,10 +230,15 @@ interrupted_writer(F) ->
         damage_release_overrides:with_lock(fun() ->
             ok = damage_release_overrides:record((meta(F, ?A))#{state => loading}),
             Parent ! {pending, self()},
-            receive never -> ok end
+            receive
+                never -> ok
+            end
         end)
     end),
-    receive {pending, Writer} -> ok after 2000 -> error(writer_timeout) end,
+    receive
+        {pending, Writer} -> ok
+    after 2000 -> error(writer_timeout)
+    end,
     stop_worker(Writer),
     Info = damage_release:info(),
     ?assertEqual(true, maps:get(runtime_modified, Info)),
@@ -190,9 +251,12 @@ interrupted_after_load(F) ->
     {ok, {?A, RawMd5}} = beam_lib:md5(Beam),
     CandidateMd5 = string:lowercase(binary:encode_hex(RawMd5)),
     Path = filename:join(maps:get(root, F), "candidate.beam"),
-    Entry = (meta(F, ?A))#{state => loading, beam_sha256 => sha256(Beam),
-                          candidate_module_md5 => CandidateMd5,
-                          candidate_filename => Path},
+    Entry = (meta(F, ?A))#{
+        state => loading,
+        beam_sha256 => sha256(Beam),
+        candidate_module_md5 => CandidateMd5,
+        candidate_filename => Path
+    },
     ok = file:write_file(Path, Beam),
     Parent = self(),
     Writer = spawn_worker(fun() ->
@@ -200,10 +264,15 @@ interrupted_after_load(F) ->
             ok = damage_release_overrides:record(Entry),
             ok = code:atomic_load([{?A, Path, Beam}]),
             Parent ! {loaded, self()},
-            receive never -> ok end
+            receive
+                never -> ok
+            end
         end)
     end),
-    receive {loaded, Writer} -> ok after 2000 -> error(load_timeout) end,
+    receive
+        {loaded, Writer} -> ok
+    after 2000 -> error(load_timeout)
+    end,
     stop_worker(Writer),
     ?assertEqual(uncertain, maps:get(runtime_integrity_status, damage_release:info())),
     Parked = park(?A),
@@ -274,17 +343,23 @@ old_generations(_F) ->
 
 reject_on_load(F) ->
     Path = damage_hotcode:source_path(?A),
-    Src = iolist_to_binary(["-module(", atom_to_list(?A), ").\n",
+    Src = iolist_to_binary([
+        "-module(",
+        atom_to_list(?A),
+        ").\n",
         "-export([value/0]).\n-on_load(init/0).\n",
         "init() -> persistent_term:put({?MODULE, test_on_load}, true), ok.\n",
-        "value() -> forbidden.\n"]),
+        "value() -> forbidden.\n"
+    ]),
     ok = file:write_file(Path, Src),
     ?assertMatch({error, {unsupported_hotcode_attributes, ?A, _}}, damage_hotcode:reload(?A)),
     ?assertEqual(false, persistent_term:get({?A, test_on_load}, false)),
     ?assertEqual(base, ?A:value()),
     ?assertEqual([], damage_hotcode:status()),
-    ?assertEqual(sha256(maps:get(?A, maps:get(beams, F))),
-        sha256(element(2, code:get_object_code(?A)))).
+    ?assertEqual(
+        sha256(maps:get(?A, maps:get(beams, F))),
+        sha256(element(2, code:get_object_code(?A)))
+    ).
 
 name_mismatch(_F) ->
     ok = file:write_file(damage_hotcode:source_path(?A), source(?B, wrong_module)),
@@ -321,9 +396,16 @@ with_fixture(Fun) ->
     SavedPath = code:get_path(),
     SavedJournal = persistent_term:get(?JOURNAL, #{}),
     SavedWorkers = erlang:put(hotcode_test_workers, []),
-    Temp = case os:getenv("TMPDIR") of false -> "/tmp"; TempValue -> TempValue end,
-    Root = filename:join(Temp, "damage-hotcode-test-" ++
-        binary_to_list(string:lowercase(binary:encode_hex(crypto:strong_rand_bytes(12))))),
+    Temp =
+        case os:getenv("TMPDIR") of
+            false -> "/tmp";
+            TempValue -> TempValue
+        end,
+    Root = filename:join(
+        Temp,
+        "damage-hotcode-test-" ++
+            binary_to_list(string:lowercase(binary:encode_hex(crypto:strong_rand_bytes(12))))
+    ),
     AppRoot = filename:join(Root, "damage-0.0.0"),
     Ebin = filename:join(AppRoot, "ebin"),
     SrcDir = filename:join(AppRoot, "src"),
@@ -333,26 +415,54 @@ with_fixture(Fun) ->
     [ok = filelib:ensure_dir(filename:join(D, "unused")) || D <- [Ebin, SrcDir, Operator]],
     try
         true = code:replace_path(damage, Ebin),
-        Core = [damage, damage_auth, damage_context, damage_build_info, damage_hotcode,
-                damage_release, damage_release_overrides, steps_hotcode, steps_utils],
-        ok = application:load({application, damage, [{vsn, "0.0.0"},
-            {description, "hotcode test fixture"}, {modules, [?A, ?B | Core]},
-            {registered, []}, {applications, [kernel, stdlib]}]}),
+        Core = [
+            damage,
+            damage_auth,
+            damage_context,
+            damage_build_info,
+            damage_hotcode,
+            damage_release,
+            damage_release_overrides,
+            steps_hotcode,
+            steps_utils
+        ],
+        ok = application:load(
+            {application, damage, [
+                {vsn, "0.0.0"},
+                {description, "hotcode test fixture"},
+                {modules, [?A, ?B | Core]},
+                {registered, []},
+                {applications, [kernel, stdlib]}
+            ]}
+        ),
         application:set_env(damage, operator_source_dir, Operator),
         application:set_env(damage, release_provenance_file, filename:join(Root, "absent.install")),
         enable([?A, ?B]),
         Beams = maps:from_list([{M, compile_source(M, source(M, base), SrcDir)} || M <- [?A, ?B]]),
-        Paths = maps:from_list([{M, filename:join(Ebin, atom_to_list(M) ++ ".beam")} || M <- [?A, ?B]]),
-        [begin
-            ok = file:write_file(maps:get(M, Paths), maps:get(M, Beams)),
-            {module, M} = code:load_binary(M, maps:get(M, Paths), maps:get(M, Beams))
-        end || M <- [?A, ?B]],
+        Paths = maps:from_list([
+            {M, filename:join(Ebin, atom_to_list(M) ++ ".beam")}
+         || M <- [?A, ?B]
+        ]),
+        [
+            begin
+                ok = file:write_file(maps:get(M, Paths), maps:get(M, Beams)),
+                {module, M} = code:load_binary(M, maps:get(M, Paths), maps:get(M, Beams))
+            end
+         || M <- [?A, ?B]
+        ],
         ?assertEqual(SrcDir, filename:join(code:lib_dir(damage), "src")),
         Fun(#{root => Root, beams => Beams, paths => Paths})
     after
         [stop_worker(P) || P <- erlang:get(hotcode_test_workers)],
         %% Test-owned modules only; clean both generations before restoring state.
-        [begin code:soft_purge(M), code:delete(M), code:soft_purge(M) end || M <- [?A, ?B]],
+        [
+            begin
+                code:soft_purge(M),
+                code:delete(M),
+                code:soft_purge(M)
+            end
+         || M <- [?A, ?B]
+        ],
         persistent_term:put(?JOURNAL, SavedJournal),
         %% Only this fixture's synthetic application was allowed to be loaded.
         application:unload(damage),
@@ -368,9 +478,13 @@ restore_env(K, undefined) -> application:unset_env(damage, K);
 restore_env(K, {ok, V}) -> application:set_env(damage, K, V).
 
 source(Module, Value) ->
-    iolist_to_binary(io_lib:format(
-        "-module(~p).\n-export([value/0, park/1]).\nvalue() -> ~p.\n"
-        "park(Parent) -> Parent ! {parked, self()}, receive stop -> ok end.\n", [Module, Value])).
+    iolist_to_binary(
+        io_lib:format(
+            "-module(~p).\n-export([value/0, park/1]).\nvalue() -> ~p.\n"
+            "park(Parent) -> Parent ! {parked, self()}, receive stop -> ok end.\n",
+            [Module, Value]
+        )
+    ).
 
 compile_source(Module, Source, Dir) ->
     Path = filename:join(Dir, atom_to_list(Module) ++ ".erl"),
@@ -384,12 +498,20 @@ sha256(B) -> string:lowercase(binary:encode_hex(crypto:hash(sha256, B))).
 meta(F, M) ->
     Beam = maps:get(M, maps:get(beams, F)),
     Md5 = string:lowercase(binary:encode_hex(M:module_info(md5))),
-    #{module => M, state => active, base_beam => Beam,
-      base_filename => maps:get(M, maps:get(paths, F)), base_module_md5 => Md5,
-      loaded_module_md5 => Md5, loaded_filename => maps:get(M, maps:get(paths, F)),
-      base_beam_sha256 => sha256(Beam),
-      loaded_beam_sha256 => sha256(Beam), beam_sha256 => sha256(Beam),
-      source_sha256 => sha256(source(M, base)), loaded_at => 1}.
+    #{
+        module => M,
+        state => active,
+        base_beam => Beam,
+        base_filename => maps:get(M, maps:get(paths, F)),
+        base_module_md5 => Md5,
+        loaded_module_md5 => Md5,
+        loaded_filename => maps:get(M, maps:get(paths, F)),
+        base_beam_sha256 => sha256(Beam),
+        loaded_beam_sha256 => sha256(Beam),
+        beam_sha256 => sha256(Beam),
+        source_sha256 => sha256(source(M, base)),
+        loaded_at => 1
+    }.
 
 spawn_worker(Fun) ->
     Pid = spawn(Fun),
@@ -398,8 +520,14 @@ spawn_worker(Fun) ->
 stop_worker(Pid) ->
     Ref = erlang:monitor(process, Pid),
     exit(Pid, kill),
-    receive {'DOWN', Ref, process, Pid, _} -> ok after 5000 -> error(worker_did_not_stop) end.
+    receive
+        {'DOWN', Ref, process, Pid, _} -> ok
+    after 5000 -> error(worker_did_not_stop)
+    end.
 park(M) ->
     Parent = self(),
     P = spawn_worker(fun() -> M:park(Parent) end),
-    receive {parked, P} -> P after 2000 -> error(park_timeout) end.
+    receive
+        {parked, P} -> P
+    after 2000 -> error(park_timeout)
+    end.

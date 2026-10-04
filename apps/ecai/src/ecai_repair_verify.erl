@@ -15,9 +15,13 @@ verify_base(Repo, Capsule) ->
             Payload = ecai_repair_capsule:payload(Capsule),
             Context = maps:get(context, Payload, #{}),
             Manifest = maps:get(source_manifest, Context, #{}),
-            Checks = [check_manifest_hash(Repo, Path, Fact) || {Path, Fact} <- maps:to_list(Manifest)],
+            Checks = [
+                check_manifest_hash(Repo, Path, Fact)
+             || {Path, Fact} <- maps:to_list(Manifest)
+            ],
             result(Checks, #{phase => base, capsule_id => ecai_repair_capsule:id(Capsule)});
-        Error -> {error, #{phase => base, capsule => Error, checks => []}}
+        Error ->
+            {error, #{phase => base, capsule => Error, checks => []}}
     end.
 
 -spec verify_candidate(file:filename_all(), map()) -> {ok, map()} | {error, map()}.
@@ -42,11 +46,17 @@ verify_candidate(Repo0, Capsule, _Opts) ->
                 check_change_scope(ChangedResult, Allowed),
                 check_change_required(ChangedResult, Policy)
             ],
-            Changed = case ChangedResult of {ok, C} -> C; _ -> [] end,
-            Checks1 = Checks0 ++ [
-                check_current_file(Repo, Path, Fact, Policy, lists:member(Path, Changed))
-                || {Path, Fact} <- maps:to_list(Manifest)
-            ],
+            Changed =
+                case ChangedResult of
+                    {ok, C} -> C;
+                    _ -> []
+                end,
+            Checks1 =
+                Checks0 ++
+                    [
+                        check_current_file(Repo, Path, Fact, Policy, lists:member(Path, Changed))
+                     || {Path, Fact} <- maps:to_list(Manifest)
+                    ],
             result(Checks1, #{
                 phase => candidate,
                 capsule_id => ecai_repair_capsule:id(Capsule),
@@ -63,7 +73,8 @@ check_capsule(Capsule) ->
         Error -> fail(capsule_id, Error)
     end.
 
-check_head(_Repo, undefined) -> pass(source_head_unavailable);
+check_head(_Repo, undefined) ->
+    pass(source_head_unavailable);
 check_head(Repo, Expected) ->
     case ecai_repair_git:head(Repo) of
         {ok, Expected} -> pass(source_head);
@@ -73,7 +84,8 @@ check_head(Repo, Expected) ->
 
 changed(_Repo, undefined, Manifest) ->
     {ok, [Path || {Path, Fact} <- maps:to_list(Manifest), not hash_matches(_Repo, Path, Fact)]};
-changed(Repo, Base, _Manifest) -> ecai_repair_git:changed_files(Repo, Base).
+changed(Repo, Base, _Manifest) ->
+    ecai_repair_git:changed_files(Repo, Base).
 
 check_change_scope({ok, Changed}, Allowed) ->
     Outside = [P || P <- Changed, not lists:member(P, Allowed)],
@@ -81,11 +93,15 @@ check_change_scope({ok, Changed}, Allowed) ->
         [] -> pass(changed_file_scope);
         _ -> fail(changed_file_scope, #{outside_allowed_files => Outside})
     end;
-check_change_scope({error, Reason}, _Allowed) -> fail(changed_file_scope, Reason).
+check_change_scope({error, Reason}, _Allowed) ->
+    fail(changed_file_scope, Reason).
 
-check_change_required({ok, []}, #{require_change := true}) -> fail(require_change, no_files_changed);
-check_change_required({ok, _}, _Policy) -> pass(require_change);
-check_change_required({error, Reason}, _Policy) -> fail(require_change, Reason).
+check_change_required({ok, []}, #{require_change := true}) ->
+    fail(require_change, no_files_changed);
+check_change_required({ok, _}, _Policy) ->
+    pass(require_change);
+check_change_required({error, Reason}, _Policy) ->
+    fail(require_change, Reason).
 
 check_manifest_hash(Repo, Path, Fact) ->
     case hash_matches(Repo, Path, Fact) of
@@ -100,7 +116,8 @@ hash_matches(Repo, Path, Fact) ->
                 {ok, Bin} -> hex(crypto:hash(sha256, Bin)) =:= maps:get(sha256, Fact, undefined);
                 _ -> false
             end;
-        _ -> false
+        _ ->
+            false
     end.
 
 check_current_file(Repo, Path, Baseline, Policy, Changed) ->
@@ -115,12 +132,17 @@ check_current_file(Repo, Path, Baseline, Policy, Changed) ->
                 true when Changed =:= false ->
                     check_manifest_hash(Repo, Path, Baseline);
                 true ->
-                    case ecai_code_invariants:file(Full, #{relative_path => Path, max_source_bytes => 0}) of
+                    case
+                        ecai_code_invariants:file(Full, #{
+                            relative_path => Path, max_source_bytes => 0
+                        })
+                    of
                         {ok, Current} -> check_api(Path, Baseline, Current, Policy);
                         {error, Reason} -> fail({parse_current, Path}, Reason)
                     end
             end;
-        Error -> fail({safe_path, Path}, Error)
+        Error ->
+            fail({safe_path, Path}, Error)
     end.
 
 check_api(Path, Baseline, Current, Policy) ->
@@ -131,10 +153,14 @@ check_api(Path, Baseline, Current, Policy) ->
         {preserve_callbacks, callbacks}
     ],
     Differences = [
-        #{field => Field, expected => maps:get(Field, Baseline, []), actual => maps:get(Field, Current, [])}
-        || {PolicyKey, Field} <- Pairs,
-           maps:get(PolicyKey, Policy, true) =:= true,
-           maps:get(Field, Baseline, []) =/= maps:get(Field, Current, [])
+        #{
+            field => Field,
+            expected => maps:get(Field, Baseline, []),
+            actual => maps:get(Field, Current, [])
+        }
+     || {PolicyKey, Field} <- Pairs,
+        maps:get(PolicyKey, Policy, true) =:= true,
+        maps:get(Field, Baseline, []) =/= maps:get(Field, Current, [])
     ],
     case Differences of
         [] -> pass({api_invariants, Path});
@@ -143,7 +169,14 @@ check_api(Path, Baseline, Current, Policy) ->
 
 result(Checks, Meta) ->
     Failed = [C || C = #{status := fail} <- Checks],
-    Report = Meta#{checks => Checks, status => case Failed of [] -> pass; _ -> fail end},
+    Report = Meta#{
+        checks => Checks,
+        status =>
+            case Failed of
+                [] -> pass;
+                _ -> fail
+            end
+    },
     case Failed of
         [] -> {ok, Report};
         _ -> {error, Report}

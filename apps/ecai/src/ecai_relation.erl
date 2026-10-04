@@ -98,9 +98,9 @@ key(Relation) ->
 
 -spec encode(relation()) -> {ok, binary()} | {error, term()}.
 encode(Relation) when is_map(Relation) ->
-    case {maps:find(subject, Relation),
-          maps:find(predicate, Relation),
-          maps:find(object, Relation)} of
+    case
+        {maps:find(subject, Relation), maps:find(predicate, Relation), maps:find(object, Relation)}
+    of
         {{ok, Subject}, {ok, Predicate}, {ok, Object}} ->
             encode_triple(Subject, Predicate, Object);
         _ ->
@@ -322,11 +322,13 @@ export_relations(Module, Exports, Meta) ->
      || Export <- Exports
     ]).
 
-export_mfa(Module, {Function, Arity})
-    when is_atom(Function), is_integer(Arity), Arity >= 0 ->
+export_mfa(Module, {Function, Arity}) when
+    is_atom(Function), is_integer(Arity), Arity >= 0
+->
     {ok, {mfa, Module, Function, Arity}};
-export_mfa(Module, #{function := Function, arity := Arity})
-    when is_atom(Function), is_integer(Arity), Arity >= 0 ->
+export_mfa(Module, #{function := Function, arity := Arity}) when
+    is_atom(Function), is_integer(Arity), Arity >= 0
+->
     {ok, {mfa, Module, Function, Arity}};
 export_mfa(_Module, _Other) ->
     error.
@@ -345,11 +347,13 @@ remote_call_relations(Module, Calls, Meta) ->
      || Call <- Calls
     ]).
 
-remote_call_mfa(#{module := TargetModule, function := Function, arity := Arity})
-    when is_atom(TargetModule), is_atom(Function), is_integer(Arity), Arity >= 0 ->
+remote_call_mfa(#{module := TargetModule, function := Function, arity := Arity}) when
+    is_atom(TargetModule), is_atom(Function), is_integer(Arity), Arity >= 0
+->
     {ok, TargetModule, {mfa, TargetModule, Function, Arity}};
-remote_call_mfa({TargetModule, Function, Arity})
-    when is_atom(TargetModule), is_atom(Function), is_integer(Arity), Arity >= 0 ->
+remote_call_mfa({TargetModule, Function, Arity}) when
+    is_atom(TargetModule), is_atom(Function), is_integer(Arity), Arity >= 0
+->
     {ok, TargetModule, {mfa, TargetModule, Function, Arity}};
 remote_call_mfa(_Other) ->
     error.

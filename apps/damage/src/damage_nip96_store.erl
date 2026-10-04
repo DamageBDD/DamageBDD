@@ -38,13 +38,15 @@ start_link(C) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, C, []).
 
 %% Legacy NIP-96 API. Keep the historic key shape for DETS compatibility.
-claim(Hash, Pubkey, ObjectMeta, OwnerMeta)
-    when is_binary(Hash), is_binary(Pubkey), is_map(ObjectMeta), is_map(OwnerMeta) ->
+claim(Hash, Pubkey, ObjectMeta, OwnerMeta) when
+    is_binary(Hash), is_binary(Pubkey), is_map(ObjectMeta), is_map(OwnerMeta)
+->
     call({claim, Hash, Pubkey, ObjectMeta, OwnerMeta}).
 
 %% Source-scoped claim used by Blossom and future HTTP facades.
-claim_source(Source, Hash, Pubkey, ObjectMeta, OwnerMeta)
-    when is_atom(Source), is_binary(Hash), is_binary(Pubkey), is_map(ObjectMeta), is_map(OwnerMeta) ->
+claim_source(Source, Hash, Pubkey, ObjectMeta, OwnerMeta) when
+    is_atom(Source), is_binary(Hash), is_binary(Pubkey), is_map(ObjectMeta), is_map(OwnerMeta)
+->
     call({claim_source, Source, Hash, Pubkey, ObjectMeta, OwnerMeta}).
 
 lookup(Hash) when is_binary(Hash) ->
@@ -53,20 +55,25 @@ lookup(Hash) when is_binary(Hash) ->
 release(Hash, Pubkey) when is_binary(Hash), is_binary(Pubkey) ->
     call({release, Hash, Pubkey}).
 
-release_source(Source, Hash, Pubkey)
-    when is_atom(Source), is_binary(Hash), is_binary(Pubkey) ->
+release_source(Source, Hash, Pubkey) when
+    is_atom(Source), is_binary(Hash), is_binary(Pubkey)
+->
     call({release_source, Source, Hash, Pubkey}).
 
-list(Pubkey, Page, Count)
-    when is_binary(Pubkey), is_integer(Page), Page >= 0, is_integer(Count), Count > 0 ->
+list(Pubkey, Page, Count) when
+    is_binary(Pubkey), is_integer(Page), Page >= 0, is_integer(Count), Count > 0
+->
     call({list, Pubkey, Page, Count}).
 
 %% BUD-12 cursor pagination for a source-scoped ownership namespace.
 %% Cursor is undefined for the first page or a lowercase sha256 binary.
-list_cursor(Source, Pubkey, Cursor, Limit)
-    when is_atom(Source), is_binary(Pubkey),
-         (Cursor =:= undefined orelse is_binary(Cursor)),
-         is_integer(Limit), Limit > 0 ->
+list_cursor(Source, Pubkey, Cursor, Limit) when
+    is_atom(Source),
+    is_binary(Pubkey),
+    (Cursor =:= undefined orelse is_binary(Cursor)),
+    is_integer(Limit),
+    Limit > 0
+->
     call({list_cursor, Source, Pubkey, Cursor, Limit}).
 
 status() ->
@@ -204,10 +211,12 @@ merge_owner_meta([{_Key, Old}], OwnerMeta) when is_map(Old) ->
     maps:merge(Old, OwnerMeta).
 
 validate_meta(ObjectMeta, OwnerMeta) ->
-    case {
-        erlang:external_size(ObjectMeta) =< ?MAX_OBJECT_META_BYTES,
-        erlang:external_size(OwnerMeta) =< ?MAX_OWNER_META_BYTES
-    } of
+    case
+        {
+            erlang:external_size(ObjectMeta) =< ?MAX_OBJECT_META_BYTES,
+            erlang:external_size(OwnerMeta) =< ?MAX_OWNER_META_BYTES
+        }
+    of
         {true, true} -> ok;
         _ -> {error, metadata_too_large}
     end.
@@ -272,8 +281,9 @@ legacy_rows(Tab, Pubkey) ->
 source_rows(Tab, Source, Pubkey) ->
     dets:foldl(
         fun
-            ({{owner, Source0, Hash, Pubkey0}, Owner}, Acc)
-                when Source0 =:= Source, Pubkey0 =:= Pubkey ->
+            ({{owner, Source0, Hash, Pubkey0}, Owner}, Acc) when
+                Source0 =:= Source, Pubkey0 =:= Pubkey
+            ->
                 maybe_add_active(Hash, Owner, Acc);
             (_, Acc) ->
                 Acc

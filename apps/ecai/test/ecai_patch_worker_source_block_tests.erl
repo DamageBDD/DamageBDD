@@ -12,10 +12,9 @@ structural_snapshot_failures_are_blocked_test() ->
     lists:foreach(
         fun(Kind) ->
             ?assert(
-                ecai_patch_worker:
-                    source_snapshot_block_kind(
-                        #{kind => Kind}
-                    )
+                ecai_patch_worker:source_snapshot_block_kind(
+                    #{kind => Kind}
+                )
             )
         end,
         Kinds
@@ -31,15 +30,15 @@ transient_snapshot_failures_remain_retryable_test() ->
     lists:foreach(
         fun(Kind) ->
             ?assertNot(
-                ecai_patch_worker:
-                    source_snapshot_block_kind(
-                        #{kind => Kind}
-                    )
+                ecai_patch_worker:source_snapshot_block_kind(
+                    #{kind => Kind}
+                )
             )
         end,
         Kinds
     ),
     ?assertNot(
-        ecai_patch_worker:
-            source_snapshot_block_kind(timeout)
+        ecai_patch_worker:source_snapshot_block_kind(
+            timeout
+        )
     ).

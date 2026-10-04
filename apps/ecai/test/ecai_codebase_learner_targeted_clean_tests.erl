@@ -11,11 +11,10 @@ dirty_targeted_source_is_skipped_test() ->
                 source_name => unicode:characters_to_binary(Source)
             },
             {skip, Skipped} =
-                ecai_codebase_learner:
-                    module_analysis_learning_eligible(
-                        Analysis,
-                        #{repo_root => Repo}
-                    ),
+                ecai_codebase_learner:module_analysis_learning_eligible(
+                    Analysis,
+                    #{repo_root => Repo}
+                ),
             ?assertEqual(
                 dirty_tracked,
                 maps:get(reason, Skipped)
@@ -32,11 +31,10 @@ clean_targeted_source_is_eligible_test() ->
             },
             ?assertEqual(
                 ok,
-                ecai_codebase_learner:
-                    module_analysis_learning_eligible(
-                        Analysis,
-                        #{repo_root => Repo}
-                    )
+                ecai_codebase_learner:module_analysis_learning_eligible(
+                    Analysis,
+                    #{repo_root => Repo}
+                )
             )
         end
     ).
@@ -51,14 +49,13 @@ dirty_override_is_preserved_test() ->
             },
             ?assertEqual(
                 ok,
-                ecai_codebase_learner:
-                    module_analysis_learning_eligible(
-                        Analysis,
-                        #{
-                            repo_root => Repo,
-                            include_dirty_files => true
-                        }
-                    )
+                ecai_codebase_learner:module_analysis_learning_eligible(
+                    Analysis,
+                    #{
+                        repo_root => Repo,
+                        include_dirty_files => true
+                    }
+                )
             )
         end
     ).
@@ -73,9 +70,14 @@ with_repo(Fun) ->
         ok = git(Repo, ["add", "."]),
         %% Override inherited signing only for this disposable fixture commit.
         ok = git(Repo, [
-            "-c", "user.name=ECAI",
-            "-c", "user.email=ecai@example.invalid",
-            "commit", "--no-gpg-sign", "-qm", "base"
+            "-c",
+            "user.name=ECAI",
+            "-c",
+            "user.email=ecai@example.invalid",
+            "commit",
+            "--no-gpg-sign",
+            "-qm",
+            "base"
         ]),
         Fun(Repo, Source)
     after
@@ -85,11 +87,12 @@ with_repo(Fun) ->
 %% A failed prior VM may leave directories behind. Never adopt one of them.
 temp_root() ->
     {ok, _} = application:ensure_all_started(crypto),
-    Parent = case os:getenv("TMPDIR") of
-        false -> "/tmp";
-        "" -> "/tmp";
-        Value -> Value
-    end,
+    Parent =
+        case os:getenv("TMPDIR") of
+            false -> "/tmp";
+            "" -> "/tmp";
+            Value -> Value
+        end,
     temp_root(filename:absname(Parent), 16).
 
 temp_root(_Parent, 0) ->
@@ -116,8 +119,7 @@ git(Repo, Args) ->
             CodeText = lists:nthtail(Size - 4, Output),
             case list_to_integer(CodeText) of
                 0 -> ok;
-                Code ->
-                    erlang:error({git_failed, Code, Output})
+                Code -> erlang:error({git_failed, Code, Output})
             end
     end.
 

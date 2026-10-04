@@ -711,7 +711,6 @@ run_exec(Config, ExecSpec, Context) ->
                 [DockerDir, RedactedSpec, ExecInfo]
             ),
             docker_result_context(Result, Context, DockerDir, RedactedSpec);
-
         {error, Reason} ->
             Result = docker_logged_result(error, Reason, StdoutLog, StderrLog),
             Details = docker_error_details(Result),
@@ -735,7 +734,6 @@ run_exec(Config, ExecSpec, Context) ->
                 ErrorBin,
                 maps:put(cmd_result, Result, Context)
             );
-
         Other ->
             Result = docker_logged_result(error, Other, StdoutLog, StderrLog),
             Details = docker_error_details(Result),
@@ -817,7 +815,6 @@ docker_exit_status_parts({exit_status, _} = ExitStatus) ->
     [ExitStatus];
 docker_exit_status_parts(_) ->
     [].
-
 
 redact_exec_spec([Executable | Args]) ->
     [Executable | redact_exec_args(Args)];
@@ -917,9 +914,12 @@ docker_error_message(DockerDir, ExecSpec, RunnerReason, Details0) ->
     <<
         "Docker command failed. ",
         Hint/binary,
-        " cwd=", (list_to_binary(DockerDir))/binary,
-        " runner_status=", RunnerText/binary,
-        " command=", SpecText/binary,
+        " cwd=",
+        (list_to_binary(DockerDir))/binary,
+        " runner_status=",
+        RunnerText/binary,
+        " command=",
+        SpecText/binary,
         " Docker output:\n",
         Details/binary
     >>.
@@ -1089,7 +1089,6 @@ truncate_error(Bin, Max) when is_binary(Bin) ->
     <<_:Skip/binary, Tail:Max/binary>> = Bin,
     <<"...<earlier Docker output truncated>...\n", Tail/binary>>.
 
-
 %% -------------------------------------------------------
 %% Helpers
 %% -------------------------------------------------------
@@ -1116,8 +1115,8 @@ build_image_from_inline_dockerfile(Config, Image, Raw, Context) ->
     BodyBin = iolist_to_binary(Raw),
     BodyBin = iolist_to_binary(Raw),
     Trimmed = unicode:characters_to_binary(
-                string:trim(binary_to_list(BodyBin), both, " \t\r\n")
-               ),
+        string:trim(binary_to_list(BodyBin), both, " \t\r\n")
+    ),
 
     case Trimmed of
         <<>> ->

@@ -296,15 +296,20 @@ temp_dir() ->
     %% unique_integer/1 is only unique within one VM. Old directories survive
     %% failed runs and must never be reused or deleted by a later test run.
     {ok, _} = application:ensure_all_started(crypto),
-    Root = case os:getenv("TMPDIR") of
-        false -> "/tmp";
-        "" -> "/tmp";
-        Value -> Value
-    end,
-    temp_dir(filename:absname(Root), fun(_Attempt) ->
-        "damage-ipfs-test-" ++
-            binary_to_list(binary:encode_hex(crypto:strong_rand_bytes(16)))
-    end, 16).
+    Root =
+        case os:getenv("TMPDIR") of
+            false -> "/tmp";
+            "" -> "/tmp";
+            Value -> Value
+        end,
+    temp_dir(
+        filename:absname(Root),
+        fun(_Attempt) ->
+            "damage-ipfs-test-" ++
+                binary_to_list(binary:encode_hex(crypto:strong_rand_bytes(16)))
+        end,
+        16
+    ).
 
 %% Candidate injection is local to this test module, for deterministic tests
 %% of collisions. Only successful mkdir establishes ownership of a directory.
@@ -341,17 +346,21 @@ temp_dir_collision_check(Kind) ->
     Root = temp_dir(),
     Existing = filename:join(Root, "occupied"),
     Fresh = filename:join(Root, "fresh"),
-    Marker = case Kind of
-        directory -> filename:join(Existing, "keep");
-        file -> Existing
-    end,
+    Marker =
+        case Kind of
+            directory -> filename:join(Existing, "keep");
+            file -> Existing
+        end,
     try
         case Kind of
             directory -> ok = file:make_dir(Existing);
             file -> ok
         end,
         ok = file:write_file(Marker, <<"must not be touched">>),
-        NameFun = fun(2) -> "occupied"; (1) -> "fresh" end,
+        NameFun = fun
+            (2) -> "occupied";
+            (1) -> "fresh"
+        end,
         ?assertEqual(Fresh, temp_dir(Root, NameFun, 2)),
         ?assert(filelib:is_dir(Fresh)),
         ?assertEqual({ok, <<"must not be touched">>}, file:read_file(Marker))
@@ -368,8 +377,10 @@ temp_dir_collision_limit_test() ->
     Existing = filename:join(Root, "occupied"),
     try
         ok = file:make_dir(Existing),
-        ?assertError({temp_dir_failed, Root, collision_limit},
-            temp_dir(Root, fun(_) -> "occupied" end, 2)),
+        ?assertError(
+            {temp_dir_failed, Root, collision_limit},
+            temp_dir(Root, fun(_) -> "occupied" end, 2)
+        ),
         ?assert(filelib:is_dir(Existing))
     after
         _ = file:del_dir(Existing),
@@ -382,8 +393,10 @@ temp_dir_other_errors_are_not_retried_test() ->
     Candidate = filename:join(Missing, "candidate"),
     try
         %% A second attempt would raise function_clause: enoent must surface.
-        ?assertError({temp_dir_failed, Candidate, enoent},
-            temp_dir(Missing, fun(2) -> "candidate" end, 2))
+        ?assertError(
+            {temp_dir_failed, Candidate, enoent},
+            temp_dir(Missing, fun(2) -> "candidate" end, 2)
+        )
     after
         _ = file:del_dir(Root)
     end.

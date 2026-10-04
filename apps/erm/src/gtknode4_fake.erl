@@ -22,8 +22,16 @@ init(Opts) ->
         backend => fake,
         protocol_version => 1,
         widgets => [
-            window, box, button, label, entry, text_view, list_view, scale,
-            picture, scrolled_box
+            window,
+            box,
+            button,
+            label,
+            entry,
+            text_view,
+            list_view,
+            scale,
+            picture,
+            scrolled_box
         ],
         object_commands => [create, config, read, destroy, inspect, sync],
         test_injection => TestMode,
@@ -175,8 +183,7 @@ default_props(Type, Props0) ->
         label -> ensure_prop(label, <<>>, Props1);
         entry -> ensure_prop(text, <<>>, Props1);
         text_view -> ensure_prop(text, <<>>, Props1);
-        list_view ->
-            ensure_prop(selected_index, -1, ensure_prop(items, [], Props1));
+        list_view -> ensure_prop(selected_index, -1, ensure_prop(items, [], Props1));
         _ -> Props1
     end.
 

@@ -60,183 +60,184 @@ init([]) ->
                 type => worker,
                 modules => [secrets]
             }
-        ] ++ ecai_logging_specs() ++ [
-            #{
-                id => nostr_pool,
-                start => {
-                    nostr_pool,
-                    start_link,
-                    [#{relays => nostr_pool:default_relays(#{})}]
+        ] ++ ecai_logging_specs() ++
+            [
+                #{
+                    id => nostr_pool,
+                    start => {
+                        nostr_pool,
+                        start_link,
+                        [#{relays => nostr_pool:default_relays(#{})}]
+                    },
+                    restart => permanent,
+                    shutdown => 60000,
+                    type => worker,
+                    modules => [nostr_pool]
                 },
-                restart => permanent,
-                shutdown => 60000,
-                type => worker,
-                modules => [nostr_pool]
-            },
-            #{
-                id => damage_schedule,
-                start => {damage_schedule, start_link, []},
-                restart => permanent,
-                shutdown => 5000,
-                type => worker,
-                modules => [damage_schedule]
-            },
-            #{
-                id => schedule_index,
-                start => {damage_schedule_index, start_link, []},
-                restart => permanent,
-                shutdown => 10000,
-                type => worker,
-                modules => [damage_schedule_index]
-            },
-            #{
-                id => abduco_services,
-                start => {abduco_sup, start_link, [AbducoWorkers]},
-                restart => permanent,
-                shutdown => 10000,
-                type => supervisor,
-                modules => [abduco_sup]
-            },
-            #{
-                id => identity_server,
-                start => {identity_server, start_link, []},
-                restart => permanent,
-                shutdown => 60000,
-                type => worker,
-                modules => [identity_server]
-            },
-            #{
-                id => lightning_auth_cache,
-                start => {lightning_auth_cache, start_link, []},
-                restart => permanent,
-                shutdown => 60000,
-                type => worker,
-                modules => [lightning_auth_cache]
-            },
-            #{
-                id => price_feed,
-                start => {price_feed, start_link, []},
-                restart => permanent,
-                shutdown => 60000,
-                type => worker,
-                modules => [price_feed]
-            },
-            %% CLN is behind a fault-containment manager. damage_cln:init/1
-            %% always succeeds and boots the CLN subtree asynchronously, so
-            %% missing/broken CLN cannot prevent DamageBDD from starting.
-            #{
-                id => damage_cln,
-                start => {damage_cln, start_link, []},
-                restart => permanent,
-                shutdown => 5000,
-                type => worker,
-                modules => [damage_cln]
-            },
-            #{
-                id => damage_ssh_tunnel_listener,
-                start => {damage_ssh_tunnel_listener, start_link, []},
-                %% Optional startup failures return ignore; once started,
-                %% supervise the listener normally and restart runtime crashes.
-                restart => permanent,
-                shutdown => 5000,
-                type => worker,
-                modules => [damage_ssh_tunnel_listener]
-            },
-            #{
-                id => damage_ssh_git_listener,
-                start => {damage_ssh_git_listener, start_link, []},
-                %% Optional startup failures return ignore; once started,
-                %% supervise the listener normally and restart runtime crashes.
-                restart => permanent,
-                shutdown => 5000,
-                type => worker,
-                modules => [damage_ssh_git_listener]
-            },
-            #{
-                id => damage_ae,
-                start => {damage_ae, start_link, []},
-                restart => permanent,
-                shutdown => 60000,
-                type => worker,
-                modules => [damage_ae]
-            },
-            #{
-                id => damage_aemdw,
-                start => {damage_aemdw, start_link, []},
-                restart => permanent,
-                shutdown => 60000,
-                type => worker,
-                modules => [damage_aemdw]
-            },
-            #{
-                id => damage_balance_cache,
-                start => {damage_balance_cache, start_link, []},
-                restart => permanent,
-                shutdown => 5000,
-                type => worker,
-                modules => [damage_balance_cache]
-            },
-            #{
-                id => liquidity_ltr_server,
-                start => {liquidity_ltr_server, start_link, []},
-                restart => permanent,
-                shutdown => 5000,
-                type => worker,
-                modules => [liquidity_ltr_server]
-            },
-            #{
-                id => damage_mm_sup,
-                start => {damage_mm_sup, start_link, []},
-                restart => permanent,
-                shutdown => 5000,
-                type => supervisor,
-                modules => [damage_mm_sup]
-            },
-            {damage_hwmon,
-                {damage_hwmon, start_link, [
-                    #{
-                        interval_ms => 5000,
-                        timeout_ms => 1500,
-                        use_ets => true,
-                        sink => fun damage_hwmon_sink:emit/1
-                    }
-                ]},
-                permanent, 5000, worker, [damage_hwmon]},
-            #{
-                id => damage_node_registry,
-                start => {damage_node_registry, start_link, []},
-                restart => permanent,
-                shutdown => 5000,
-                type => worker,
-                modules => [damage_node_registry]
-            },
-            #{
-                id => damage_nwc_invoice_watch_sup,
-                start => {damage_nwc_invoice_watch_sup, start_link, []},
-                restart => permanent,
-                shutdown => infinity,
-                type => supervisor,
-                modules => [damage_nwc_invoice_watch_sup]
-            },
-            #{
-                id => damage_nostr,
-                start => {damage_nostr, start_link, [damage_nostr_nsec]},
-                restart => transient,
-                shutdown => 60000,
-                type => worker,
-                modules => [damage_nostr]
-            },
-            damage_nsecbunker_sup:child_spec(),
-            #{
-                id => damage_nwc_listener,
-                start => {damage_nwc_listener, start_link, []},
-                restart => permanent,
-                shutdown => infinity,
-                type => worker,
-                modules => [damage_nwc_listener, damage_nwc_listener]
-            },
-            damage_ipfs_sup:child_spec()
-        ],
+                #{
+                    id => damage_schedule,
+                    start => {damage_schedule, start_link, []},
+                    restart => permanent,
+                    shutdown => 5000,
+                    type => worker,
+                    modules => [damage_schedule]
+                },
+                #{
+                    id => schedule_index,
+                    start => {damage_schedule_index, start_link, []},
+                    restart => permanent,
+                    shutdown => 10000,
+                    type => worker,
+                    modules => [damage_schedule_index]
+                },
+                #{
+                    id => abduco_services,
+                    start => {abduco_sup, start_link, [AbducoWorkers]},
+                    restart => permanent,
+                    shutdown => 10000,
+                    type => supervisor,
+                    modules => [abduco_sup]
+                },
+                #{
+                    id => identity_server,
+                    start => {identity_server, start_link, []},
+                    restart => permanent,
+                    shutdown => 60000,
+                    type => worker,
+                    modules => [identity_server]
+                },
+                #{
+                    id => lightning_auth_cache,
+                    start => {lightning_auth_cache, start_link, []},
+                    restart => permanent,
+                    shutdown => 60000,
+                    type => worker,
+                    modules => [lightning_auth_cache]
+                },
+                #{
+                    id => price_feed,
+                    start => {price_feed, start_link, []},
+                    restart => permanent,
+                    shutdown => 60000,
+                    type => worker,
+                    modules => [price_feed]
+                },
+                %% CLN is behind a fault-containment manager. damage_cln:init/1
+                %% always succeeds and boots the CLN subtree asynchronously, so
+                %% missing/broken CLN cannot prevent DamageBDD from starting.
+                #{
+                    id => damage_cln,
+                    start => {damage_cln, start_link, []},
+                    restart => permanent,
+                    shutdown => 5000,
+                    type => worker,
+                    modules => [damage_cln]
+                },
+                #{
+                    id => damage_ssh_tunnel_listener,
+                    start => {damage_ssh_tunnel_listener, start_link, []},
+                    %% Optional startup failures return ignore; once started,
+                    %% supervise the listener normally and restart runtime crashes.
+                    restart => permanent,
+                    shutdown => 5000,
+                    type => worker,
+                    modules => [damage_ssh_tunnel_listener]
+                },
+                #{
+                    id => damage_ssh_git_listener,
+                    start => {damage_ssh_git_listener, start_link, []},
+                    %% Optional startup failures return ignore; once started,
+                    %% supervise the listener normally and restart runtime crashes.
+                    restart => permanent,
+                    shutdown => 5000,
+                    type => worker,
+                    modules => [damage_ssh_git_listener]
+                },
+                #{
+                    id => damage_ae,
+                    start => {damage_ae, start_link, []},
+                    restart => permanent,
+                    shutdown => 60000,
+                    type => worker,
+                    modules => [damage_ae]
+                },
+                #{
+                    id => damage_aemdw,
+                    start => {damage_aemdw, start_link, []},
+                    restart => permanent,
+                    shutdown => 60000,
+                    type => worker,
+                    modules => [damage_aemdw]
+                },
+                #{
+                    id => damage_balance_cache,
+                    start => {damage_balance_cache, start_link, []},
+                    restart => permanent,
+                    shutdown => 5000,
+                    type => worker,
+                    modules => [damage_balance_cache]
+                },
+                #{
+                    id => liquidity_ltr_server,
+                    start => {liquidity_ltr_server, start_link, []},
+                    restart => permanent,
+                    shutdown => 5000,
+                    type => worker,
+                    modules => [liquidity_ltr_server]
+                },
+                #{
+                    id => damage_mm_sup,
+                    start => {damage_mm_sup, start_link, []},
+                    restart => permanent,
+                    shutdown => 5000,
+                    type => supervisor,
+                    modules => [damage_mm_sup]
+                },
+                {damage_hwmon,
+                    {damage_hwmon, start_link, [
+                        #{
+                            interval_ms => 5000,
+                            timeout_ms => 1500,
+                            use_ets => true,
+                            sink => fun damage_hwmon_sink:emit/1
+                        }
+                    ]},
+                    permanent, 5000, worker, [damage_hwmon]},
+                #{
+                    id => damage_node_registry,
+                    start => {damage_node_registry, start_link, []},
+                    restart => permanent,
+                    shutdown => 5000,
+                    type => worker,
+                    modules => [damage_node_registry]
+                },
+                #{
+                    id => damage_nwc_invoice_watch_sup,
+                    start => {damage_nwc_invoice_watch_sup, start_link, []},
+                    restart => permanent,
+                    shutdown => infinity,
+                    type => supervisor,
+                    modules => [damage_nwc_invoice_watch_sup]
+                },
+                #{
+                    id => damage_nostr,
+                    start => {damage_nostr, start_link, [damage_nostr_nsec]},
+                    restart => transient,
+                    shutdown => 60000,
+                    type => worker,
+                    modules => [damage_nostr]
+                },
+                damage_nsecbunker_sup:child_spec(),
+                #{
+                    id => damage_nwc_listener,
+                    start => {damage_nwc_listener, start_link, []},
+                    restart => permanent,
+                    shutdown => infinity,
+                    type => worker,
+                    modules => [damage_nwc_listener, damage_nwc_listener]
+                },
+                damage_ipfs_sup:child_spec()
+            ],
 
     %% 6) finally: append Poolboy pools LAST so their workers prepopulate after price_feed is up
     AllChildren = Core ++ PoolSpecs,

@@ -17,20 +17,23 @@ create(CapsuleId) when is_binary(CapsuleId) ->
                     point => PointBin
                 }
             };
-        unavailable -> Base
+        unavailable ->
+            Base
     end.
 
 -spec verify(binary(), map()) -> ok | {error, term()}.
 verify(CapsuleId, #{digest := CapsuleId} = Commitment) ->
     case maps:get(native, Commitment, undefined) of
-        undefined -> ok;
+        undefined ->
+            ok;
         #{module := Module, function := Function, point := Expected} ->
             case call_native(Module, Function, CapsuleId) of
                 {ok, Expected} -> ok;
                 {ok, Actual} -> {error, {native_commitment_mismatch, Expected, Actual}};
                 unavailable -> ok
             end;
-        _ -> {error, invalid_native_commitment}
+        _ ->
+            {error, invalid_native_commitment}
     end;
 verify(CapsuleId, #{digest := Other}) ->
     {error, {commitment_digest_mismatch, CapsuleId, Other}};
@@ -51,7 +54,8 @@ native_commitment([{Module, Function} | Rest], CapsuleId) ->
         {ok, PointBin} -> {ok, Module, Function, PointBin};
         unavailable -> native_commitment(Rest, CapsuleId)
     end;
-native_commitment([], _CapsuleId) -> unavailable.
+native_commitment([], _CapsuleId) ->
+    unavailable.
 
 call_native(Module, Function, CapsuleId) ->
     case code:ensure_loaded(Module) of
@@ -66,7 +70,9 @@ call_native(Module, Function, CapsuleId) ->
                     catch
                         _:_ -> unavailable
                     end;
-                false -> unavailable
+                false ->
+                    unavailable
             end;
-        _ -> unavailable
+        _ ->
+            unavailable
     end.

@@ -12,8 +12,15 @@
 -include_lib("kernel/include/logger.hrl").
 
 -export([start_link/1, status/0]).
--export([init/1, handle_continue/2, handle_call/3, handle_cast/2,
-         handle_info/2, terminate/2, code_change/3]).
+-export([
+    init/1,
+    handle_continue/2,
+    handle_call/3,
+    handle_cast/2,
+    handle_info/2,
+    terminate/2,
+    code_change/3
+]).
 
 -record(state, {
     config = #{},
@@ -39,15 +46,17 @@ handle_continue(ensure_started, State0) ->
     {noreply, ensure_kubo(State0)}.
 
 handle_call(status, _From, State) ->
-    {reply, #{
-        managed => true,
-        repo => maps:get(kubo_repo, State#state.config),
-        api => maps:get(ipfs_api, State#state.config),
-        pid => State#state.pid,
-        os_pid => State#state.os_pid,
-        running => managed_alive(State),
-        last_error => State#state.last_error
-    }, State};
+    {reply,
+        #{
+            managed => true,
+            repo => maps:get(kubo_repo, State#state.config),
+            api => maps:get(ipfs_api, State#state.config),
+            pid => State#state.pid,
+            os_pid => State#state.os_pid,
+            running => managed_alive(State),
+            last_error => State#state.last_error
+        },
+        State};
 handle_call(_Request, _From, State) ->
     {reply, {error, unsupported_call}, State}.
 
@@ -56,15 +65,23 @@ handle_cast(_Message, State) ->
 
 handle_info(retry_kubo, State0) ->
     {noreply, ensure_kubo(State0#state{retry_ref = undefined})};
-handle_info({'DOWN', OsPid, process, Pid, Reason},
-            State = #state{os_pid = OsPid, pid = Pid}) ->
+handle_info(
+    {'DOWN', OsPid, process, Pid, Reason},
+    State = #state{os_pid = OsPid, pid = Pid}
+) ->
     ?LOG_WARNING("Managed Kubo exited os_pid=~p pid=~p reason=~p", [OsPid, Pid, Reason]),
-    {noreply, schedule_retry({kubo_exited, Reason},
-        State#state{pid = undefined, os_pid = undefined})};
+    {noreply,
+        schedule_retry(
+            {kubo_exited, Reason},
+            State#state{pid = undefined, os_pid = undefined}
+        )};
 handle_info({'EXIT', Pid, Reason}, State = #state{pid = Pid}) ->
     ?LOG_WARNING("Managed Kubo linked process exited pid=~p reason=~p", [Pid, Reason]),
-    {noreply, schedule_retry({kubo_exited, Reason},
-        State#state{pid = undefined, os_pid = undefined})};
+    {noreply,
+        schedule_retry(
+            {kubo_exited, Reason},
+            State#state{pid = undefined, os_pid = undefined}
+        )};
 handle_info(_Message, State) ->
     {noreply, State}.
 
@@ -93,11 +110,14 @@ ensure_kubo(State0 = #state{config = Config}) ->
                                 {ok, State2} -> State2#state{last_error = undefined};
                                 {error, Reason} -> schedule_retry(Reason, State1)
                             end;
-                        {error, Reason} -> schedule_retry(Reason, State1)
+                        {error, Reason} ->
+                            schedule_retry(Reason, State1)
                     end;
-                {error, Reason} -> schedule_retry(Reason, State0)
+                {error, Reason} ->
+                    schedule_retry(Reason, State0)
             end;
-        {error, Reason} -> schedule_retry({erlexec_unavailable, Reason}, State0)
+        {error, Reason} ->
+            schedule_retry({erlexec_unavailable, Reason}, State0)
     end.
 
 prepare_repo(State = #state{config = Config}) ->
@@ -105,21 +125,25 @@ prepare_repo(State = #state{config = Config}) ->
     case damage_config:ensure_directory(Repo) of
         ok ->
             case filelib:is_regular(filename:join(Repo, "config")) of
-                true -> configure_repo(State);
+                true ->
+                    configure_repo(State);
                 false ->
                     case run_ipfs_sync(State, ["init", "--profile=server"]) of
                         ok -> configure_repo(State);
                         {error, _} = Error -> Error
                     end
             end;
-        {error, Reason} -> {error, {kubo_repo_directory_failed, Repo, Reason}}
+        {error, Reason} ->
+            {error, {kubo_repo_directory_failed, Repo, Reason}}
     end.
 
 configure_repo(State = #state{config = Config}) ->
-    Api = "/ip4/127.0.0.1/tcp/" ++
-        integer_to_list(maps:get(kubo_api_port, Config)),
-    Gateway = "/ip4/127.0.0.1/tcp/" ++
-        integer_to_list(maps:get(kubo_gateway_port, Config)),
+    Api =
+        "/ip4/127.0.0.1/tcp/" ++
+            integer_to_list(maps:get(kubo_api_port, Config)),
+    Gateway =
+        "/ip4/127.0.0.1/tcp/" ++
+            integer_to_list(maps:get(kubo_gateway_port, Config)),
     SwarmPort = maps:get(kubo_swarm_port, Config),
     Swarm = swarm_addresses_json(SwarmPort),
     run_config_steps(State, [
@@ -139,7 +163,8 @@ swarm_addresses_json(SwarmPort) ->
         <<"/ip6/::/udp/", Port/binary, "/quic-v1">>
     ]).
 
-run_config_steps(_State, []) -> ok;
+run_config_steps(_State, []) ->
+    ok;
 run_config_steps(State, [Args | Rest]) ->
     case run_ipfs_sync(State, Args) of
         ok -> run_config_steps(State, Rest);
@@ -147,26 +172,44 @@ run_config_steps(State, [Args | Rest]) ->
     end.
 
 start_daemon(State = #state{config = Config}) ->
-    Args = case maps:get(kubo_gc, Config, true) of true -> ["daemon", "--enable-gc"]; false -> ["daemon"] end,
+    Args =
+        case maps:get(kubo_gc, Config, true) of
+            true -> ["daemon", "--enable-gc"];
+            false -> ["daemon"]
+        end,
     Cmd = ipfs_command(State, Args),
     LogFun = fun(Stream, OsPid0, Data) ->
         ?LOG_DEBUG("kubo(~p) ~p: ~ts", [OsPid0, Stream, safe_text(Data)])
     end,
-    Opts = [monitor, {stdin, null}, {stdout, LogFun}, {stderr, LogFun},
-            {group, 0}, kill_group, {kill_timeout, 5}],
+    Opts = [
+        monitor,
+        {stdin, null},
+        {stdout, LogFun},
+        {stderr, LogFun},
+        {group, 0},
+        kill_group,
+        {kill_timeout, 5}
+    ],
     case safe_exec_run(Cmd, Opts) of
         {ok, Pid, OsPid} ->
             Candidate = State#state{pid = Pid, os_pid = OsPid},
-            case wait_for_api(maps:get(kubo_api_port, Config), maps:get(kubo_start_timeout_ms, Config)) of
+            case
+                wait_for_api(
+                    maps:get(kubo_api_port, Config), maps:get(kubo_start_timeout_ms, Config)
+                )
+            of
                 ok ->
-                    ?LOG_INFO("Started Damage-managed Kubo repo=~s api=~s os_pid=~p",
-                        [maps:get(kubo_repo, Config), maps:get(ipfs_api, Config), OsPid]),
+                    ?LOG_INFO(
+                        "Started Damage-managed Kubo repo=~s api=~s os_pid=~p",
+                        [maps:get(kubo_repo, Config), maps:get(ipfs_api, Config), OsPid]
+                    ),
                     {ok, Candidate};
                 {error, Reason} ->
                     _ = stop_kubo(Candidate),
                     {error, {kubo_api_not_ready, Reason}}
             end;
-        {error, Reason} -> {error, {kubo_start_failed, Reason}}
+        {error, Reason} ->
+            {error, {kubo_start_failed, Reason}}
     end.
 
 run_ipfs_sync(State, Args) ->
@@ -177,7 +220,11 @@ run_ipfs_sync(State, Args) ->
 
 ipfs_command(#state{config = Config, executable = Executable}, Args) ->
     Repo = maps:get(kubo_repo, Config),
-    Env = case os:find_executable("env") of false -> "/usr/bin/env"; Path -> Path end,
+    Env =
+        case os:find_executable("env") of
+            false -> "/usr/bin/env";
+            Path -> Path
+        end,
     [Env, "IPFS_PATH=" ++ Repo, Executable | Args].
 
 kubo_executable(Config) ->
@@ -202,21 +249,33 @@ schedule_retry(Reason, State = #state{config = Config, retry_ref = Ref}) ->
     NewRef = erlang:send_after(RetryMs, self(), retry_kubo),
     State#state{retry_ref = NewRef, last_error = Reason}.
 
-cancel_retry(undefined) -> ok;
-cancel_retry(Ref) -> _ = erlang:cancel_timer(Ref), ok.
+cancel_retry(undefined) ->
+    ok;
+cancel_retry(Ref) ->
+    _ = erlang:cancel_timer(Ref),
+    ok.
 
-stop_kubo(#state{os_pid = undefined}) -> ok;
+stop_kubo(#state{os_pid = undefined}) ->
+    ok;
 stop_kubo(#state{os_pid = OsPid}) ->
-    try exec:stop_and_wait(OsPid, 10000) of _ -> ok catch _:_ -> ok end.
+    try exec:stop_and_wait(OsPid, 10000) of
+        _ -> ok
+    catch
+        _:_ -> ok
+    end.
 
 managed_alive(#state{pid = Pid}) when is_pid(Pid) -> is_process_alive(Pid);
 managed_alive(_) -> false.
 
 wait_for_api(_Port, LeftMs) when LeftMs =< 0 -> {error, timeout};
 wait_for_api(Port, LeftMs) ->
-    case gen_tcp:connect({127,0,0,1}, Port, [binary, {active, false}], 250) of
-        {ok, Socket} -> gen_tcp:close(Socket), ok;
-        {error, _} -> timer:sleep(100), wait_for_api(Port, LeftMs - 100)
+    case gen_tcp:connect({127, 0, 0, 1}, Port, [binary, {active, false}], 250) of
+        {ok, Socket} ->
+            gen_tcp:close(Socket),
+            ok;
+        {error, _} ->
+            timer:sleep(100),
+            wait_for_api(Port, LeftMs - 100)
     end.
 
 ensure_erlexec() ->
@@ -230,18 +289,26 @@ ensure_erlexec() ->
     end.
 
 safe_exec_run(Cmd, Opts) ->
-    try exec:run(Cmd, Opts) of Reply -> Reply
-    catch Class:Reason:Stack -> {error, {exception, Class, Reason, Stack}} end.
+    try exec:run(Cmd, Opts) of
+        Reply -> Reply
+    catch
+        Class:Reason:Stack -> {error, {exception, Class, Reason, Stack}}
+    end.
 
-sanitize_exec_error({exit_status, Status}) -> {exit_status, Status};
+sanitize_exec_error({exit_status, Status}) ->
+    {exit_status, Status};
 sanitize_exec_error(List) when is_list(List) ->
-    [case Item of
-         {exit_status, Status} -> {exit_status, Status};
-         {stderr, _} -> {stderr, redacted};
-         {stdout, _} -> {stdout, redacted};
-         Other -> Other
-     end || Item <- List];
-sanitize_exec_error(Other) -> Other.
+    [
+        case Item of
+            {exit_status, Status} -> {exit_status, Status};
+            {stderr, _} -> {stderr, redacted};
+            {stdout, _} -> {stdout, redacted};
+            Other -> Other
+        end
+     || Item <- List
+    ];
+sanitize_exec_error(Other) ->
+    Other.
 
 safe_text(Data) when is_binary(Data) -> Data;
 safe_text(Data) when is_list(Data) -> unicode:characters_to_binary(Data);

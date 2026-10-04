@@ -387,7 +387,11 @@ do_query(#{public_key := AeAccount}) ->
 from_json(Req, #{public_key := AeAccount} = State) ->
     {ok, Data, _Req2} = cowboy_req:read_body(Req),
     {Status, Resp0} =
-        case damage_otp_compat:catch_value(fun() -> jsx:decode(Data, [{labels, atom}, return_maps]) end) of
+        case
+            damage_otp_compat:catch_value(fun() ->
+                jsx:decode(Data, [{labels, atom}, return_maps])
+            end)
+        of
             {'EXIT', {badarg, Trace}} ->
                 logger:error("json decoding failed ~p err: ~p.", [Data, Trace]),
                 {400, <<"Json decoding failed.">>};

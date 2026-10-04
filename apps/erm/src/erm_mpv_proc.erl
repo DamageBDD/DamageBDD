@@ -316,7 +316,9 @@ ensure_mpv(Path, S) ->
             preserve_live_backend(Path, S);
         %% Something already owns the socket. Do not delete it.
         {false, true} ->
-            ?LOG_INFO("MPV IPC socket already alive at ~s; adopting existing MPV", [Path], ?LOG_META),
+            ?LOG_INFO(
+                "MPV IPC socket already alive at ~s; adopting existing MPV", [Path], ?LOG_META
+            ),
             {ok, adopt_external_mpv(Path, S)};
         {false, false} ->
             adopt_surviving_or_start(Path, S)
@@ -356,9 +358,9 @@ adopt_surviving_or_start(Path, S = #st{survive_beam = true}) ->
                 ok ->
                     {ok, adopt_external_mpv(Path, S)};
                 {error, timeout} ->
-                    {error,
-                        {surviving_mpv_ipc_unavailable, OsPid, Path},
-                        S#st{os_pid = OsPid, detached = true}}
+                    {error, {surviving_mpv_ipc_unavailable, OsPid, Path}, S#st{
+                        os_pid = OsPid, detached = true
+                    }}
             end;
         _ ->
             start_managed_mpv(Path, S)
@@ -567,9 +569,14 @@ force_detached_mpv_stop(undefined, Path) ->
 force_detached_mpv_stop(OsPid, Path) when is_integer(OsPid) ->
     _ = signal_os_pid(OsPid, term),
     case wait_for_os_pid_gone(OsPid, ?KILL_WAIT_MS) of
-        ok -> ok;
+        ok ->
+            ok;
         {error, timeout} ->
-            ?LOG_WARNING("Detached MPV os_pid=~p did not stop after SIGTERM; forcing SIGKILL", [OsPid], ?LOG_META),
+            ?LOG_WARNING(
+                "Detached MPV os_pid=~p did not stop after SIGTERM; forcing SIGKILL",
+                [OsPid],
+                ?LOG_META
+            ),
             _ = signal_os_pid(OsPid, kill),
             case wait_for_os_pid_gone(OsPid, ?KILL_WAIT_MS) of
                 ok -> ok;
@@ -809,7 +816,6 @@ fallback_mpv_ipc_call(Function, Args) ->
             {error, {mpv_ipc_load_failed, Class, CatchReason, Stacktrace}}
     end.
 
-
 adopt_external_mpv(Path, S) ->
     case pidfile_status(Path) of
         OsPid when is_integer(OsPid) ->
@@ -826,24 +832,36 @@ adopt_external_mpv(Path, S) ->
                 last_error = undefined
             };
         _ ->
-            S#st{path = Path, pid = undefined, os_pid = undefined, detached = false, last_error = undefined}
+            S#st{
+                path = Path,
+                pid = undefined,
+                os_pid = undefined,
+                detached = false,
+                last_error = undefined
+            }
     end.
 
 detached_shell_command(Cmd, PidFile, LogFile) ->
     Command = string:join([shell_quote(Arg) || Arg <- Cmd], " "),
     Script = lists:flatten([
         "umask 077; ",
-        "setsid ", Command,
-        " </dev/null >>", shell_quote(LogFile), " 2>&1 & ",
-        "echo $! > ", shell_quote(PidFile)
+        "setsid ",
+        Command,
+        " </dev/null >>",
+        shell_quote(LogFile),
+        " 2>&1 & ",
+        "echo $! > ",
+        shell_quote(PidFile)
     ]),
     "sh -c " ++ shell_quote(Script).
 
 mpv_survive_beam() ->
     ConfigDefault =
         case application:get_env(erm, mpv_survive_beam, true) of
-            true -> true;
-            false -> false;
+            true ->
+                true;
+            false ->
+                false;
             Invalid ->
                 ?LOG_WARNING(
                     "Ignoring invalid erm.mpv_survive_beam value ~p; defaulting to true",
@@ -873,8 +891,10 @@ pidfile_status(Path) ->
                 true -> OsPid;
                 false -> stale
             end;
-        {error, enoent} -> undefined;
-        {error, _Reason} -> unreadable
+        {error, enoent} ->
+            undefined;
+        {error, _Reason} ->
+            unreadable
     end.
 
 normalize_pid_status(OsPid) when is_integer(OsPid) -> OsPid;
@@ -896,7 +916,9 @@ read_pidfile(PidFile) ->
 os_pid_alive(undefined) ->
     false;
 os_pid_alive(OsPid) when is_integer(OsPid), OsPid > 0 ->
-    Result = string:trim(os:cmd("kill -0 " ++ integer_to_list(OsPid) ++ " 2>/dev/null && echo alive || echo dead")),
+    Result = string:trim(
+        os:cmd("kill -0 " ++ integer_to_list(OsPid) ++ " 2>/dev/null && echo alive || echo dead")
+    ),
     Result =:= "alive";
 os_pid_alive(_Other) ->
     false.
@@ -910,7 +932,8 @@ wait_for_os_pid_gone(OsPid, LeftMs) when LeftMs =< 0 ->
     end;
 wait_for_os_pid_gone(OsPid, LeftMs) ->
     case os_pid_alive(OsPid) of
-        false -> ok;
+        false ->
+            ok;
         true ->
             timer:sleep(?SOCKET_POLL_MS),
             wait_for_os_pid_gone(OsPid, LeftMs - ?SOCKET_POLL_MS)
@@ -930,8 +953,10 @@ signal_os_pid(OsPid, Signal) when is_integer(OsPid) ->
 
 safe_delete_file(Path) ->
     case file:delete(Path) of
-        ok -> ok;
-        {error, enoent} -> ok;
+        ok ->
+            ok;
+        {error, enoent} ->
+            ok;
         {error, Reason} ->
             ?LOG_DEBUG("Could not delete file ~s: ~p", [Path, Reason], ?LOG_META),
             ok
@@ -939,8 +964,10 @@ safe_delete_file(Path) ->
 
 env_bool(Name, Default) ->
     case os:getenv(Name) of
-        false -> Default;
-        "" -> Default;
+        false ->
+            Default;
+        "" ->
+            Default;
         Value ->
             case string:lowercase(Value) of
                 "1" -> true;

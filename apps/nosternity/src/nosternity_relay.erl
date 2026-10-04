@@ -65,7 +65,6 @@ code_change(_OldVsn, State, _Extra) ->
 
 %%% Internal Helpers
 
-
 do_publish(#{id := Id} = Event, State) ->
     case validate_event(Event) of
         true ->
@@ -95,8 +94,9 @@ hydrate_page(State0) ->
     case nosternity_event_store:get_events(Offset, PageSize) of
         {ok, Events} when is_list(Events) ->
             lists:foreach(
-                fun(#{id := Id} = Event) -> ets:insert_new(?TABLE, {Id, Event});
-                   (_) -> ok
+                fun
+                    (#{id := Id} = Event) -> ets:insert_new(?TABLE, {Id, Event});
+                    (_) -> ok
                 end,
                 Events
             ),
@@ -104,7 +104,9 @@ hydrate_page(State0) ->
             State1 = State0#{hydrate_offset => Offset + Count},
             case Count < PageSize of
                 true ->
-                    ?LOG_INFO("Nosternity relay rehydrated ~p Aeternity-backed events", [Offset + Count]),
+                    ?LOG_INFO("Nosternity relay rehydrated ~p Aeternity-backed events", [
+                        Offset + Count
+                    ]),
                     State1#{hydrated => true};
                 false ->
                     self() ! hydrate,
@@ -115,7 +117,9 @@ hydrate_page(State0) ->
         {error, contract_unavailable} ->
             maybe_retry_hydrate(State0);
         {error, Reason} ->
-            ?LOG_WARNING("Nosternity event-store rehydrate failed offset=~p reason=~p", [Offset, Reason]),
+            ?LOG_WARNING("Nosternity event-store rehydrate failed offset=~p reason=~p", [
+                Offset, Reason
+            ]),
             maybe_retry_hydrate(State0)
     end.
 

@@ -41,8 +41,11 @@ single_file_unified_diff_gets_git_header_test() ->
     {ok, Patch} =
         ecai_patch_worker:normalize_proposal_patch(Raw),
     ?assertMatch(
-        <<"diff --git a/apps/ecai/src/a.erl "
-          "b/apps/ecai/src/a.erl\n", _/binary>>,
+        <<
+            "diff --git a/apps/ecai/src/a.erl "
+            "b/apps/ecai/src/a.erl\n",
+            _/binary
+        >>,
         Patch
     ),
     ?assertEqual(ok, ecai_patch_verifier:validate_patch(Patch)).
@@ -83,8 +86,9 @@ compact_verification_diagnostic_keeps_first_failure_test() ->
         ]
     },
     Compact =
-        ecai_patch_worker:
-            compact_verification_diagnostic(Verification),
+        ecai_patch_worker:compact_verification_diagnostic(
+            Verification
+        ),
     ?assertEqual(failed, maps:get(status, Compact)),
     Failed = maps:get(failing_step, Compact),
     ?assertEqual(patch_apply_check, maps:get(step, Failed)),

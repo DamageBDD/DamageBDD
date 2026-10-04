@@ -2,10 +2,22 @@
 -module(erm_voice_boundary).
 -export([new/0, normalize/1, wake/2, feed/5, tick/3, cancel/1, suffix/2]).
 
-new() -> #{phase => idle, text => <<>>, last_seen => undefined,
-           changed => undefined, deadline => undefined, recent => #{}, consumed => <<>>,
-           wake_prefix => <<>>, prefix_at => undefined,
-           utterance_id => undefined, finalized => false, structured => false, done => []}.
+new() ->
+    #{
+        phase => idle,
+        text => <<>>,
+        last_seen => undefined,
+        changed => undefined,
+        deadline => undefined,
+        recent => #{},
+        consumed => <<>>,
+        wake_prefix => <<>>,
+        prefix_at => undefined,
+        utterance_id => undefined,
+        finalized => false,
+        structured => false,
+        done => []
+    }.
 cancel(S) -> S#{phase => locked, text => <<>>, deadline => undefined}.
 
 normalize(Text) ->
@@ -13,21 +25,36 @@ normalize(Text) ->
     true = is_binary(Bin),
     Folded = unicode:characters_to_binary(string:casefold(Bin)),
     true = is_binary(Folded),
-    string:trim(re:replace(Folded, "[^\\p{L}\\p{M}\\p{N}_]+", " ",
-                           [global, unicode, {return, binary}])).
+    string:trim(
+        re:replace(
+            Folded,
+            "[^\\p{L}\\p{M}\\p{N}_]+",
+            " ",
+            [global, unicode, {return, binary}]
+        )
+    ).
 
 %% Addressed speech only: no wake word hidden in a song title or conversation.
 %% Longer aliases win; aliases are explicit, never fuzzy/substring matched.
 wake(Text, Phrases) ->
     Tokens = tokens(normalize(Text)),
-    Aliases = lists:sort(fun(A, B) -> length(A) > length(B) end,
-                        [tokens(normalize(P)) || P <- Phrases,
-                         normalize(P) =/= <<>>]),
+    Aliases = lists:sort(
+        fun(A, B) -> length(A) > length(B) end,
+        [
+            tokens(normalize(P))
+         || P <- Phrases,
+            normalize(P) =/= <<>>
+        ]
+    ),
     case wake_tokens(Tokens, Aliases) of
         {wake, Command} ->
-            {wake, suffix(unicode:characters_to_binary(Text),
-                          length(Tokens) - length(tokens(Command)))};
-        nomatch -> nomatch
+            {wake,
+                suffix(
+                    unicode:characters_to_binary(Text),
+                    length(Tokens) - length(tokens(Command))
+                )};
+        nomatch ->
+            nomatch
     end.
 
 %% Remove a counted matching prefix without normalizing command arguments.
@@ -38,7 +65,8 @@ suffix(Text, N) ->
             [{At, Len}] = lists:nth(N, Matches),
             Rest = binary:part(Text, At + Len, byte_size(Text) - At - Len),
             re:replace(Rest, "^[\\s,:;.!?]+", "", [unicode, {return, binary}]);
-        _ -> Text
+        _ ->
+            Text
     end.
 wake_tokens(Tokens, Aliases) ->
     case strip_alias(Tokens, Aliases) of
@@ -46,11 +74,14 @@ wake_tokens(Tokens, Aliases) ->
             case Tokens of
                 [P | Rest] when P =:= <<"hey">>; P =:= <<"okay">>; P =:= <<"ok">> ->
                     strip_alias(Rest, Aliases);
-                _ -> nomatch
+                _ ->
+                    nomatch
             end;
-        Match -> Match
+        Match ->
+            Match
     end.
-strip_alias(_Tokens, []) -> nomatch;
+strip_alias(_Tokens, []) ->
+    nomatch;
 strip_alias(Tokens, [Alias | Rest]) ->
     case lists:prefix(Alias, Tokens) of
         true -> {wake, join(lists:nthtail(length(Alias), Tokens))};
@@ -61,22 +92,37 @@ tokens(B) -> binary:split(B, <<" ">>, [global]).
 join(Tokens) -> iolist_to_binary(lists:join(<<" ">>, Tokens)).
 
 %% Structured input must come from an adapter with real utterance boundaries.
-feed(#{utterance_id := Id, text := Text, final := Final}, Phrases, Now, S0, Opts)
-  when is_binary(Id), byte_size(Id) > 0, byte_size(Id) =< 128, is_boolean(Final) ->
+feed(#{utterance_id := Id, text := Text, final := Final}, Phrases, Now, S0, Opts) when
+    is_binary(Id), byte_size(Id) > 0, byte_size(Id) =< 128, is_boolean(Final)
+->
     case lists:member(Id, maps:get(done, S0)) of
-        true -> S0;
+        true ->
+            S0;
         false ->
             case {maps:get(utterance_id, S0), maps:get(finalized, S0)} of
-                {Id, true} -> S0;
+                {Id, true} ->
+                    S0;
                 {Previous, _} ->
-                    S1 = case Previous of
-                        Id -> S0;
-                        undefined -> (new())#{done => maps:get(done, S0)};
-                        _ -> (new())#{done => lists:sublist(
-                                      [Previous | maps:get(done, S0)], 128)}
-                    end,
-                    S2 = feed_plain(Text, Phrases, Now,
-                                   S1#{utterance_id => Id, structured => true}, Opts),
+                    S1 =
+                        case Previous of
+                            Id ->
+                                S0;
+                            undefined ->
+                                (new())#{done => maps:get(done, S0)};
+                            _ ->
+                                (new())#{
+                                    done => lists:sublist(
+                                        [Previous | maps:get(done, S0)], 128
+                                    )
+                                }
+                        end,
+                    S2 = feed_plain(
+                        Text,
+                        Phrases,
+                        Now,
+                        S1#{utterance_id => Id, structured => true},
+                        Opts
+                    ),
                     S2#{finalized => Final}
             end
     end;
@@ -86,7 +132,8 @@ feed(Text, Phrases, Now, S, Opts) when is_binary(Text); is_list(Text) ->
         true -> S;
         false -> feed_plain(Text, Phrases, Now, S, Opts)
     end;
-feed(_, _, _, S, _) -> cancel(S).
+feed(_, _, _, S, _) ->
+    cancel(S).
 
 feed_plain(Text0, Phrases, Now, S0, Opts) ->
     %% Bound untrusted STT input before normalizing or retaining it.
@@ -95,16 +142,25 @@ feed_plain(Text0, Phrases, Now, S0, Opts) ->
         false -> cancel(S0);
         true -> feed_text(string:trim(Text), Phrases, Now, S0, Opts)
     end.
-feed_text(<<>>, _Phrases, _Now, S, _Opts) -> S;
+feed_text(<<>>, _Phrases, _Now, S, _Opts) ->
+    S;
 feed_text(Text, Phrases, Now, S0, Opts) ->
     S = expire_capture(Now, expire_lock(Now, S0, Opts)),
     {Match, Prefixed} = match_with_prefix(Text, Phrases, Now, S),
     Seen = Prefixed#{last_seen => Now},
     case {maps:get(phase, S), Match} of
         {idle, {wake, Command}} ->
-            candidate(Command, Now, Seen#{phase => capturing,
-                deadline => Now + maps:get(command_window_ms, Opts, 8000)}, Opts);
-        {capturing, {wake, Command}} -> candidate(Command, Now, Seen, Opts);
+            candidate(
+                Command,
+                Now,
+                Seen#{
+                    phase => capturing,
+                    deadline => Now + maps:get(command_window_ms, Opts, 8000)
+                },
+                Opts
+            );
+        {capturing, {wake, Command}} ->
+            candidate(Command, Now, Seen, Opts);
         {capturing, nomatch} ->
             %% A wake-only record may be followed by a separate command record.
             %% Otherwise accept rolling-prefix/suffix overlaps only. Unrelated
@@ -114,8 +170,10 @@ feed_text(Text, Phrases, Now, S0, Opts) ->
                 unrelated -> cancel(Seen);
                 Joined -> candidate(Joined, Now, Seen, Opts)
             end;
-        {locked, _} -> Seen;
-        _ -> Seen
+        {locked, _} ->
+            Seen;
+        _ ->
+            Seen
     end.
 match_with_prefix(Text, Phrases, Now, S = #{phase := idle}) ->
     Prefix = maps:get(wake_prefix, S),
@@ -123,53 +181,67 @@ match_with_prefix(Text, Phrases, Now, S = #{phase := idle}) ->
     Clear = S#{wake_prefix => <<>>, prefix_at => undefined},
     case wake(Text, Phrases) of
         nomatch ->
-            Combined = case Prefix =/= <<>> andalso is_integer(At) andalso Now - At =< 1500 of
-                true -> <<Prefix/binary, " ", Text/binary>>;
-                false -> Text
-            end,
+            Combined =
+                case Prefix =/= <<>> andalso is_integer(At) andalso Now - At =< 1500 of
+                    true -> <<Prefix/binary, " ", Text/binary>>;
+                    false -> Text
+                end,
             case wake(Combined, Phrases) of
                 nomatch ->
                     case wake_prefix(Combined, Phrases) of
                         true -> {nomatch, Clear#{wake_prefix => Combined, prefix_at => Now}};
                         false -> {nomatch, Clear}
                     end;
-                Match -> {Match, Clear}
+                Match ->
+                    {Match, Clear}
             end;
-        Match -> {Match, Clear}
+        Match ->
+            {Match, Clear}
     end;
-match_with_prefix(Text, Phrases, _Now, S) -> {wake(Text, Phrases), S}.
+match_with_prefix(Text, Phrases, _Now, S) ->
+    {wake(Text, Phrases), S}.
 wake_prefix(Text, Phrases) ->
     T0 = tokens(normalize(Text)),
-    T = case T0 of
-        [P | Rest] when P =:= <<"hey">>; P =:= <<"ok">>; P =:= <<"okay">> -> Rest;
-        _ -> T0
-    end,
-    T =/= [] andalso lists:any(fun(P) ->
-        Alias = tokens(normalize(P)),
-        length(T) < length(Alias) andalso lists:prefix(T, Alias)
-    end, Phrases).
+    T =
+        case T0 of
+            [P | Rest] when P =:= <<"hey">>; P =:= <<"ok">>; P =:= <<"okay">> -> Rest;
+            _ -> T0
+        end,
+    T =/= [] andalso
+        lists:any(
+            fun(P) ->
+                Alias = tokens(normalize(P)),
+                length(T) < length(Alias) andalso lists:prefix(T, Alias)
+            end,
+            Phrases
+        ).
 
 candidate(Text, Now, S, Opts) ->
     case byte_size(Text) =< maps:get(max_command_bytes, Opts, 512) of
-        false -> cancel(S);
+        false ->
+            cancel(S);
         true ->
             case Text =:= maps:get(text, S) of
                 true -> S;
                 false -> S#{text => Text, changed => Now}
             end
     end.
-merge(<<>>, Text) -> Text;
+merge(<<>>, Text) ->
+    Text;
 merge(Old, Text) ->
-    A = tokens(normalize(Old)), B = tokens(normalize(Text)),
+    A = tokens(normalize(Old)),
+    B = tokens(normalize(Text)),
     case lists:prefix(A, B) orelse lists:prefix(B, A) of
-        true -> Text;
+        true ->
+            Text;
         false ->
             case overlap(A, B, min(length(A), length(B))) of
                 unrelated -> unrelated;
                 N -> <<Old/binary, " ", (suffix(Text, N))/binary>>
             end
     end.
-overlap(_A, _B, 0) -> unrelated;
+overlap(_A, _B, 0) ->
+    unrelated;
 overlap(A, B, N) ->
     case lists:nthtail(length(A) - N, A) =:= lists:sublist(B, N) of
         true -> N;
@@ -183,44 +255,62 @@ tick(Now, S0, Opts) ->
             Text = maps:get(text, S),
             Deadline = maps:get(deadline, S),
             Changed = maps:get(changed, S),
-            Ready = case maps:get(structured, S) of
-                true -> maps:get(finalized, S);
-                false -> not maps:get(require_final, Opts, false) andalso
-                         is_integer(Changed) andalso
-                         Now - Changed >= settle_delay(Text, Opts)
-            end,
+            Ready =
+                case maps:get(structured, S) of
+                    true ->
+                        maps:get(finalized, S);
+                    false ->
+                        not maps:get(require_final, Opts, false) andalso
+                            is_integer(Changed) andalso
+                            Now - Changed >= settle_delay(Text, Opts)
+                end,
             case {Now >= Deadline, Text =/= <<>> andalso Ready} of
-                {true, _} -> {none, cancel(S)}; %% Never execute a truncated timeout.
+                %% Never execute a truncated timeout.
+                {true, _} ->
+                    {none, cancel(S)};
                 {false, true} ->
-                    Recent = maps:filter(fun(_, At) ->
-                        Now - At < maps:get(command_dedupe_ms, Opts, 3000)
-                    end, maps:get(recent, S)),
+                    Recent = maps:filter(
+                        fun(_, At) ->
+                            Now - At < maps:get(command_dedupe_ms, Opts, 3000)
+                        end,
+                        maps:get(recent, S)
+                    ),
                     Key = normalize(Text),
-                    Done = case maps:get(utterance_id, S) of
-                        undefined -> maps:get(done, S);
-                        Id -> lists:sublist([Id | maps:get(done, S)], 128)
-                    end,
-                    Locked = (cancel(S))#{recent => maps:put(Key, Now, Recent),
-                                         consumed => Text, done => Done},
+                    Done =
+                        case maps:get(utterance_id, S) of
+                            undefined -> maps:get(done, S);
+                            Id -> lists:sublist([Id | maps:get(done, S)], 128)
+                        end,
+                    Locked = (cancel(S))#{
+                        recent => maps:put(Key, Now, Recent),
+                        consumed => Text,
+                        done => Done
+                    },
                     case not maps:get(structured, S) andalso maps:is_key(Key, Recent) of
                         true -> {none, Locked};
                         false -> {{command, Text}, Locked}
                     end;
-                _ -> {none, S}
+                _ ->
+                    {none, S}
             end;
-        _ -> {none, S}
+        _ ->
+            {none, S}
     end.
 expire_capture(Now, S = #{phase := capturing, deadline := Deadline}) when Now >= Deadline ->
     cancel(S);
-expire_capture(_, S) -> S.
-expire_lock(_Now, S = #{structured := true}, _Opts) -> S;
-expire_lock(Now, S = #{phase := locked, last_seen := Last}, Opts)
-  when is_integer(Last) ->
+expire_capture(_, S) ->
+    S.
+expire_lock(_Now, S = #{structured := true}, _Opts) ->
+    S;
+expire_lock(Now, S = #{phase := locked, last_seen := Last}, Opts) when
+    is_integer(Last)
+->
     case Now - Last >= maps:get(rearm_silence_ms, Opts, 6000) of
         true -> S#{phase => idle, text => <<>>};
         false -> S
     end;
-expire_lock(_Now, S, _Opts) -> S.
+expire_lock(_Now, S, _Opts) ->
+    S.
 
 %% Exact reversible interruption commands need less settling than open-ended
 %% speech. Do not widen wake matching or treat arbitrary prefixes as commands.

@@ -161,11 +161,12 @@ handle_info({publish_timeout, EventId}, S0) ->
         "Nostr publish ACK timeout relay=~p event_id=~p",
         [S0#state.relay, EventId]
     ),
-    {noreply, complete_publish(
-        EventId,
-        {error, {relay_ack_timeout, EventId}},
-        S0
-    )};
+    {noreply,
+        complete_publish(
+            EventId,
+            {error, {relay_ack_timeout, EventId}},
+            S0
+        )};
 handle_info(ping, S0) ->
     S1 = ensure_connected(S0),
     S =
@@ -174,7 +175,9 @@ handle_info(ping, S0) ->
                 S1;
             true ->
                 %% WebSocket ping frame
-                damage_otp_compat:catch_value(fun() -> gun:ws_send(S1#state.conn_pid, S1#state.stream_ref, {ping, <<>>}) end),
+                damage_otp_compat:catch_value(fun() ->
+                    gun:ws_send(S1#state.conn_pid, S1#state.stream_ref, {ping, <<>>})
+                end),
                 S1
         end,
     {noreply, schedule_ping(S)};
@@ -433,25 +436,40 @@ schedule_reconnect(S0 = #state{backoff_ms = Backoff}) ->
     Next = min(?RECONNECT_MAX_MS, max(?RECONNECT_MIN_MS, Backoff * 2)),
     S0#state{reconnect_tref = TRef, backoff_ms = Next}.
 
-classify_relay_failure({connect_failed, Reason}) -> classify_relay_failure(Reason);
-classify_relay_failure({await_up_failed, Reason}) -> classify_relay_failure(Reason);
-classify_relay_failure({await_up_exit, Reason}) -> classify_relay_failure(Reason);
-classify_relay_failure(timeout) -> retryable;
-classify_relay_failure(closed) -> retryable;
-classify_relay_failure(econnrefused) -> retryable;
-classify_relay_failure(econnreset) -> retryable;
-classify_relay_failure(enetunreach) -> retryable;
-classify_relay_failure(ehostunreach) -> retryable;
-classify_relay_failure({websocket_upgrade_rejected, _, 429}) -> retryable;
+classify_relay_failure({connect_failed, Reason}) ->
+    classify_relay_failure(Reason);
+classify_relay_failure({await_up_failed, Reason}) ->
+    classify_relay_failure(Reason);
+classify_relay_failure({await_up_exit, Reason}) ->
+    classify_relay_failure(Reason);
+classify_relay_failure(timeout) ->
+    retryable;
+classify_relay_failure(closed) ->
+    retryable;
+classify_relay_failure(econnrefused) ->
+    retryable;
+classify_relay_failure(econnreset) ->
+    retryable;
+classify_relay_failure(enetunreach) ->
+    retryable;
+classify_relay_failure(ehostunreach) ->
+    retryable;
+classify_relay_failure({websocket_upgrade_rejected, _, 429}) ->
+    retryable;
 classify_relay_failure({websocket_upgrade_rejected, _, Status}) when Status >= 500 -> retryable;
 classify_relay_failure({upgrade_failed, Status, _}) when Status =:= 429 -> retryable;
 classify_relay_failure({upgrade_failed, Status, _}) when Status >= 500 -> retryable;
-classify_relay_failure({websocket_upgrade_rejected, _, Status}) when Status >= 400, Status < 500 -> permanent;
+classify_relay_failure({websocket_upgrade_rejected, _, Status}) when Status >= 400, Status < 500 ->
+    permanent;
 classify_relay_failure({upgrade_failed, Status, _}) when Status >= 400, Status < 500 -> permanent;
-classify_relay_failure({invalid_ws_protocol, _}) -> permanent;
-classify_relay_failure({unsupported_scheme, _}) -> permanent;
-classify_relay_failure({bad_relay_url, _}) -> permanent;
-classify_relay_failure(_) -> retryable.
+classify_relay_failure({invalid_ws_protocol, _}) ->
+    permanent;
+classify_relay_failure({unsupported_scheme, _}) ->
+    permanent;
+classify_relay_failure({bad_relay_url, _}) ->
+    permanent;
+classify_relay_failure(_) ->
+    retryable.
 
 ws_send_json(#state{conn_pid = ConnPid, stream_ref = StreamRef}, Term) ->
     %?LOG_DEBUG("nostr_relay_worker ws_send_json ~p", [Term]),

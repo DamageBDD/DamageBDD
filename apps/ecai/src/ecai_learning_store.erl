@@ -40,8 +40,14 @@
     snapshot_data/0
 ]).
 
--export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-         terminate/2, code_change/3]).
+-export([
+    init/1,
+    handle_call/3,
+    handle_cast/2,
+    handle_info/2,
+    terminate/2,
+    code_change/3
+]).
 
 -define(SERVER, ?MODULE).
 -define(TABLE, ecai_code_learning_dets).
@@ -99,10 +105,14 @@ get_global_knowledge() -> gen_server:call(?SERVER, {get, global_knowledge}).
 put_repair(Fingerprint, FindingVersion, Repair) ->
     Fp = to_binary(Fingerprint),
     Version = to_binary(FindingVersion),
-    gen_server:call(?SERVER, {put_transition, {repair, Fp, Version}, repair, {Fp, Version}, Repair}, infinity).
+    gen_server:call(
+        ?SERVER, {put_transition, {repair, Fp, Version}, repair, {Fp, Version}, Repair}, infinity
+    ).
 get_repair(Fingerprint, FindingVersion) ->
-    gen_server:call(?SERVER,
-        {get, {repair, to_binary(Fingerprint), to_binary(FindingVersion)}}).
+    gen_server:call(
+        ?SERVER,
+        {get, {repair, to_binary(Fingerprint), to_binary(FindingVersion)}}
+    ).
 repairs() -> gen_server:call(?SERVER, repairs, infinity).
 repairs(Fingerprint) -> gen_server:call(?SERVER, {repairs, to_binary(Fingerprint)}, infinity).
 
@@ -143,24 +153,40 @@ init(Opts) ->
                 {ok, ?TABLE} ->
                     Seq = load_event_seq(?TABLE),
                     {ok, #state{tab = ?TABLE, state_root = Root, file = File, event_seq = Seq}};
-                {error, Reason} -> {stop, {cannot_open_learning_store, File, Reason}}
+                {error, Reason} ->
+                    {stop, {cannot_open_learning_store, File, Reason}}
             end;
-        {error, Reason} -> {stop, {cannot_resolve_state_root, Reason}}
+        {error, Reason} ->
+            {stop, {cannot_resolve_state_root, Reason}}
     end.
 
-handle_call(stop, _From, State) -> {stop, normal, ok, State};
+handle_call(stop, _From, State) ->
+    {stop, normal, ok, State};
 handle_call(status, _From, State) ->
-    Info = case dets:info(State#state.tab) of undefined -> []; I -> I end,
-    {reply, #{state_root => State#state.state_root, file => State#state.file,
-              event_seq => State#state.event_seq, table_info => Info}, State};
+    Info =
+        case dets:info(State#state.tab) of
+            undefined -> [];
+            I -> I
+        end,
+    {reply,
+        #{
+            state_root => State#state.state_root,
+            file => State#state.file,
+            event_seq => State#state.event_seq,
+            table_info => Info
+        },
+        State};
 handle_call({put_relations, Scope, Relations, Keys}, _From, State) ->
-    Reply = case dets:insert(State#state.tab, [
-        {{relations, Scope}, Relations},
-        {{relation_keys, Scope}, Keys}
-    ]) of
-        ok -> dets:sync(State#state.tab);
-        Error -> Error
-    end,
+    Reply =
+        case
+            dets:insert(State#state.tab, [
+                {{relations, Scope}, Relations},
+                {{relation_keys, Scope}, Keys}
+            ])
+        of
+            ok -> dets:sync(State#state.tab);
+            Error -> Error
+        end,
     {reply, Reply, State};
 handle_call({put, Key, Value}, _From, State) ->
     Reply = persist_value(State#state.tab, Key, Value),
@@ -173,25 +199,30 @@ handle_call({put_checkpoint, Name, Checkpoint0}, _From, State) ->
     Reply = persist_value(State#state.tab, {checkpoint, Name}, Checkpoint),
     {reply, Reply, State};
 handle_call({delete, Key}, _From, State) ->
-    Reply = case dets:delete(State#state.tab, Key) of
-        ok -> dets:sync(State#state.tab);
-        Error -> Error
-    end,
+    Reply =
+        case dets:delete(State#state.tab, Key) of
+            ok -> dets:sync(State#state.tab);
+            Error -> Error
+        end,
     {reply, Reply, State};
 handle_call({get, Key}, _From, State) ->
-    Reply = case dets:lookup(State#state.tab, Key) of
-        [{Key, Value}] -> {ok, Value};
-        [] -> not_found
-    end,
+    Reply =
+        case dets:lookup(State#state.tab, Key) of
+            [{Key, Value}] -> {ok, Value};
+            [] -> not_found
+        end,
     {reply, Reply, State};
 handle_call({select_prefix, Type, App}, _From, State) ->
     Values = dets:foldl(
         fun
             ({{Type0, App0, _Module}, Value}, Acc) when Type0 =:= Type, App0 =:= App ->
                 [Value | Acc];
-            (_, Acc) -> Acc
+            (_, Acc) ->
+                Acc
         end,
-        [], State#state.tab),
+        [],
+        State#state.tab
+    ),
     {reply, lists:reverse(Values), State};
 handle_call(repairs, _From, State) ->
     {reply, collect_repairs(State#state.tab, all), State};
@@ -208,7 +239,8 @@ handle_call({events, Type, Id, Limit}, _From, State) ->
     {reply, collect_events(State#state.tab, Type, Id, Limit), State};
 handle_call(snapshot_data, _From, State) ->
     {reply, build_snapshot_data(State#state.tab), State};
-handle_call(_Request, _From, State) -> {reply, {error, unsupported_call}, State}.
+handle_call(_Request, _From, State) ->
+    {reply, {error, unsupported_call}, State}.
 
 handle_cast(_Msg, State) -> {noreply, State}.
 handle_info(_Info, State) -> {noreply, State}.
@@ -248,32 +280,82 @@ persist_transition(Key, Type, Id, Value0, State0) ->
                 ok -> {ok, State0#state{event_seq = Seq}};
                 Error -> {Error, State0}
             end;
-        Error -> {Error, State0}
+        Error ->
+            {Error, State0}
     end.
 
 enrich_persisted(Value, Seq, Now) when is_map(Value) ->
     Value#{persist_seq => Seq, persisted_at => Now};
-enrich_persisted(Value, _Seq, _Now) -> Value.
+enrich_persisted(Value, _Seq, _Now) ->
+    Value.
 
 event_summary(checkpoint, Value) when is_map(Value) ->
-    maps:with([
-        schema_version, phase, cycle, completed, total, queued_count,
-        inflight_count, ready, last_error, next_run_at_ms, resume_count,
-        cycles, state, active_jobs, last_run_at
-    ], Value);
+    maps:with(
+        [
+            schema_version,
+            phase,
+            cycle,
+            completed,
+            total,
+            queued_count,
+            inflight_count,
+            ready,
+            last_error,
+            next_run_at_ms,
+            resume_count,
+            cycles,
+            state,
+            active_jobs,
+            last_run_at
+        ],
+        Value
+    );
 event_summary(repair, Value) when is_map(Value) ->
-    maps:with([
-        status, stage, fingerprint, finding_version, application, module, attempt,
-        retry_count, retryable, next_retry_at_ms, failure_class, last_error,
-        last_failed_at, worker_started_at, error, patch_sha256, patch_file,
-        created_at, updated_at, completed_at, persist_seq, persisted_at
-    ], Value);
+    maps:with(
+        [
+            status,
+            stage,
+            fingerprint,
+            finding_version,
+            application,
+            module,
+            attempt,
+            retry_count,
+            retryable,
+            next_retry_at_ms,
+            failure_class,
+            last_error,
+            last_failed_at,
+            worker_started_at,
+            error,
+            patch_sha256,
+            patch_file,
+            created_at,
+            updated_at,
+            completed_at,
+            persist_seq,
+            persisted_at
+        ],
+        Value
+    );
 event_summary(log_incident, Value) when is_map(Value) ->
-    maps:with([
-        status, fingerprint, application, module, level, observed_at,
-        learned_at, error, persist_seq, persisted_at
-    ], Value);
-event_summary(_Type, Value) -> Value.
+    maps:with(
+        [
+            status,
+            fingerprint,
+            application,
+            module,
+            level,
+            observed_at,
+            learned_at,
+            error,
+            persist_seq,
+            persisted_at
+        ],
+        Value
+    );
+event_summary(_Type, Value) ->
+    Value.
 
 load_event_seq(Tab) ->
     case dets:lookup(Tab, {meta, event_seq}) of
@@ -286,25 +368,35 @@ collect_events(Tab, Type, Id, Limit) ->
         fun
             ({{event, Type0, Id0, Seq}, Event}, Acc) when Type0 =:= Type, Id0 =:= Id ->
                 [{Seq, Event} | Acc];
-            (_, Acc) -> Acc
+            (_, Acc) ->
+                Acc
         end,
-        [], Tab),
+        [],
+        Tab
+    ),
     Sorted = lists:reverse(lists:keysort(1, Events)),
     [Event || {_Seq, Event} <- lists:sublist(Sorted, Limit)].
 
 collect_repairs(Tab, Filter) ->
-    lists:reverse(dets:foldl(
-        fun
-            ({{repair, Fingerprint, Version}, Repair}, Acc) when is_map(Repair) ->
-                case (Filter =:= all) orelse (Filter =:= Fingerprint) of
-                    true -> [Repair#{fingerprint => Fingerprint, finding_version => Version} | Acc];
-                    false -> Acc
-                end;
-            ({{repair, _Fingerprint, _Version}, _MalformedRepair}, Acc) ->
-                Acc;
-            (_, Acc) -> Acc
-        end,
-        [], Tab)).
+    lists:reverse(
+        dets:foldl(
+            fun
+                ({{repair, Fingerprint, Version}, Repair}, Acc) when is_map(Repair) ->
+                    case (Filter =:= all) orelse (Filter =:= Fingerprint) of
+                        true ->
+                            [Repair#{fingerprint => Fingerprint, finding_version => Version} | Acc];
+                        false ->
+                            Acc
+                    end;
+                ({{repair, _Fingerprint, _Version}, _MalformedRepair}, Acc) ->
+                    Acc;
+                (_, Acc) ->
+                    Acc
+            end,
+            [],
+            Tab
+        )
+    ).
 
 collect_log_incidents(Tab, Filter) ->
     Incidents = dets:foldl(
@@ -312,17 +404,19 @@ collect_log_incidents(Tab, Filter) ->
             ({{log_incident, Fingerprint}, Incident}, Acc) when is_map(Incident) ->
                 App = maps:get(application, Incident, undefined),
                 Module = maps:get(module, Incident, undefined),
-                Include = case Filter of
-                    all -> true;
-                    {App0, Module0} -> App =:= App0 andalso Module =:= Module0
-                end,
+                Include =
+                    case Filter of
+                        all -> true;
+                        {App0, Module0} -> App =:= App0 andalso Module =:= Module0
+                    end,
                 case Include of
                     true -> [Incident#{fingerprint => Fingerprint} | Acc];
                     false -> Acc
                 end;
             ({{log_incident, _Fingerprint}, _Malformed}, Acc) ->
                 Acc;
-            (_, Acc) -> Acc
+            (_, Acc) ->
+                Acc
         end,
         [],
         Tab
@@ -353,10 +447,14 @@ build_snapshot_data(Tab) ->
             ({{relation_keys, Scope}, Keys}, Acc) when is_list(Keys) ->
                 Sets0 = maps:get(relation_sets, Acc, #{}),
                 Digest = relation_key_digest(Keys),
-                Acc#{relation_sets => Sets0#{Scope => #{
-                    count => length(Keys),
-                    key_digest_sha256 => Digest
-                }}};
+                Acc#{
+                    relation_sets => Sets0#{
+                        Scope => #{
+                            count => length(Keys),
+                            key_digest_sha256 => Digest
+                        }
+                    }
+                };
             ({{relation_benchmark, Scope}, Benchmark}, Acc) when is_map(Benchmark) ->
                 Benchmarks0 = maps:get(relation_benchmarks, Acc, #{}),
                 ThinBenchmark = maps:without([recovered_keys, missing_keys], Benchmark),
@@ -364,7 +462,11 @@ build_snapshot_data(Tab) ->
             ({{repair, Fingerprint, Version}, Repair}, Acc) when is_map(Repair) ->
                 Repairs0 = maps:get(repairs, Acc, []),
                 Thin = maps:without([patch, proposal, verifier_output, context], Repair),
-                Acc#{repairs => [Thin#{fingerprint => Fingerprint, finding_version => Version} | Repairs0]};
+                Acc#{
+                    repairs => [
+                        Thin#{fingerprint => Fingerprint, finding_version => Version} | Repairs0
+                    ]
+                };
             ({{repair, _Fingerprint, _Version}, _MalformedRepair}, Acc) ->
                 Acc;
             ({{log_incident, Fingerprint}, Incident}, Acc) when is_map(Incident) ->
@@ -376,13 +478,23 @@ build_snapshot_data(Tab) ->
             ({{checkpoint, Name}, Checkpoint}, Acc) ->
                 Runtime0 = maps:get(runtime_checkpoints, Acc, #{}),
                 Acc#{runtime_checkpoints => Runtime0#{Name => checkpoint_snapshot(Checkpoint)}};
-            (_, Acc) -> Acc
+            (_, Acc) ->
+                Acc
         end,
-        #{analyses => [], module_knowledge => [], app_knowledge => #{}, graphs => #{},
-          repairs => [], log_incidents => [], runtime_checkpoints => #{},
-          global_knowledge => #{},
-          relation_sets => #{}, relation_benchmarks => #{}},
-        Tab).
+        #{
+            analyses => [],
+            module_knowledge => [],
+            app_knowledge => #{},
+            graphs => #{},
+            repairs => [],
+            log_incidents => [],
+            runtime_checkpoints => #{},
+            global_knowledge => #{},
+            relation_sets => #{},
+            relation_benchmarks => #{}
+        },
+        Tab
+    ).
 
 relation_key_digest(Keys) ->
     Sorted = lists:sort(Keys),
@@ -397,37 +509,52 @@ checkpoint_snapshot(
     };
 checkpoint_snapshot(Checkpoint) when is_map(Checkpoint) ->
     maps:without([queue, inflight_entries, current_item], Checkpoint);
-checkpoint_snapshot(Other) -> Other.
+checkpoint_snapshot(Other) ->
+    Other.
 
 thin_health_report(Report) when is_map(Report) ->
-    Resolution = case maps:get(resolution, Report, undefined) of
-        R when is_map(R) ->
-            Steps = case maps:get(steps, R, []) of
-                Value when is_list(Value) -> Value;
-                _ -> []
-            end,
-            #{
-                summary => maps:get(summary, R, <<>>),
-                step_ids => [
-                    maps:get(id, Step, undefined)
-                 || Step <- Steps,
-                    is_map(Step)
-                ],
-                automatic_execution => maps:get(automatic_execution, R, false)
-            };
-        _ -> undefined
-    end,
+    Resolution =
+        case maps:get(resolution, Report, undefined) of
+            R when is_map(R) ->
+                Steps =
+                    case maps:get(steps, R, []) of
+                        Value when is_list(Value) -> Value;
+                        _ -> []
+                    end,
+                #{
+                    summary => maps:get(summary, R, <<>>),
+                    step_ids => [
+                        maps:get(id, Step, undefined)
+                     || Step <- Steps,
+                        is_map(Step)
+                    ],
+                    automatic_execution => maps:get(automatic_execution, R, false)
+                };
+            _ ->
+                undefined
+        end,
     (maps:with(
-        [checked_at, status, all_systems_go, patch_ready,
-         resolution_source, automatic_execution],
+        [
+            checked_at,
+            status,
+            all_systems_go,
+            patch_ready,
+            resolution_source,
+            automatic_execution
+        ],
         Report
-    ))#{resolution => Resolution};
-thin_health_report(_) -> undefined.
+    ))#{
+        resolution => Resolution
+    };
+thin_health_report(_) ->
+    undefined.
 
 now_iso8601() ->
-    unicode:characters_to_binary(calendar:system_time_to_rfc3339(
-        erlang:system_time(second), [{unit, second}, {offset, "Z"}]
-    )).
+    unicode:characters_to_binary(
+        calendar:system_time_to_rfc3339(
+            erlang:system_time(second), [{unit, second}, {offset, "Z"}]
+        )
+    ).
 
 to_binary(B) when is_binary(B) -> B;
 to_binary(L) when is_list(L) -> unicode:characters_to_binary(L);

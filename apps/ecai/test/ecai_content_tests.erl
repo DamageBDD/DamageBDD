@@ -10,17 +10,26 @@ valid_pack_test() ->
 secret_marker_rejected_test() ->
     Pack0 = valid_pack(),
     Article0 = maps:get(<<"article_markdown">>, Pack0),
-    Pack = Pack0#{<<"article_markdown">> => <<Article0/binary, "\n\nlinkedin_access_token=secret-value must not appear">>},
-    ?assertMatch({error, {secret_marker_detected, _}},
-                 ecai_content_validator:validate(Pack, evidence())).
+    Pack = Pack0#{
+        <<"article_markdown">> =>
+            <<Article0/binary, "\n\nlinkedin_access_token=secret-value must not appear">>
+    },
+    ?assertMatch(
+        {error, {secret_marker_detected, _}},
+        ecai_content_validator:validate(Pack, evidence())
+    ).
 
 unknown_module_evidence_rejected_test() ->
     Pack0 = valid_pack(),
-    Pack = Pack0#{<<"evidence">> => [
-        #{<<"application">> => <<"ecai">>, <<"module">> => <<"not_a_real_module">>}
-    ]},
-    ?assertMatch({error, {unknown_evidence_module, _}},
-                 ecai_content_validator:validate(Pack, evidence())).
+    Pack = Pack0#{
+        <<"evidence">> => [
+            #{<<"application">> => <<"ecai">>, <<"module">> => <<"not_a_real_module">>}
+        ]
+    },
+    ?assertMatch(
+        {error, {unknown_evidence_module, _}},
+        ecai_content_validator:validate(Pack, evidence())
+    ).
 
 blossom_default_server_test() ->
     ?assertEqual("https://media.damagebdd.com", ecai_blossom_client:default_server()).
@@ -41,8 +50,10 @@ valid_pack() ->
         <<"title">> => <<"Persistent code intelligence">>,
         <<"slug">> => <<"persistent-code-intelligence">>,
         <<"summary">> => <<"Grounded summary">>,
-        <<"article_markdown">> => <<"# Article\n\nThis article is grounded in the persisted learned code state. It describes only the implementation facts represented by the supplied evidence and avoids unsupported claims.">>,
-        <<"documentation_markdown">> => <<"# Operator documentation\n\nUse the operator API to inspect, generate, render, publish, retry, and resume deterministic publication jobs derived from learned code evidence.">>,
+        <<"article_markdown">> =>
+            <<"# Article\n\nThis article is grounded in the persisted learned code state. It describes only the implementation facts represented by the supplied evidence and avoids unsupported claims.">>,
+        <<"documentation_markdown">> =>
+            <<"# Operator documentation\n\nUse the operator API to inspect, generate, render, publish, retry, and resume deterministic publication jobs derived from learned code evidence.">>,
         <<"linkedin">> => #{
             <<"commentary">> => <<"A grounded implementation update.">>,
             <<"alt_text">> => <<"Architecture diagram for the ECAI content pipeline">>
@@ -64,8 +75,11 @@ evidence() ->
         snapshot_id => <<"snapshot-1">>,
         learning => #{
             module_knowledge => [
-                #{application => ecai, module => ecai_codebase_learner,
-                  <<"source_sha256">> => <<"abc">>}
+                #{
+                    application => ecai,
+                    module => ecai_codebase_learner,
+                    <<"source_sha256">> => <<"abc">>
+                }
             ]
         }
     }.
@@ -82,7 +96,10 @@ nostr_long_form_event_test() ->
 
 html_article_rejected_test() ->
     Pack0 = valid_pack(),
-    Article = <<"# Article\n\nThis article contains enough grounded explanatory material for validation, but then includes a raw HTML element which NIP-23 publication should reject. <div>bad</div>">>,
+    Article =
+        <<"# Article\n\nThis article contains enough grounded explanatory material for validation, but then includes a raw HTML element which NIP-23 publication should reject. <div>bad</div>">>,
     Pack = Pack0#{<<"article_markdown">> => Article},
-    ?assertEqual({error, article_html_not_allowed},
-                 ecai_content_validator:validate(Pack, evidence())).
+    ?assertEqual(
+        {error, article_html_not_allowed},
+        ecai_content_validator:validate(Pack, evidence())
+    ).

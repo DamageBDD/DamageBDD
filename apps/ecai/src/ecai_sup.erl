@@ -103,24 +103,24 @@ init([]) ->
     ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
     {ok, {SupFlags, PoolSpecs0}}.
 
-
 code_security_specs() ->
     case application:get_env(ecai, code_security_enabled, true) of
         true ->
-            [#{
-                id => ecai_code_security_sup,
-                start => {ecai_code_security_sup, start_link, []},
-                restart => permanent,
-                shutdown => infinity,
-                type => supervisor,
-                modules => [ecai_code_security_sup]
-            }];
+            [
+                #{
+                    id => ecai_code_security_sup,
+                    start => {ecai_code_security_sup, start_link, []},
+                    restart => permanent,
+                    shutdown => infinity,
+                    type => supervisor,
+                    modules => [ecai_code_security_sup]
+                }
+            ];
         false ->
             [];
         Invalid ->
             erlang:error({invalid_configuration, code_security_enabled, Invalid})
     end.
-
 
 vulnerability_monitor_specs() ->
     Interval = application:get_env(ecai, vulnerability_scan_interval_ms, 60000),

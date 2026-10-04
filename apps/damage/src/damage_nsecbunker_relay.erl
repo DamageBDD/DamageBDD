@@ -76,7 +76,6 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
-
 child_spec() ->
     #{
         id => ?MODULE,
@@ -169,20 +168,24 @@ handle_call({subscribe, Filter0, Relays0}, _From, St0) ->
     %% gen_server waiting for websocket upgrades.  Earlier versions waited
     %% inside this call; while waiting, status/0 could not be served and the
     %% live BDD timed out with damage_nsecbunker_relay:status/0.
-    St1 = case {Filter, Relays} =:= {St0#st.filter, St0#st.relays} of
-        true -> St0;
-        false ->
-            close_all(St0#st.conns),
-            stop_connectors(St0#st.connectors),
-            St0#st{relays = Relays, filter = Filter, conns = #{}, connectors = #{}}
-    end,
+    St1 =
+        case {Filter, Relays} =:= {St0#st.filter, St0#st.relays} of
+            true ->
+                St0;
+            false ->
+                close_all(St0#st.conns),
+                stop_connectors(St0#st.connectors),
+                St0#st{relays = Relays, filter = Filter, conns = #{}, connectors = #{}}
+        end,
 
     {Results, St2} = subscribe_all(Relays, Filter, St1),
     Scheduled = length([ok || {_, ok} <- Results]),
     Reply =
         case Scheduled > 0 of
             true ->
-                {ok, #{scheduled => Scheduled, subscribing => true, relays => Results, filter => Filter}};
+                {ok, #{
+                    scheduled => Scheduled, subscribing => true, relays => Results, filter => Filter
+                }};
             false ->
                 {error, #{error => all_relays_failed, relays => Results, filter => Filter}}
         end,
@@ -204,10 +207,17 @@ handle_info({relay_opened, Worker, Relay, Filter, {ok, ConnPid, StreamRef}}, St0
     case maps:is_key(Worker, St0#st.connectors) andalso Filter =:= St0#st.filter of
         true ->
             RelayUrl = relay_url(Relay),
-            Conn = #{relay => Relay, relay_url => RelayUrl,
-                stream_ref => StreamRef, sub_id => make_sub_id(), filter => Filter,
-                owner => Worker, subscribed => false, subscribe_attempts => 0,
-                opened_at => erlang:system_time(second)},
+            Conn = #{
+                relay => Relay,
+                relay_url => RelayUrl,
+                stream_ref => StreamRef,
+                sub_id => make_sub_id(),
+                filter => Filter,
+                owner => Worker,
+                subscribed => false,
+                subscribe_attempts => 0,
+                opened_at => erlang:system_time(second)
+            },
             St1 = clear_retry_state(RelayUrl, St0#st{conns = (St0#st.conns)#{ConnPid => Conn}}),
             schedule_subscription_attempt(ConnPid, 0),
             {noreply, St1};
@@ -219,17 +229,24 @@ handle_info({relay_opened, Worker, Relay, Filter, {ok, ConnPid, StreamRef}}, St0
 handle_info({'DOWN', Ref, process, Worker, Reason}, St0) ->
     case maps:find(Worker, St0#st.connectors) of
         {ok, #{monitor := Ref, relay_url := RelayUrl}} ->
-            Conns = maps:filter(fun(Pid, Conn) ->
-                case maps:get(owner, Conn, undefined) =:= Worker of
-                    true -> safe_close_gun(Pid), false;
-                    false -> true
-                end
-            end, St0#st.conns),
+            Conns = maps:filter(
+                fun(Pid, Conn) ->
+                    case maps:get(owner, Conn, undefined) =:= Worker of
+                        true ->
+                            safe_close_gun(Pid),
+                            false;
+                        false ->
+                            true
+                    end
+                end,
+                St0#st.conns
+            ),
             ?LOG_DEBUG("nsecbunker relay worker down relay=~p reason=~p", [RelayUrl, Reason]),
             St1 = St0#st{conns = Conns, connectors = maps:remove(Worker, St0#st.connectors)},
             St2 = schedule_reconnect(RelayUrl, Reason, St1),
             {noreply, St2};
-        _ -> {noreply, St0}
+        _ ->
+            {noreply, St0}
     end;
 handle_info({'EXIT', _Worker, _Reason}, St) ->
     %% Monitors handle worker cleanup; links terminate workers with the adapter.
@@ -344,16 +361,22 @@ subscribe_all(Relays, Filter, St0) ->
 
 connect_and_subscribe(Relay, Filter, St0) ->
     RelayUrl = relay_url(Relay),
-    Existing = lists:any(fun(#{relay_url := Url}) -> Url =:= RelayUrl end,
-                         maps:values(St0#st.connectors)),
+    Existing = lists:any(
+        fun(#{relay_url := Url}) -> Url =:= RelayUrl end,
+        maps:values(St0#st.connectors)
+    ),
     case Existing of
-        true -> {ok, St0};
+        true ->
+            {ok, St0};
         false ->
             Parent = self(),
             Timeout = connect_timeout_ms(),
-            {Worker, Ref} = spawn_opt(fun() ->
-                connection_worker(Parent, Relay, Filter, Timeout)
-            end, [link, monitor]),
+            {Worker, Ref} = spawn_opt(
+                fun() ->
+                    connection_worker(Parent, Relay, Filter, Timeout)
+                end,
+                [link, monitor]
+            ),
             Workers = (St0#st.connectors)#{Worker => #{monitor => Ref, relay_url => RelayUrl}},
             {ok, St0#st{connectors = Workers}}
     end.
@@ -367,25 +390,33 @@ connection_worker(Parent, Relay, Filter, Timeout) ->
             Monitor = erlang:monitor(process, ConnPid),
             Parent ! {relay_opened, self(), Relay, Filter, {ok, ConnPid, StreamRef}},
             forward_connection(Parent, ConnPid, Monitor);
-        {error, Reason} -> exit({connect_failed, compact_error(Reason)})
+        {error, Reason} ->
+            exit({connect_failed, compact_error(Reason)})
     end.
 
 forward_connection(Parent, ConnPid, Monitor) ->
     receive
         {'DOWN', Monitor, process, ConnPid, Reason} ->
             exit({connection_down, Reason});
-        Message when is_tuple(Message), tuple_size(Message) >= 2,
-                     element(2, Message) =:= ConnPid ->
+        Message when
+            is_tuple(Message),
+            tuple_size(Message) >= 2,
+            element(2, Message) =:= ConnPid
+        ->
             Parent ! Message,
             forward_connection(Parent, ConnPid, Monitor);
-        _Other -> forward_connection(Parent, ConnPid, Monitor)
+        _Other ->
+            forward_connection(Parent, ConnPid, Monitor)
     end.
 
 stop_connectors(Workers) ->
-    maps:foreach(fun(Worker, #{monitor := Ref}) ->
-        erlang:demonitor(Ref, [flush]),
-        kill_worker(Worker)
-    end, Workers).
+    maps:foreach(
+        fun(Worker, #{monitor := Ref}) ->
+            erlang:demonitor(Ref, [flush]),
+            kill_worker(Worker)
+        end,
+        Workers
+    ).
 
 await_ws_upgrade(ConnPid, StreamRef, RelayUrl, TimeoutMs) ->
     receive
@@ -544,7 +575,8 @@ schedule_reconnect(RelayUrl, Reason, St0 = #st{retry_state = Retry0}) ->
             case classify_relay_failure(Reason) of
                 permanent ->
                     case maps:get(disabled, Prev, false) of
-                        true -> ok;
+                        true ->
+                            ok;
                         false ->
                             ?LOG_ERROR(
                                 "nsecbunker relay disabled after unrecoverable failure relay=~p reason=~p",
@@ -553,7 +585,11 @@ schedule_reconnect(RelayUrl, Reason, St0 = #st{retry_state = Retry0}) ->
                     end,
                     Retry = maps:put(
                         RelayUrl,
-                        Prev#{disabled => true, timer => undefined, last_reason => compact_error(Reason)},
+                        Prev#{
+                            disabled => true,
+                            timer => undefined,
+                            last_reason => compact_error(Reason)
+                        },
                         Retry0
                     ),
                     St0#st{retry_state = Retry};
@@ -602,8 +638,7 @@ log_retry(debug, RelayUrl, Attempt, Delay, Reason) ->
 clear_retry_timer(RelayUrl, St0 = #st{retry_state = Retry0}) ->
     case maps:get(RelayUrl, Retry0, undefined) of
         undefined -> St0;
-        Prev ->
-            St0#st{retry_state = maps:put(RelayUrl, Prev#{timer => undefined}, Retry0)}
+        Prev -> St0#st{retry_state = maps:put(RelayUrl, Prev#{timer => undefined}, Retry0)}
     end.
 
 clear_retry_state(RelayUrl, St0 = #st{retry_state = Retry0}) ->
@@ -618,33 +653,54 @@ clear_retry_state(RelayUrl, St0 = #st{retry_state = Retry0}) ->
             St0
     end.
 
-classify_relay_failure({connect_failed, Reason}) -> classify_relay_failure(Reason);
-classify_relay_failure({connection_down, Reason}) -> classify_relay_failure(Reason);
-classify_relay_failure({await_up_failed, Reason}) -> classify_relay_failure(Reason);
-classify_relay_failure({await_up_exit, Reason}) -> classify_relay_failure(Reason);
-classify_relay_failure({gun_error, _StreamRef, Reason}) -> classify_relay_failure(Reason);
-classify_relay_failure({gun_error, Reason}) -> classify_relay_failure(Reason);
-classify_relay_failure({gun_down, _Protocol, Reason, _}) -> classify_relay_failure(Reason);
-classify_relay_failure({gun_down, _Protocol, Reason, _, _}) -> classify_relay_failure(Reason);
-classify_relay_failure(timeout) -> retryable;
-classify_relay_failure(normal) -> retryable;
-classify_relay_failure(killed) -> retryable;
-classify_relay_failure(closed) -> retryable;
-classify_relay_failure(econnrefused) -> retryable;
-classify_relay_failure(econnreset) -> retryable;
-classify_relay_failure(enetunreach) -> retryable;
-classify_relay_failure(ehostunreach) -> retryable;
-classify_relay_failure({websocket_upgrade_rejected, _, 429}) -> retryable;
+classify_relay_failure({connect_failed, Reason}) ->
+    classify_relay_failure(Reason);
+classify_relay_failure({connection_down, Reason}) ->
+    classify_relay_failure(Reason);
+classify_relay_failure({await_up_failed, Reason}) ->
+    classify_relay_failure(Reason);
+classify_relay_failure({await_up_exit, Reason}) ->
+    classify_relay_failure(Reason);
+classify_relay_failure({gun_error, _StreamRef, Reason}) ->
+    classify_relay_failure(Reason);
+classify_relay_failure({gun_error, Reason}) ->
+    classify_relay_failure(Reason);
+classify_relay_failure({gun_down, _Protocol, Reason, _}) ->
+    classify_relay_failure(Reason);
+classify_relay_failure({gun_down, _Protocol, Reason, _, _}) ->
+    classify_relay_failure(Reason);
+classify_relay_failure(timeout) ->
+    retryable;
+classify_relay_failure(normal) ->
+    retryable;
+classify_relay_failure(killed) ->
+    retryable;
+classify_relay_failure(closed) ->
+    retryable;
+classify_relay_failure(econnrefused) ->
+    retryable;
+classify_relay_failure(econnreset) ->
+    retryable;
+classify_relay_failure(enetunreach) ->
+    retryable;
+classify_relay_failure(ehostunreach) ->
+    retryable;
+classify_relay_failure({websocket_upgrade_rejected, _, 429}) ->
+    retryable;
 classify_relay_failure({websocket_upgrade_rejected, _, Status}) when Status >= 500 -> retryable;
 classify_relay_failure({upgrade_failed, Status, _}) when Status =:= 429 -> retryable;
 classify_relay_failure({upgrade_failed, Status, _}) when Status >= 500 -> retryable;
-classify_relay_failure({websocket_upgrade_rejected, _, Status}) when Status >= 400, Status < 500 -> permanent;
+classify_relay_failure({websocket_upgrade_rejected, _, Status}) when Status >= 400, Status < 500 ->
+    permanent;
 classify_relay_failure({upgrade_failed, Status, _}) when Status >= 400, Status < 500 -> permanent;
-classify_relay_failure({invalid_ws_protocol, _}) -> permanent;
-classify_relay_failure({unsupported_scheme, _}) -> permanent;
-classify_relay_failure({bad_relay_url, _}) -> permanent;
-classify_relay_failure(_) -> retryable.
-
+classify_relay_failure({invalid_ws_protocol, _}) ->
+    permanent;
+classify_relay_failure({unsupported_scheme, _}) ->
+    permanent;
+classify_relay_failure({bad_relay_url, _}) ->
+    permanent;
+classify_relay_failure(_) ->
+    retryable.
 
 %% IMPORTANT: do not call damage_nostr_relay_client:inbound_event/1 inline
 %% from this gen_server. That call may publish a response through this same

@@ -273,7 +273,11 @@ do_post_message(
             case gun:await_body(ConnPid, StreamRef) of
                 {ok, RespBody} ->
                     RespMap =
-                        case damage_otp_compat:catch_value(fun() -> jsx:decode(RespBody, [{labels, atom}, return_maps]) end) of
+                        case
+                            damage_otp_compat:catch_value(fun() ->
+                                jsx:decode(RespBody, [{labels, atom}, return_maps])
+                            end)
+                        of
                             {'EXIT', _} -> #{raw => RespBody};
                             Decoded -> Decoded
                         end,

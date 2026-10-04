@@ -41,10 +41,10 @@ single_key_representation_test_() ->
     [
         ?_assertEqual({ok, some(42)}, damage_release_nft:call_return(Call))
      || Call <- [
-        #{"return_type" => "ok", "return_value" => some(42)},
-        #{return_type => ok, return_value => some(42)},
-        #{<<"return_type">> => <<"ok">>, <<"return_value">> => some(42)}
-    ]
+            #{"return_type" => "ok", "return_value" => some(42)},
+            #{return_type => ok, return_value => some(42)},
+            #{<<"return_type">> => <<"ok">>, <<"return_value">> => some(42)}
+        ]
     ].
 
 atom_keys_precede_raw_binary_fallback_test() ->
@@ -64,8 +64,12 @@ mint_and_oracle_results_test_() ->
     %% Mint token ID, unit response, oracle query ID, and a native map.
     %% Do not specialize call_return/1 for options only.
     [
-        ?_assertEqual({ok, Value}, damage_release_nft:call_return(
-            (logged_none_reply())#{"return_value" := Value}))
+        ?_assertEqual(
+            {ok, Value},
+            damage_release_nft:call_return(
+                (logged_none_reply())#{"return_value" := Value}
+            )
+        )
      || Value <- [42, {}, {oracle_query, <<0:256>>}, #{<<"release">> => <<"v1">>}]
     ].
 
@@ -76,8 +80,10 @@ revert_keeps_decoded_reason_test() ->
         <<"return_type">> := <<"revert">>,
         <<"return_value">> := <<"cb_opaque-revert">>
     },
-    ?assertEqual({error, {revert, <<"Release already exists">>}},
-        damage_release_nft:call_return(Call)).
+    ?assertEqual(
+        {error, {revert, <<"Release already exists">>}},
+        damage_release_nft:call_return(Call)
+    ).
 
 error_keeps_decoded_reason_test() ->
     Call = (logged_none_reply())#{
@@ -86,12 +92,16 @@ error_keeps_decoded_reason_test() ->
         <<"return_type">> := <<"error">>,
         <<"return_value">> := <<"cb_opaque-error">>
     },
-    ?assertEqual({error, {unexpected_return_type, "error", <<"Contract execution failed">>}},
-        damage_release_nft:call_return(Call)).
+    ?assertEqual(
+        {error, {unexpected_return_type, "error", <<"Contract execution failed">>}},
+        damage_release_nft:call_return(Call)
+    ).
 
 missing_status_still_fails_test() ->
-    ?assertEqual({error, missing_return_type},
-        damage_release_nft:call_return(#{"return_value" => none()})).
+    ?assertEqual(
+        {error, missing_return_type},
+        damage_release_nft:call_return(#{"return_value" => none()})
+    ).
 
 nonmap_still_fails_test() ->
     ?assertEqual({error, contract_call_failed}, damage_release_nft:call_return(not_a_map)).
@@ -109,32 +119,40 @@ malformed_decoded_value_does_not_fall_back_test() ->
         <<"return_value">> := none()
     },
     ?assertEqual({ok, undefined}, damage_release_nft:call_return(Call)),
-    ?assertEqual({error, invalid_release_option},
-        damage_release_nft:option_value(undefined)).
+    ?assertEqual(
+        {error, invalid_release_option},
+        damage_release_nft:option_value(undefined)
+    ).
 
 malformed_variant_still_fails_test_() ->
     [
         ?_assertEqual({error, invalid_release_option}, damage_release_nft:option_value(Value))
      || Value <- [
-        {variant, [1, 0], 0, {}},
-        {variant, [0, 1], 0, {unexpected}},
-        {variant, [0, 1], 1, {}},
-        {variant, [0, 1], 2, {}},
-        <<"not a decoded option">>
-    ]
+            {variant, [1, 0], 0, {}},
+            {variant, [0, 1], 0, {unexpected}},
+            {variant, [0, 1], 1, {}},
+            {variant, [0, 1], 2, {}},
+            <<"not a decoded option">>
+        ]
     ].
 
 latest_none_is_not_found_test() ->
     Query = fun("latest_release_value_for", ["ubuntu-noble-amd64"]) ->
         damage_release_nft:call_return(logged_none_reply())
     end,
-    ?assertEqual({error, not_found},
-        damage_release_nft:select_release(latest, <<"ubuntu-noble-amd64">>, Query)).
+    ?assertEqual(
+        {error, not_found},
+        damage_release_nft:select_release(latest, <<"ubuntu-noble-amd64">>, Query)
+    ).
 
 historical_none_is_not_found_test() ->
     %% No metadata lookup may run for a nonexistent release token.
     Query = fun("release_token", ["v1.2.3", "ubuntu-noble-amd64"]) ->
         damage_release_nft:call_return(logged_none_reply())
     end,
-    ?assertEqual({error, not_found}, damage_release_nft:select_release(
-        {release, <<"v1.2.3">>}, <<"ubuntu-noble-amd64">>, Query)).
+    ?assertEqual(
+        {error, not_found},
+        damage_release_nft:select_release(
+            {release, <<"v1.2.3">>}, <<"ubuntu-noble-amd64">>, Query
+        )
+    ).

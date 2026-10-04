@@ -277,19 +277,22 @@ do_publish_sync(Event, Relays0, TimeoutMs, S) ->
                             Result =
                                 case get_worker(R, S) of
                                     {ok, WorkerPid} ->
-                                        damage_otp_compat:catch_value(fun() -> nostr_relay_worker:publish_sync(
-                                            WorkerPid, Event, TimeoutMs
-                                        ) end);
+                                        damage_otp_compat:catch_value(fun() ->
+                                            nostr_relay_worker:publish_sync(
+                                                WorkerPid, Event, TimeoutMs
+                                            )
+                                        end);
                                     Error ->
                                         Error
                                 end,
-                            Parent ! {
-                                nostr_publish_result,
-                                Ref,
-                                self(),
-                                Relay,
-                                normalize_publish_result(Result)
-                            }
+                            Parent !
+                                {
+                                    nostr_publish_result,
+                                    Ref,
+                                    self(),
+                                    Relay,
+                                    normalize_publish_result(Result)
+                                }
                         end),
                         {Pid, Relay}
                     end

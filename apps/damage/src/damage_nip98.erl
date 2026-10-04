@@ -196,7 +196,8 @@ optional_tag_value(Name, Tags) ->
 tag_values(Name, Tags) ->
     [Value || [TagName, Value | _] <- Tags, TagName =:= Name].
 
-run_checks([]) -> ok;
+run_checks([]) ->
+    ok;
 run_checks([F | Rest]) ->
     case F() of
         ok -> run_checks(Rest);
@@ -208,22 +209,24 @@ run_checks([F | Rest]) ->
 %% ------------------------------------------------------------------
 
 decode_hex(Hex) when is_binary(Hex), byte_size(Hex) =:= 64 ->
-    try {ok, binary:decode_hex(upper_ascii(Hex))}
+    try
+        {ok, binary:decode_hex(upper_ascii(Hex))}
     catch
         _:_ -> error
     end;
-decode_hex(_) -> error.
+decode_hex(_) ->
+    error.
 
 trim_b64_padding(Bin) ->
     binary:replace(Bin, <<"=">>, <<>>, [global]).
 
 upper_ascii(B) ->
-    << <<(upper_char(C))>> || <<C>> <= B >>.
+    <<<<(upper_char(C))>> || <<C>> <= B>>.
 upper_char(C) when C >= $a, C =< $z -> C - 32;
 upper_char(C) -> C.
 
 lower_ascii(B) ->
-    << <<(lower_char(C))>> || <<C>> <= B >>.
+    <<<<(lower_char(C))>> || <<C>> <= B>>.
 lower_char(C) when C >= $A, C =< $Z -> C + 32;
 lower_char(C) -> C.
 

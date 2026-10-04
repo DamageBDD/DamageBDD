@@ -141,7 +141,11 @@ parse_body_to_map(Bin) when is_binary(Bin) ->
     T = string:trim(Str),
     case T of
         [$\{ | _] ->
-            case damage_otp_compat:catch_value(fun() -> jiffy:decode(list_to_binary(T), [return_maps]) end) of
+            case
+                damage_otp_compat:catch_value(fun() ->
+                    jiffy:decode(list_to_binary(T), [return_maps])
+                end)
+            of
                 M when is_map(M) -> M;
                 _ -> #{}
             end;

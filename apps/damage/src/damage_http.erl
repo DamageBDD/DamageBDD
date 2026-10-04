@@ -218,7 +218,7 @@ generate_l402_invoice(Req0, State) ->
             {{false, ?AUTH_HEADER}, Req0, State};
         node_anchor ->
             {{false, ?AUTH_HEADER}, Req0, State};
-         _ ->
+        _ ->
             case node_secrets_ready() of
                 true ->
                     generate_l402_invoice_ready(Action, Req0, State, Scope);
@@ -359,8 +359,10 @@ node_secrets_ready() ->
             end
     end.
 
-secrets_unavailable_reason(node_locked) -> true;
-secrets_unavailable_reason(secrets_not_ready) -> true;
+secrets_unavailable_reason(node_locked) ->
+    true;
+secrets_unavailable_reason(secrets_not_ready) ->
+    true;
 secrets_unavailable_reason({error, Reason}) ->
     secrets_unavailable_reason(Reason);
 secrets_unavailable_reason({master_key_unavailable, Reason}) ->
@@ -538,11 +540,16 @@ json_stream_mode(Context) ->
             Error
     end.
 
-parse_stream_flag(undefined) -> {ok, false};
-parse_stream_flag(false) -> {ok, false};
-parse_stream_flag(true) -> {ok, true};
-parse_stream_flag(0) -> {ok, false};
-parse_stream_flag(1) -> {ok, true};
+parse_stream_flag(undefined) ->
+    {ok, false};
+parse_stream_flag(false) ->
+    {ok, false};
+parse_stream_flag(true) ->
+    {ok, true};
+parse_stream_flag(0) ->
+    {ok, false};
+parse_stream_flag(1) ->
+    {ok, true};
 parse_stream_flag(Value) when is_list(Value) ->
     parse_stream_flag(unicode:characters_to_binary(Value));
 parse_stream_flag(Value) when is_binary(Value) ->
@@ -577,7 +584,8 @@ normalize_concurrency(Value) when is_list(Value) ->
     catch
         _:_ -> 1
     end;
-normalize_concurrency(_) -> 1.
+normalize_concurrency(_) ->
+    1.
 get_stream_config(Config, Context, Req) ->
     %% stream logs via text formatter to cowboy stream
     %Req = cowboy_req:stream_reply(
@@ -639,103 +647,103 @@ get_config(Config, Context, Req0) ->
 execute_bdd_once(Config, Context, FeatureData) ->
     Response =
         case damage:execute_data(Config, Context, FeatureData) of
-        %% Failing step (runner-level assertion failure)
-        [
-            #{
-                fail := FailReason,
-                failing_step := {_KeyWord, Line, Step, _Args}
-            }
-            | _
-        ] ->
-            ?LOG_DEBUG("BDD assertion failed line=~p", [Line]),
-            {200, #{
-                status => <<"notok">>,
-                line => Line,
-                failing_step =>
-                    list_to_binary(damage_utils:lists_concat(Step, " ")),
-                reason => FailReason
-            }};
-        %% Failed run map. This must come before report_hash success,
-        %% because damage:execute_data/3 may still return hashes for failed runs.
-        #{fail := FailReason, failing_step := {_KeyWord, Line, Step, _Args}} ->
-            {400, #{
-                status => <<"notok">>,
-                line => Line,
-                failing_step =>
-                    list_to_binary(damage_utils:lists_concat(Step, " ")),
-                reason => FailReason
-            }};
-        #{fail := FailReason} = Result ->
-            {400,
-                maps:merge(Result, #{
+            %% Failing step (runner-level assertion failure)
+            [
+                #{
+                    fail := FailReason,
+                    failing_step := {_KeyWord, Line, Step, _Args}
+                }
+                | _
+            ] ->
+                ?LOG_DEBUG("BDD assertion failed line=~p", [Line]),
+                {200, #{
                     status => <<"notok">>,
+                    line => Line,
+                    failing_step =>
+                        list_to_binary(damage_utils:lists_concat(Step, " ")),
                     reason => FailReason
-                })};
-        %% Current RunRecord may carry result instead of fail.
-        #{result := Result0} = Result when
-            Result0 =/= <<"success">>,
-            Result0 =/= "success",
-            Result0 =/= success
-        ->
-            {400,
-                maps:merge(Result, #{
+                }};
+            %% Failed run map. This must come before report_hash success,
+            %% because damage:execute_data/3 may still return hashes for failed runs.
+            #{fail := FailReason, failing_step := {_KeyWord, Line, Step, _Args}} ->
+                {400, #{
                     status => <<"notok">>,
-                    reason => Result0
-                })};
-        %% Parser/lexer error with pretty message
-        {parse_error, LineNo, MessagePretty} ->
-            formatter:format(Config, error, {LineNo, MessagePretty}),
-            ?LOG_DEBUG("BDD parse failed line=~p", [LineNo]),
-            {400, #{
-                status => <<"notok">>,
-                message => MessagePretty,
-                line => LineNo
-            }};
-        %% Dry run success (explicit match on dry_run := true)
-        #{dry_run := true, report_hash := _, cost := Cost} = Result ->
-            {200, add_cost_units(maps:merge(Result, #{status => <<"ok">>, cost => Cost}))};
-        %% Successful run (non-dry). We don't guard; the dry-run clause above
-        %% already caught the dry-run case.
-        #{report_hash := _} = Result ->
-            {200, maps:merge(Result, #{status => <<"ok">>})};
-        {error, {context_scope_unavailable, Scope, Reason}} ->
-            case secrets_unavailable_reason(Reason) of
-                true ->
-                    node_secrets_unavailable_response(Reason);
-                false ->
-                    {503, #{
+                    line => Line,
+                    failing_step =>
+                        list_to_binary(damage_utils:lists_concat(Step, " ")),
+                    reason => FailReason
+                }};
+            #{fail := FailReason} = Result ->
+                {400,
+                    maps:merge(Result, #{
                         status => <<"notok">>,
-                        error => <<"CONTEXT_SCOPE_UNAVAILABLE">>,
-                        message => <<"Required context scope is unavailable.">>,
-                        scope => to_bin(io_lib:format("~p", [Scope])),
-                        reason => to_bin(io_lib:format("~p", [Reason]))
-                    }}
-            end;
-        {error, {context_ipfs_publish_failed, Reason}} ->
-            {500, #{
-                status => <<"notok">>,
-                error => <<"CONTEXT_IPFS_PUBLISH_FAILED">>,
-                message =>
-                    <<"Context proof could not be published to IPFS; report was not published.">>,
-                reason => to_bin(io_lib:format("~p", [Reason]))
-            }};
-        {error, {context_proof_write_failed, Reason}} ->
-            {500, #{
-                status => <<"notok">>,
-                error => <<"CONTEXT_PROOF_WRITE_FAILED">>,
-                message => <<"Context proof could not be written; report was not published.">>,
-                reason => to_bin(io_lib:format("~p", [Reason]))
-            }};
-        %% Anything unexpected
-        Error ->
-            ?LOG_ERROR("execute_bdd unexpected failure ~s.", [redacted_log_term(Context, Error)]),
-            {500, #{
-                status => <<"notok">>,
-                message => to_bin(io_lib:format("~p", [Error])),
-                hint =>
-                    <<"Make sure POST data is binary, e.g.: ",
-                        "curl --data-binary @features/test.feature ...">>
-            }}
+                        reason => FailReason
+                    })};
+            %% Current RunRecord may carry result instead of fail.
+            #{result := Result0} = Result when
+                Result0 =/= <<"success">>,
+                Result0 =/= "success",
+                Result0 =/= success
+            ->
+                {400,
+                    maps:merge(Result, #{
+                        status => <<"notok">>,
+                        reason => Result0
+                    })};
+            %% Parser/lexer error with pretty message
+            {parse_error, LineNo, MessagePretty} ->
+                formatter:format(Config, error, {LineNo, MessagePretty}),
+                ?LOG_DEBUG("BDD parse failed line=~p", [LineNo]),
+                {400, #{
+                    status => <<"notok">>,
+                    message => MessagePretty,
+                    line => LineNo
+                }};
+            %% Dry run success (explicit match on dry_run := true)
+            #{dry_run := true, report_hash := _, cost := Cost} = Result ->
+                {200, add_cost_units(maps:merge(Result, #{status => <<"ok">>, cost => Cost}))};
+            %% Successful run (non-dry). We don't guard; the dry-run clause above
+            %% already caught the dry-run case.
+            #{report_hash := _} = Result ->
+                {200, maps:merge(Result, #{status => <<"ok">>})};
+            {error, {context_scope_unavailable, Scope, Reason}} ->
+                case secrets_unavailable_reason(Reason) of
+                    true ->
+                        node_secrets_unavailable_response(Reason);
+                    false ->
+                        {503, #{
+                            status => <<"notok">>,
+                            error => <<"CONTEXT_SCOPE_UNAVAILABLE">>,
+                            message => <<"Required context scope is unavailable.">>,
+                            scope => to_bin(io_lib:format("~p", [Scope])),
+                            reason => to_bin(io_lib:format("~p", [Reason]))
+                        }}
+                end;
+            {error, {context_ipfs_publish_failed, Reason}} ->
+                {500, #{
+                    status => <<"notok">>,
+                    error => <<"CONTEXT_IPFS_PUBLISH_FAILED">>,
+                    message =>
+                        <<"Context proof could not be published to IPFS; report was not published.">>,
+                    reason => to_bin(io_lib:format("~p", [Reason]))
+                }};
+            {error, {context_proof_write_failed, Reason}} ->
+                {500, #{
+                    status => <<"notok">>,
+                    error => <<"CONTEXT_PROOF_WRITE_FAILED">>,
+                    message => <<"Context proof could not be written; report was not published.">>,
+                    reason => to_bin(io_lib:format("~p", [Reason]))
+                }};
+            %% Anything unexpected
+            Error ->
+                ?LOG_ERROR("execute_bdd unexpected failure ~s.", [redacted_log_term(Context, Error)]),
+                {500, #{
+                    status => <<"notok">>,
+                    message => to_bin(io_lib:format("~p", [Error])),
+                    hint =>
+                        <<"Make sure POST data is binary, e.g.: ",
+                            "curl --data-binary @features/test.feature ...">>
+                }}
         end,
     with_release_info(Response).
 
@@ -820,206 +828,219 @@ execute_bdd(Context, State, Req0) ->
 execute_bdd(Context0, State, Req0, ConfigOverrides) ->
     Response =
         try
-        %% Build and freeze effective context once for both dry and paid runs.
-        ContextIn = effective_context(Context0, State),
-        FeatureData = maps:get(feature, Context0),
+            %% Build and freeze effective context once for both dry and paid runs.
+            ContextIn = effective_context(Context0, State),
+            FeatureData = maps:get(feature, Context0),
 
-        %% --- 1) DRY RUN (force nostream) ----------------------------------------
-        DryOverrides = [{dry_run, true} | ConfigOverrides],
-        DryContext = maps:put(stream, nostream, ContextIn),
+            %% --- 1) DRY RUN (force nostream) ----------------------------------------
+            DryOverrides = [{dry_run, true} | ConfigOverrides],
+            DryContext = maps:put(stream, nostream, ContextIn),
 
-        case
-            execute_bdd_once(
-                get_config(DryOverrides, DryContext, Req0),
-                DryContext,
-                FeatureData
-            )
-        of
-            %% Dry run OK
-            {200, DryRes} ->
-                %% If caller wanted only dry-run, return immediately
-                case dry_run_only(ConfigOverrides) of
-                    true ->
-                        {200, add_cost_units(DryRes)};
-                    false ->
-                        %% Must have a cost in dry-run success
-                        Cost = maps:get(cost, DryRes, 0),
+            case
+                execute_bdd_once(
+                    get_config(DryOverrides, DryContext, Req0),
+                    DryContext,
+                    FeatureData
+                )
+            of
+                %% Dry run OK
+                {200, DryRes} ->
+                    %% If caller wanted only dry-run, return immediately
+                    case dry_run_only(ConfigOverrides) of
+                        true ->
+                            {200, add_cost_units(DryRes)};
+                        false ->
+                            %% Must have a cost in dry-run success
+                            Cost = maps:get(cost, DryRes, 0),
 
-                        %% Find account id (support public_key or address)
-                        AeAccount =
-                            case ContextIn of
-                                #{public_key := PK} -> PK;
-                                #{address := PK} -> PK;
-                                _ -> undefined
-                            end,
+                            %% Find account id (support public_key or address)
+                            AeAccount =
+                                case ContextIn of
+                                    #{public_key := PK} -> PK;
+                                    #{address := PK} -> PK;
+                                    _ -> undefined
+                                end,
 
-                        Charge = charge_hits(Cost),
+                            Charge = charge_hits(Cost),
 
-                        ?LOG_INFO("has_enough_damage ~p ~p", [AeAccount, Charge]),
-                        case damage_balance_cache:has_enough_damage(AeAccount, Charge) of
-                            {ok, _Balance, _BalanceSnapshot} ->
-                                %% Original execution path for both normal auth and
-                                %% L402 auth. L402 auth has already mapped State to
-                                %% the configured l402_account in damage_auth.
-                                RunConfig0 = get_config(ConfigOverrides, ContextIn, Req0),
-                                RunConfig = [{defer_summary, true} | RunConfig0],
-                                case execute_bdd_once(RunConfig, ContextIn, FeatureData) of
-                                    {RunStatus, #{report_hash := _} = Result0} when
-                                        RunStatus =:= 200; RunStatus =:= 400
-                                    ->
-                                        %% Only published runs enter settlement. Feature
-                                        %% assertion failures remain billable when the runner
-                                        %% produced a committed report; infrastructure failures
-                                        %% and non-publishable errors return immediately.
-                                        case safe_confirm_spend(RunConfig, Result0) of
-                                            {ok, Spend, TxHash} ->
-                                                ?LOG_INFO("Result ~p", [Spend]),
-                                                Result1 =
-                                                    maps:put(
-                                                        tx_hash,
-                                                        to_bin(TxHash),
-                                                        maps:put(spend, Spend, Result0)
+                            ?LOG_INFO("has_enough_damage ~p ~p", [AeAccount, Charge]),
+                            case damage_balance_cache:has_enough_damage(AeAccount, Charge) of
+                                {ok, _Balance, _BalanceSnapshot} ->
+                                    %% Original execution path for both normal auth and
+                                    %% L402 auth. L402 auth has already mapped State to
+                                    %% the configured l402_account in damage_auth.
+                                    RunConfig0 = get_config(ConfigOverrides, ContextIn, Req0),
+                                    RunConfig = [{defer_summary, true} | RunConfig0],
+                                    case execute_bdd_once(RunConfig, ContextIn, FeatureData) of
+                                        {RunStatus, #{report_hash := _} = Result0} when
+                                            RunStatus =:= 200; RunStatus =:= 400
+                                        ->
+                                            %% Only published runs enter settlement. Feature
+                                            %% assertion failures remain billable when the runner
+                                            %% produced a committed report; infrastructure failures
+                                            %% and non-publishable errors return immediately.
+                                            case safe_confirm_spend(RunConfig, Result0) of
+                                                {ok, Spend, TxHash} ->
+                                                    ?LOG_INFO("Result ~p", [Spend]),
+                                                    Result1 =
+                                                        maps:put(
+                                                            tx_hash,
+                                                            to_bin(TxHash),
+                                                            maps:put(spend, Spend, Result0)
+                                                        ),
+                                                    Result2 = maps:put(cost, Cost, Result1),
+                                                    Summary0 = add_cost_units(
+                                                        maybe_l402_result_meta(ContextIn, Result2)
                                                     ),
-                                                Result2 = maps:put(cost, Cost, Result1),
-                                                Summary0 = add_cost_units(
-                                                    maybe_l402_result_meta(ContextIn, Result2)
-                                                ),
-                                                Summary = Summary0#{
-                                                    status => maps:get(status, Summary0, <<"ok">>),
-                                                    result => maps:get(
-                                                        result, Summary0, <<"success">>
+                                                    Summary = Summary0#{
+                                                        status => maps:get(
+                                                            status, Summary0, <<"ok">>
+                                                        ),
+                                                        result => maps:get(
+                                                            result, Summary0, <<"success">>
+                                                        ),
+                                                        public_key => AeAccount
+                                                    },
+                                                    formatter:format(
+                                                        RunConfig,
+                                                        summary,
+                                                        Summary
                                                     ),
-                                                    public_key => AeAccount
-                                                },
-                                                formatter:format(
-                                                    RunConfig,
-                                                    summary,
-                                                    Summary
-                                                ),
-                                                {RunStatus, Summary};
-                                            {pending, TxHash, ChainError} ->
-                                                ?LOG_WARNING(
-                                                    "confirm spend pending account=~p tx_hash=~p error=~p",
-                                                    [AeAccount, TxHash, ChainError]
-                                                ),
-                                                Pending0 =
-                                                    add_cost_units(
-                                                        maybe_l402_result_meta(
-                                                            ContextIn,
-                                                            maps:put(cost, Cost, Result0)
+                                                    {RunStatus, Summary};
+                                                {pending, TxHash, ChainError} ->
+                                                    ?LOG_WARNING(
+                                                        "confirm spend pending account=~p tx_hash=~p error=~p",
+                                                        [AeAccount, TxHash, ChainError]
+                                                    ),
+                                                    Pending0 =
+                                                        add_cost_units(
+                                                            maybe_l402_result_meta(
+                                                                ContextIn,
+                                                                maps:put(cost, Cost, Result0)
+                                                            )
+                                                        ),
+                                                    Pending = Pending0#{
+                                                        status => <<"pending">>,
+                                                        result => maps:get(
+                                                            result, Pending0, <<"success">>
+                                                        ),
+                                                        settlement_status => <<"pending">>,
+                                                        error => <<"CONFIRM_SPEND_PENDING">>,
+                                                        message =>
+                                                            <<
+                                                                "Execution completed and the spend transaction was submitted, "
+                                                                "but it was not mined before the confirmation timeout. "
+                                                                "Do not rerun the feature; verify tx_hash before retrying settlement."
+                                                            >>,
+                                                        tx_hash => to_bin(TxHash),
+                                                        public_key => AeAccount,
+                                                        retry_feature => false,
+                                                        chain_reason => confirm_spend_reason(
+                                                            ChainError
                                                         )
+                                                    },
+                                                    formatter:format(RunConfig, summary, Pending),
+                                                    {202, Pending};
+                                                {error, insufficient_balance, Spend, ChainError} ->
+                                                    ?LOG_WARNING(
+                                                        "confirm spend insufficient balance account=~p spend=~p error=~p",
+                                                        [AeAccount, Spend, ChainError]
                                                     ),
-                                                Pending = Pending0#{
-                                                    status => <<"pending">>,
-                                                    result => maps:get(
-                                                        result, Pending0, <<"success">>
+                                                    {402, #{
+                                                        status => <<"notok">>,
+                                                        error => <<"ACCOUNT_INSUFFICIENT_BALANCE">>,
+                                                        message => insufficient_balance_message(
+                                                            ContextIn
+                                                        ),
+                                                        balance => damage_balance_cache:execution_damage_balance(
+                                                            AeAccount
+                                                        ),
+                                                        required => Spend,
+                                                        required_damage => cost_hits_to_damage(
+                                                            Spend
+                                                        ),
+                                                        required_sats => cost_hits_to_sats(Spend),
+                                                        chain_reason => confirm_spend_reason(
+                                                            ChainError
+                                                        )
+                                                    }};
+                                                {error, Reason, Spend, ChainError} ->
+                                                    ?LOG_ERROR(
+                                                        "confirm spend failed account=~p spend=~p reason=~p error=~p",
+                                                        [AeAccount, Spend, Reason, ChainError]
                                                     ),
-                                                    settlement_status => <<"pending">>,
-                                                    error => <<"CONFIRM_SPEND_PENDING">>,
-                                                    message =>
-                                                        <<
-                                                            "Execution completed and the spend transaction was submitted, "
-                                                            "but it was not mined before the confirmation timeout. "
-                                                            "Do not rerun the feature; verify tx_hash before retrying settlement."
-                                                        >>,
-                                                    tx_hash => to_bin(TxHash),
-                                                    public_key => AeAccount,
-                                                    retry_feature => false,
-                                                    chain_reason => confirm_spend_reason(ChainError)
-                                                },
-                                                formatter:format(RunConfig, summary, Pending),
-                                                {202, Pending};
-                                            {error, insufficient_balance, Spend, ChainError} ->
-                                                ?LOG_WARNING(
-                                                    "confirm spend insufficient balance account=~p spend=~p error=~p",
-                                                    [AeAccount, Spend, ChainError]
-                                                ),
-                                                {402, #{
-                                                    status => <<"notok">>,
-                                                    error => <<"ACCOUNT_INSUFFICIENT_BALANCE">>,
-                                                    message => insufficient_balance_message(
-                                                        ContextIn
+                                                    {500, #{
+                                                        status => <<"notok">>,
+                                                        error => <<"CONFIRM_SPEND_FAILED">>,
+                                                        reason => confirm_spend_reason(Reason),
+                                                        required => Spend,
+                                                        required_damage => cost_hits_to_damage(
+                                                            Spend
+                                                        ),
+                                                        required_sats => cost_hits_to_sats(Spend),
+                                                        chain_reason => confirm_spend_reason(
+                                                            ChainError
+                                                        )
+                                                    }};
+                                                {exception, Class, Reason, Stack} ->
+                                                    ?LOG_ERROR(
+                                                        "confirm spend crashed account=~p error=~p:~p stack=~p",
+                                                        [AeAccount, Class, Reason, Stack]
                                                     ),
-                                                    balance => damage_balance_cache:execution_damage_balance(
-                                                        AeAccount
+                                                    {500, #{
+                                                        status => <<"notok">>,
+                                                        error => <<"CONFIRM_SPEND_CRASH">>,
+                                                        class => to_bin(Class),
+                                                        reason => confirm_spend_reason(Reason)
+                                                    }};
+                                                Other ->
+                                                    ?LOG_ERROR(
+                                                        "confirm spend unexpected result account=~p result=~p",
+                                                        [AeAccount, Other]
                                                     ),
-                                                    required => Spend,
-                                                    required_damage => cost_hits_to_damage(Spend),
-                                                    required_sats => cost_hits_to_sats(Spend),
-                                                    chain_reason => confirm_spend_reason(ChainError)
-                                                }};
-                                            {error, Reason, Spend, ChainError} ->
-                                                ?LOG_ERROR(
-                                                    "confirm spend failed account=~p spend=~p reason=~p error=~p",
-                                                    [AeAccount, Spend, Reason, ChainError]
-                                                ),
-                                                {500, #{
-                                                    status => <<"notok">>,
-                                                    error => <<"CONFIRM_SPEND_FAILED">>,
-                                                    reason => confirm_spend_reason(Reason),
-                                                    required => Spend,
-                                                    required_damage => cost_hits_to_damage(Spend),
-                                                    required_sats => cost_hits_to_sats(Spend),
-                                                    chain_reason => confirm_spend_reason(ChainError)
-                                                }};
-                                            {exception, Class, Reason, Stack} ->
-                                                ?LOG_ERROR(
-                                                    "confirm spend crashed account=~p error=~p:~p stack=~p",
-                                                    [AeAccount, Class, Reason, Stack]
-                                                ),
-                                                {500, #{
-                                                    status => <<"notok">>,
-                                                    error => <<"CONFIRM_SPEND_CRASH">>,
-                                                    class => to_bin(Class),
-                                                    reason => confirm_spend_reason(Reason)
-                                                }};
-                                            Other ->
-                                                ?LOG_ERROR(
-                                                    "confirm spend unexpected result account=~p result=~p",
-                                                    [AeAccount, Other]
-                                                ),
-                                                {500, #{
-                                                    status => <<"notok">>,
-                                                    error => <<"CONFIRM_SPEND_UNEXPECTED_RESULT">>,
-                                                    reason => confirm_spend_reason(Other)
-                                                }}
-                                        end;
-                                    {RunStatus, RunError} ->
-                                        {RunStatus, RunError}
-                                end;
-                            {error, insufficient_damage, Balance, _BalanceSnapshot} ->
-                                {402, #{
-                                    status => <<"notok">>,
-                                    message => insufficient_balance_message(ContextIn),
-                                    balance => Balance,
-                                    required => Charge,
-                                    required_damage => cost_hits_to_damage(Charge),
-                                    required_sats => cost_hits_to_sats(Charge)
-                                }}
-                        end
-                end;
-            %% Dry run failed; bubble it up as-is
-            {DryCode, DryRes} ->
-                {DryCode, DryRes}
-        end
-    catch
-        error:{context_scope_unavailable, Scope, Reason0}:Stacktrace ->
-            ?LOG_ERROR(
-                "Context preparation failed scope=~p reason=~p stack=~p",
-                [Scope, Reason0, Stacktrace]
-            ),
-            case secrets_unavailable_reason(Reason0) of
-                true ->
-                    node_secrets_unavailable_response(Reason0);
-                false ->
-                    {503, #{
-                        status => <<"notok">>,
-                        error => <<"CONTEXT_SCOPE_UNAVAILABLE">>,
-                        message => <<"Required context scope is unavailable.">>,
-                        scope => to_bin(io_lib:format("~p", [Scope])),
-                        reason => to_bin(io_lib:format("~p", [Reason0]))
-                    }}
+                                                    {500, #{
+                                                        status => <<"notok">>,
+                                                        error =>
+                                                            <<"CONFIRM_SPEND_UNEXPECTED_RESULT">>,
+                                                        reason => confirm_spend_reason(Other)
+                                                    }}
+                                            end;
+                                        {RunStatus, RunError} ->
+                                            {RunStatus, RunError}
+                                    end;
+                                {error, insufficient_damage, Balance, _BalanceSnapshot} ->
+                                    {402, #{
+                                        status => <<"notok">>,
+                                        message => insufficient_balance_message(ContextIn),
+                                        balance => Balance,
+                                        required => Charge,
+                                        required_damage => cost_hits_to_damage(Charge),
+                                        required_sats => cost_hits_to_sats(Charge)
+                                    }}
+                            end
+                    end;
+                %% Dry run failed; bubble it up as-is
+                {DryCode, DryRes} ->
+                    {DryCode, DryRes}
             end
+        catch
+            error:{context_scope_unavailable, Scope, Reason0}:Stacktrace ->
+                ?LOG_ERROR(
+                    "Context preparation failed scope=~p reason=~p stack=~p",
+                    [Scope, Reason0, Stacktrace]
+                ),
+                case secrets_unavailable_reason(Reason0) of
+                    true ->
+                        node_secrets_unavailable_response(Reason0);
+                    false ->
+                        {503, #{
+                            status => <<"notok">>,
+                            error => <<"CONTEXT_SCOPE_UNAVAILABLE">>,
+                            message => <<"Required context scope is unavailable.">>,
+                            scope => to_bin(io_lib:format("~p", [Scope])),
+                            reason => to_bin(io_lib:format("~p", [Reason0]))
+                        }}
+                end
         end,
     with_release_info(Response).
 
@@ -2371,10 +2392,18 @@ stream_crash_footer(Class, Reason) ->
     iolist_to_binary([
         "\n---\n",
         "status: notok\n",
-        "http_status: ", integer_to_binary(HttpStatus), "\n",
-        "error: ", ErrorCode, "\n",
-        "class: ", printable_stream_value(Class), "\n",
-        "reason: ", secret_reason_bin(Reason), "\n",
+        "http_status: ",
+        integer_to_binary(HttpStatus),
+        "\n",
+        "error: ",
+        ErrorCode,
+        "\n",
+        "class: ",
+        printable_stream_value(Class),
+        "\n",
+        "reason: ",
+        secret_reason_bin(Reason),
+        "\n",
         stream_release_lines(ReleaseFields),
         "\n"
     ]).
@@ -2468,7 +2497,6 @@ to_json(Req0, State) ->
     %  cowboy_req:set_resp_header(<<"X-SessionID">>, <<"testsessionid">>, Req1),
     {Body, Req0, State}.
 
-
 to_text(Req, #{action := version} = State) ->
     to_json(Req, State);
 to_text(Req, State) ->
@@ -2484,18 +2512,26 @@ safe_json_call(Fun) when is_function(Fun, 0) ->
 
 json_safe_runtime_value({error, Reason}) ->
     #{available => false, error => to_bin(io_lib:format("~p", [Reason]))};
-json_safe_runtime_value({ok, Value}) -> json_safe_runtime_value(Value);
+json_safe_runtime_value({ok, Value}) ->
+    json_safe_runtime_value(Value);
 json_safe_runtime_value(Map) when is_map(Map) ->
-    maps:from_list([{json_safe_runtime_key(K), json_safe_runtime_value(V)} || {K,V} <- maps:to_list(Map)]);
+    maps:from_list([
+        {json_safe_runtime_key(K), json_safe_runtime_value(V)}
+     || {K, V} <- maps:to_list(Map)
+    ]);
 json_safe_runtime_value(Tuple) when is_tuple(Tuple) ->
     [json_safe_runtime_value(V) || V <- tuple_to_list(Tuple)];
 json_safe_runtime_value(List) when is_list(List) ->
     [json_safe_runtime_value(V) || V <- List];
-json_safe_runtime_value(true) -> true;
-json_safe_runtime_value(false) -> false;
-json_safe_runtime_value(null) -> null;
+json_safe_runtime_value(true) ->
+    true;
+json_safe_runtime_value(false) ->
+    false;
+json_safe_runtime_value(null) ->
+    null;
 json_safe_runtime_value(Value) when is_atom(Value) -> atom_to_binary(Value, utf8);
-json_safe_runtime_value(Value) -> Value.
+json_safe_runtime_value(Value) ->
+    Value.
 
 json_safe_runtime_key(Key) when is_atom(Key); is_binary(Key) -> Key;
 json_safe_runtime_key(Key) when is_list(Key) -> unicode:characters_to_binary(Key);

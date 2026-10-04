@@ -134,7 +134,8 @@ ingest(Other) ->
 
 safe_call(Request, Timeout) ->
     case whereis(?SERVER) of
-        undefined -> {error, not_started};
+        undefined ->
+            {error, not_started};
         _Pid ->
             try gen_server:call(?SERVER, Request, Timeout) of
                 Reply -> Reply
@@ -236,10 +237,11 @@ normalize_event(#{level := Level, msg := Msg} = LogEvent, State) ->
         false ->
             ignore;
         true ->
-            Meta = case maps:get(meta, LogEvent, #{}) of
-                Value when is_map(Value) -> Value;
-                _ -> #{}
-            end,
+            Meta =
+                case maps:get(meta, LogEvent, #{}) of
+                    Value when is_map(Value) -> Value;
+                    _ -> #{}
+                end,
             case maps:get(damage_ecai_internal, Meta, false) of
                 true ->
                     ignore;
@@ -318,15 +320,20 @@ app_from_module(Module) when is_atom(Module) ->
         undefined -> app_from_module_name(atom_to_list(Module))
     end.
 
-app_from_module_name("damage") -> damage;
-app_from_module_name("ecai") -> ecai;
-app_from_module_name("erm") -> erm;
+app_from_module_name("damage") ->
+    damage;
+app_from_module_name("ecai") ->
+    ecai;
+app_from_module_name("erm") ->
+    erm;
 app_from_module_name(Name) ->
     case lists:prefix("damage_", Name) of
-        true -> damage;
+        true ->
+            damage;
         false ->
             case lists:prefix("ecai_", Name) of
-                true -> ecai;
+                true ->
+                    ecai;
                 false ->
                     case lists:prefix("erm_", Name) of
                         true -> erm;
@@ -338,8 +345,10 @@ app_from_module_name(Name) ->
 maybe_enqueue_learning(Event, State) ->
     Level = maps:get(level, Event),
     Module = maps:get(module, Event, undefined),
-    case level_at_least(Level, State#state.learning_level) andalso
-         learning_eligible_module(Module) of
+    case
+        level_at_least(Level, State#state.learning_level) andalso
+            learning_eligible_module(Module)
+    of
         false ->
             State;
         true ->
@@ -408,10 +417,11 @@ flush_pending_batch(State0) ->
     StateA = add_counter(learning_forward_failed, Failed, State0),
     State1 = add_counter(learning_forwarded, Forwarded, StateA#state{
         pending = Pending1,
-        last_forwarded_at = case Forwarded > 0 of
-            true -> now_iso8601();
-            false -> State0#state.last_forwarded_at
-        end,
+        last_forwarded_at =
+            case Forwarded > 0 of
+                true -> now_iso8601();
+                false -> State0#state.last_forwarded_at
+            end,
         last_error = LastError
     }),
     case map_size(Pending1) > 0 andalso Forwarded > 0 andalso Failed =:= 0 of
@@ -487,7 +497,8 @@ ensure_handler(State = #state{enabled = false}) ->
     State;
 ensure_handler(State) ->
     case handler_present(State#state.handler_id) of
-        true -> State#state{handler_installed = true};
+        true ->
+            State#state{handler_installed = true};
         false ->
             State1 = inc_counter(handler_reinstalls, State),
             maybe_install_handler(State1)
@@ -540,8 +551,10 @@ message_text({string, Text}) ->
     safe_unicode(Text);
 message_text({report, Report}) ->
     safe_unicode(log_utils:summarize_fmt(Report, summary_opts()));
-message_text({Format, Args}) when is_list(Args),
-                                  (is_list(Format) orelse is_binary(Format)) ->
+message_text({Format, Args}) when
+    is_list(Args),
+    (is_list(Format) orelse is_binary(Format))
+->
     SafeArgs = [log_utils:summarize(Arg, summary_opts()) || Arg <- Args],
     safe_format(Format, SafeArgs);
 message_text(Other) ->
@@ -558,10 +571,11 @@ summary_opts() ->
     }.
 
 safe_format(Format0, Args) ->
-    Format = case Format0 of
-        Bin when is_binary(Bin) -> unicode:characters_to_list(Bin);
-        List -> List
-    end,
+    Format =
+        case Format0 of
+            Bin when is_binary(Bin) -> unicode:characters_to_list(Bin);
+            List -> List
+        end,
     try safe_unicode(io_lib:format(Format, Args)) of
         LogBridgeResultBin -> LogBridgeResultBin
     catch
@@ -582,22 +596,23 @@ redact(Text0) ->
     Text1 = safe_unicode(Text0),
     Patterns = [
         {<<"(?i)(authorization|proxy-authorization)\\s*[:=]\\s*(bearer|basic)?\\s*[^\\s,;}\\]&]+">>,
-         <<"authorization=<redacted>">>},
+            <<"authorization=<redacted>">>},
         {<<"(?i)bearer\\s+[a-z0-9._~+/-]+=*">>, <<"Bearer <redacted>">>},
         {<<"(?i)(nsec1|ncryptsec1)[0-9a-z]+">>, <<"nostr-secret=<redacted>">>},
         {<<"(?i)(password|passwd|secret|client[_-]?secret|api[_-]?key|private[_-]?key|access[_-]?token|refresh[_-]?token|session[_-]?token|auth[_-]?token)\\s*[=:]\\s*[\"']?[^\\s,;}&\\]]+">>,
-         <<"credential=<redacted>">>},
-        {<<"(?i)(cookie|set-cookie)\\s*[:=]\\s*[^\\r\\n]+">>,
-         <<"cookie=<redacted>">>}
+            <<"credential=<redacted>">>},
+        {<<"(?i)(cookie|set-cookie)\\s*[:=]\\s*[^\\r\\n]+">>, <<"cookie=<redacted>">>}
     ],
     lists:foldl(
         fun({Pattern, Replacement}, Acc) ->
-            try re:replace(
-                Acc,
-                Pattern,
-                Replacement,
-                [global, unicode, {return, binary}]
-            ) of
+            try
+                re:replace(
+                    Acc,
+                    Pattern,
+                    Replacement,
+                    [global, unicode, {return, binary}]
+                )
+            of
                 Redacted -> Redacted
             catch
                 _:_ -> Acc
@@ -608,8 +623,19 @@ redact(Text0) ->
     ).
 
 metadata_summary(Meta) ->
-    Keys = [application, domain, mfa, module, file, line, pid, node,
-            request_id, req_id, trace_id],
+    Keys = [
+        application,
+        domain,
+        mfa,
+        module,
+        file,
+        line,
+        pid,
+        node,
+        request_id,
+        req_id,
+        trace_id
+    ],
     maps:fold(
         fun(Key, Value, Acc) ->
             Acc#{Key => metadata_value(Key, Value)}
@@ -623,8 +649,9 @@ metadata_value(module, Value) when is_atom(Value) -> Value;
 metadata_value(node, Value) when is_atom(Value) -> Value;
 metadata_value(line, Value) when is_integer(Value), Value >= 0 -> Value;
 metadata_value(pid, Value) when is_pid(Value) -> Value;
-metadata_value(mfa, {Module, Function, Arity})
-  when is_atom(Module), is_atom(Function), is_integer(Arity), Arity >= 0 ->
+metadata_value(mfa, {Module, Function, Arity}) when
+    is_atom(Module), is_atom(Function), is_integer(Arity), Arity >= 0
+->
     {Module, Function, Arity};
 metadata_value(domain, Value) when is_list(Value) ->
     lists:sublist([Part || Part <- Value, is_atom(Part)], 8);
@@ -647,10 +674,11 @@ cap_binary(Bin, Max) when is_binary(Bin), byte_size(Bin) =< Max ->
     Bin;
 cap_binary(Bin, Max) when is_binary(Bin), Max > 0 ->
     Suffix0 = <<"...<truncated>">>,
-    Suffix = case byte_size(Suffix0) =< Max of
-        true -> Suffix0;
-        false -> binary:part(Suffix0, 0, Max)
-    end,
+    Suffix =
+        case byte_size(Suffix0) =< Max of
+            true -> Suffix0;
+            false -> binary:part(Suffix0, 0, Max)
+        end,
     HeadBytes = max(0, Max - byte_size(Suffix)),
     <<(binary:part(Bin, 0, HeadBytes))/binary, Suffix/binary>>.
 
@@ -681,16 +709,19 @@ put_recent(Event, Recent0, Limit) ->
         fun(E) -> maps:get(fingerprint, E, undefined) =:= Fingerprint end,
         Recent0
     ),
-    Event1 = case Matching of
-        [Previous | _] ->
-            Event#{first_observed_at => maps:get(
-                first_observed_at,
-                Previous,
-                maps:get(observed_at, Previous, undefined)
-            )};
-        [] ->
-            Event#{first_observed_at => maps:get(observed_at, Event)}
-    end,
+    Event1 =
+        case Matching of
+            [Previous | _] ->
+                Event#{
+                    first_observed_at => maps:get(
+                        first_observed_at,
+                        Previous,
+                        maps:get(observed_at, Previous, undefined)
+                    )
+                };
+            [] ->
+                Event#{first_observed_at => maps:get(observed_at, Event)}
+        end,
     {Event1, lists:sublist([Event1 | Others], Limit)}.
 
 trim_seen(Seen, RecentLimit) when map_size(Seen) =< (RecentLimit * 4) ->
@@ -800,24 +831,33 @@ apps_opt(Opts) ->
     case Value of
         Apps when is_list(Apps) ->
             Filtered = [App || App <- Apps, is_atom(App)],
-            case Filtered of [] -> ?DEFAULT_APPS; _ -> lists:usort(Filtered) end;
+            case Filtered of
+                [] -> ?DEFAULT_APPS;
+                _ -> lists:usort(Filtered)
+            end;
         _ ->
             ?DEFAULT_APPS
     end.
 
-normalize_level(Level, _Default) when Level =:= debug; Level =:= info;
-                                      Level =:= notice; Level =:= warning;
-                                      Level =:= error; Level =:= critical;
-                                      Level =:= alert; Level =:= emergency;
-                                      Level =:= all; Level =:= none ->
+normalize_level(Level, _Default) when
+    Level =:= debug;
+    Level =:= info;
+    Level =:= notice;
+    Level =:= warning;
+    Level =:= error;
+    Level =:= critical;
+    Level =:= alert;
+    Level =:= emergency;
+    Level =:= all;
+    Level =:= none
+->
     Level;
 normalize_level(_Level, Default) ->
     Default.
 
 level_at_least(_Level, all) -> true;
 level_at_least(_Level, none) -> false;
-level_at_least(Level, Threshold) ->
-    level_rank(Level) >= level_rank(Threshold).
+level_at_least(Level, Threshold) -> level_rank(Level) >= level_rank(Threshold).
 
 level_rank(debug) -> 0;
 level_rank(info) -> 1;
@@ -865,7 +905,8 @@ schedule_flush(State = #state{timer_ref = undefined}, Delay) ->
 schedule_flush(State, _Delay) ->
     State.
 
-cancel_timer(undefined) -> ok;
+cancel_timer(undefined) ->
+    ok;
 cancel_timer(Ref) ->
     _ = erlang:cancel_timer(Ref),
     ok.

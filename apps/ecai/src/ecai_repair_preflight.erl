@@ -9,9 +9,14 @@
 -export([decision/3]).
 -endif.
 
-check(App, Module, Finding, Fingerprint, Version, Opts)
-  when is_atom(App), is_atom(Module), is_map(Finding),
-       is_binary(Fingerprint), is_binary(Version), is_map(Opts) ->
+check(App, Module, Finding, Fingerprint, Version, Opts) when
+    is_atom(App),
+    is_atom(Module),
+    is_map(Finding),
+    is_binary(Fingerprint),
+    is_binary(Version),
+    is_map(Opts)
+->
     case enabled(Opts) of
         false ->
             {allow, #{preflight => disabled}};
@@ -43,15 +48,23 @@ safe_check(App, Module, Finding, Fingerprint, Version, Opts) ->
                         }};
                     {superseded, Reason} ->
                         Repair = persist_superseded(
-                            App, Module, Finding,
-                            Fingerprint, Version,
-                            CurrentVersion, Reason
+                            App,
+                            Module,
+                            Finding,
+                            Fingerprint,
+                            Version,
+                            CurrentVersion,
+                            Reason
                         ),
                         {superseded, Repair};
                     {blocked, Reason} ->
                         Repair = persist_blocked(
-                            App, Module, Finding,
-                            Fingerprint, Version, Reason
+                            App,
+                            Module,
+                            Finding,
+                            Fingerprint,
+                            Version,
+                            Reason
                         ),
                         {blocked, Repair}
                 end;
@@ -72,10 +85,11 @@ safe_check(App, Module, Finding, Fingerprint, Version, Opts) ->
             }}
     end.
 
-decision(Version, CurrentVersion, _Snapshot)
-  when is_binary(CurrentVersion),
-       byte_size(CurrentVersion) > 0,
-       Version =/= CurrentVersion ->
+decision(Version, CurrentVersion, _Snapshot) when
+    is_binary(CurrentVersion),
+    byte_size(CurrentVersion) > 0,
+    Version =/= CurrentVersion
+->
     {superseded, #{
         kind => stale_finding_version,
         finding_version => Version,
@@ -105,8 +119,13 @@ structural_snapshot_failure(_) ->
     false.
 
 persist_superseded(
-    App, Module, Finding, Fingerprint, Version,
-    CurrentVersion, Reason
+    App,
+    Module,
+    Finding,
+    Fingerprint,
+    Version,
+    CurrentVersion,
+    Reason
 ) ->
     Existing = existing_repair(Fingerprint, Version),
     Now = now_iso8601(),
@@ -206,8 +225,11 @@ repair_base(
     ).
 
 existing_repair(Fingerprint, Version) ->
-    case ecai_learning_store:get_repair(
-             Fingerprint, Version) of
+    case
+        ecai_learning_store:get_repair(
+            Fingerprint, Version
+        )
+    of
         {ok, Repair} when is_map(Repair) -> Repair;
         _ -> #{}
     end.

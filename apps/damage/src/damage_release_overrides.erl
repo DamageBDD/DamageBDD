@@ -4,8 +4,17 @@
 %%% This is operational provenance, not an attestation/sandbox for hostile BEAM code.
 -module(damage_release_overrides).
 
--export([record/1, remove/1, get/1, list/0, clear/0,
-         with_lock/1, snapshot/0, runtime_code_hash/1, current_generation/2]).
+-export([
+    record/1,
+    remove/1,
+    get/1,
+    list/0,
+    clear/0,
+    with_lock/1,
+    snapshot/0,
+    runtime_code_hash/1,
+    current_generation/2
+]).
 
 -define(KEY, {?MODULE, overrides}).
 -define(LOCK_MARKER, {?MODULE, lock_held}).
@@ -15,18 +24,24 @@
 -spec with_lock(fun(() -> T)) -> T.
 with_lock(Fun) when is_function(Fun, 0) ->
     case erlang:get(?LOCK_MARKER) of
-        true -> Fun();
+        true ->
+            Fun();
         _ ->
-            global:trans({{?MODULE, journal}, self()}, fun() ->
-                Previous = erlang:put(?LOCK_MARKER, true),
-                try Fun()
-                after
-                    case Previous of
-                        undefined -> erlang:erase(?LOCK_MARKER);
-                        _ -> erlang:put(?LOCK_MARKER, Previous)
+            global:trans(
+                {{?MODULE, journal}, self()},
+                fun() ->
+                    Previous = erlang:put(?LOCK_MARKER, true),
+                    try
+                        Fun()
+                    after
+                        case Previous of
+                            undefined -> erlang:erase(?LOCK_MARKER);
+                            _ -> erlang:put(?LOCK_MARKER, Previous)
+                        end
                     end
-                end
-            end, [node()])
+                end,
+                [node()]
+            )
     end.
 
 -spec record(map()) -> ok.
@@ -54,7 +69,8 @@ remove(Module) when is_atom(Module) ->
     with_lock(fun() ->
         {Revision, Overrides} = state(),
         case maps:find(Module, Overrides) of
-            error -> ok;
+            error ->
+                ok;
             {ok, Meta} ->
                 case restored(Module, Meta) of
                     true -> write(Revision, maps:remove(Module, Overrides));
@@ -80,12 +96,17 @@ snapshot() ->
         {Revision, Overrides} = state(),
         Pairs = lists:sort(maps:to_list(Overrides)),
         Public = [public_meta(M, Meta) || {M, Meta} <- Pairs],
-        Integrity = case lists:all(fun({M, Meta}) -> consistent(M, Meta) end, Pairs) of
-            true -> recorded;
-            false -> uncertain
-        end,
-        #{overrides => Public, override_revision => Revision,
-          runtime_modified => Public =/= [], runtime_integrity_status => Integrity}
+        Integrity =
+            case lists:all(fun({M, Meta}) -> consistent(M, Meta) end, Pairs) of
+                true -> recorded;
+                false -> uncertain
+            end,
+        #{
+            overrides => Public,
+            override_revision => Revision,
+            runtime_modified => Public =/= [],
+            runtime_integrity_status => Integrity
+        }
     end).
 
 -spec list() -> [map()].
@@ -99,16 +120,28 @@ runtime_code_hash(#{overrides := Overrides} = Info) when is_list(Overrides) ->
     case maps:get(runtime_integrity_status, Info, recorded) of
         recorded ->
             Origin = maps:get(release_origin, Info, package),
-            Nft = case Origin of nft -> maps:get(nft, Info, null); _ -> null end,
-            Sorted = lists:sort(fun(A, B) ->
-                maps:get(module, A) < maps:get(module, B)
-            end, Overrides),
-            Data = [<<"damagebdd-runtime-code-v2\0">>,
+            Nft =
+                case Origin of
+                    nft -> maps:get(nft, Info, null);
+                    _ -> null
+                end,
+            Sorted = lists:sort(
+                fun(A, B) ->
+                    maps:get(module, A) < maps:get(module, B)
+                end,
+                Overrides
+            ),
+            Data = [
+                <<"damagebdd-runtime-code-v2\0">>,
                 field(maps:get(release_version, Info, <<>>)),
-                field(maps:get(git_sha, Info, <<>>)), field(Origin), nft_field(Nft),
-                [override_field(O) || O <- Sorted]],
+                field(maps:get(git_sha, Info, <<>>)),
+                field(Origin),
+                nft_field(Nft),
+                [override_field(O) || O <- Sorted]
+            ],
             hex(crypto:hash(sha256, Data));
-        _ -> <<"unknown">>
+        _ ->
+            <<"unknown">>
     end.
 
 state() ->
@@ -116,7 +149,8 @@ state() ->
         {journal_v2, Revision, Overrides} when is_integer(Revision), is_map(Overrides) ->
             {Revision, Overrides};
         Legacy when is_map(Legacy) -> {0, Legacy};
-        _ -> error(invalid_override_journal)
+        _ ->
+            error(invalid_override_journal)
     end.
 
 write(Revision, Overrides) ->
@@ -129,7 +163,8 @@ restored(Module, Meta) ->
             Filename =:= maps:get(base_filename, Meta, undefined) andalso
                 Sha =:= maps:get(base_beam_sha256, Meta, undefined) andalso
                 not erlang:check_old_code(Module);
-        {error, _} -> false
+        {error, _} ->
+            false
     end.
 
 consistent(Module, Meta) ->
@@ -142,7 +177,8 @@ consistent(Module, Meta) ->
                 Filename =:= maps:get(loaded_filename, Meta, undefined) andalso
                     Md5 =:= maps:get(loaded_module_md5, Meta, undefined) andalso
                     Sha =:= maps:get(loaded_beam_sha256, Meta, undefined);
-            {error, _} -> false
+            {error, _} ->
+                false
         end.
 
 %% Resolve a journaled generation using the VM's loaded filename and code MD5.
@@ -160,13 +196,16 @@ current_generation(Module, Meta) ->
                 true -> resolve_generation(Module, Meta, Filename, Md5);
                 false -> {error, {untracked_current_code, Module}}
             end;
-        _ -> {error, {untracked_current_code, Module}}
+        _ ->
+            {error, {untracked_current_code, Module}}
     end.
 
 resolve_generation(Module, Meta, Filename, Md5) ->
-    Keys = [{base_filename, base_module_md5, base_beam_sha256},
-            {loaded_filename, loaded_module_md5, loaded_beam_sha256},
-            {candidate_filename, candidate_module_md5, beam_sha256}],
+    Keys = [
+        {base_filename, base_module_md5, base_beam_sha256},
+        {loaded_filename, loaded_module_md5, loaded_beam_sha256},
+        {candidate_filename, candidate_module_md5, beam_sha256}
+    ],
     Digests = lists:usort([
         maps:get(ShaKey, Meta, undefined)
      || {PathKey, Md5Key, ShaKey} <- Keys,
@@ -179,30 +218,51 @@ resolve_generation(Module, Meta, Filename, Md5) ->
                 true -> {ok, #{filename => Filename, module_md5 => Md5, beam_sha256 => Sha}};
                 false -> {error, {ambiguous_current_generation, Module}}
             end;
-        [] -> {error, {untracked_current_code, Module}};
-        _ -> {error, {ambiguous_current_generation, Module}}
+        [] ->
+            {error, {untracked_current_code, Module}};
+        _ ->
+            {error, {ambiguous_current_generation, Module}}
     end.
 
 valid_sha256(Sha) when is_binary(Sha), byte_size(Sha) =:= 64 ->
     re:run(Sha, <<"\\A[0-9a-f]{64}\\z">>, [{capture, none}]) =:= match;
-valid_sha256(_) -> false.
+valid_sha256(_) ->
+    false.
 
 current_md5(Module) ->
     case code:is_loaded(Module) of
-        false -> undefined;
-        _ -> try hex(Module:module_info(md5)) catch _:_ -> undefined end
+        false ->
+            undefined;
+        _ ->
+            try
+                hex(Module:module_info(md5))
+            catch
+                _:_ -> undefined
+            end
     end.
 
 public_meta(Module, Meta) ->
-    Public = maps:with([source_sha256, beam_sha256, base_beam_sha256,
-        loaded_beam_sha256, old_beam_sha256, base_module_md5,
-        loaded_module_md5, loaded_at, state], Meta),
+    Public = maps:with(
+        [
+            source_sha256,
+            beam_sha256,
+            base_beam_sha256,
+            loaded_beam_sha256,
+            old_beam_sha256,
+            base_module_md5,
+            loaded_module_md5,
+            loaded_at,
+            state
+        ],
+        Meta
+    ),
     %% Another process may have explicitly purged old code. Do not claim that
     %% generation remains present if the VM no longer has it.
-    Old = case erlang:check_old_code(Module) of
-        true -> maps:get(old_beam_sha256, Meta, <<"unknown">>);
-        false -> <<>>
-    end,
+    Old =
+        case erlang:check_old_code(Module) of
+            true -> maps:get(old_beam_sha256, Meta, <<"unknown">>);
+            false -> <<>>
+        end,
     Public#{module => atom_to_binary(Module, utf8), old_beam_sha256 => Old}.
 
 field(Value) ->
@@ -210,13 +270,30 @@ field(Value) ->
     [integer_to_binary(byte_size(Bin)), <<":">>, Bin, <<"\0">>].
 
 nft_field(Nft) when is_map(Nft) ->
-    [field(nft) | [field(maps:get(K, Nft, <<>>)) || K <-
-        [network_id, contract_id, token_id, metadata_cid, asset_cid, package_sha256]]];
-nft_field(_) -> field(none).
+    [
+        field(nft)
+        | [
+            field(maps:get(K, Nft, <<>>))
+         || K <-
+                [network_id, contract_id, token_id, metadata_cid, asset_cid, package_sha256]
+        ]
+    ];
+nft_field(_) ->
+    field(none).
 
 override_field(O) ->
-    [field(maps:get(K, O, <<>>)) || K <- [module, state, source_sha256,
-        beam_sha256, base_beam_sha256, loaded_beam_sha256, old_beam_sha256]].
+    [
+        field(maps:get(K, O, <<>>))
+     || K <- [
+            module,
+            state,
+            source_sha256,
+            beam_sha256,
+            base_beam_sha256,
+            loaded_beam_sha256,
+            old_beam_sha256
+        ]
+    ].
 
 hex(Bin) -> string:lowercase(binary:encode_hex(Bin)).
 to_bin(V) when is_binary(V) -> V;

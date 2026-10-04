@@ -84,12 +84,15 @@ snapshot_repository(
     end;
 snapshot_repository(Analysis, Opts) ->
     SnapshotOpts =
-        case {
-            maps:is_key(base_commit, Opts),
-            maps:get(base_commit, Analysis, undefined)
-        } of
-            {false, Commit}
-              when is_binary(Commit), byte_size(Commit) > 0 ->
+        case
+            {
+                maps:is_key(base_commit, Opts),
+                maps:get(base_commit, Analysis, undefined)
+            }
+        of
+            {false, Commit} when
+                is_binary(Commit), byte_size(Commit) > 0
+            ->
                 Opts#{base_commit => Commit};
             _ ->
                 Opts
@@ -181,8 +184,10 @@ repo_relative_source(RepoRoot0, SourceName0) ->
         end,
     RootParts = filename:split(RepoRoot),
     SourceParts = filename:split(SourceAbs),
-    case lists:prefix(RootParts, SourceParts) andalso
-         length(SourceParts) > length(RootParts) of
+    case
+        lists:prefix(RootParts, SourceParts) andalso
+            length(SourceParts) > length(RootParts)
+    of
         false ->
             {error, source_outside_repository};
         true ->
@@ -191,20 +196,26 @@ repo_relative_source(RepoRoot0, SourceName0) ->
     end.
 
 repo_root(Opts) ->
-    filename:absname(path_to_list(maps:get(
-        repo_root,
-        Opts,
-        application:get_env(ecai, code_repo_root, ".")
-    ))).
+    filename:absname(
+        path_to_list(
+            maps:get(
+                repo_root,
+                Opts,
+                application:get_env(ecai, code_repo_root, ".")
+            )
+        )
+    ).
 
 command_timeout(Opts) ->
-    case maps:get(
-        command_timeout_ms,
-        Opts,
-        application:get_env(
-            ecai, code_patch_command_timeout_ms, ?DEFAULT_TIMEOUT_MS
+    case
+        maps:get(
+            command_timeout_ms,
+            Opts,
+            application:get_env(
+                ecai, code_patch_command_timeout_ms, ?DEFAULT_TIMEOUT_MS
+            )
         )
-    ) of
+    of
         N when is_integer(N), N > 0 -> N;
         _ -> ?DEFAULT_TIMEOUT_MS
     end.
@@ -237,7 +248,8 @@ collect_port(Port, Acc0, Timeout) ->
         {Port, {exit_status, Status}} ->
             #{ok => false, exit_status => Status, output => Acc0}
     after Timeout ->
-        try port_close(Port)
+        try
+            port_close(Port)
         catch
             _:_ -> ok
         end,
@@ -269,8 +281,10 @@ hashes_equal(_, _) ->
 
 sha256_hex(Bin) when is_binary(Bin) ->
     iolist_to_binary(
-        [io_lib:format("~2.16.0b", [Byte]) ||
-         <<Byte>> <= crypto:hash(sha256, Bin)]
+        [
+            io_lib:format("~2.16.0b", [Byte])
+         || <<Byte>> <= crypto:hash(sha256, Bin)
+        ]
     ).
 
 trim_binary(Bin) when is_binary(Bin) ->

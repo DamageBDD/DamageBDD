@@ -5,14 +5,15 @@
 
 start_link() -> supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
-child_spec() -> #{
-    id => ?MODULE,
-    start => {?MODULE, start_link, []},
-    restart => permanent,
-    shutdown => infinity,
-    type => supervisor,
-    modules => [?MODULE]
-}.
+child_spec() ->
+    #{
+        id => ?MODULE,
+        start => {?MODULE, start_link, []},
+        restart => permanent,
+        shutdown => infinity,
+        type => supervisor,
+        modules => [?MODULE]
+    }.
 
 init([]) ->
     Store = #{

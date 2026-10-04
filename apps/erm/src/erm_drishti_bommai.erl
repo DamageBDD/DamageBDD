@@ -191,9 +191,10 @@ kick(left) ->
 kick(right) ->
     kick(right, 300.0).
 
-kick(Direction, Strength)
-        when (Direction =:= left orelse Direction =:= right),
-             is_number(Strength) ->
+kick(Direction, Strength) when
+    (Direction =:= left orelse Direction =:= right),
+    is_number(Strength)
+->
     gen_server:cast(?SERVER, {kick, Direction, float(Strength)}).
 
 %%%===================================================================
@@ -253,12 +254,11 @@ init_ui(Opts) ->
                                 {class, "drishti-root"}
                             ],
                             [
-                                {label, drishti_anchor,
-                                    [
-                                        {label, "●"},
-                                        {align, center},
-                                        {class, "drishti-anchor"}
-                                    ]},
+                                {label, drishti_anchor, [
+                                    {label, "●"},
+                                    {align, center},
+                                    {class, "drishti-anchor"}
+                                ]},
 
                                 {frame, drishti_sway_row,
                                     [
@@ -269,11 +269,10 @@ init_ui(Opts) ->
                                         {class, "drishti-stage"}
                                     ],
                                     [
-                                        {label, drishti_left_space,
-                                            [
-                                                {label, ""},
-                                                {width, Base}
-                                            ]},
+                                        {label, drishti_left_space, [
+                                            {label, ""},
+                                            {width, Base}
+                                        ]},
 
                                         {frame, drishti_body,
                                             [
@@ -283,27 +282,24 @@ init_ui(Opts) ->
                                                 {class, "drishti-body"}
                                             ],
                                             [
-                                                {label, drishti_chain,
-                                                    [
-                                                        {label, "│\n●\n●"},
-                                                        {align, center},
-                                                        {class, "drishti-chain"}
-                                                    ]},
+                                                {label, drishti_chain, [
+                                                    {label, "│\n●\n●"},
+                                                    {align, center},
+                                                    {class, "drishti-chain"}
+                                                ]},
 
-                                                {picture, drishti_picture,
-                                                    [
-                                                        {file, Asset},
-                                                        {width, ImageWidth},
-                                                        {height, ImageHeight},
-                                                        {class, "drishti-picture"}
-                                                    ]}
+                                                {picture, drishti_picture, [
+                                                    {file, Asset},
+                                                    {width, ImageWidth},
+                                                    {height, ImageHeight},
+                                                    {class, "drishti-picture"}
+                                                ]}
                                             ]},
 
-                                        {label, drishti_right_space,
-                                            [
-                                                {label, ""},
-                                                {width, Base}
-                                            ]}
+                                        {label, drishti_right_space, [
+                                            {label, ""},
+                                            {width, Base}
+                                        ]}
                                     ]}
                             ]}
                     ]}
@@ -330,7 +326,6 @@ init_ui(Opts) ->
                         damping = maps:get(damping, Opts, 1.45),
                         ambient = maps:get(ambient, Opts, 3.5)
                     }};
-
                 Error ->
                     {stop, {drishti_ui_failed, Error}}
             end
@@ -342,21 +337,17 @@ handle_call(_Request, _From, State) ->
 handle_cast(show, State) ->
     _ = gtkgs:config(drishti_window, {map, true}),
     {noreply, State};
-
 handle_cast(hide, State) ->
     _ = gtkgs:config(drishti_window, {map, false}),
     {noreply, State};
-
 handle_cast({kick, left, Strength}, State) ->
     {noreply, State#state{
         velocity = State#state.velocity - Strength
     }};
-
 handle_cast({kick, right, Strength}, State) ->
     {noreply, State#state{
         velocity = State#state.velocity + Strength
     }};
-
 handle_cast(_Message, State) ->
     {noreply, State}.
 
@@ -364,14 +355,11 @@ handle_info(tick, State0) ->
     State1 = physics_step(State0),
     Timer = erlang:send_after(State1#state.tick_ms, self(), tick),
     {noreply, State1#state{timer = Timer}};
-
 %% gtknode4 currently hides the window on close.
 handle_info({gtkgs, drishti_window, hidden, _Data, _Args}, State) ->
     {stop, normal, State};
-
 handle_info({gtkgs, drishti_window, destroy, _Data, _Args}, State) ->
     {stop, normal, State};
-
 handle_info(_Message, State) ->
     {noreply, State}.
 
@@ -387,31 +375,31 @@ code_change(_OldVersion, State, _Extra) ->
 %%% Physics
 %%%===================================================================
 
-physics_step(State = #state{
-    x = X,
-    velocity = V,
-    time = T,
-    spring = K,
-    damping = D,
-    ambient = Ambient,
-    tick_ms = TickMs,
-    base = Base
-}) ->
+physics_step(
+    State = #state{
+        x = X,
+        velocity = V,
+        time = T,
+        spring = K,
+        damping = D,
+        ambient = Ambient,
+        tick_ms = TickMs,
+        base = Base
+    }
+) ->
     Dt = TickMs / 1000.0,
 
     %% Light irregular "alive" movement while at rest.
     Drive =
         Ambient *
-        (
-            math:sin(T * 1.7) +
-            0.35 * math:sin(T * 3.13)
-        ),
+            (math:sin(T * 1.7) +
+                0.35 * math:sin(T * 3.13)),
 
     %% Damped harmonic oscillator.
     Acceleration =
         -(K * X) -
-        (D * V) +
-        Drive,
+            (D * V) +
+            Drive,
 
     V1 = V + Acceleration * Dt,
     X0 = X + V1 * Dt,
@@ -462,8 +450,13 @@ default_asset() ->
         {error, _Reason} ->
             %% Helpful fallback while running directly from a source tree.
             filename:absname(
-                filename:join(["apps", "erm", "priv", "images",
-                               "drishti_bommai.png"])
+                filename:join([
+                    "apps",
+                    "erm",
+                    "priv",
+                    "images",
+                    "drishti_bommai.png"
+                ])
             )
     end.
 
@@ -480,8 +473,19 @@ image_dimensions(Path0) ->
             Result =
                 case file:read(Io, 24) of
                     {ok, <<
-                        137, 80, 78, 71, 13, 10, 26, 10,
-                        0, 0, 0, 13, "IHDR",
+                        137,
+                        80,
+                        78,
+                        71,
+                        13,
+                        10,
+                        26,
+                        10,
+                        0,
+                        0,
+                        0,
+                        13,
+                        "IHDR",
                         Width:32/unsigned-big-integer,
                         Height:32/unsigned-big-integer
                     >>} when Width > 0, Height > 0 ->
@@ -551,8 +555,12 @@ resolve_image_size(NativeWidth, NativeHeight, Opts) ->
     WidthOpt = maps:get(image_width, Opts, undefined),
     HeightOpt = maps:get(image_height, Opts, undefined),
     case {WidthOpt, HeightOpt} of
-        {Width, Height} when is_integer(Width), Width > 0,
-                             is_integer(Height), Height > 0 ->
+        {Width, Height} when
+            is_integer(Width),
+            Width > 0,
+            is_integer(Height),
+            Height > 0
+        ->
             {ok, {Width, Height}};
         {Width, undefined} when is_integer(Width), Width > 0 ->
             Height = max(1, round(NativeHeight * (Width / NativeWidth))),

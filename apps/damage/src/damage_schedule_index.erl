@@ -150,7 +150,9 @@ maybe_run(Account, Id, Schedule) ->
 %% Internal logic
 %%--------------------------------------------------------------------
 
-upsert_internal(_Account, _Id, #{cron := [once | _], execution_counter := Count}, _CronSpec, _NowMin) when
+upsert_internal(
+    _Account, _Id, #{cron := [once | _], execution_counter := Count}, _CronSpec, _NowMin
+) when
     is_integer(Count), Count > 0
 ->
     ok;

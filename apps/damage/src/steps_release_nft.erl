@@ -22,8 +22,12 @@
 -export([step/6, step_dry/6]).
 -export([test_oracle_query/2, test_oracle_query/3]).
 
--import(damage_release_nft, [contract_source/0, call_return/1,
-    option_value/1, release_answer/6]).
+-import(damage_release_nft, [
+    contract_source/0,
+    call_return/1,
+    option_value/1,
+    release_answer/6
+]).
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -export([oracle_announcement_result/2, checked_mint_inputs/7, existing_release_mismatches/2]).
@@ -86,10 +90,14 @@
     AssetPath
 ]).
 -define(STEP_PREPARE_INSTALL, [
-    "I prepare installation metadata in", MetaVar,
-    "for platform", Platform,
-    "from IPFS asset hash in", AssetVar,
-    "with manifest path", ManifestPath
+    "I prepare installation metadata in",
+    MetaVar,
+    "for platform",
+    Platform,
+    "from IPFS asset hash in",
+    AssetVar,
+    "with manifest path",
+    ManifestPath
 ]).
 -define(STEP_STORE_MINT, [
     "I store the mint result in", Variable
@@ -160,9 +168,12 @@ step_dry(_Config, Context, _Keyword, _LineNo, ?STEP_SETTLE_CHECKOUT, _Body) ->
 step(_Config, Context, _Keyword, _LineNo, ?STEP_DISCOVERY_CONFIGURED, _Body) ->
     case installation_discovery_config(Context) of
         {ok, Config} ->
-            Context#{build_release_nft_contract => maps:get(nft, Config),
-                build_release_discovery_config => Config};
-        {error, Why} -> fail(Context, {release_discovery_configuration_failed, Why})
+            Context#{
+                build_release_nft_contract => maps:get(nft, Config),
+                build_release_discovery_config => Config
+            };
+        {error, Why} ->
+            fail(Context, {release_discovery_configuration_failed, Why})
     end;
 step(_Config, Context, _Keyword, _LineNo, ?STEP_VERIFY_DISCOVERY, _Body) ->
     verify_installable_mint(Context);
@@ -208,12 +219,20 @@ step(_Config, Context, <<"When">>, _LineNo, ?STEP_MINT_LEGACY, _Body) ->
 step(_Config, Context, <<"When">>, _LineNo, ?STEP_MINT_PLATFORM, _Body) ->
     mint_from_context(Context, MetaVar, AssetVar, #{platform => to_bin(Platform)});
 step(_Config, Context, <<"When">>, _LineNo, ?STEP_MINT_EXPLICIT, _Body) ->
-    mint_from_context(Context, MetaVar, AssetVar,
-        #{release => to_bin(ReleaseName), platform => to_bin(Platform), git_sha => to_bin(GitSha)});
+    mint_from_context(
+        Context,
+        MetaVar,
+        AssetVar,
+        #{release => to_bin(ReleaseName), platform => to_bin(Platform), git_sha => to_bin(GitSha)}
+    );
 step(_Config, Context, <<"When">>, _LineNo, ?STEP_MINT_GENERIC_EXPLICIT, _Body) ->
-    mint_from_context(Context, MetaVar, AssetVar,
+    mint_from_context(
+        Context,
+        MetaVar,
+        AssetVar,
         #{release => to_bin(ReleaseName), platform => to_bin(Platform), git_sha => to_bin(GitSha)},
-        generic);
+        generic
+    );
 %% Also reject the old operation if invoked without a preceding dry-run.
 step(_Config, Context, _Keyword, _LineNo, ?STEP_PUBLISH_INSTALL, _Body) ->
     _ = {PackageFile, AssetPath},
@@ -228,18 +247,28 @@ step(_Config, Context, <<"When">>, _LineNo, ?STEP_PREPARE_INSTALL, _Body) ->
                     case damage_release_nft:prepared_installation(Prepared) of
                         {ok, Expected} ->
                             Updated = put_context_var(Context, MetaVar, Prepared),
-                            PreparedContext = put_context_var(Updated, "git_sha", maps:get(git_sha, Expected)),
-                            ReleaseContext = case maps:find(<<"release">>, Prepared) of
-                                {ok, Version} -> put_context_var(PreparedContext, "build_release", Version);
-                                error -> PreparedContext
-                            end,
-                            ReleaseContext#{build_release_installation_expected => Expected,
-                                build_release_platform => maps:get(platform, Expected)};
-                        {error, Why} -> fail(Context, {installation_metadata_failed, Why})
+                            PreparedContext = put_context_var(
+                                Updated, "git_sha", maps:get(git_sha, Expected)
+                            ),
+                            ReleaseContext =
+                                case maps:find(<<"release">>, Prepared) of
+                                    {ok, Version} ->
+                                        put_context_var(PreparedContext, "build_release", Version);
+                                    error ->
+                                        PreparedContext
+                                end,
+                            ReleaseContext#{
+                                build_release_installation_expected => Expected,
+                                build_release_platform => maps:get(platform, Expected)
+                            };
+                        {error, Why} ->
+                            fail(Context, {installation_metadata_failed, Why})
                     end;
-                {error, Why} -> fail(Context, {installation_metadata_failed, Why})
+                {error, Why} ->
+                    fail(Context, {installation_metadata_failed, Why})
             end;
-        _ -> fail(Context, installation_metadata_requires_metadata_and_asset)
+        _ ->
+            fail(Context, installation_metadata_requires_metadata_and_asset)
     end;
 %% Preserve the exact existing build-feature idiom:
 %%   When I mint ...
@@ -358,10 +387,14 @@ create_checkout_invoice(Context, Mint, Buyer, Quote, Opts) ->
     Token = maps:get(token_id, Mint),
     Key = {Contract, Token},
     LockId = checkout_operation_lock_id(Key),
-    case global:trans(
-        LockId,
-        fun() -> create_checkout_invoice_locked(Context, Mint, Buyer, Quote, Opts, Expiry, Key) end
-    ) of
+    case
+        global:trans(
+            LockId,
+            fun() ->
+                create_checkout_invoice_locked(Context, Mint, Buyer, Quote, Opts, Expiry, Key)
+            end
+        )
+    of
         aborted -> {error, checkout_creation_lock_aborted};
         {aborted, Reason} -> {error, {checkout_creation_lock_failed, Reason}};
         Result -> Result
@@ -373,9 +406,11 @@ create_checkout_invoice_locked(Context, Mint, Buyer, Quote, Opts, Expiry, Key) -
             CheckoutId = checkout_id(Opts),
             Label = checkout_label(Key, CheckoutId),
             ReservationFields = checkout_reservation_fields(Context, Quote),
-            case damage_release_nft_checkout_store:reserve(
-                Key, Buyer, CheckoutId, Label, ReservationFields
-            ) of
+            case
+                damage_release_nft_checkout_store:reserve(
+                    Key, Buyer, CheckoutId, Label, ReservationFields
+                )
+            of
                 {ok, new, _Record} ->
                     create_reserved_checkout_invoice(Key, Mint, Buyer, Quote, Label, Expiry);
                 {ok, existing, Existing} ->
@@ -402,7 +437,8 @@ checkout_listing_snapshot(Context) ->
                     case nostr_event_created_at(Event) of
                         CreatedAt when is_integer(CreatedAt), CreatedAt > 0 ->
                             Listing#{nostr_created_at => CreatedAt};
-                        _ -> Listing
+                        _ ->
+                            Listing
                     end;
                 _ ->
                     Listing
@@ -437,13 +473,15 @@ ensure_release_owned_by_seller(Context, Mint, Buyer) ->
 release_token_owner(KeyPair, Mint) ->
     Contract = maps:get(contract_id, Mint),
     Token = maps:get(token_id, Mint),
-    case damage_ae:contract_query(
-        KeyPair,
-        Contract,
-        contract_source(),
-        "owner",
-        [integer_to_list(Token)]
-    ) of
+    case
+        damage_ae:contract_query(
+            KeyPair,
+            Contract,
+            contract_source(),
+            "owner",
+            [integer_to_list(Token)]
+        )
+    of
         OwnerCall when is_map(OwnerCall) ->
             case call_return(OwnerCall) of
                 {ok, EncodedOption} ->
@@ -472,8 +510,10 @@ checkout_label({Contract, Token}, CheckoutId) ->
 create_reserved_checkout_invoice(Key, Mint, Buyer, Quote, Label, Expiry) ->
     TokenBin = to_bin(maps:get(token_id, Mint)),
     Description = iolist_to_binary([
-        <<"DamageBDD build release NFT #">>, TokenBin,
-        <<" for ">>, Buyer
+        <<"DamageBDD build release NFT #">>,
+        TokenBin,
+        <<" for ">>,
+        Buyer
     ]),
     Sats = maps:get(sats, Quote),
     try damage_cln:create_invoice(Sats * 1000, Description, Expiry, Label) of
@@ -550,11 +590,15 @@ reconcile_existing_checkout(Key, Mint, Buyer, Quote, Expiry, Existing, Opts) ->
                             retry_checkout_after_expiry(Key, Mint, Buyer, Quote, Expiry, Opts);
                         paid when SameBuyer ->
                             _ = damage_release_nft_checkout_store:mark_status(Key, paid),
-                            checkout_from_invoice(Mint, Buyer, ExistingQuote, Label, Expiry, Invoice);
+                            checkout_from_invoice(
+                                Mint, Buyer, ExistingQuote, Label, Expiry, Invoice
+                            );
                         paid ->
                             {error, {checkout_paid_pending_settlement, ExistingBuyer, Label}};
                         _ when SameBuyer ->
-                            checkout_from_invoice(Mint, Buyer, ExistingQuote, Label, Expiry, Invoice);
+                            checkout_from_invoice(
+                                Mint, Buyer, ExistingQuote, Label, Expiry, Invoice
+                            );
                         Status ->
                             {error, {checkout_in_progress, ExistingBuyer, Status}}
                     end;
@@ -585,9 +629,11 @@ retry_checkout_after_expiry(Key, Mint, Buyer, Quote, Expiry, Opts) ->
     BaseId = checkout_id(Opts),
     CheckoutId = <<BaseId/binary, "-", (lower_hex(crypto:strong_rand_bytes(4)))/binary>>,
     Label = checkout_label(Key, CheckoutId),
-    case damage_release_nft_checkout_store:reserve(
-        Key, Buyer, CheckoutId, Label, #{quote => Quote}
-    ) of
+    case
+        damage_release_nft_checkout_store:reserve(
+            Key, Buyer, CheckoutId, Label, #{quote => Quote}
+        )
+    of
         {ok, new, _} -> create_reserved_checkout_invoice(Key, Mint, Buyer, Quote, Label, Expiry);
         {ok, existing, Record} -> {error, {checkout_in_progress, Record}};
         {error, _} = Error -> Error
@@ -653,8 +699,10 @@ invoice_sats(Invoice) ->
     end.
 
 msat_value(V) when is_integer(V) -> V;
-msat_value(#{msat := V}) -> msat_value(V);
-msat_value(#{<<"msat">> := V}) -> msat_value(V);
+msat_value(#{msat := V}) ->
+    msat_value(V);
+msat_value(#{<<"msat">> := V}) ->
+    msat_value(V);
 msat_value(V) when is_list(V) -> msat_value(to_bin(V));
 msat_value(V) when is_binary(V) ->
     Numeric =
@@ -662,8 +710,13 @@ msat_value(V) when is_binary(V) ->
             [N, <<>>] -> N;
             _ -> V
         end,
-    try binary_to_integer(Numeric) catch _:_ -> undefined end;
-msat_value(_) -> undefined.
+    try
+        binary_to_integer(Numeric)
+    catch
+        _:_ -> undefined
+    end;
+msat_value(_) ->
+    undefined.
 
 settle_build_release_checkout(Context0) ->
     case maps:get(build_release_nft_checkout, Context0, undefined) of
@@ -672,14 +725,16 @@ settle_build_release_checkout(Context0) ->
             Token = maps:get(token_id, Mint),
             Key = {Contract, Token},
             LockId = checkout_operation_lock_id(Key),
-            case global:trans(
-                LockId,
-                fun() ->
-                    settle_build_release_checkout_locked(
-                        Context0, Checkout, Mint, Buyer, Label, Key
-                    )
-                end
-            ) of
+            case
+                global:trans(
+                    LockId,
+                    fun() ->
+                        settle_build_release_checkout_locked(
+                            Context0, Checkout, Mint, Buyer, Label, Key
+                        )
+                    end
+                )
+            of
                 aborted ->
                     fail(Context0, checkout_settlement_lock_aborted);
                 {aborted, Reason} ->
@@ -766,10 +821,12 @@ transfer_paid_build_release(Context0, Checkout, Mint, Buyer, Invoice, Key) ->
                         Context0, Checkout, Mint, Buyer, Invoice, Key, already_owned_by_buyer
                     );
                 {ok, Seller} ->
-                    case damage_release_nft_checkout_store:put_fields(Key, #{
-                        status => settling,
-                        transfer_started_at => erlang:system_time(second)
-                    }) of
+                    case
+                        damage_release_nft_checkout_store:put_fields(Key, #{
+                            status => settling,
+                            transfer_started_at => erlang:system_time(second)
+                        })
+                    of
                         {ok, _} ->
                             Args = [to_list(Buyer), integer_to_list(Token), "None"],
                             TransferResult = damage_ae:contract_call_payfor_user_safe(
@@ -802,7 +859,13 @@ transfer_paid_build_release(Context0, Checkout, Mint, Buyer, Invoice, Key) ->
     end.
 
 settle_safe_transfer_result(
-    Context0, Checkout, Mint, Buyer, Invoice, Key, _KeyPair,
+    Context0,
+    Checkout,
+    Mint,
+    Buyer,
+    Invoice,
+    Key,
+    _KeyPair,
     {confirmed, TxHash, TransferCall}
 ) when is_map(TransferCall) ->
     _ = damage_release_nft_checkout_store:put_fields(Key, #{
@@ -830,7 +893,13 @@ settle_safe_transfer_result(
             )
     end;
 settle_safe_transfer_result(
-    Context0, _Checkout, _Mint, _Buyer, _Invoice, Key, _KeyPair,
+    Context0,
+    _Checkout,
+    _Mint,
+    _Buyer,
+    _Invoice,
+    Key,
+    _KeyPair,
     {not_submitted, Reason}
 ) ->
     %% No transaction reached post_tx/1. Re-open settlement from the paid state
@@ -839,7 +908,13 @@ settle_safe_transfer_result(
         Context0, Key, {build_release_nft_transfer_not_submitted, Reason}
     );
 settle_safe_transfer_result(
-    Context0, Checkout, Mint, Buyer, Invoice, Key, KeyPair,
+    Context0,
+    Checkout,
+    Mint,
+    Buyer,
+    Invoice,
+    Key,
+    KeyPair,
     {uncertain, TxHash, Reason}
 ) ->
     _ = persist_uncertain_transfer(Key, TxHash, Reason),
@@ -869,11 +944,13 @@ settle_safe_transfer_result(
     ).
 
 restore_paid_checkout_after_definite_failure(Context0, Key, Failure) ->
-    case damage_release_nft_checkout_store:put_fields(Key, #{
-        status => paid,
-        transfer_error => compact_transfer_error(Failure),
-        transfer_failed_at => erlang:system_time(second)
-    }) of
+    case
+        damage_release_nft_checkout_store:put_fields(Key, #{
+            status => paid,
+            transfer_error => compact_transfer_error(Failure),
+            transfer_failed_at => erlang:system_time(second)
+        })
+    of
         {ok, _} -> fail(Context0, Failure);
         {error, Why} -> fail(Context0, {checkout_store_paid_restore_failed, Failure, Why})
     end.
@@ -930,17 +1007,19 @@ reconcile_settling_checkout(Context0, Checkout, Mint, Buyer, Invoice, Key, Store
                     fail(Context0, {build_release_nft_transfer_owner_changed, Owner});
                 {error, Why} ->
                     fail(Context0, {build_release_nft_transfer_owner_check_failed, Why})
-             end;
-         {error, Why} ->
-             fail(Context0, Why)
+            end;
+        {error, Why} ->
+            fail(Context0, Why)
     end.
 
 finalize_checkout_settlement(Context0, Checkout, Mint, Buyer, Invoice, Key, TransferResult) ->
-    case damage_release_nft_checkout_store:put_fields(Key, #{
-        status => settled,
-        settled_at => erlang:system_time(second),
-        transfer_result => compact_transfer_error(TransferResult)
-    }) of
+    case
+        damage_release_nft_checkout_store:put_fields(Key, #{
+            status => settled,
+            settled_at => erlang:system_time(second),
+            transfer_result => compact_transfer_error(TransferResult)
+        })
+    of
         {ok, _} ->
             Checkout1 = Checkout#{status => settled},
             Checkout2 =
@@ -1008,7 +1087,8 @@ merge_listing_metadata(Listing, Stored) when is_map(Stored) ->
                 undefined -> Listing;
                 CreatedAt -> Listing#{nostr_created_at => CreatedAt}
             end;
-        _ -> Listing
+        _ ->
+            Listing
     end;
 merge_listing_metadata(Listing, _) ->
     Listing.
@@ -1035,11 +1115,14 @@ generate_sold_release_card(Mint, SoldSale, ActiveImage, Opts) ->
                                         sha256 => lower_hex(crypto:hash(sha256, Svg)),
                                         file => to_bin(Path)
                                     }};
-                                {error, _} = Error -> Error
+                                {error, _} = Error ->
+                                    Error
                             end;
-                        {error, _} = Error -> Error
+                        {error, _} = Error ->
+                            Error
                     end;
-                {error, Why} -> {error, {write_sold_release_card_failed, Path, Why}}
+                {error, Why} ->
+                    {error, {write_sold_release_card_failed, Path, Why}}
             end;
         {error, Why} ->
             {error, {sold_release_card_directory_failed, Path, Why}}
@@ -1064,8 +1147,9 @@ sold_release_card_path(Mint, ActiveImage) ->
             )
     end.
 
-wait_for_nostr_replacement_slot(PreviousCreatedAt)
-    when is_integer(PreviousCreatedAt), PreviousCreatedAt > 0 ->
+wait_for_nostr_replacement_slot(PreviousCreatedAt) when
+    is_integer(PreviousCreatedAt), PreviousCreatedAt > 0
+->
     Now = erlang:system_time(second),
     DelayMs = replacement_delay_ms(PreviousCreatedAt, Now),
     case DelayMs > 0 of
@@ -1120,11 +1204,14 @@ persist_sold_listing_publish(Key, SoldListing, Published) ->
                             _ -> Fields0#{sold_nostr_event_id => to_bin(EventId)}
                         end,
                     case damage_release_nft_checkout_store:put_fields(Key, Fields) of
-                        {ok, _} -> Published;
+                        {ok, _} ->
+                            Published;
                         {error, Why} ->
-                            Published#{build_release_nft_sold_publish_error => {
-                                sold_listing_persist_failed, Why
-                            }}
+                            Published#{
+                                build_release_nft_sold_publish_error => {
+                                    sold_listing_persist_failed, Why
+                                }
+                            }
                     end;
                 _ ->
                     Published#{build_release_nft_sold_publish_error => sold_event_missing}
@@ -1132,7 +1219,6 @@ persist_sold_listing_publish(Key, SoldListing, Published) ->
         _ ->
             Published
     end.
-
 
 invoice_status(Invoice) ->
     case map_get_any([status, <<"status">>, "status"], Invoice, unknown) of
@@ -1218,12 +1304,15 @@ ipfs_file_cid(HashList, Name0) when is_list(HashList) ->
                 to_bin(filename:basename(to_list(ItemName))) =:= Name
             ],
             case Named of
-                [Cid | _] -> {ok, Cid};
+                [Cid | _] ->
+                    {ok, Cid};
                 [] ->
                     Cids = [
                         to_bin(Hash)
                      || Item <- HashList,
-                        Hash <- [map_get_any([<<"Hash">>, "Hash", hash, <<"hash">>], Item, undefined)],
+                        Hash <- [
+                            map_get_any([<<"Hash">>, "Hash", hash, <<"hash">>], Item, undefined)
+                        ],
                         Hash =/= undefined
                     ],
                     case lists:reverse(Cids) of
@@ -1292,7 +1381,6 @@ publish_release_listing(Context0, Mint, Image, Sale, Opts) ->
         Class:Reason -> fail(Context0, {nostr_publish_crashed, Class, Reason})
     end.
 
-
 release_nostr_payload(Mint, Image, Sale, Notification) ->
     Token = to_bin(maps:get(token_id, Mint)),
     Contract = to_bin(maps:get(contract_id, Mint)),
@@ -1311,20 +1399,40 @@ release_nostr_payload(Mint, Image, Sale, Notification) ->
     PackageFormat = maps:get(package_format, Notification, <<>>),
     Architecture = maps:get(architecture, Notification, <<>>),
     Base = [
-        <<"📦 ">>, Title, <<"\n\n">>,
+        <<"📦 ">>,
+        Title,
+        <<"\n\n">>,
         maybe_notification_line(<<"Description: ">>, Description),
-        <<"Platform: ">>, Platform, <<"\n">>,
+        <<"Platform: ">>,
+        Platform,
+        <<"\n">>,
         maybe_notification_pair(<<"Package: ">>, PackageFormat, Architecture),
-        <<"Download: ">>, PackageUrl, <<"\n">>,
+        <<"Download: ">>,
+        PackageUrl,
+        <<"\n">>,
         maybe_notification_line(<<"SHA-256: ">>, Sha256),
-        <<"Release: ">>, Release, <<"\n">>,
-        <<"Git: ">>, GitSha, <<"\n">>,
+        <<"Release: ">>,
+        Release,
+        <<"\n">>,
+        <<"Git: ">>,
+        GitSha,
+        <<"\n">>,
         maybe_notification_line(<<"Source: ">>, SourceRepo),
-        <<"NFT: #">>, Token, <<"\n">>,
-        <<"Contract: ">>, Contract, <<"\n">>,
-        <<"Artifact CID: ipfs://">>, Asset, <<"\n">>,
-        <<"Metadata: ">>, MetadataUrl, <<"\n">>,
-        <<"Image: ">>, ImageUrl, <<"\n">>
+        <<"NFT: #">>,
+        Token,
+        <<"\n">>,
+        <<"Contract: ">>,
+        Contract,
+        <<"\n">>,
+        <<"Artifact CID: ipfs://">>,
+        Asset,
+        <<"\n">>,
+        <<"Metadata: ">>,
+        MetadataUrl,
+        <<"\n">>,
+        <<"Image: ">>,
+        ImageUrl,
+        <<"\n">>
     ],
     Content = iolist_to_binary([
         Base,
@@ -1332,8 +1440,11 @@ release_nostr_payload(Mint, Image, Sale, Notification) ->
         <<"\n#DamageBDD #BuildNFT #aeternity #nostr">>
     ]),
     Alt = iolist_to_binary([
-        Title, <<" — DamageBDD build release NFT #">>, Token,
-        <<" for ">>, Platform
+        Title,
+        <<" — DamageBDD build release NFT #">>,
+        Token,
+        <<" for ">>,
+        Platform
     ]),
     Imeta = [
         <<"imeta">>,
@@ -1360,20 +1471,24 @@ release_nostr_payload(Mint, Image, Sale, Notification) ->
             {1, Content, Tags0};
         #{status := sold, damage_text := DamageText} ->
             DTag = <<"build-release-nft:", Contract/binary, ":", Token/binary>>,
-            {30078, Content, Tags0 ++ [
-                [<<"d">>, DTag],
-                [<<"price">>, DamageText, <<"DAMAGE">>],
-                [<<"status">>, <<"sold">>]
-            ]};
+            {30078, Content,
+                Tags0 ++
+                    [
+                        [<<"d">>, DTag],
+                        [<<"price">>, DamageText, <<"DAMAGE">>],
+                        [<<"status">>, <<"sold">>]
+                    ]};
         #{damage_text := DamageText} ->
             %% NIP-33 parameterized replaceable event: retries replace the same
             %% token listing instead of creating duplicate sale announcements.
             DTag = <<"build-release-nft:", Contract/binary, ":", Token/binary>>,
-            {30078, Content, Tags0 ++ [
-                [<<"d">>, DTag],
-                [<<"price">>, DamageText, <<"DAMAGE">>],
-                [<<"payment">>, <<"lightning">>]
-            ]}
+            {30078, Content,
+                Tags0 ++
+                    [
+                        [<<"d">>, DTag],
+                        [<<"price">>, DamageText, <<"DAMAGE">>],
+                        [<<"payment">>, <<"lightning">>]
+                    ]}
     end.
 
 release_notification_details(Context, Mint, Opts) ->
@@ -1385,8 +1500,17 @@ release_notification_details(Context, Mint, Opts) ->
             Base = default_release_notification(Mint, Opts),
             Title = metadata_notification_text(
                 Meta,
-                [<<"name">>, name, "name", <<"title">>, title, "title",
-                 <<"package_title">>, package_title, "package_title"],
+                [
+                    <<"name">>,
+                    name,
+                    "name",
+                    <<"title">>,
+                    title,
+                    "title",
+                    <<"package_title">>,
+                    package_title,
+                    "package_title"
+                ],
                 maps:get(title, Base),
                 180
             ),
@@ -1404,14 +1528,32 @@ release_notification_details(Context, Mint, Opts) ->
             ),
             SourceRepo0 = metadata_notification_text(
                 Meta,
-                [<<"source_repo">>, source_repo, "source_repo", <<"source_url">>, source_url, "source_url"],
+                [
+                    <<"source_repo">>,
+                    source_repo,
+                    "source_repo",
+                    <<"source_url">>,
+                    source_url,
+                    "source_url"
+                ],
                 <<>>,
                 512
             ),
-            SourceRepo = case is_http_url(SourceRepo0) of true -> SourceRepo0; false -> <<>> end,
+            SourceRepo =
+                case is_http_url(SourceRepo0) of
+                    true -> SourceRepo0;
+                    false -> <<>>
+                end,
             PackageFormat = metadata_notification_text(
                 Meta,
-                [<<"package_format">>, package_format, "package_format", <<"artifact_type">>, artifact_type, "artifact_type"],
+                [
+                    <<"package_format">>,
+                    package_format,
+                    "package_format",
+                    <<"artifact_type">>,
+                    artifact_type,
+                    "artifact_type"
+                ],
                 <<>>,
                 64
             ),
@@ -1421,9 +1563,14 @@ release_notification_details(Context, Mint, Opts) ->
                 <<>>,
                 64
             ),
-            Base#{title => Title, description => Description, sha256 => Sha256,
-                source_repo => SourceRepo, package_format => PackageFormat,
-                architecture => Architecture}
+            Base#{
+                title => Title,
+                description => Description,
+                sha256 => Sha256,
+                source_repo => SourceRepo,
+                package_format => PackageFormat,
+                architecture => Architecture
+            }
     end.
 
 default_release_notification(Mint, Opts) ->
@@ -1433,10 +1580,11 @@ default_release_notification(Mint, Opts) ->
     Meta = strip_ipfs_prefix(to_bin(maps:get(metadata_cid, Mint, <<>>))),
     Gateway = artifact_gateway(Opts),
     PackageUrl0 = option_text(Opts, [<<"package_url">>, package_url, "package_url"], <<>>),
-    PackageUrl = case is_http_url(PackageUrl0) of
-        true -> PackageUrl0;
-        false -> append_gateway_cid(Gateway, Asset)
-    end,
+    PackageUrl =
+        case is_http_url(PackageUrl0) of
+            true -> PackageUrl0;
+            false -> append_gateway_cid(Gateway, Asset)
+        end,
     #{
         title => <<Release/binary, " — ", Platform/binary>>,
         description => <<>>,
@@ -1455,24 +1603,34 @@ release_notification_meta(Context) ->
     end.
 
 artifact_gateway(Opts) ->
-    Candidate = case option_text(
-        Opts,
-        [<<"package_gateway">>, package_gateway, "package_gateway",
-         <<"asset_gateway">>, asset_gateway, "asset_gateway"],
-        <<>>
-    ) of
-        <<>> ->
-            case application:get_env(damage, build_release_nft_asset_gateway) of
-                {ok, AssetGateway} -> to_bin(AssetGateway);
-                undefined ->
-                    case application:get_env(damage, build_release_ipfs_gateway) of
-                        {ok, ReleaseGateway} -> to_bin(ReleaseGateway);
-                        undefined -> image_gateway(Opts)
-                    end
-            end;
-        Gateway ->
-            Gateway
-    end,
+    Candidate =
+        case
+            option_text(
+                Opts,
+                [
+                    <<"package_gateway">>,
+                    package_gateway,
+                    "package_gateway",
+                    <<"asset_gateway">>,
+                    asset_gateway,
+                    "asset_gateway"
+                ],
+                <<>>
+            )
+        of
+            <<>> ->
+                case application:get_env(damage, build_release_nft_asset_gateway) of
+                    {ok, AssetGateway} ->
+                        to_bin(AssetGateway);
+                    undefined ->
+                        case application:get_env(damage, build_release_ipfs_gateway) of
+                            {ok, ReleaseGateway} -> to_bin(ReleaseGateway);
+                            undefined -> image_gateway(Opts)
+                        end
+                end;
+            Gateway ->
+                Gateway
+        end,
     Clean = trim_trailing_slash(notification_text(Candidate, 1024)),
     case is_http_url(Clean) of
         true -> Clean;
@@ -1485,7 +1643,9 @@ metadata_notification_text(Meta, Keys, Default, MaxChars) ->
 option_text(Opts, Keys, Default) ->
     notification_text(map_get_any(Keys, Opts, Default), 1024).
 
-notification_text(Value, MaxChars) when is_binary(Value); is_list(Value); is_atom(Value); is_integer(Value) ->
+notification_text(Value, MaxChars) when
+    is_binary(Value); is_list(Value); is_atom(Value); is_integer(Value)
+->
     Bin0 = to_bin(Value),
     Bin1 = binary:replace(Bin0, <<"\r">>, <<" ">>, [global]),
     Bin2 = binary:replace(Bin1, <<"\n">>, <<" ">>, [global]),
@@ -1524,12 +1684,16 @@ sale_note_lines(none) ->
     <<>>;
 sale_note_lines(#{status := sold, damage_text := DamageText}) ->
     [
-        <<"\n✅ Sold • ">>, DamageText, <<" DAMAGE\n">>,
+        <<"\n✅ Sold • ">>,
+        DamageText,
+        <<" DAMAGE\n">>,
         <<"The Lightning checkout for this NFT is closed.\n">>
     ];
 sale_note_lines(#{damage_text := DamageText}) ->
     [
-        <<"\n💎 For sale: ">>, DamageText, <<" DAMAGE\n">>,
+        <<"\n💎 For sale: ">>,
+        DamageText,
+        <<" DAMAGE\n">>,
         <<"⚡ Lightning checkout available. A fresh spot-priced invoice is generated for each buyer.\n">>
     ].
 
@@ -1549,7 +1713,11 @@ build_release_card_svg(Mint, Sale) ->
     iolist_to_binary([
         <<"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"1200\" height=\"630\" viewBox=\"0 0 1200 630\">">>,
         <<"<defs><linearGradient id=\"bg\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"1\">">>,
-        <<"<stop offset=\"0%\" stop-color=\"">>, Color1, <<"\"/><stop offset=\"100%\" stop-color=\"">>, Color2, <<"\"/></linearGradient>">>,
+        <<"<stop offset=\"0%\" stop-color=\"">>,
+        Color1,
+        <<"\"/><stop offset=\"100%\" stop-color=\"">>,
+        Color2,
+        <<"\"/></linearGradient>">>,
         <<"<linearGradient id=\"shine\" x1=\"0\" y1=\"0\" x2=\"1\" y2=\"0\"><stop offset=\"0%\" stop-color=\"#ffffff\" stop-opacity=\"0.08\"/><stop offset=\"100%\" stop-color=\"#ffffff\" stop-opacity=\"0.01\"/></linearGradient></defs>">>,
         <<"<rect width=\"1200\" height=\"630\" rx=\"36\" fill=\"url(#bg)\"/>">>,
         <<"<circle cx=\"1080\" cy=\"90\" r=\"230\" fill=\"#ffffff\" opacity=\"0.055\"/><circle cx=\"1050\" cy=\"580\" r=\"300\" fill=\"#000000\" opacity=\"0.08\"/>">>,
@@ -1557,14 +1725,26 @@ build_release_card_svg(Mint, Sale) ->
         <<"<text x=\"82\" y=\"105\" fill=\"#ffffff\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"34\" font-weight=\"800\">DamageBDD</text>">>,
         <<"<text x=\"82\" y=\"143\" fill=\"#ffffff\" opacity=\"0.70\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"18\" letter-spacing=\"4\">BUILD RELEASE NFT</text>">>,
         <<"<text x=\"82\" y=\"236\" fill=\"#ffffff\" opacity=\"0.68\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"19\">RELEASE</text>">>,
-        <<"<text x=\"82\" y=\"281\" fill=\"#ffffff\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"42\" font-weight=\"750\">">>, Release, <<"</text>">>,
-        <<"<text x=\"82\" y=\"333\" fill=\"#ffffff\" opacity=\"0.82\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"24\">">>, Platform, <<"</text>">>,
+        <<"<text x=\"82\" y=\"281\" fill=\"#ffffff\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"42\" font-weight=\"750\">">>,
+        Release,
+        <<"</text>">>,
+        <<"<text x=\"82\" y=\"333\" fill=\"#ffffff\" opacity=\"0.82\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"24\">">>,
+        Platform,
+        <<"</text>">>,
         <<"<rect x=\"820\" y=\"82\" width=\"270\" height=\"92\" rx=\"22\" fill=\"#000000\" opacity=\"0.20\"/>">>,
         <<"<text x=\"845\" y=\"117\" fill=\"#ffffff\" opacity=\"0.68\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"16\">TOKEN</text>">>,
-        <<"<text x=\"845\" y=\"153\" fill=\"#ffffff\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"30\" font-weight=\"800\">#">>, xml_escape(Token), <<"</text>">>,
-        <<"<text x=\"82\" y=\"405\" fill=\"#ffffff\" opacity=\"0.62\" font-family=\"ui-monospace,SFMono-Regular,monospace\" font-size=\"15\">contract  ">>, ContractShort, <<"</text>">>,
-        <<"<text x=\"82\" y=\"438\" fill=\"#ffffff\" opacity=\"0.62\" font-family=\"ui-monospace,SFMono-Regular,monospace\" font-size=\"15\">git       ">>, GitSha, <<"</text>">>,
-        <<"<text x=\"82\" y=\"471\" fill=\"#ffffff\" opacity=\"0.62\" font-family=\"ui-monospace,SFMono-Regular,monospace\" font-size=\"15\">artifact  ">>, Asset, <<"</text>">>,
+        <<"<text x=\"845\" y=\"153\" fill=\"#ffffff\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"30\" font-weight=\"800\">#">>,
+        xml_escape(Token),
+        <<"</text>">>,
+        <<"<text x=\"82\" y=\"405\" fill=\"#ffffff\" opacity=\"0.62\" font-family=\"ui-monospace,SFMono-Regular,monospace\" font-size=\"15\">contract  ">>,
+        ContractShort,
+        <<"</text>">>,
+        <<"<text x=\"82\" y=\"438\" fill=\"#ffffff\" opacity=\"0.62\" font-family=\"ui-monospace,SFMono-Regular,monospace\" font-size=\"15\">git       ">>,
+        GitSha,
+        <<"</text>">>,
+        <<"<text x=\"82\" y=\"471\" fill=\"#ffffff\" opacity=\"0.62\" font-family=\"ui-monospace,SFMono-Regular,monospace\" font-size=\"15\">artifact  ">>,
+        Asset,
+        <<"</text>">>,
         SaleBadge,
         <<"<text x=\"82\" y=\"555\" fill=\"#ffffff\" opacity=\"0.68\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"17\">Content-addressed build artifact • AEX-141 release record</text>">>,
         <<"</svg>">>
@@ -1577,14 +1757,16 @@ release_card_sale_badge(#{status := sold, damage_text := DamageText0}) ->
     [
         <<"<rect x=\"82\" y=\"495\" width=\"650\" height=\"40\" rx=\"20\" fill=\"#000000\" opacity=\"0.18\"/>">>,
         <<"<text x=\"102\" y=\"521\" fill=\"#ffffff\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"17\" font-weight=\"700\">SOLD • ">>,
-        DamageText, <<" DAMAGE</text>">>
+        DamageText,
+        <<" DAMAGE</text>">>
     ];
 release_card_sale_badge(#{damage_text := DamageText0}) ->
     DamageText = xml_escape(DamageText0),
     [
         <<"<rect x=\"82\" y=\"495\" width=\"650\" height=\"40\" rx=\"20\" fill=\"#000000\" opacity=\"0.18\"/>">>,
         <<"<text x=\"102\" y=\"521\" fill=\"#ffffff\" font-family=\"Inter,system-ui,sans-serif\" font-size=\"17\" font-weight=\"700\">ASK • ">>,
-        DamageText, <<" DAMAGE • Lightning</text>">>
+        DamageText,
+        <<" DAMAGE • Lightning</text>">>
     ].
 
 listing_relays(Context, Opts) ->
@@ -1621,9 +1803,11 @@ option_pos_int(Opts, Keys, Default) ->
     end.
 
 image_gateway(Opts) ->
-    case map_get_any(
-        [<<"image_gateway">>, image_gateway, "image_gateway"], Opts, undefined
-    ) of
+    case
+        map_get_any(
+            [<<"image_gateway">>, image_gateway, "image_gateway"], Opts, undefined
+        )
+    of
         undefined ->
             case application:get_env(damage, build_release_nft_image_gateway) of
                 {ok, Value} -> to_bin(Value);
@@ -1637,7 +1821,8 @@ append_gateway_cid(Gateway0, Cid) ->
     Gateway = trim_trailing_slash(to_bin(Gateway0)),
     <<Gateway/binary, "/", Cid/binary>>.
 
-trim_trailing_slash(<<>>) -> <<>>;
+trim_trailing_slash(<<>>) ->
+    <<>>;
 trim_trailing_slash(Bin) ->
     case binary:last(Bin) of
         $/ -> trim_trailing_slash(binary:part(Bin, 0, byte_size(Bin) - 1));
@@ -1659,7 +1844,8 @@ parse_pos_number(V) when is_list(V) ->
                 {I, []} when I > 0 -> {ok, float(I)};
                 _ -> {error, not_positive_number}
             end;
-        _ -> {error, not_positive_number}
+        _ ->
+            {error, not_positive_number}
     end;
 parse_pos_number(_) ->
     {error, not_positive_number}.
@@ -1669,8 +1855,10 @@ short_text(Value, MaxChars) ->
     try unicode:characters_to_list(Bin) of
         Chars ->
             case length(Chars) =< MaxChars of
-                true -> Bin;
-                false -> unicode:characters_to_binary(lists:sublist(Chars, MaxChars - 1) ++ [16#2026])
+                true ->
+                    Bin;
+                false ->
+                    unicode:characters_to_binary(lists:sublist(Chars, MaxChars - 1) ++ [16#2026])
             end
     catch
         _:_ -> Bin
@@ -1745,14 +1933,24 @@ sale_listing_is_replaceable_test() ->
         url => <<"https://example.test/ipfs/QmImage">>,
         sha256 => <<"0123456789abcdef">>
     },
-    Notification = default_release_notification(Mint,
-        #{<<"package_gateway">> => <<"https://example.test/ipfs">>}),
+    Notification = default_release_notification(
+        Mint,
+        #{<<"package_gateway">> => <<"https://example.test/ipfs">>}
+    ),
     Sale = #{damage_amount => 100.0, damage_text => <<"100">>},
     {30078, Content, Tags} =
         release_nostr_payload(Mint, Image, Sale, Notification),
     ?assertMatch({_, _}, binary:match(Content, <<"fresh spot-priced invoice">>)),
     ?assert(lists:member([<<"d">>, <<"build-release-nft:ct_test:42">>], Tags)),
-    ?assertNot(lists:any(fun([<<"lightning">> | _]) -> true; (_) -> false end, Tags)),
+    ?assertNot(
+        lists:any(
+            fun
+                ([<<"lightning">> | _]) -> true;
+                (_) -> false
+            end,
+            Tags
+        )
+    ),
     ?assert(lists:member([<<"payment">>, <<"lightning">>], Tags)),
     ?assert(lists:member([<<"price">>, <<"100">>, <<"DAMAGE">>], Tags)),
     Sold = Sale#{status => sold},
@@ -1793,19 +1991,26 @@ useful_release_notification_test() ->
     ?assertMatch({_, _}, binary:match(Content, maps:get(title, Notification))),
     ?assertMatch({_, _}, binary:match(Content, <<"Download: https://damagebdd.com/ipfs/QmAsset">>)),
     ?assertMatch({_, _}, binary:match(Content, <<"SHA-256: 5a867113">>)),
-    ?assertMatch({_, _}, binary:match(Content, <<"Source: https://github.com/ElementsProject/lightning.git">>)),
+    ?assertMatch(
+        {_, _},
+        binary:match(Content, <<"Source: https://github.com/ElementsProject/lightning.git">>)
+    ),
     ?assert(lists:member([<<"r">>, <<"https://damagebdd.com/ipfs/QmAsset">>], Tags)),
     ?assert(lists:member([<<"x">>, maps:get(sha256, Notification)], Tags)).
 -endif.
 
 %% Deterministic, dependency-free error: no filesystem, IPFS, key or chain access.
 obsolete_install_publication(Context) ->
-    Context#{fail =>
-        <<"Build release NFT failed: obsolete_install_publication_step. "
-          "Prepare installation metadata from the artifact CID BEFORE uploading "
-          "meta.json and minting. Remove the post-mint package-file publication "
-          "step; container-to-IPFS export does not populate run_dir/docker/out. "
-          "A previously successful mint is not rolled back.">>}.
+    Context#{
+        fail =>
+            <<
+                "Build release NFT failed: obsolete_install_publication_step. "
+                "Prepare installation metadata from the artifact CID BEFORE uploading "
+                "meta.json and minting. Remove the post-mint package-file publication "
+                "step; container-to-IPFS export does not populate run_dir/docker/out. "
+                "A previously successful mint is not rolled back."
+            >>
+    }.
 
 %% ------------------------------------------------------------------
 %% Release + oracle transaction flow.
@@ -1818,13 +2023,16 @@ mint_from_context(Context, MetaVar, AssetVar, Overrides, ValidationMode) ->
         {ok, MetaCid, AssetCid} ->
             %% Explicit fields must not evaluate an irrelevant fallback (for
             %% example malformed legacy metadata when platform is explicit).
-            Release = mint_field(release, Overrides, fun() -> infer_release_name(Context, AssetCid) end),
+            Release = mint_field(release, Overrides, fun() ->
+                infer_release_name(Context, AssetCid)
+            end),
             Platform = mint_field(platform, Overrides, fun() -> infer_platform(Context) end),
             GitSha = mint_field(git_sha, Overrides, fun() -> infer_git_sha(Context) end),
             mint_release_and_pin(
                 Context, Release, Platform, GitSha, MetaCid, AssetCid, ValidationMode
             );
-        {error, Why} -> fail(Context, Why)
+        {error, Why} ->
+            fail(Context, Why)
     end.
 
 mint_field(Key, Fields, Fallback) ->
@@ -1842,9 +2050,11 @@ mint_release_and_pin(
     MetaCid = strip_ipfs_prefix(to_bin(MetaCid0)),
     AssetCid = strip_ipfs_prefix(to_bin(AssetCid0)),
 
-    case checked_mint_inputs(
-        Context0, ReleaseName, Platform, GitSha, MetaCid, AssetCid, ValidationMode
-    ) of
+    case
+        checked_mint_inputs(
+            Context0, ReleaseName, Platform, GitSha, MetaCid, AssetCid, ValidationMode
+        )
+    of
         ok ->
             case resolve_contract(Context0) of
                 {ok, ContractId} ->
@@ -1922,19 +2132,25 @@ ensure_release_token(
                             ),
                             case damage_release_nft:token_release(KeyPair, ContractId, TokenId) of
                                 {ok, Existing} ->
-                                    Expected = #{release => ReleaseName, platform => Platform,
-                                        git_sha => GitSha, metadata_cid => MetaCid, asset_cid => AssetCid},
+                                    Expected = #{
+                                        release => ReleaseName,
+                                        platform => Platform,
+                                        git_sha => GitSha,
+                                        metadata_cid => MetaCid,
+                                        asset_cid => AssetCid
+                                    },
                                     case existing_release_mismatches(Existing, Expected) of
                                         [] ->
                                             {ok, TokenId, #{reused => true}};
                                         Mismatches ->
                                             {error, {
-                                                     existing_release_content_mismatch,
-                                                     TokenId,
-                                                     Mismatches
-                                                    }}
+                                                existing_release_content_mismatch,
+                                                TokenId,
+                                                Mismatches
+                                            }}
                                     end;
-                                {error, Why} -> {error, {existing_release_read_failed, Why}}
+                                {error, Why} ->
+                                    {error, {existing_release_read_failed, Why}}
                             end;
                         none ->
                             mint_new_release(
@@ -2011,28 +2227,53 @@ mint_new_release(
 %% Minting already committed the latest NFT pointer. Discovery never depends
 %% on a mutable "latest" oracle question. Announcements are opt-in snapshots.
 finish_release(Context, KeyPair, Contract, Token, Release, Platform, GitSha, Meta, Asset, MintCall) ->
-    Mint = #{contract_id => Contract, token_id => Token, release => Release,
-        platform => Platform, git_sha => GitSha, metadata_cid => Meta, asset_cid => Asset,
-        mint_status => mint_status(MintCall), mint_tx_hash => tx_hash(MintCall),
-        oracle_status => disabled},
+    Mint = #{
+        contract_id => Contract,
+        token_id => Token,
+        release => Release,
+        platform => Platform,
+        git_sha => GitSha,
+        metadata_cid => Meta,
+        asset_cid => Asset,
+        mint_status => mint_status(MintCall),
+        mint_tx_hash => tx_hash(MintCall),
+        oracle_status => disabled
+    },
     Base = Context#{build_release_mint_result => Mint},
     case application:get_env(damage, build_release_announce_oracle, false) of
-        false -> Base;
+        false ->
+            Base;
         true ->
-            Outcome = try pin_platform_latest(Base, KeyPair, Contract, Token, Release,
-                Platform, GitSha, Meta, Asset)
-            catch _:_ -> #{fail => oracle_announcement_failed} end,
+            Outcome =
+                try
+                    pin_platform_latest(
+                        Base,
+                        KeyPair,
+                        Contract,
+                        Token,
+                        Release,
+                        Platform,
+                        GitSha,
+                        Meta,
+                        Asset
+                    )
+                catch
+                    _:_ -> #{fail => oracle_announcement_failed}
+                end,
             oracle_announcement_result(Base, Outcome)
     end.
 
 oracle_announcement_result(Base, #{fail := _}) ->
     ?LOG_WARNING("Release NFT minted; optional oracle announcement failed. Do not remint."),
     Mint = maps:get(build_release_mint_result, Base),
-    Base#{build_release_mint_result := Mint#{oracle_status => failed,
-        oracle_error => oracle_announcement_failed}};
+    Base#{
+        build_release_mint_result := Mint#{
+            oracle_status => failed,
+            oracle_error => oracle_announcement_failed
+        }
+    };
 oracle_announcement_result(_Base, #{build_release_mint_result := Mint} = Result) ->
     Result#{build_release_mint_result := Mint#{oracle_status => announced}}.
-
 
 pin_platform_latest(
     Context0,
@@ -2179,9 +2420,12 @@ respond_latest_and_verify(
                                                     ),
                                                     case Answer =:= Expected of
                                                         true ->
-                                                            Mint = maps:get(build_release_mint_result, Context0),
+                                                            Mint = maps:get(
+                                                                build_release_mint_result, Context0
+                                                            ),
                                                             Result = Mint#{
-                                                                oracle_question => <<"latest:", Platform/binary>>,
+                                                                oracle_question =>
+                                                                    <<"latest:", Platform/binary>>,
                                                                 oracle_query_id => QueryId,
                                                                 oracle_query_tx_hash => tx_hash(
                                                                     QueryCall
@@ -2400,11 +2644,14 @@ resolve_contract(Context) ->
     of
         undefined ->
             case application:get_env(damage, build_release_nft_contract) of
-                {ok, Configured} -> validate_contract_id(Configured);
+                {ok, Configured} ->
+                    validate_contract_id(Configured);
                 undefined ->
                     case context_account(Context) of
-                        {ok, Account} -> damage_contract_bootstrap:ensure_build_release_nft(Account);
-                        {error, _} = Error -> Error
+                        {ok, Account} ->
+                            damage_contract_bootstrap:ensure_build_release_nft(Account);
+                        {error, _} = Error ->
+                            Error
                     end
             end;
         Ct0 ->
@@ -2416,41 +2663,64 @@ installation_discovery_config(Context) ->
     case damage_release_nft:discovery_config() of
         {ok, Config} ->
             Contract = maps:get(nft, Config),
-            Override = map_get_any([build_release_nft_contract, <<"build_release_nft_contract">>,
-                "build_release_nft_contract"], Context, Contract),
+            Override = map_get_any(
+                [
+                    build_release_nft_contract,
+                    <<"build_release_nft_contract">>,
+                    "build_release_nft_contract"
+                ],
+                Context,
+                Contract
+            ),
             case to_bin(Override) =:= Contract of
                 true -> {ok, Config};
                 false -> {error, build_release_discovery_contract_mismatch}
             end;
-        {error, _} = Error -> Error
+        {error, _} = Error ->
+            Error
     end.
 
 %% This reads the exact same resolver as /api/releases/latest?platform=... .
 %% Failure never rolls back a successful mint and must never trigger reminting
 %% into another registry. The read/assertion can safely be retried by itself.
 verify_installable_mint(Context0) ->
-    Context = maps:without([build_release_install_result, build_release_install_manifest], Context0),
-    case {maps:find(build_release_mint_result, Context),
-          maps:find(build_release_installation_expected, Context)} of
+    Context = maps:without(
+        [build_release_install_result, build_release_install_manifest], Context0
+    ),
+    case
+        {
+            maps:find(build_release_mint_result, Context),
+            maps:find(build_release_installation_expected, Context)
+        }
+    of
         {{ok, Mint}, {ok, Expected}} when is_map(Mint), is_map(Expected) ->
             case installation_discovery_config(Context) of
                 {ok, Config} ->
                     Network = maps:get(network, Config),
                     case damage_release_nft:latest(maps:get(platform, Mint)) of
                         {ok, Discovered} ->
-                            case damage_release_nft:verify_publication(
-                                Mint#{network_id => Network}, Expected, Discovered) of
+                            case
+                                damage_release_nft:verify_publication(
+                                    Mint#{network_id => Network}, Expected, Discovered
+                                )
+                            of
                                 ok ->
-                                    Context#{build_release_install_result => Discovered,
+                                    Context#{
+                                        build_release_install_result => Discovered,
                                         build_release_install_manifest =>
-                                            damage_release_nft:install_manifest(Discovered)};
-                                {error, Why} -> fail(Context, Why)
+                                            damage_release_nft:install_manifest(Discovered)
+                                    };
+                                {error, Why} ->
+                                    fail(Context, Why)
                             end;
-                        {error, Why} -> fail(Context, {release_discovery_verification_failed, Why})
+                        {error, Why} ->
+                            fail(Context, {release_discovery_verification_failed, Why})
                     end;
-                {error, Why} -> fail(Context, {release_discovery_configuration_failed, Why})
+                {error, Why} ->
+                    fail(Context, {release_discovery_configuration_failed, Why})
             end;
-        _ -> fail(Context, prepared_installation_and_mint_required)
+        _ ->
+            fail(Context, prepared_installation_and_mint_required)
     end.
 
 context_account(Context) ->
@@ -2609,13 +2879,18 @@ infer_git_sha(Context) ->
 
 checked_mint_inputs(Context, Release, Platform, GitSha, MetaCid, AssetCid, ValidationMode) ->
     %% This also rejects ':' release-key collisions and '|' wire delimiters.
-    case damage_release_nft:parse_release(release_answer(1, Release, Platform, GitSha, MetaCid, AssetCid)) of
+    case
+        damage_release_nft:parse_release(
+            release_answer(1, Release, Platform, GitSha, MetaCid, AssetCid)
+        )
+    of
         {ok, Identity} ->
             case is_boolean(application:get_env(damage, build_release_announce_oracle, false)) of
                 false -> {error, invalid_build_release_announce_oracle};
                 true -> verify_mint_metadata(ValidationMode, Context, Identity)
             end;
-        {error, Why} -> {error, {invalid_release_fields, Why}}
+        {error, Why} ->
+            {error, {invalid_release_fields, Why}}
     end.
 
 %% Generic build NFTs still validate the release/platform/git/CIDs above, but
@@ -2652,15 +2927,21 @@ verify_prepared_metadata(Context, Identity) ->
                         true -> ok;
                         false -> {error, prepared_installation_metadata_mismatch}
                     end;
-                {error, Why} -> {error, {prepared_installation_metadata_invalid, Why}}
+                {error, Why} ->
+                    {error, {prepared_installation_metadata_invalid, Why}}
             end;
-        _ -> {error, invalid_prepared_installation_metadata}
+        _ ->
+            {error, invalid_prepared_installation_metadata}
     end.
 
 put_context_var(Context, Key, Value) ->
     Bin = to_bin(Key),
     Keys0 = [Key, Bin, to_list(Bin)],
-    Keys = case existing_atom(Bin) of {ok, Atom} -> [Atom | Keys0]; error -> Keys0 end,
+    Keys =
+        case existing_atom(Bin) of
+            {ok, Atom} -> [Atom | Keys0];
+            error -> Keys0
+        end,
     lists:foldl(fun(K, Acc) -> maps:put(K, Value, Acc) end, Context, Keys).
 
 strip_ipfs_prefix(<<"ipfs://", Rest/binary>>) -> Rest;

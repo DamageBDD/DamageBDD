@@ -88,7 +88,12 @@ install_provenance(Manifest0) ->
 %% Falls back to {<<"damage">>, VsnFromApp} if release_handler is unavailable.
 -spec rel_name_vsn() -> {binary(), binary()}.
 rel_name_vsn() ->
-    Releases = try release_handler:which_releases() catch _:_ -> unavailable end,
+    Releases =
+        try
+            release_handler:which_releases()
+        catch
+            _:_ -> unavailable
+        end,
     case Releases of
         List when is_list(List) ->
             case lists:dropwhile(fun({_, _, _, S}) -> S =/= current end, List) of
@@ -175,9 +180,10 @@ provenance_build_status(Provenance, Build) ->
         _ ->
             %% A differing known release version is still a definite mismatch.
             %% Matching versions alone are not enough to prove artifact identity.
-            case known_release(ProvenanceRelease) andalso
-                known_release(BuildRelease) andalso
-                ProvenanceRelease =/= BuildRelease
+            case
+                known_release(ProvenanceRelease) andalso
+                    known_release(BuildRelease) andalso
+                    ProvenanceRelease =/= BuildRelease
             of
                 true -> build_mismatch;
                 false -> unverified
@@ -214,8 +220,12 @@ safe_override_snapshot() ->
             Snapshot
     catch
         _:_ ->
-            #{overrides => [], override_revision => null,
-              runtime_modified => null, runtime_integrity_status => unavailable}
+            #{
+                overrides => [],
+                override_revision => null,
+                runtime_modified => null,
+                runtime_integrity_status => unavailable
+            }
     end.
 
 runtime_code_hash(ReleaseInfo) ->
@@ -299,11 +309,22 @@ provenance_build_status_test_() ->
     Sha = binary:copy(<<"a">>, 40),
     P = #{git_sha => Sha, release => <<"1.2.3">>},
     B = #{git_sha => Sha, release_version => <<"1.2.3">>},
-    [?_assertEqual(valid, provenance_build_status(P, B)),
-     ?_assertEqual(build_mismatch, provenance_build_status(P, B#{release_version := <<"1.2.4">>})),
-     ?_assertEqual(build_mismatch, provenance_build_status(P, B#{git_sha := binary:copy(<<"b">>, 40)})),
-     ?_assertEqual(unverified, provenance_build_status(P, B#{git_sha := <<"unknown">>})),
-     ?_assertEqual(unverified, provenance_build_status(P#{git_sha := <<>>}, B)),
-     ?_assertEqual(build_mismatch, provenance_build_status(P#{git_sha := <<>>},
-                         B#{release_version := <<"1.2.4">>}))].
+    [
+        ?_assertEqual(valid, provenance_build_status(P, B)),
+        ?_assertEqual(
+            build_mismatch, provenance_build_status(P, B#{release_version := <<"1.2.4">>})
+        ),
+        ?_assertEqual(
+            build_mismatch, provenance_build_status(P, B#{git_sha := binary:copy(<<"b">>, 40)})
+        ),
+        ?_assertEqual(unverified, provenance_build_status(P, B#{git_sha := <<"unknown">>})),
+        ?_assertEqual(unverified, provenance_build_status(P#{git_sha := <<>>}, B)),
+        ?_assertEqual(
+            build_mismatch,
+            provenance_build_status(
+                P#{git_sha := <<>>},
+                B#{release_version := <<"1.2.4">>}
+            )
+        )
+    ].
 -endif.

@@ -208,11 +208,14 @@ handle_call(
         secret_provider => damage_nsecbunker_config:secret_provider(Config),
         retry_in_ms => RetryMs,
         last_error => LastError,
-        vault => #{ready => false, guard_state => #{
-            sealed => true,
-            integrity => waiting_for_secrets,
-            pubkey_hex => <<>>
-        }},
+        vault => #{
+            ready => false,
+            guard_state => #{
+                sealed => true,
+                integrity => waiting_for_secrets,
+                pubkey_hex => <<>>
+            }
+        },
         secure_owner => secure_owner_status(Config),
         relay_client_enabled => maps:get(relay_client_enabled, Config, false)
     },
@@ -319,22 +322,28 @@ handle_call(
                 {error, Reason}
         end,
     {reply, Reply, State};
-handle_call(handoff_status, _From, State = #state{
-    config = Config,
-    policy = Policy,
-    started_at = StartedAt,
-    ready = Ready
-}) ->
-    {reply, #{
-        ready => Ready,
-        started_at => StartedAt,
-        secret_provider =>
-            damage_nsecbunker_config:secret_provider(Config),
-        bunker_pubkey_hex =>
-            maps:get(bunker_pubkey_hex, Policy, <<>>),
-        authorized_clients =>
-            maps:get(authorized_clients, Policy, [])
-    }, State};
+handle_call(
+    handoff_status,
+    _From,
+    State = #state{
+        config = Config,
+        policy = Policy,
+        started_at = StartedAt,
+        ready = Ready
+    }
+) ->
+    {reply,
+        #{
+            ready => Ready,
+            started_at => StartedAt,
+            secret_provider =>
+                damage_nsecbunker_config:secret_provider(Config),
+            bunker_pubkey_hex =>
+                maps:get(bunker_pubkey_hex, Policy, <<>>),
+            authorized_clients =>
+                maps:get(authorized_clients, Policy, [])
+        },
+        State};
 handle_call(Other, _From, State) ->
     {reply, {error, {unknown_call, Other}}, State}.
 
@@ -688,8 +697,11 @@ prepare_runtime(Config0) ->
 
 runtime_identity_config(Config, Pubkey) ->
     case maps:get(bunker_pubkey_hex, Config, undefined) of
-        Existing when is_binary(Existing), byte_size(Existing) =:= 64,
-                      Existing =/= <<"BUNKER_PUBKEY_HEX">> ->
+        Existing when
+            is_binary(Existing),
+            byte_size(Existing) =:= 64,
+            Existing =/= <<"BUNKER_PUBKEY_HEX">>
+        ->
             Config;
         _ ->
             Config#{bunker_pubkey_hex => Pubkey}
@@ -711,11 +723,13 @@ ensure_parent(Path0) ->
     end.
 
 ensure_local_bootstrap_secret(Config) ->
-    case {
-        damage_nsecbunker_config:secret_provider(Config),
-        damage_nsecbunker_config:vault_mode(Config),
-        filelib:is_regular(path_list(maps:get(vault_path, Config)))
-    } of
+    case
+        {
+            damage_nsecbunker_config:secret_provider(Config),
+            damage_nsecbunker_config:vault_mode(Config),
+            filelib:is_regular(path_list(maps:get(vault_path, Config)))
+        }
+    of
         {local, create_if_missing, false} ->
             ensure_local_vault_passphrase(Config);
         _ ->

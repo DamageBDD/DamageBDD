@@ -23,16 +23,19 @@ new(RepoState, Problem, Context) ->
     new(RepoState, Problem, Context, #{}).
 
 -spec new(map(), map(), map(), map()) -> {ok, map()} | {error, term()}.
-new(RepoState, Problem, Context, Opts)
-        when is_map(RepoState), is_map(Problem), is_map(Context), is_map(Opts) ->
-    Files = lists:sort(lists:usort(
-        maps:get(allowed_files, Opts, maps:get(target_files, Context, []))
-    )),
+new(RepoState, Problem, Context, Opts) when
+    is_map(RepoState), is_map(Problem), is_map(Context), is_map(Opts)
+->
+    Files = lists:sort(
+        lists:usort(
+            maps:get(allowed_files, Opts, maps:get(target_files, Context, []))
+        )
+    ),
     ProblemFingerprint = digest(#{problem => Problem, files => Files}),
     Policy = maps:merge(default_policy(Files), maps:get(policy, Opts, #{})),
     Invariants = lists:sort(
         maps:get(invariants, Opts, maps:get(extracted_invariants, Context, [])) ++
-        policy_invariants(Policy)
+            policy_invariants(Policy)
     ),
     StableRepoState = maps:without([path, repo_path, worktree, checkout], RepoState),
     Runtime = runtime_hints(RepoState),
@@ -61,9 +64,15 @@ new(_RepoState, _Problem, _Context, _Opts) ->
     {error, invalid_arguments}.
 
 -spec validate(term()) -> ok | {error, term()}.
-validate(#{schema := ?SCHEMA, version := ?VERSION, capsule_id := Id,
-           commitment := Commitment, payload := Payload})
-        when is_binary(Id), is_map(Payload) ->
+validate(#{
+    schema := ?SCHEMA,
+    version := ?VERSION,
+    capsule_id := Id,
+    commitment := Commitment,
+    payload := Payload
+}) when
+    is_binary(Id), is_map(Payload)
+->
     case maps:get(policy, Payload, undefined) of
         Policy when is_map(Policy) ->
             case maps:get(allowed_files, Policy, undefined) of
@@ -72,12 +81,16 @@ validate(#{schema := ?SCHEMA, version := ?VERSION, capsule_id := Id,
                         ok -> ecai_repair_commitment:verify(Id, Commitment);
                         Error -> Error
                     end;
-                _ -> {error, missing_allowed_files}
+                _ ->
+                    {error, missing_allowed_files}
             end;
-        _ -> {error, missing_policy}
+        _ ->
+            {error, missing_policy}
     end;
-validate(#{schema := Schema}) -> {error, {unsupported_schema, Schema}};
-validate(_) -> {error, invalid_capsule}.
+validate(#{schema := Schema}) ->
+    {error, {unsupported_schema, Schema}};
+validate(_) ->
+    {error, invalid_capsule}.
 
 -spec verify_id(map()) -> ok | {error, term()}.
 verify_id(#{capsule_id := Id, payload := Payload}) -> verify_id_map(Id, Payload);
@@ -164,7 +177,8 @@ stable_context(Context) ->
     case maps:get(repo_state, Context, undefined) of
         RepoState when is_map(RepoState) ->
             Context#{repo_state => maps:without([path, repo_path, worktree, checkout], RepoState)};
-        _ -> Context
+        _ ->
+            Context
     end.
 
 digest(Term) ->
@@ -176,11 +190,18 @@ canonical(List) when is_list(List) ->
     {list, [canonical(V) || V <- List]};
 canonical(Tuple) when is_tuple(Tuple) ->
     {tuple, [canonical(V) || V <- tuple_to_list(Tuple)]};
-canonical(Value) -> Value.
+canonical(Value) ->
+    Value.
 
 secure_equal(A, B) when is_binary(A), is_binary(B), byte_size(A) =:= byte_size(B) ->
-    0 =:= lists:foldl(fun({X, Y}, Acc) -> Acc bor (X bxor Y) end, 0, lists:zip(binary_to_list(A), binary_to_list(B)));
-secure_equal(_, _) -> false.
+    0 =:=
+        lists:foldl(
+            fun({X, Y}, Acc) -> Acc bor (X bxor Y) end,
+            0,
+            lists:zip(binary_to_list(A), binary_to_list(B))
+        );
+secure_equal(_, _) ->
+    false.
 
 hex(Bin) ->
     iolist_to_binary([io_lib:format("~2.16.0b", [Byte]) || <<Byte>> <= Bin]).

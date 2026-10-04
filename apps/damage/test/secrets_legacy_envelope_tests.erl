@@ -58,8 +58,15 @@ unsupported_envelope_shapes_return_error() ->
     Tag = <<0:128>>,
     lists:foreach(
         fun(Term) -> ?assertEqual(error, secrets:decrypt(KeyPair, encode_term(Term))) end,
-        [undefined, #{}, [], {IV, CipherText}, {IV, CipherText, Tag, extra},
-         {bound_v1, IV, CipherText, Tag}, {IV, [1, 2, 3], Tag}]
+        [
+            undefined,
+            #{},
+            [],
+            {IV, CipherText},
+            {IV, CipherText, Tag, extra},
+            {bound_v1, IV, CipherText, Tag},
+            {IV, [1, 2, 3], Tag}
+        ]
     ).
 
 invalid_iv_and_tag_sizes_return_error() ->
@@ -69,9 +76,14 @@ invalid_iv_and_tag_sizes_return_error() ->
     Tag = <<0:128>>,
     lists:foreach(
         fun(Term) -> ?assertEqual(error, secrets:decrypt(KeyPair, encode_term(Term))) end,
-        [{<<0:120>>, CipherText, Tag}, {<<0:136>>, CipherText, Tag},
-         {not_binary, CipherText, Tag}, {IV, CipherText, <<0:120>>},
-         {IV, CipherText, <<0:136>>}, {IV, CipherText, not_binary}]
+        [
+            {<<0:120>>, CipherText, Tag},
+            {<<0:136>>, CipherText, Tag},
+            {not_binary, CipherText, Tag},
+            {IV, CipherText, <<0:120>>},
+            {IV, CipherText, <<0:136>>},
+            {IV, CipherText, not_binary}
+        ]
     ).
 
 tampered_envelope_returns_error() ->
@@ -80,9 +92,11 @@ tampered_envelope_returns_error() ->
     {IV, CipherText, Tag} = binary_to_term(base64:decode(Encoded), [safe]),
     lists:foreach(
         fun(Term) -> ?assertEqual(error, secrets:decrypt(KeyPair, encode_term(Term))) end,
-        [{flip_byte(IV), CipherText, Tag},
-         {IV, flip_byte(CipherText), Tag},
-         {IV, CipherText, flip_byte(Tag)}]
+        [
+            {flip_byte(IV), CipherText, Tag},
+            {IV, flip_byte(CipherText), Tag},
+            {IV, CipherText, flip_byte(Tag)}
+        ]
     ).
 
 wrong_key_returns_error() ->
@@ -113,8 +127,10 @@ encryption_fixture() ->
     %% Opaque disposable AES key material, NOT a valid signing wallet.
     %% The legacy encryption boundary derives its AES key from these bytes;
     %% signing-key validation remains covered by damage_ae_wallet_tests.
-    #{public_key => <<"disposable-encryption-fixture">>,
-      private_key => crypto:strong_rand_bytes(64)}.
+    #{
+        public_key => <<"disposable-encryption-fixture">>,
+        private_key => crypto:strong_rand_bytes(64)
+    }.
 
 encode_term(Term) ->
     base64:encode(term_to_binary(Term)).

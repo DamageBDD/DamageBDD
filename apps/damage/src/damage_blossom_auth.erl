@@ -265,8 +265,10 @@ check_expiration(#{created_at := CreatedAt}, Tags) ->
                 error ->
                     {error, invalid_expiration}
             end;
-        [] -> {error, missing_expiration};
-        _ -> {error, duplicate_expiration}
+        [] ->
+            {error, missing_expiration};
+        _ ->
+            {error, duplicate_expiration}
     end.
 
 expiration(Tags) ->
@@ -276,7 +278,8 @@ expiration(Tags) ->
                 {ok, I} -> I;
                 error -> 0
             end;
-        _ -> 0
+        _ ->
+            0
     end.
 
 check_action(Action, Tags) ->
@@ -290,7 +293,8 @@ check_action(Action, Tags) ->
 check_server(Server, Tags) ->
     Servers = [lower_ascii(V) || V <- tag_values(<<"server">>, Tags)],
     case Servers of
-        [] -> ok;
+        [] ->
+            ok;
         _ ->
             case lists:any(fun(V) -> V =:= Server end, Servers) of
                 true -> ok;
@@ -316,7 +320,8 @@ check_hash_scope(Action, Hash, Tags) ->
             case requires_hash(Action) of
                 true ->
                     case Hash of
-                        undefined -> {error, missing_hash_scope};
+                        undefined ->
+                            {error, missing_hash_scope};
                         _ ->
                             case lists:any(fun(V) -> V =:= Hash end, Xs) of
                                 true -> ok;
@@ -332,7 +337,8 @@ check_hash_scope(Action, Hash, Tags) ->
                                 true -> ok;
                                 false -> {error, wrong_hash_scope}
                             end;
-                        _ -> ok
+                        _ ->
+                            ok
                     end
             end;
         {error, _} = Error ->
@@ -406,11 +412,13 @@ verify_schnorr_signature(Event) ->
     IdHex = lower_ascii(maps:get(id, Event)),
     PubkeyHex = lower_ascii(maps:get(pubkey, Event)),
     SigHex = lower_ascii(maps:get(sig, Event)),
-    case {
-        decode_hex_exact(IdHex, 32),
-        decode_hex_exact(PubkeyHex, 32),
-        decode_hex_exact(SigHex, 64)
-    } of
+    case
+        {
+            decode_hex_exact(IdHex, 32),
+            decode_hex_exact(PubkeyHex, 32),
+            decode_hex_exact(SigHex, 64)
+        }
+    of
         {{ok, Id}, {ok, Pubkey}, {ok, Sig}} ->
             try nostrlib_schnorr:verify(Id, Pubkey, Sig) of
                 true ->
@@ -471,11 +479,11 @@ decode_hex_exact(_, _) ->
 lower_hex(Bin) when is_binary(Bin) ->
     iolist_to_binary([io_lib:format("~2.16.0b", [Byte]) || <<Byte>> <= Bin]).
 
-
 tag_values(Name, Tags) ->
     [Value || [TagName, Value | _] <- Tags, TagName =:= Name].
 
-run_checks([]) -> ok;
+run_checks([]) ->
+    ok;
 run_checks([F | Rest]) ->
     case F() of
         ok -> run_checks(Rest);
@@ -502,7 +510,8 @@ public_server_name(Req) ->
             lower_ascii(cowboy_req:host(Req))
     end.
 
-normalize_hash(undefined) -> undefined;
+normalize_hash(undefined) ->
+    undefined;
 normalize_hash(Hash0) ->
     Hash = lower_ascii(to_bin(Hash0)),
     case valid_hex64(Hash) of
@@ -512,7 +521,8 @@ normalize_hash(Hash0) ->
 
 valid_hex64(Bin) when is_binary(Bin), byte_size(Bin) =:= 64 ->
     re:run(Bin, <<"\\A[0-9a-f]{64}\\z">>, [{capture, none}]) =:= match;
-valid_hex64(_) -> false.
+valid_hex64(_) ->
+    false.
 
 parse_nonneg_int(Bin) when is_binary(Bin) ->
     try binary_to_integer(Bin) of
@@ -521,7 +531,8 @@ parse_nonneg_int(Bin) when is_binary(Bin) ->
     catch
         _:_ -> error
     end;
-parse_nonneg_int(_) -> error.
+parse_nonneg_int(_) ->
+    error.
 
 configured_int(Key, Default, Min, Max) ->
     case application:get_env(damage, Key, Default) of
@@ -531,7 +542,7 @@ configured_int(Key, Default, Min, Max) ->
     end.
 
 lower_ascii(B) ->
-    << <<(lower_char(C))>> || <<C>> <= B >>.
+    <<<<(lower_char(C))>> || <<C>> <= B>>.
 lower_char(C) when C >= $A, C =< $Z -> C + 32;
 lower_char(C) -> C.
 

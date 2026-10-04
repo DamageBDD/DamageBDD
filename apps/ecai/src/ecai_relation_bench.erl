@@ -15,11 +15,12 @@
     [ecai_relation:relation()],
     non_neg_integer()
 ) -> map().
-evaluate(TrainingRelations, HiddenRelations, MaxDepth)
-    when is_list(TrainingRelations),
-         is_list(HiddenRelations),
-         is_integer(MaxDepth),
-         MaxDepth >= 0 ->
+evaluate(TrainingRelations, HiddenRelations, MaxDepth) when
+    is_list(TrainingRelations),
+    is_list(HiddenRelations),
+    is_integer(MaxDepth),
+    MaxDepth >= 0
+->
     Closure = ecai_compose:closure(TrainingRelations, MaxDepth),
     ClosureKeys = maps:from_list([{ecai_relation:key(R), true} || R <- Closure]),
     Hidden = ecai_relation:dedupe(HiddenRelations),

@@ -275,9 +275,11 @@ normalize_target(Kind, Target) ->
         field(namespace, Target, ?DEFAULT_NAMESPACE)
     ),
     BaseDir = normalize_base_dir(field(base_dir, Target, default_base_dir())),
-    try ecai_private_store:assert_public(BaseDir)
-    catch error:private_index_requires_authorized_api ->
-        validation_error(private_jobs_require_private_api)
+    try
+        ecai_private_store:assert_public(BaseDir)
+    catch
+        error:private_index_requires_authorized_api ->
+            validation_error(private_jobs_require_private_api)
     end,
     Mode = normalize_index_mode(Kind, field(mode, Target, default_mode(Kind))),
     PreviousManifestCid = optional_reference(
@@ -613,11 +615,18 @@ hex_digit(N) -> $a + (N - 10).
 %% Never accept a privacy flag only to discard it during normalisation.
 reject_private_job(Spec) ->
     Containers = [Spec | [field(K, Spec, #{}) || K <- [target, options, source]]],
-    lists:foreach(fun(M) when is_map(M) ->
-        try ecai_private_policy:assert_public_record(M)
-        catch error:private_record_requires_private_api ->
-            validation_error(private_jobs_require_private_api)
-        end;
-       (_) -> ok
-    end, Containers),
+    lists:foreach(
+        fun
+            (M) when is_map(M) ->
+                try
+                    ecai_private_policy:assert_public_record(M)
+                catch
+                    error:private_record_requires_private_api ->
+                        validation_error(private_jobs_require_private_api)
+                end;
+            (_) ->
+                ok
+        end,
+        Containers
+    ),
     ok.

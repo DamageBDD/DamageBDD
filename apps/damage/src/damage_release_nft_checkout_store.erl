@@ -60,7 +60,9 @@ attach_invoice(Key, InvoiceFields) when is_map(InvoiceFields) ->
     update(Key, fun(Record) -> maps:merge(Record, InvoiceFields#{status => pending}) end).
 
 mark_status(Key, Status) ->
-    update(Key, fun(Record) -> Record#{status => Status, updated_at => erlang:system_time(second)} end).
+    update(Key, fun(Record) ->
+        Record#{status => Status, updated_at => erlang:system_time(second)}
+    end).
 
 put_fields(Key, Fields) when is_map(Fields) ->
     update(Key, fun(Record) ->
@@ -95,12 +97,14 @@ with_lock(Key, Fun) ->
     %% key in the resource id and the calling process in the requester id so
     %% unrelated NFTs do not serialize on one global lock.
     LockId = {{?MODULE, Key}, self()},
-    case global:trans(LockId, fun() ->
-        case ensure_open() of
-            ok -> Fun();
-            {error, _} = Error -> Error
-        end
-    end) of
+    case
+        global:trans(LockId, fun() ->
+            case ensure_open() of
+                ok -> Fun();
+                {error, _} = Error -> Error
+            end
+        end)
+    of
         aborted -> {error, checkout_store_lock_aborted};
         {aborted, Reason} -> {error, {checkout_store_lock_failed, Reason}};
         Result -> Result

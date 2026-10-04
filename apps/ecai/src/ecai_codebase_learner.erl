@@ -117,7 +117,6 @@ handle_info(resume_cycle, State0) ->
     State2 = dispatch(State1),
     ok = checkpoint_and_publish(State2),
     {noreply, maybe_finalize(State2)};
-
 handle_info(start_cycle, State0 = #state{phase = idle}) ->
     StateA = cancel_cycle_timer(State0),
     {Queue, Errors} = build_queue(StateA#state.apps, StateA#state.opts),
@@ -130,7 +129,11 @@ handle_info(start_cycle, State0 = #state{phase = idle}) ->
         cycle = StateA#state.cycle + 1,
         changed_apps = #{},
         last_started_at = now_iso8601(),
-        last_error = case Errors of [] -> undefined; _ -> Errors end,
+        last_error =
+            case Errors of
+                [] -> undefined;
+                _ -> Errors
+            end,
         refresh_requested = false,
         ready = false
     },
@@ -142,7 +145,6 @@ handle_info(start_cycle, State0) ->
     State1 = State0#state{refresh_requested = true},
     ok = checkpoint_and_publish(State1),
     {noreply, State1};
-
 handle_info({learn_result, TaskRef, Result}, State0) ->
     case maps:take(TaskRef, State0#state.inflight) of
         error ->
@@ -157,7 +159,6 @@ handle_info({learn_result, TaskRef, Result}, State0) ->
             ok = checkpoint_and_publish(State3),
             {noreply, maybe_finalize(State3)}
     end;
-
 handle_info({'DOWN', MRef, process, _Pid, Reason}, State0) ->
     case take_task_by_monitor(MRef, State0#state.inflight) of
         not_found ->
@@ -165,7 +166,9 @@ handle_info({'DOWN', MRef, process, _Pid, Reason}, State0) ->
         {ok, TaskRef, Task, Inflight1} ->
             Entry = maps:get(entry, Task),
             Error = {learning_worker_down, Reason},
-            logger:error("ECAI code learning worker failed entry=~p reason=~p; requeueing", [Entry, Reason]),
+            logger:error("ECAI code learning worker failed entry=~p reason=~p; requeueing", [
+                Entry, Reason
+            ]),
             State1 = State0#state{
                 inflight = Inflight1,
                 queue = [Entry | State0#state.queue],
@@ -177,9 +180,9 @@ handle_info({'DOWN', MRef, process, _Pid, Reason}, State0) ->
             ok = checkpoint_and_publish(State2),
             {noreply, maybe_finalize(State2)}
     end;
-
-handle_info(finalize_cycle, State0 = #state{queue = [], inflight = Inflight})
-  when map_size(Inflight) =:= 0 ->
+handle_info(finalize_cycle, State0 = #state{queue = [], inflight = Inflight}) when
+    map_size(Inflight) =:= 0
+->
     Finalizing = State0#state{phase = finalizing},
     ok = checkpoint_and_publish(Finalizing),
     State1 = finish_cycle(Finalizing),
@@ -203,17 +206,21 @@ handle_info(_Info, State) ->
 terminate(_Reason, State0) ->
     State1 = cancel_timer_preserve_deadline(State0),
     _ = checkpoint_state(State1),
-    maps:foreach(fun(_Ref, Task) ->
-        case maps:get(pid, Task, undefined) of
-            Pid when is_pid(Pid) ->
-                try exit(Pid, shutdown) of
-                    _ -> ok
-                catch
-                    _:_ -> ok
-                end;
-            _ -> ok
-        end
-    end, State1#state.inflight),
+    maps:foreach(
+        fun(_Ref, Task) ->
+            case maps:get(pid, Task, undefined) of
+                Pid when is_pid(Pid) ->
+                    try exit(Pid, shutdown) of
+                        _ -> ok
+                    catch
+                        _:_ -> ok
+                    end;
+                _ ->
+                    ok
+            end
+        end,
+        State1#state.inflight
+    ),
     ok.
 
 code_change(_Old, State, _Extra) -> {ok, State}.
@@ -255,8 +262,9 @@ enqueue_module_change(App, Module, State0 = #state{phase = idle}) ->
             self() ! start_cycle,
             {noreply, State1}
     end;
-enqueue_module_change(_App, _Module, State0 = #state{phase = Phase})
-  when Phase =:= learning; Phase =:= queued; Phase =:= finalizing ->
+enqueue_module_change(_App, _Module, State0 = #state{phase = Phase}) when
+    Phase =:= learning; Phase =:= queued; Phase =:= finalizing
+->
     %% A full cycle is an immutable source generation. Never append a module
     %% that would resolve ecai_source_repository:current/1 later and possibly
     %% belong to a newer commit. Collapse any number of module notifications
@@ -274,10 +282,13 @@ dispatch(State0) ->
             TaskRef = make_ref(),
             Parent = self(),
             Opts = State0#state.opts,
-            {Pid, MRef} = spawn_opt(fun() ->
-                Result = safe_learn_entry(Entry, Opts),
-                Parent ! {learn_result, TaskRef, Result}
-            end, [link, monitor]),
+            {Pid, MRef} = spawn_opt(
+                fun() ->
+                    Result = safe_learn_entry(Entry, Opts),
+                    Parent ! {learn_result, TaskRef, Result}
+                end,
+                [link, monitor]
+            ),
             Task = #{entry => Entry, pid => Pid, mref => MRef},
             Inflight = (State0#state.inflight)#{TaskRef => Task},
             dispatch(State0#state{queue = Rest, inflight = Inflight, phase = learning})
@@ -312,11 +323,13 @@ apply_learning_result(Entry, {error, Reason}, State) ->
     State#state{last_error = {Entry, Reason}}.
 
 take_task_by_monitor(MRef, Inflight) ->
-    case [
-        {TaskRef, Task}
-     || {TaskRef, Task} <- maps:to_list(Inflight),
-        maps:get(mref, Task, undefined) =:= MRef
-    ] of
+    case
+        [
+            {TaskRef, Task}
+         || {TaskRef, Task} <- maps:to_list(Inflight),
+            maps:get(mref, Task, undefined) =:= MRef
+        ]
+    of
         [{TaskRef, Task}] -> {ok, TaskRef, Task, maps:remove(TaskRef, Inflight)};
         _ -> not_found
     end.
@@ -351,7 +364,8 @@ init_status_table() ->
 
 publish_status(State) ->
     case ets:whereis(?STATUS_TABLE) of
-        undefined -> ok;
+        undefined ->
+            ok;
         _Tid ->
             true = ets:insert(?STATUS_TABLE, {?STATUS_KEY, status_map(State)}),
             ok
@@ -372,7 +386,11 @@ status_map(State) ->
     #{
         cycle => State#state.cycle,
         phase => State#state.phase,
-        current => case Inflight of [One] -> One; _ -> undefined end,
+        current =>
+            case Inflight of
+                [One] -> One;
+                _ -> undefined
+            end,
         inflight => Inflight,
         inflight_count => length(Inflight),
         max_parallel => State#state.max_parallel,
@@ -436,12 +454,15 @@ canonical_entries(App, Commit, Root, Files) ->
             case repo_relative_path(Root, Path) of
                 {ok, RelPath} ->
                     {
-                        Entries ++ [{
-                            canonical_file,
-                            App,
-                            Commit,
-                            to_binary(RelPath)
-                        }],
+                        Entries ++
+                            [
+                                {
+                                    canonical_file,
+                                    App,
+                                    Commit,
+                                    to_binary(RelPath)
+                                }
+                            ],
                         Errors
                     };
                 {error, Reason} ->
@@ -477,7 +498,8 @@ runtime_fallback_enabled(Opts) ->
         allow_runtime_source_fallback,
         Opts,
         application:get_env(
-            ecai, code_source_allow_runtime_fallback, false)
+            ecai, code_source_allow_runtime_fallback, false
+        )
     ) =:= true.
 
 repo_relative_path(Root0, Path0) ->
@@ -499,8 +521,11 @@ safe_learn_entry(Entry, Opts) ->
     end.
 
 learn_entry({canonical_module, App, Commit, Module}, Opts) ->
-    case ecai_source_repository:module_source_at_commit(
-             App, Module, Commit, Opts) of
+    case
+        ecai_source_repository:module_source_at_commit(
+            App, Module, Commit, Opts
+        )
+    of
         {ok, SourceMeta} ->
             Path = path_to_list(maps:get(full_path, SourceMeta)),
             case ecai_code_analyser:analyse_file(App, Path) of
@@ -567,7 +592,8 @@ learn_entry(
             case ecai_code_analyser:analyse_file(App, Path) of
                 {ok, Analysis0} ->
                     Analysis = pin_canonical_analysis(
-                        Analysis0, Commit, RelPath),
+                        Analysis0, Commit, RelPath
+                    ),
                     learn_analysis(App, Analysis, Opts);
                 {error, _} = Error ->
                     Error
@@ -622,8 +648,9 @@ module_analysis_learning_eligible(
     _Opts
 ) ->
     ok;
-module_analysis_learning_eligible(Analysis, Opts)
-  when is_map(Analysis), is_map(Opts) ->
+module_analysis_learning_eligible(Analysis, Opts) when
+    is_map(Analysis), is_map(Opts)
+->
     case maps:get(source_kind, Analysis, undefined) of
         source_file ->
             module_source_file_eligible(Analysis, Opts);
@@ -646,8 +673,11 @@ module_source_file_eligible(Analysis, Opts) ->
         _ ->
             RepoRoot = learning_repo_root(Opts),
             SourcePath = path_to_list(SourceName),
-            case ecai_git_worktree:filter_learning_files(
-                     RepoRoot, [SourcePath], Opts) of
+            case
+                ecai_git_worktree:filter_learning_files(
+                    RepoRoot, [SourcePath], Opts
+                )
+            of
                 {ok, [_], []} ->
                     ok;
                 {ok, [], [Skipped | _]} ->
@@ -745,7 +775,8 @@ optional_binary(Value) -> to_binary(Value).
 
 mget(Key, Map, Default) when is_map(Map), is_binary(Key) ->
     case maps:find(Key, Map) of
-        {ok, Value} -> Value;
+        {ok, Value} ->
+            Value;
         error ->
             try binary_to_existing_atom(Key, utf8) of
                 AtomKey -> maps:get(AtomKey, Map, Default)
@@ -753,9 +784,11 @@ mget(Key, Map, Default) when is_map(Map), is_binary(Key) ->
                 error:badarg -> Default
             end
     end;
-mget(_Key, _Map, Default) -> Default.
+mget(_Key, _Map, Default) ->
+    Default.
 
-analysis_changed(not_found, _Analysis) -> true;
+analysis_changed(not_found, _Analysis) ->
+    true;
 analysis_changed({ok, Previous}, Analysis) ->
     maps:get(source_sha256, Previous, undefined) =/=
         maps:get(source_sha256, Analysis, undefined).
@@ -763,10 +796,11 @@ analysis_changed({ok, Previous}, Analysis) ->
 finish_cycle(State0) ->
     AppResults = [{App, refresh_application(App, State0)} || App <- State0#state.apps],
     AppErrors = [{App, Reason} || {App, {error, Reason}} <- AppResults],
-    GlobalResult = case AppErrors of
-        [] -> refresh_global(State0);
-        _ -> {error, {application_synthesis_failed, AppErrors}}
-    end,
+    GlobalResult =
+        case AppErrors of
+            [] -> refresh_global(State0);
+            _ -> {error, {application_synthesis_failed, AppErrors}}
+        end,
     case GlobalResult of
         ok ->
             ok = refresh_relations(State0),
@@ -782,8 +816,9 @@ finish_cycle(State0) ->
 refresh_relations(State) ->
     case ecai_relation_learning:refresh_all() of
         {ok, _Summary} ->
-            NeedBenchmark = (maps:size(State#state.changed_apps) > 0) orelse
-                            (ecai_learning_store:get_relation_benchmark(all) =:= not_found),
+            NeedBenchmark =
+                (maps:size(State#state.changed_apps) > 0) orelse
+                    (ecai_learning_store:get_relation_benchmark(all) =:= not_found),
             case NeedBenchmark of
                 true -> maybe_benchmark_relations();
                 false -> ok
@@ -796,13 +831,15 @@ refresh_relations(State) ->
 maybe_benchmark_relations() ->
     Enabled = application:get_env(ecai, relation_benchmark_enabled, true),
     case Enabled of
-        false -> ok;
+        false ->
+            ok;
         true ->
             Limit0 = application:get_env(ecai, relation_benchmark_holdout, 1000),
-            Limit = case Limit0 of
-                N when is_integer(N), N > 0 -> N;
-                _ -> 1000
-            end,
+            Limit =
+                case Limit0 of
+                    N when is_integer(N), N > 0 -> N;
+                    _ -> 1000
+                end,
             case ecai_relation_learning:benchmark(all, Limit) of
                 {ok, Result} ->
                     logger:info(
@@ -841,13 +878,16 @@ refresh_application(App, State) ->
                         [] ->
                             ok;
                         _ ->
-                            case ecai_code_knowledge:synthesize_application(
-                                App,
-                                Cards,
-                                ecai_code_graph:summary(Graph),
-                                ollama_opts(State#state.opts)
-                            ) of
-                                {ok, Card} -> ecai_learning_store:put_app_knowledge(App, Card);
+                            case
+                                ecai_code_knowledge:synthesize_application(
+                                    App,
+                                    Cards,
+                                    ecai_code_graph:summary(Graph),
+                                    ollama_opts(State#state.opts)
+                                )
+                            of
+                                {ok, Card} ->
+                                    ecai_learning_store:put_app_knowledge(App, Card);
                                 {error, Reason} ->
                                     logger:error(
                                         "ECAI application synthesis failed app=~p reason=~p",
@@ -885,10 +925,13 @@ refresh_global(State) ->
                     ),
                     {error, {application_cards_incomplete, maps:keys(AppCards)}};
                 true ->
-                    case ecai_code_knowledge:synthesize_global(
-                        AppCards, ollama_opts(State#state.opts)
-                    ) of
-                        {ok, Card} -> ecai_learning_store:put_global_knowledge(Card);
+                    case
+                        ecai_code_knowledge:synthesize_global(
+                            AppCards, ollama_opts(State#state.opts)
+                        )
+                    of
+                        {ok, Card} ->
+                            ecai_learning_store:put_global_knowledge(Card);
                         {error, Reason} ->
                             logger:error("ECAI global code synthesis failed reason=~p", [Reason]),
                             {error, Reason}
@@ -939,7 +982,8 @@ schedule_next_cycle(State0) ->
     TRef = erlang:send_after(State0#state.interval_ms, self(), start_cycle),
     State0#state{timer_ref = TRef, next_run_at_ms = Next}.
 
-cancel_timer_preserve_deadline(State = #state{timer_ref = undefined}) -> State;
+cancel_timer_preserve_deadline(State = #state{timer_ref = undefined}) ->
+    State;
 cancel_timer_preserve_deadline(State = #state{timer_ref = TRef}) ->
     _ = erlang:cancel_timer(TRef),
     State#state{timer_ref = undefined}.
@@ -949,7 +993,6 @@ cancel_cycle_timer(State = #state{timer_ref = undefined}) ->
 cancel_cycle_timer(State = #state{timer_ref = TRef}) ->
     _ = erlang:cancel_timer(TRef),
     State#state{timer_ref = undefined, next_run_at_ms = undefined}.
-
 
 checkpoint_and_publish(State) ->
     %% Fail closed: do not continue dispatching new inference work if its
@@ -1039,12 +1082,18 @@ schedule_at_checkpoint(State = #state{next_run_at_ms = Next}) ->
     State#state{timer_ref = TRef}.
 
 unique_entries(Entries) ->
-    lists:reverse(lists:foldl(fun(Entry, Acc) ->
-        case lists:member(Entry, Acc) of
-            true -> Acc;
-            false -> [Entry | Acc]
-        end
-    end, [], Entries)).
+    lists:reverse(
+        lists:foldl(
+            fun(Entry, Acc) ->
+                case lists:member(Entry, Acc) of
+                    true -> Acc;
+                    false -> [Entry | Acc]
+                end
+            end,
+            [],
+            Entries
+        )
+    ).
 
 path_to_list(P) when is_list(P) -> P;
 path_to_list(P) when is_binary(P) -> binary_to_list(P).
@@ -1056,6 +1105,8 @@ to_binary(A) when is_atom(A) -> atom_to_binary(A, utf8);
 to_binary(V) -> iolist_to_binary(io_lib:format("~p", [V])).
 
 now_iso8601() ->
-    unicode:characters_to_binary(calendar:system_time_to_rfc3339(
-        erlang:system_time(second), [{unit, second}, {offset, "Z"}]
-    )).
+    unicode:characters_to_binary(
+        calendar:system_time_to_rfc3339(
+            erlang:system_time(second), [{unit, second}, {offset, "Z"}]
+        )
+    ).

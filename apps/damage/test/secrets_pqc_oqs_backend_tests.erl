@@ -50,12 +50,16 @@ require_oqs_backend() ->
             %% Exercise an actual native operation before claiming availability.
             case secrets_pqc_oqs:keypair(?KEM) of
                 #{public_key := Pub, private_key := Priv} when
-                    is_binary(Pub), byte_size(Pub) =:= 1184,
-                    is_binary(Priv), byte_size(Priv) =:= 2400
-                -> ok;
+                    is_binary(Pub),
+                    byte_size(Pub) =:= 1184,
+                    is_binary(Priv),
+                    byte_size(Priv) =:= 2400
+                ->
+                    ok;
                 {error, Reason} when is_atom(Reason) ->
                     error({required_oqs_backend_unavailable, Reason});
-                _ -> error({required_oqs_backend_unavailable, invalid_keypair})
+                _ ->
+                    error({required_oqs_backend_unavailable, invalid_keypair})
             end;
         {error, Reason} ->
             error({required_oqs_backend_unavailable, Reason})
@@ -176,8 +180,11 @@ secrets_pqc_context_bound_roundtrip_using_oqs_backend() ->
     ),
 
     WrongAADContext = AADContext#{<<"contract_id">> := <<"ct_wrong">>},
-    ?assertException(error, {pqc_aad_context_mismatch, _},
-        secrets_pqc:decrypt(?KEM, Envelope, PrivateKey, WrongAADContext)).
+    ?assertException(
+        error,
+        {pqc_aad_context_mismatch, _},
+        secrets_pqc:decrypt(?KEM, Envelope, PrivateKey, WrongAADContext)
+    ).
 
 secrets_pqc_tampered_payload_fails() ->
     #{public_key := PublicKey, private_key := PrivateKey} =
@@ -212,18 +219,33 @@ unsupported_kem_errors() ->
 invalid_raw_sizes_are_rejected() ->
     #{public_key := Pub, private_key := Priv} = secrets_pqc_oqs:keypair(?KEM),
     #{ciphertext := Ct} = secrets_pqc_oqs:encapsulate(?KEM, Pub),
-    lists:foreach(fun(BadPub) ->
-        ?assertEqual({error, invalid_public_key_size},
-            secrets_pqc_oqs:encapsulate(?KEM, BadPub))
-    end, [<<>>, binary:part(Pub, 0, byte_size(Pub) - 1), <<Pub/binary, 0>>]),
-    lists:foreach(fun(BadCt) ->
-        ?assertEqual({error, invalid_ciphertext_size},
-            secrets_pqc_oqs:decapsulate(?KEM, BadCt, Priv))
-    end, [<<>>, binary:part(Ct, 0, byte_size(Ct) - 1), <<Ct/binary, 0>>]),
-    lists:foreach(fun(BadPriv) ->
-        ?assertEqual({error, invalid_private_key_size},
-            secrets_pqc_oqs:decapsulate(?KEM, Ct, BadPriv))
-    end, [<<>>, binary:part(Priv, 0, byte_size(Priv) - 1), <<Priv/binary, 0>>]).
+    lists:foreach(
+        fun(BadPub) ->
+            ?assertEqual(
+                {error, invalid_public_key_size},
+                secrets_pqc_oqs:encapsulate(?KEM, BadPub)
+            )
+        end,
+        [<<>>, binary:part(Pub, 0, byte_size(Pub) - 1), <<Pub/binary, 0>>]
+    ),
+    lists:foreach(
+        fun(BadCt) ->
+            ?assertEqual(
+                {error, invalid_ciphertext_size},
+                secrets_pqc_oqs:decapsulate(?KEM, BadCt, Priv)
+            )
+        end,
+        [<<>>, binary:part(Ct, 0, byte_size(Ct) - 1), <<Ct/binary, 0>>]
+    ),
+    lists:foreach(
+        fun(BadPriv) ->
+            ?assertEqual(
+                {error, invalid_private_key_size},
+                secrets_pqc_oqs:decapsulate(?KEM, Ct, BadPriv)
+            )
+        end,
+        [<<>>, binary:part(Priv, 0, byte_size(Priv) - 1), <<Priv/binary, 0>>]
+    ).
 
 tampered_kem_ciphertext_does_not_match() ->
     #{public_key := Pub, private_key := Priv} = secrets_pqc_oqs:keypair(?KEM),

@@ -27,18 +27,24 @@ lookup(Root0, Fingerprint0) ->
 
 -spec promotable(file:filename_all(), binary() | list(), pos_integer()) ->
     {ok, [map()]} | {error, term()}.
-promotable(Root, Fingerprint, MinimumEvidence)
-        when is_integer(MinimumEvidence), MinimumEvidence > 0 ->
+promotable(Root, Fingerprint, MinimumEvidence) when
+    is_integer(MinimumEvidence), MinimumEvidence > 0
+->
     case lookup(Root, Fingerprint) of
         {ok, Events} ->
             Groups = lists:foldl(fun group_event/2, #{}, Events),
             Candidates = lists:sort(fun candidate_order/2, [
-                #{candidate_hash => Hash, evidence_count => length(Group), evidence => lists:reverse(Group)}
-                || {Hash, Group} <- maps:to_list(Groups),
-                   length(Group) >= MinimumEvidence
+                #{
+                    candidate_hash => Hash,
+                    evidence_count => length(Group),
+                    evidence => lists:reverse(Group)
+                }
+             || {Hash, Group} <- maps:to_list(Groups),
+                length(Group) >= MinimumEvidence
             ]),
             {ok, Candidates};
-        Error -> Error
+        Error ->
+            Error
     end.
 
 -spec candidate_hash(term()) -> binary().
@@ -52,10 +58,13 @@ candidate_hash(Result) ->
 
 group_event(#{candidate_hash := Hash} = Event, Acc) ->
     maps:update_with(Hash, fun(Existing) -> [Event | Existing] end, [Event], Acc);
-group_event(_Event, Acc) -> Acc.
+group_event(_Event, Acc) ->
+    Acc.
 
-candidate_order(#{evidence_count := A, candidate_hash := HA},
-                #{evidence_count := B, candidate_hash := HB}) ->
+candidate_order(
+    #{evidence_count := A, candidate_hash := HA},
+    #{evidence_count := B, candidate_hash := HB}
+) ->
     case A =:= B of
         true -> HA =< HB;
         false -> A > B

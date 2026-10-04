@@ -16,18 +16,21 @@ generation_identity_test_() ->
     end.
 
 generation_cases() ->
-    {inorder, [{Name, {timeout, 60, fun() -> with_fixture(Test) end}} || {Name, Test} <- [
-        {"reload records private loaded filenames", fun normal_reload/1},
-        {"same-MD5 interruption before atomic_load retains A's old hash", fun before_load/1},
-        {"same-MD5 interruption after atomic_load retains B's old hash", fun after_load/1},
-        {"interrupted rollback recovers the old generation", fun after_base_load/1},
-        {"different filename with identical code MD5 is untracked", fun untracked_filename/1},
-        {"missing loaded filename is uncertain", fun missing_filename/1},
-        {"conflicting hashes for one filename and MD5 are uncertain", fun conflicting_hashes/1},
-        {"duplicate references to the same BEAM are not ambiguous", fun identical_candidate/1},
-        {"invalid hash for a matching identity is uncertain", fun malformed_hash/1},
-        {"rollback retry does not create another generation", fun repeat_rollback/1}
-    ]]}.
+    {inorder, [
+        {Name, {timeout, 60, fun() -> with_fixture(Test) end}}
+     || {Name, Test} <- [
+            {"reload records private loaded filenames", fun normal_reload/1},
+            {"same-MD5 interruption before atomic_load retains A's old hash", fun before_load/1},
+            {"same-MD5 interruption after atomic_load retains B's old hash", fun after_load/1},
+            {"interrupted rollback recovers the old generation", fun after_base_load/1},
+            {"different filename with identical code MD5 is untracked", fun untracked_filename/1},
+            {"missing loaded filename is uncertain", fun missing_filename/1},
+            {"conflicting hashes for one filename and MD5 are uncertain", fun conflicting_hashes/1},
+            {"duplicate references to the same BEAM are not ambiguous", fun identical_candidate/1},
+            {"invalid hash for a matching identity is uncertain", fun malformed_hash/1},
+            {"rollback retry does not create another generation", fun repeat_rollback/1}
+        ]
+    ]}.
 
 normal_reload(_F) ->
     {A, PathA, _BeamA} = load_a(),
@@ -37,8 +40,11 @@ normal_reload(_F) ->
     S = damage_release_overrides:snapshot(),
     ?assertEqual(recorded, maps:get(runtime_integrity_status, S)),
     [Public] = maps:get(overrides, S),
-    [?assertNot(maps:is_key(K, Public)) || K <-
-        [base_filename, loaded_filename, candidate_filename, base_beam]],
+    [
+        ?assertNot(maps:is_key(K, Public))
+     || K <-
+            [base_filename, loaded_filename, candidate_filename, base_beam]
+    ],
     ?assertMatch({ok, _}, damage_hotcode:rollback(?M)),
     ?assertEqual([], damage_hotcode:status()).
 
@@ -59,10 +65,11 @@ same_md5_interruption(F, Phase) ->
         end
     end),
     assert_uncertain(),
-    {ExpectedPath, ExpectedSha} = case Phase of
-        before_load -> {PathA, sha256(BeamA)};
-        after_load -> {PathB, sha256(BeamB)}
-    end,
+    {ExpectedPath, ExpectedSha} =
+        case Phase of
+            before_load -> {PathA, sha256(BeamA)};
+            after_load -> {PathB, sha256(BeamB)}
+        end,
     ?assertEqual({file, ExpectedPath}, code:is_loaded(?M)),
     %% Pin the current override so it remains old code after restoring the base.
     Parked = park(),
@@ -78,8 +85,11 @@ after_base_load(F) ->
     Parked = park(),
     interrupted(fun() ->
         true = code:soft_purge(?M),
-        ok = damage_release_overrides:record(A#{state => rolling_back,
-            loaded_filename => PathA, loaded_beam_sha256 => sha256(BeamA)}),
+        ok = damage_release_overrides:record(A#{
+            state => rolling_back,
+            loaded_filename => PathA,
+            loaded_beam_sha256 => sha256(BeamA)
+        }),
         ok = code:atomic_load([{?M, maps:get(base_path, F), maps:get(base_beam, F)}])
     end),
     assert_uncertain(),
@@ -195,12 +205,21 @@ metadata_variant(BeamA, Label) ->
 
 loading_entry(A, Path, Beam) ->
     {ok, {?M, Md5}} = beam_lib:md5(Beam),
-    A#{state => loading, candidate_filename => Path,
-       candidate_module_md5 => hex(Md5), beam_sha256 => sha256(Beam)}.
+    A#{
+        state => loading,
+        candidate_filename => Path,
+        candidate_module_md5 => hex(Md5),
+        beam_sha256 => sha256(Beam)
+    }.
 
 cache_fixture(F, Beam) ->
-    Path = filename:join([maps:get(root, F), "overrides", "beams",
-        binary_to_list(sha256(Beam)), atom_to_list(?M) ++ ".beam"]),
+    Path = filename:join([
+        maps:get(root, F),
+        "overrides",
+        "beams",
+        binary_to_list(sha256(Beam)),
+        atom_to_list(?M) ++ ".beam"
+    ]),
     ok = filelib:ensure_dir(Path),
     ok = file:write_file(Path, Beam),
     Path.
@@ -213,16 +232,21 @@ interrupted(Operation) ->
         damage_release_overrides:with_lock(fun() ->
             ok = Operation(),
             Parent ! {at_transition, self()},
-            receive never -> ok end
+            receive
+                never -> ok
+            end
         end)
     end),
     Ref = monitor(process, Writer),
     receive
         {at_transition, Writer} ->
             exit(Writer, kill),
-            receive {'DOWN', Ref, process, Writer, killed} -> ok
-            after 5000 -> error(writer_did_not_stop) end;
-        {'DOWN', Ref, process, Writer, Why} -> error({transition_failed, Why})
+            receive
+                {'DOWN', Ref, process, Writer, killed} -> ok
+            after 5000 -> error(writer_did_not_stop)
+            end;
+        {'DOWN', Ref, process, Writer, Why} ->
+            error({transition_failed, Why})
     after 10000 ->
         demonitor(Ref, [flush]),
         error(transition_timeout)
@@ -239,8 +263,14 @@ with_fixture(Test) ->
     SavedWorkers = put(?WORKERS, []),
     EnvKeys = [operator_hotcode, operator_source_dir],
     SavedEnv = [{K, application:get_env(damage, K)} || K <- EnvKeys],
-    Temp = case os:getenv("TMPDIR") of false -> "/tmp"; T -> T end,
-    Root = filename:join(Temp, "damage-generation-test-" ++ binary_to_list(hex(crypto:strong_rand_bytes(12)))),
+    Temp =
+        case os:getenv("TMPDIR") of
+            false -> "/tmp";
+            T -> T
+        end,
+    Root = filename:join(
+        Temp, "damage-generation-test-" ++ binary_to_list(hex(crypto:strong_rand_bytes(12)))
+    ),
     App = filename:join(Root, "damage-0.0.0"),
     Ebin = filename:join(App, "ebin"),
     Src = filename:join(App, "src"),
@@ -248,12 +278,21 @@ with_fixture(Test) ->
     [ok = filelib:ensure_dir(filename:join(D, "unused")) || D <- [Ebin, Src, Operator]],
     try
         true = code:replace_path(damage, Ebin),
-        ok = application:load({application, damage, [{vsn, "0.0.0"},
-            {description, "isolated generation test"}, {modules, [?M]},
-            {registered, []}, {applications, [kernel, stdlib]}]}),
+        ok = application:load(
+            {application, damage, [
+                {vsn, "0.0.0"},
+                {description, "isolated generation test"},
+                {modules, [?M]},
+                {registered, []},
+                {applications, [kernel, stdlib]}
+            ]}
+        ),
         ok = application:set_env(damage, operator_source_dir, Operator),
-        ok = application:set_env(damage, operator_hotcode,
-            [{enabled, true}, {allowed_modules, [?M]}]),
+        ok = application:set_env(
+            damage,
+            operator_hotcode,
+            [{enabled, true}, {allowed_modules, [?M]}]
+        ),
         Source = filename:join(Src, atom_to_list(?M) ++ ".erl"),
         ok = file:write_file(Source, source(base)),
         {ok, ?M, BaseBeam} = compile:noenv_file(Source, [binary, debug_info]),
@@ -265,7 +304,9 @@ with_fixture(Test) ->
     after
         [stop_worker(P) || P <- get(?WORKERS)],
         %% Destructive cleanup is limited to our single test-owned module.
-        code:soft_purge(?M), code:delete(?M), code:soft_purge(?M),
+        code:soft_purge(?M),
+        code:delete(?M),
+        code:soft_purge(?M),
         persistent_term:put(?JOURNAL, SavedJournal),
         application:unload(damage),
         true = code:set_path(SavedPath),
@@ -275,9 +316,13 @@ with_fixture(Test) ->
     end.
 
 source(Value) ->
-    iolist_to_binary(io_lib:format(
-        "-module(~p).\n-export([value/0, park/1]).\nvalue() -> ~p.\n"
-        "park(Parent) -> Parent ! {parked, self()}, receive stop -> value() end.\n", [?M, Value])).
+    iolist_to_binary(
+        io_lib:format(
+            "-module(~p).\n-export([value/0, park/1]).\nvalue() -> ~p.\n"
+            "park(Parent) -> Parent ! {parked, self()}, receive stop -> value() end.\n",
+            [?M, Value]
+        )
+    ).
 
 restore_env(K, undefined) -> application:unset_env(damage, K);
 restore_env(K, {ok, V}) -> application:set_env(damage, K, V).
@@ -288,11 +333,16 @@ spawn_worker(Fun) ->
 stop_worker(Pid) ->
     Ref = monitor(process, Pid),
     exit(Pid, kill),
-    receive {'DOWN', Ref, process, Pid, _} -> ok
-    after 5000 -> error(worker_did_not_stop) end.
+    receive
+        {'DOWN', Ref, process, Pid, _} -> ok
+    after 5000 -> error(worker_did_not_stop)
+    end.
 park() ->
     Parent = self(),
     Pid = spawn_worker(fun() -> ?M:park(Parent) end),
-    receive {parked, Pid} -> Pid after 5000 -> error(park_timeout) end.
+    receive
+        {parked, Pid} -> Pid
+    after 5000 -> error(park_timeout)
+    end.
 sha256(B) -> hex(crypto:hash(sha256, B)).
 hex(B) -> string:lowercase(binary:encode_hex(B)).

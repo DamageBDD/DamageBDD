@@ -43,7 +43,7 @@ cross_application_uses_test() ->
     EcaiGraph = ecai_code_graph:build([EcaiAnalysis]),
     Relations = ecai_relation:dedupe(
         ecai_relation:from_code_graph(DamageGraph) ++
-        ecai_relation:from_code_graph(EcaiGraph)
+            ecai_relation:from_code_graph(EcaiGraph)
     ),
     Truth = ecai_relation_learning:ground_truth_uses(DamageGraph),
     Result = ecai_relation_learning:benchmark_relations(Relations, Truth, 1000),

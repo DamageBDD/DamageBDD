@@ -22,7 +22,9 @@ prepare(Repo, Problem, Opts) ->
             CapsuleOpts = #{
                 allowed_files => maps:get(allowed_files, Opts, maps:get(target_files, Context, [])),
                 policy => maps:get(policy, Opts, #{}),
-                invariants => maps:get(invariants, Opts, maps:get(extracted_invariants, Context, []))
+                invariants => maps:get(
+                    invariants, Opts, maps:get(extracted_invariants, Context, [])
+                )
             },
             case ecai_repair_capsule:new(RepoState, Problem, Context, CapsuleOpts) of
                 {ok, Capsule} ->
@@ -38,9 +40,11 @@ prepare(Repo, Problem, Opts) ->
                         capsule_path => Persisted,
                         prompt => Prompt
                     }};
-                Error -> Error
+                Error ->
+                    Error
             end;
-        Error -> Error
+        Error ->
+            Error
     end.
 
 -spec infer(map(), map()) -> {ok, map()} | {error, term()}.
@@ -62,27 +66,32 @@ repair(Repo, Problem, Opts) ->
                 {ok, Candidate} -> {ok, Prepared#{candidate => Candidate}};
                 Error -> Error
             end;
-        Error -> Error
+        Error ->
+            Error
     end.
 
 -spec verify(file:filename_all(), map()) -> {ok, map()} | {error, map()}.
 verify(Repo, PreparedOrCapsule) ->
-    Capsule = case PreparedOrCapsule of
-        #{capsule := C} -> C;
-        C -> C
-    end,
+    Capsule =
+        case PreparedOrCapsule of
+            #{capsule := C} -> C;
+            C -> C
+        end,
     ecai_repair_verify:verify_candidate(Repo, Capsule).
 
 -spec augment_request(term(), file:filename_all(), map()) -> term().
 augment_request(Task, Repo, Request) when is_map(Request) ->
     ecai_repair_bridge:maybe_enrich(Task, Request#{repo => Repo});
-augment_request(_Task, _Repo, Request) -> Request.
+augment_request(_Task, _Repo, Request) ->
+    Request.
 
 default_task(Problem) ->
-    iolist_to_binary(io_lib:format(
-        "Produce the smallest correct code repair for this structured failure:~n~0tp",
-        [Problem]
-    )).
+    iolist_to_binary(
+        io_lib:format(
+            "Produce the smallest correct code repair for this structured failure:~n~0tp",
+            [Problem]
+        )
+    ).
 
 to_list(Value) when is_list(Value) -> Value;
 to_list(Value) when is_binary(Value) -> unicode:characters_to_list(Value).

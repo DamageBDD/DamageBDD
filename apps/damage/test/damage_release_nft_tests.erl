@@ -1,8 +1,16 @@
 -module(damage_release_nft_tests).
 -include_lib("eunit/include/eunit.hrl").
 
--import(damage_release_test_support, [cid/0, digest/0, answer/0,
-    release_record/0, metadata/0, installed_release/0, some/1, token_metadata/0]).
+-import(damage_release_test_support, [
+    cid/0,
+    digest/0,
+    answer/0,
+    release_record/0,
+    metadata/0,
+    installed_release/0,
+    some/1,
+    token_metadata/0
+]).
 
 manifest(Path, Digest) ->
     A = answer(),
@@ -50,8 +58,12 @@ latest_platform_test() ->
     Query = fun("latest_release_value_for", ["ubuntu-noble-amd64"]) ->
         {ok, some(answer())}
     end,
-    ?assertEqual({ok, release_record()}, damage_release_nft:select_release(
-        latest, <<"ubuntu-noble-amd64">>, Query)).
+    ?assertEqual(
+        {ok, release_record()},
+        damage_release_nft:select_release(
+            latest, <<"ubuntu-noble-amd64">>, Query
+        )
+    ).
 
 latest_global_test() ->
     Query = fun("latest_release_value", []) -> {ok, some(answer())} end,
@@ -62,8 +74,12 @@ historical_lookup_test() ->
         ("release_token", ["v1.4.1", "ubuntu-noble-amd64"]) -> {ok, some(42)};
         ("metadata", [42]) -> {ok, some(token_metadata())}
     end,
-    ?assertEqual({ok, release_record()}, damage_release_nft:select_release(
-        {release, <<"v1.4.1">>}, <<"ubuntu-noble-amd64">>, Query)).
+    ?assertEqual(
+        {ok, release_record()},
+        damage_release_nft:select_release(
+            {release, <<"v1.4.1">>}, <<"ubuntu-noble-amd64">>, Query
+        )
+    ).
 
 missing_release_test() ->
     Query = fun(_, _) -> {ok, {variant, [0, 1], 0, {}}} end,
@@ -71,39 +87,70 @@ missing_release_test() ->
 
 snapshot_mismatch_test() ->
     Query = fun(_, _) -> {ok, some(answer())} end,
-    ?assertEqual({error, release_platform_mismatch},
-        damage_release_nft:select_release(latest, <<"archlinux-x86_64">>, Query)),
+    ?assertEqual(
+        {error, release_platform_mismatch},
+        damage_release_nft:select_release(latest, <<"archlinux-x86_64">>, Query)
+    ),
     Historical = fun
         ("release_token", _) -> {ok, some(42)};
         ("metadata", [42]) -> {ok, some(token_metadata())}
     end,
-    ?assertEqual({error, release_version_mismatch}, damage_release_nft:select_release(
-        {release, <<"v0.0.0">>}, <<"ubuntu-noble-amd64">>, Historical)).
+    ?assertEqual(
+        {error, release_version_mismatch},
+        damage_release_nft:select_release(
+            {release, <<"v0.0.0">>}, <<"ubuntu-noble-amd64">>, Historical
+        )
+    ).
 
 install_manifest_v2_test() ->
     Bin = damage_release_nft:install_manifest(installed_release()),
-    ?assertEqual([
-        <<"damagebdd-install-v2">>, <<"ae_mainnet">>, <<"ct_test_fixture">>, <<"42">>,
-        <<"v1.4.1">>, <<"ubuntu-noble-amd64">>, <<>>, cid(), cid(),
-        <<"damage.deb">>, digest(), <<>>
-    ], binary:split(Bin, <<"\n">>, [global])).
+    ?assertEqual(
+        [
+            <<"damagebdd-install-v2">>,
+            <<"ae_mainnet">>,
+            <<"ct_test_fixture">>,
+            <<"42">>,
+            <<"v1.4.1">>,
+            <<"ubuntu-noble-amd64">>,
+            <<>>,
+            cid(),
+            cid(),
+            <<"damage.deb">>,
+            digest(),
+            <<>>
+        ],
+        binary:split(Bin, <<"\n">>, [global])
+    ).
 
 shared_release_serialization_test() ->
-    Encoded = damage_release_nft:release_answer(42, <<"v1.4.1">>,
-        <<"ubuntu-noble-amd64">>, <<>>, cid(), cid()),
+    Encoded = damage_release_nft:release_answer(
+        42,
+        <<"v1.4.1">>,
+        <<"ubuntu-noble-amd64">>,
+        <<>>,
+        cid(),
+        cid()
+    ),
     ?assertEqual(answer(), Encoded),
     ?assertEqual({ok, release_record()}, damage_release_nft:parse_release(Encoded)).
 
 shared_contract_decoder_test_() ->
-    [?_assertEqual({ok, 42}, damage_release_nft:call_return(Call)) || Call <- [
-        #{return_type => ok, return_value => 42},
-        #{<<"return_type">> => <<"ok">>, <<"return_value">> => 42},
-        #{"return_type" => "ok", "return_value" => 42}
-    ]].
+    [
+        ?_assertEqual({ok, 42}, damage_release_nft:call_return(Call))
+     || Call <- [
+            #{return_type => ok, return_value => 42},
+            #{<<"return_type">> => <<"ok">>, <<"return_value">> => 42},
+            #{"return_type" => "ok", "return_value" => 42}
+        ]
+    ].
 
 shared_contract_error_test() ->
-    ?assertEqual({error, {revert, <<"denied">>}}, damage_release_nft:call_return(
-        #{return_type => revert, return_value => <<"denied">>})),
+    ?assertEqual(
+        {error, {revert, <<"denied">>}},
+        damage_release_nft:call_return(
+            #{return_type => revert, return_value => <<"denied">>}
+        )
+    ),
     ?assertEqual({error, contract_call_failed}, damage_release_nft:call_return(not_a_map)),
     ?assertEqual({error, missing_return_type}, damage_release_nft:call_return(#{})).
 
@@ -112,38 +159,60 @@ prepared_installation_test() ->
     Expected = damage_release_nft:installation_identity(Actual),
     ?assertEqual(7, map_size(Expected)),
     ?assertEqual({ok, Expected}, damage_release_nft:prepared_installation(metadata())),
-    ?assertEqual(Expected, damage_release_nft:installation_identity(
-        Actual#{ignored => <<"extra">>, token_id => 999})).
+    ?assertEqual(
+        Expected,
+        damage_release_nft:installation_identity(
+            Actual#{ignored => <<"extra">>, token_id => 999}
+        )
+    ).
 
 metadata_binding_test() ->
     Meta = metadata(),
-    ?assertEqual({error, installation_manifest_missing},
-        damage_release_nft:installation_fields(release_record(), #{})),
-    ?assertEqual({error, release_asset_mismatch}, damage_release_nft:installation_fields(
-        release_record(), Meta#{<<"file_ipfs">> := <<"different">>})),
-    ?assertEqual({error, release_git_sha_mismatch}, damage_release_nft:installation_fields(
-        release_record(), Meta#{<<"git_sha">> := binary:copy(<<"a">>, 40)})).
+    ?assertEqual(
+        {error, installation_manifest_missing},
+        damage_release_nft:installation_fields(release_record(), #{})
+    ),
+    ?assertEqual(
+        {error, release_asset_mismatch},
+        damage_release_nft:installation_fields(
+            release_record(), Meta#{<<"file_ipfs">> := <<"different">>}
+        )
+    ),
+    ?assertEqual(
+        {error, release_git_sha_mismatch},
+        damage_release_nft:installation_fields(
+            release_record(), Meta#{<<"git_sha">> := binary:copy(<<"a">>, 40)}
+        )
+    ).
 
 installation_rejection_test_() ->
     Meta = metadata(),
     I = maps:get(<<"installation">>, Meta),
-    [?_assertEqual({error, Reason}, damage_release_nft:installation_fields(
-        release_record(), Meta#{<<"installation">> := I#{Key => Value}}))
+    [
+        ?_assertEqual(
+            {error, Reason},
+            damage_release_nft:installation_fields(
+                release_record(), Meta#{<<"installation">> := I#{Key => Value}}
+            )
+        )
      || {Key, Value, Reason} <- [
-        {<<"schema_version">>, 2, invalid_installation_schema},
-        {<<"platform">>, <<"archlinux-x86_64">>, release_platform_mismatch},
-        {<<"asset_path">>, <<"../damage.deb">>, invalid_asset_path},
-        {<<"sha256">>, <<"wrong">>, invalid_package_sha256},
-        {<<"package_format">>, <<"exe">>, invalid_package_format},
-        {<<"architecture">>, <<"arm64">>, release_architecture_mismatch}
-    ]].
+            {<<"schema_version">>, 2, invalid_installation_schema},
+            {<<"platform">>, <<"archlinux-x86_64">>, release_platform_mismatch},
+            {<<"asset_path">>, <<"../damage.deb">>, invalid_asset_path},
+            {<<"sha256">>, <<"wrong">>, invalid_package_sha256},
+            {<<"package_format">>, <<"exe">>, invalid_package_format},
+            {<<"architecture">>, <<"arm64">>, release_architecture_mismatch}
+        ]
+    ].
 
 json_validation_test() ->
     ?assertEqual({ok, metadata()}, damage_release_nft:checked_json(jsx:encode(metadata()))),
     ?assertEqual({error, invalid_installation_metadata}, damage_release_nft:checked_json(<<"[]">>)),
     ?assertEqual({error, invalid_installation_metadata}, damage_release_nft:checked_json(<<"{">>)),
-    ?assertEqual({error, release_metadata_too_large},
-        damage_release_nft:checked_json(binary:copy(<<"a">>, 1048577))).
+    ?assertEqual(
+        {error, release_metadata_too_large},
+        damage_release_nft:checked_json(binary:copy(<<"a">>, 1048577))
+    ).
 
 bounded_query_test() ->
     ?assertEqual({ok, value}, damage_release_nft:bounded(fun() -> {ok, value} end, 1000)),

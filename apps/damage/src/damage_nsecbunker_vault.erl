@@ -63,11 +63,13 @@ guard_state(Vault = #vault{policy = Policy, backend = secure_owner}) ->
                     sealed(Reason, Expected)
             end
     end;
-guard_state(Vault = #vault{
-    config = Config,
-    policy = Policy,
-    backend = {legacy, {ok, _Cmd}}
-}) ->
+guard_state(
+    Vault = #vault{
+        config = Config,
+        policy = Policy,
+        backend = {legacy, {ok, _Cmd}}
+    }
+) ->
     Expected = maps:get(bunker_pubkey_hex, Policy, undefined),
     case {local_vault_passphrase(Config), public_key(Vault)} of
         {{ok, _}, {ok, Actual}} ->

@@ -49,7 +49,8 @@ handle_event(Event, State) ->
         ok ->
             {reply, {text, encode_json(["NOTICE", "Event received"])}, State};
         {error, Reason} ->
-            {reply, {text, encode_json(["NOTICE", io_lib:format("Invalid event: ~p", [Reason])])}, State}
+            {reply, {text, encode_json(["NOTICE", io_lib:format("Invalid event: ~p", [Reason])])},
+                State}
     end.
 
 handle_subscription(SubId, Filter, #state{subscriptions = Subs} = State) ->

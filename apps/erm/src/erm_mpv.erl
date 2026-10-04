@@ -740,21 +740,24 @@ builtin_player_tree() ->
                                                 ]},
                                                 {button, random_album_button, [
                                                     {label, "Album"},
-                                                    {tooltip, "Shuffle remaining playlist by album"},
+                                                    {tooltip,
+                                                        "Shuffle remaining playlist by album"},
                                                     {min_height, 32},
                                                     {min_width, 56},
                                                     {class, "cp-button cp-randomize-button"}
                                                 ]},
                                                 {button, random_artist_button, [
                                                     {label, "Artist"},
-                                                    {tooltip, "Shuffle remaining playlist by artist"},
+                                                    {tooltip,
+                                                        "Shuffle remaining playlist by artist"},
                                                     {min_height, 32},
                                                     {min_width, 56},
                                                     {class, "cp-button cp-randomize-button"}
                                                 ]},
                                                 {button, random_genre_button, [
                                                     {label, "Genre"},
-                                                    {tooltip, "Shuffle remaining playlist by genre"},
+                                                    {tooltip,
+                                                        "Shuffle remaining playlist by genre"},
                                                     {min_height, 32},
                                                     {min_width, 56},
                                                     {class, "cp-button cp-randomize-button"}
@@ -768,7 +771,8 @@ builtin_player_tree() ->
                                                 ]},
                                                 {button, random_directory_button, [
                                                     {label, "Dir"},
-                                                    {tooltip, "Shuffle remaining playlist by directory"},
+                                                    {tooltip,
+                                                        "Shuffle remaining playlist by directory"},
                                                     {min_height, 32},
                                                     {min_width, 44},
                                                     {class, "cp-button cp-randomize-button"}
@@ -1259,7 +1263,8 @@ randomize_playlist(Mode, State0) ->
                 ok ->
                     State2 =
                         case LivePlayback of
-                            true -> sync_randomized_mpv_tail(Mode, State1);
+                            true ->
+                                sync_randomized_mpv_tail(Mode, State1);
                             false ->
                                 update_status(
                                     io_lib:format("Mixed playlist: ~ts", [
@@ -1281,7 +1286,9 @@ randomize_playlist(Mode, State0) ->
         {error, Reason, State1} ->
             %% Do not mutate the persistent logical queue when MPV state is
             %% uncertain; that could let live playback and playlist state drift.
-            update_status(io_lib:format("Randomize deferred; MPV status unavailable: ~p", [Reason])),
+            update_status(
+                io_lib:format("Randomize deferred; MPV status unavailable: ~p", [Reason])
+            ),
             State1
     end.
 
@@ -1364,7 +1371,6 @@ randomize_mode_label(latest) -> "latest";
 randomize_mode_label(directory) -> "directory";
 randomize_mode_label(Mode) -> to_text(Mode).
 
-
 add_folder_from_entry(State) ->
     case ui_read(folder_entry, text) of
         Path0 when is_binary(Path0); is_list(Path0) ->
@@ -1390,7 +1396,9 @@ add_folder_from_entry(State) ->
                         {error, Reason} ->
                             update_status(io_lib:format("Could not add folder: ~p", [Reason]));
                         Other ->
-                            update_status(io_lib:format("Unexpected add-folder result: ~p", [Other]))
+                            update_status(
+                                io_lib:format("Unexpected add-folder result: ~p", [Other])
+                            )
                     end
             end;
         Error ->
@@ -1554,14 +1562,12 @@ play_playlist_index(Index, State) ->
                 [Index, Track#track.id]
             ),
             State;
-
         {ok, Track} ->
             ?LOG_DEBUG(
                 "Playlist selection index=~p id=~p path=~ts",
                 [Index, Track#track.id, Track#track.path]
             ),
             play_track(Track, State);
-
         {error, Reason} ->
             update_status(
                 io_lib:format(
@@ -1570,7 +1576,6 @@ play_playlist_index(Index, State) ->
                 )
             ),
             State;
-
         Other ->
             update_status(
                 io_lib:format(
@@ -1606,10 +1611,12 @@ play_track(Track, State) ->
 playlist_tail_from_track(#track{id = Id}) ->
     case safe_playlist(all) of
         Tracks when is_list(Tracks) ->
-            case lists:dropwhile(
-                fun({_Index, #track{id = TrackId}}) -> TrackId =/= Id end,
-                Tracks
-            ) of
+            case
+                lists:dropwhile(
+                    fun({_Index, #track{id = TrackId}}) -> TrackId =/= Id end,
+                    Tracks
+                )
+            of
                 [] -> {error, track_not_in_playlist};
                 Tail -> {ok, [Track || {_Index, Track} <- Tail]}
             end;
@@ -1626,11 +1633,15 @@ play_track_progression(Track, Path, TailTracks, State) ->
                 {ok, _Reply, ReadyState} ->
                     commit_playing_track(Track, Path, ReadyState);
                 {error, Reason, FailedState} ->
-                    update_status(io_lib:format("Could not load selected playlist position: ~p", [Reason])),
+                    update_status(
+                        io_lib:format("Could not load selected playlist position: ~p", [Reason])
+                    ),
                     FailedState
             end;
         {error, Reason} ->
-            update_status(io_lib:format("Could not build selected playlist progression: ~p", [Reason])),
+            update_status(
+                io_lib:format("Could not build selected playlist progression: ~p", [Reason])
+            ),
             State
     end.
 

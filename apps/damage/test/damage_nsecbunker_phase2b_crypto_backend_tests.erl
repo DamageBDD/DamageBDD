@@ -24,8 +24,12 @@ setup() ->
     try
         ok = file:change_mode(Scratch, 8#700),
         Pass = binary_to_list(binary:encode_hex(crypto:strong_rand_bytes(32))),
-        #{cmd => Cmd, vault => filename:join(Scratch, "test.vault"),
-            pass => Pass, scratch_dir => Scratch}
+        #{
+            cmd => Cmd,
+            vault => filename:join(Scratch, "test.vault"),
+            pass => Pass,
+            scratch_dir => Scratch
+        }
     catch
         Class:Reason:Stack ->
             remove_scratch_tree(Scratch),
@@ -116,7 +120,10 @@ call(#{cmd := Cmd, vault := Vault, pass := Pass}, Req, PlainNip44) ->
         {"DAMAGE_NSECBUNKER_VAULT_PATH", Vault},
         {"DAMAGE_NSECBUNKER_VAULT_PASSPHRASE", Pass},
         {"DAMAGE_NSECBUNKER_ALLOW_PLAIN_NIP44",
-            case PlainNip44 of true -> "1"; false -> false end}
+            case PlainNip44 of
+                true -> "1";
+                false -> false
+            end}
     ],
     Port = open_port({spawn_executable, Cmd}, [
         binary, use_stdio, exit_status, stderr_to_stdout, {env, Env}
@@ -238,16 +245,26 @@ crypto_backend_command() ->
 %% Rebar runs from the project root. Walking ancestors also supports callers
 %% launched from apps/damage or a build directory. Do not invoke a shell.
 find_built_backend(Dir) ->
-    Cmd = filename:join([Dir, "priv", "crypto", "damage-nsecbunker-crypto-c",
-        "damage-nsecbunker-crypto-c"]),
+    Cmd = filename:join([
+        Dir,
+        "priv",
+        "crypto",
+        "damage-nsecbunker-crypto-c",
+        "damage-nsecbunker-crypto-c"
+    ]),
     case filelib:is_file(Cmd) of
-        true -> checked_executable(Cmd);
+        true ->
+            checked_executable(Cmd);
         false ->
             Parent = filename:dirname(Dir),
             case Parent =:= Dir of
-                true -> error({crypto_backend_not_built,
-                    "Run rebar3 compile or set DAMAGE_NSECBUNKER_CRYPTO_CMD"});
-                false -> find_built_backend(Parent)
+                true ->
+                    error(
+                        {crypto_backend_not_built,
+                            "Run rebar3 compile or set DAMAGE_NSECBUNKER_CRYPTO_CMD"}
+                    );
+                false ->
+                    find_built_backend(Parent)
             end
     end.
 
@@ -255,16 +272,19 @@ checked_executable(Cmd) ->
     case file:read_file_info(Cmd) of
         {ok, #file_info{type = regular, mode = Mode}} when (Mode band 8#111) =/= 0 ->
             Cmd;
-        {ok, _} -> error({crypto_backend_not_executable, Cmd});
-        {error, Reason} -> error({crypto_backend_unavailable, Cmd, Reason})
+        {ok, _} ->
+            error({crypto_backend_not_executable, Cmd});
+        {error, Reason} ->
+            error({crypto_backend_unavailable, Cmd, Reason})
     end.
 
 new_scratch_dir() ->
-    Root = case os:getenv("TMPDIR") of
-        false -> "/tmp";
-        "" -> "/tmp";
-        Value -> Value
-    end,
+    Root =
+        case os:getenv("TMPDIR") of
+            false -> "/tmp";
+            "" -> "/tmp";
+            Value -> Value
+        end,
     new_scratch_dir(filename:absname(Root), 16).
 
 new_scratch_dir(Root, 0) ->
@@ -284,13 +304,19 @@ remove_scratch_tree(Path) ->
     case file:read_link_info(Path) of
         {ok, #file_info{type = directory}} ->
             {ok, Names} = file:list_dir(Path),
-            lists:foreach(fun(Name) ->
-                ok = remove_scratch_tree(filename:join(Path, Name))
-            end, Names),
+            lists:foreach(
+                fun(Name) ->
+                    ok = remove_scratch_tree(filename:join(Path, Name))
+                end,
+                Names
+            ),
             file:del_dir(Path);
-        {ok, _} -> file:delete(Path);
-        {error, enoent} -> ok;
-        {error, Reason} -> error({crypto_test_cleanup_failed, Reason})
+        {ok, _} ->
+            file:delete(Path);
+        {error, enoent} ->
+            ok;
+        {error, Reason} ->
+            error({crypto_test_cleanup_failed, Reason})
     end.
 
 %% Fixture regression: independent vault locations even in successive VMs.
@@ -332,8 +358,13 @@ default_backend_is_found_from_child_directory_test() ->
     {ok, _} = application:ensure_all_started(crypto),
     Scratch = new_scratch_dir(),
     try
-        Cmd = filename:join([Scratch, "priv", "crypto", "damage-nsecbunker-crypto-c",
-            "damage-nsecbunker-crypto-c"]),
+        Cmd = filename:join([
+            Scratch,
+            "priv",
+            "crypto",
+            "damage-nsecbunker-crypto-c",
+            "damage-nsecbunker-crypto-c"
+        ]),
         Child = filename:join([Scratch, "apps", "damage"]),
         ok = filelib:ensure_dir(Cmd),
         ok = filelib:ensure_dir(filename:join(Child, "unused")),

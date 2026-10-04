@@ -20,14 +20,16 @@ init(Opts) ->
     KuboChildren =
         case maps:get(managed_kubo, C, false) of
             true ->
-                [#{
-                    id => damage_ipfs_kubo,
-                    start => {damage_ipfs_kubo, start_link, [C]},
-                    restart => permanent,
-                    shutdown => 15000,
-                    type => worker,
-                    modules => [damage_ipfs_kubo]
-                }];
+                [
+                    #{
+                        id => damage_ipfs_kubo,
+                        start => {damage_ipfs_kubo, start_link, [C]},
+                        restart => permanent,
+                        shutdown => 15000,
+                        type => worker,
+                        modules => [damage_ipfs_kubo]
+                    }
+                ];
             false ->
                 []
         end,

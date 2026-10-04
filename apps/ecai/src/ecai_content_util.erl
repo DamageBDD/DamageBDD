@@ -30,30 +30,39 @@ to_list(V) -> binary_to_list(to_binary(V)).
 
 mget(Key, Map, Default) when is_map(Map) ->
     case maps:find(Key, Map) of
-        {ok, Value} -> Value;
+        {ok, Value} ->
+            Value;
         error when is_binary(Key) ->
             try binary_to_existing_atom(Key, utf8) of
                 AtomKey -> maps:get(AtomKey, Map, Default)
-            catch error:badarg -> Default
+            catch
+                error:badarg -> Default
             end;
         error when is_atom(Key) ->
             maps:get(atom_to_binary(Key, utf8), Map, Default);
-        error -> Default
+        error ->
+            Default
     end;
-mget(_Key, _Map, Default) -> Default.
+mget(_Key, _Map, Default) ->
+    Default.
 
 json_safe(Map) when is_map(Map) ->
     maps:from_list([{json_key(K), json_safe(V)} || {K, V} <- maps:to_list(Map)]);
 json_safe(List) when is_list(List) -> [json_safe(V) || V <- List];
 json_safe(Tuple) when is_tuple(Tuple) -> [json_safe(V) || V <- tuple_to_list(Tuple)];
-json_safe(true) -> true;
-json_safe(false) -> false;
-json_safe(null) -> null;
-json_safe(undefined) -> null;
+json_safe(true) ->
+    true;
+json_safe(false) ->
+    false;
+json_safe(null) ->
+    null;
+json_safe(undefined) ->
+    null;
 json_safe(Atom) when is_atom(Atom) -> atom_to_binary(Atom, utf8);
 json_safe(Bin) when is_binary(Bin) -> Bin;
 json_safe(Number) when is_number(Number) -> Number;
-json_safe(Other) -> to_binary(Other).
+json_safe(Other) ->
+    to_binary(Other).
 
 json_key(K) when is_binary(K) -> K;
 json_key(K) when is_atom(K) -> atom_to_binary(K, utf8);
@@ -65,9 +74,11 @@ sha256_hex(Data) ->
     iolist_to_binary([io_lib:format("~2.16.0b", [B]) || <<B>> <= crypto:hash(sha256, Bin)]).
 
 now_iso8601() ->
-    to_binary(calendar:system_time_to_rfc3339(
-        erlang:system_time(second), [{unit, second}, {offset, "Z"}]
-    )).
+    to_binary(
+        calendar:system_time_to_rfc3339(
+            erlang:system_time(second), [{unit, second}, {offset, "Z"}]
+        )
+    ).
 
 atomic_write(Path0, Data) ->
     Path = to_list(Path0),
@@ -76,12 +87,14 @@ atomic_write(Path0, Data) ->
     case file:write_file(Tmp, Data) of
         ok ->
             case file:rename(Tmp, Path) of
-                ok -> ok;
+                ok ->
+                    ok;
                 {error, Reason} ->
                     _ = file:delete(Tmp),
                     {error, {rename_failed, Reason}}
             end;
-        {error, Reason} -> {error, {write_failed, Reason}}
+        {error, Reason} ->
+            {error, {write_failed, Reason}}
     end.
 
 endpoint(Url0) ->
@@ -92,12 +105,17 @@ endpoint(Url0) ->
             Host = to_binary(maps:get(host, Parsed, <<>>)),
             Port = maps:get(port, Parsed, default_port(Scheme)),
             Path0 = to_binary(maps:get(path, Parsed, <<"/">>)),
-            Path1 = case Path0 of <<>> -> <<"/">>; _ -> Path0 end,
+            Path1 =
+                case Path0 of
+                    <<>> -> <<"/">>;
+                    _ -> Path0
+                end,
             Query = to_binary(maps:get(query, Parsed, <<>>)),
-            Path = case Query of
-                <<>> -> Path1;
-                _ -> <<Path1/binary, "?", Query/binary>>
-            end,
+            Path =
+                case Query of
+                    <<>> -> Path1;
+                    _ -> <<Path1/binary, "?", Query/binary>>
+                end,
             case Host of
                 <<>> -> {error, {invalid_url, Url}};
                 _ -> {ok, #{scheme => Scheme, host => Host, port => Port, path => Path}}
@@ -110,7 +128,11 @@ default_port(<<"https">>) -> 443;
 default_port(_) -> 80.
 
 http_opts(#{scheme := Scheme, host := Host}, Timeout, Decode) ->
-    Transport = case Scheme of <<"https">> -> tls; _ -> tcp end,
+    Transport =
+        case Scheme of
+            <<"https">> -> tls;
+            _ -> tcp
+        end,
     Base = #{
         transport => Transport,
         proxy => direct,
@@ -129,13 +151,15 @@ header(Name0, Headers) ->
     Name = lower(to_binary(Name0)),
     header_1(Name, Headers).
 
-header_1(_Name, []) -> undefined;
+header_1(_Name, []) ->
+    undefined;
 header_1(Name, [{K, V} | Rest]) ->
     case lower(to_binary(K)) =:= Name of
         true -> to_binary(V);
         false -> header_1(Name, Rest)
     end;
-header_1(Name, [_ | Rest]) -> header_1(Name, Rest).
+header_1(Name, [_ | Rest]) ->
+    header_1(Name, Rest).
 
 base64_json(Map) when is_map(Map) -> base64:encode(jsx:encode(json_safe(Map))).
 

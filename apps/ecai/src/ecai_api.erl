@@ -234,7 +234,9 @@ from_json(Req, #{action := search} = State) ->
 from_json(Req, #{ae_account := AeAccount, action := encode} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
     ?LOG_DEBUG("post action ~p ", [Data]),
-    case ecai_otp_compat:catch_value(fun() -> jsx:decode(Data, [return_maps, {labels, atom}]) end) of
+    case
+        ecai_otp_compat:catch_value(fun() -> jsx:decode(Data, [return_maps, {labels, atom}]) end)
+    of
         #{
             subject := _Subject,
             predicate := _Predicate,
@@ -261,7 +263,9 @@ from_json(Req, #{ae_account := AeAccount, action := encode} = State) ->
 from_json(Req, #{ae_account := AeAccount} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
     ?LOG_DEBUG("post action ~p ", [Data]),
-    case ecai_otp_compat:catch_value(fun() -> jsx:decode(Data, [return_maps, {labels, atom}]) end) of
+    case
+        ecai_otp_compat:catch_value(fun() -> jsx:decode(Data, [return_maps, {labels, atom}]) end)
+    of
         #{<<"session_id">> := SessionID, <<"user_id">> := AeAccount, <<"message">> := Message} ->
             AIReply = ecai_chat:get_reply(SessionID, Message),
             Response = #{<<"reply">> => AIReply},

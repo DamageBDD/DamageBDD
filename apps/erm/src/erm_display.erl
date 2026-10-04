@@ -97,8 +97,10 @@ child_spec() ->
 
 enabled() ->
     case proplists:get_value(enabled, config(), true) of
-        true -> true;
-        false -> false;
+        true ->
+            true;
+        false ->
+            false;
         Invalid ->
             ?LOG_WARNING("Ignoring invalid erm.display enabled value ~p; defaulting to true", [
                 Invalid
@@ -406,15 +408,14 @@ try_x11_pairs([], _RuntimeDir, _Commands, _Timeout, Errors) ->
 try_x11_pairs([{Display, Authority} | Rest], RuntimeDir, Commands, Timeout, Errors) ->
     case probe_x11(Display, Authority, RuntimeDir, Commands, Timeout) of
         {ok, Validator} ->
-            {ok,
-                [
-                    {backend, x11},
-                    {display, Display},
-                    {xauthority, Authority},
-                    {xdg_runtime_dir, RuntimeDir},
-                    {validated_by, Validator},
-                    {detected_at_ms, erlang:system_time(millisecond)}
-                ]};
+            {ok, [
+                {backend, x11},
+                {display, Display},
+                {xauthority, Authority},
+                {xdg_runtime_dir, RuntimeDir},
+                {validated_by, Validator},
+                {detected_at_ms, erlang:system_time(millisecond)}
+            ]};
         {error, Reason} ->
             try_x11_pairs(
                 Rest,
@@ -642,8 +643,10 @@ session_env(Session) ->
         {"XDG_RUNTIME_DIR", proplists:get_value(xdg_runtime_dir, Session)}
     ]).
 
-put_env(_Name, undefined) -> ok;
-put_env(_Name, false) -> ok;
+put_env(_Name, undefined) ->
+    ok;
+put_env(_Name, false) ->
+    ok;
 put_env(Name, Value) ->
     _ = os:putenv(Name, to_string(Value)),
     ok.
@@ -677,7 +680,8 @@ state_status(State) ->
 config() ->
     case application:get_env(erm, display, []) of
         List when is_list(List) -> List;
-        undefined -> [];
+        undefined ->
+            [];
         Invalid ->
             ?LOG_WARNING(
                 "Ignoring invalid erm.display configuration ~p; expected a tuple list",
@@ -695,10 +699,12 @@ proplist_value(Key, List, Default) when is_list(List) ->
 current_uid() ->
     case file:read_file("/proc/self/status") of
         {ok, Binary} ->
-            case re:run(Binary, <<"^Uid:[\\t ]+([0-9]+)">>, [
-                multiline,
-                {capture, [1], binary}
-            ]) of
+            case
+                re:run(Binary, <<"^Uid:[\\t ]+([0-9]+)">>, [
+                    multiline,
+                    {capture, [1], binary}
+                ])
+            of
                 {match, [UidBin]} -> {ok, binary_to_integer(UidBin)};
                 nomatch -> {error, uid_not_found}
             end;
@@ -735,7 +741,11 @@ find_home([], _Uid) ->
     "".
 
 safe_binary_integer(Binary) ->
-    try binary_to_integer(Binary) catch _:_ -> undefined end.
+    try
+        binary_to_integer(Binary)
+    catch
+        _:_ -> undefined
+    end.
 
 expand_token(Value, Token, Replacement) ->
     lists:flatten(string:replace(Value, Token, Replacement, all)).
@@ -759,7 +769,8 @@ compact_env(Env) ->
 unique(List) ->
     unique(List, []).
 
-unique([], Acc) -> lists:reverse(Acc);
+unique([], Acc) ->
+    lists:reverse(Acc);
 unique([Value | Rest], Acc) ->
     case lists:member(Value, Acc) of
         true -> unique(Rest, Acc);
@@ -778,7 +789,8 @@ positive_or_infinity(Value, Default) -> positive_integer(Value, Default).
 schedule_refresh(infinity) -> undefined;
 schedule_refresh(Ms) -> erlang:send_after(Ms, self(), refresh).
 
-cancel_timer(undefined) -> ok;
+cancel_timer(undefined) ->
+    ok;
 cancel_timer(Ref) ->
     _ = erlang:cancel_timer(Ref),
     ok.

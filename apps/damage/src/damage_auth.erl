@@ -185,11 +185,16 @@ authenticate(Req, State0) ->
 
 -spec authenticated_account(map()) -> {ok, binary()} | {error, unauthenticated}.
 authenticated_account(State) when is_map(State) ->
-    case first_identity_value(State, [
-        public_key, <<"public_key">>,
-        ae_account, <<"ae_account">>,
-        owner, <<"owner">>
-    ]) of
+    case
+        first_identity_value(State, [
+            public_key,
+            <<"public_key">>,
+            ae_account,
+            <<"ae_account">>,
+            owner,
+            <<"owner">>
+        ])
+    of
         undefined -> {error, unauthenticated};
         Value -> normalize_authenticated_account(Value)
     end;

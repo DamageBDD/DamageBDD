@@ -59,8 +59,10 @@ refresh(App) when is_atom(App) ->
                         relation_count => length(Relations),
                         relation_key_count => length(ecai_relation:dedupe(Relations))
                     }};
-                {error, _} = Error -> Error;
-                Other -> {error, {relation_store_failed, App, Other}}
+                {error, _} = Error ->
+                    Error;
+                Other ->
+                    {error, {relation_store_failed, App, Other}}
             end;
         not_found ->
             {error, {graph_not_found, App}};
@@ -92,8 +94,10 @@ refresh_all() ->
                         relation_count => length(All),
                         relation_key_count => length(All)
                     }};
-                {error, _} = Error -> Error;
-                Other -> {error, {relation_store_failed, all, Other}}
+                {error, _} = Error ->
+                    Error;
+                Other ->
+                    {error, {relation_store_failed, all, Other}}
             end;
         Errors ->
             {error, {relation_refresh_failed, Errors}}
@@ -141,7 +145,8 @@ benchmark(Scope, Limit) when is_atom(Scope), is_integer(Limit), Limit > 0 ->
                         {error, _} = Error -> Error;
                         Other -> {error, {benchmark_store_failed, Scope, Other}}
                     end;
-                {error, _} = Error -> Error
+                {error, _} = Error ->
+                    Error
             end
     end.
 
@@ -155,8 +160,9 @@ benchmark(Scope, Limit) when is_atom(Scope), is_integer(Limit), Limit > 0 ->
     [ecai_relation:relation()],
     pos_integer()
 ) -> map().
-benchmark_relations(Relations, Truth0, Limit)
-    when is_list(Relations), is_list(Truth0), is_integer(Limit), Limit > 0 ->
+benchmark_relations(Relations, Truth0, Limit) when
+    is_list(Relations), is_list(Truth0), is_integer(Limit), Limit > 0
+->
     Truth = sort_relations(ecai_relation:dedupe(Truth0)),
     Sample = lists:sublist(Truth, erlang:min(Limit, length(Truth))),
     Derived = sort_relations(derive_uses(Relations)),
@@ -231,16 +237,19 @@ ground_truth_uses(Graph) when is_map(Graph) ->
                 fun(Call, Acc) ->
                     case maps:get(module, Call, undefined) of
                         Target when is_atom(Target) ->
-                            case ecai_relation:new(
-                                Module,
-                                uses,
-                                Target,
-                                #{source => analyser_ground_truth}
-                            ) of
+                            case
+                                ecai_relation:new(
+                                    Module,
+                                    uses,
+                                    Target,
+                                    #{source => analyser_ground_truth}
+                                )
+                            of
                                 {ok, Relation} -> [Relation | Acc];
                                 {error, _} -> Acc
                             end;
-                        _ -> Acc
+                        _ ->
+                            Acc
                     end
                 end,
                 Acc0,
@@ -278,9 +287,7 @@ ground_truth_for_scope(all) ->
     ],
     case [Error || {error, _} = Error <- Results] of
         [] ->
-            {ok, ecai_relation:dedupe(lists:append([
-                Relations || {ok, Relations} <- Results
-            ]))};
+            {ok, ecai_relation:dedupe(lists:append([Relations || {ok, Relations} <- Results]))};
         Errors ->
             {error, {ground_truth_unavailable, Errors}}
     end;
@@ -291,14 +298,16 @@ ground_truth_for_scope(App) ->
     end.
 
 scope_status(Scope) ->
-    Relations = case ecai_learning_store:get_relations(Scope) of
-        {ok, Rs} -> length(Rs);
-        not_found -> 0
-    end,
-    Keys = case ecai_learning_store:relation_keys(Scope) of
-        {ok, Ks} -> length(Ks);
-        not_found -> 0
-    end,
+    Relations =
+        case ecai_learning_store:get_relations(Scope) of
+            {ok, Rs} -> length(Rs);
+            not_found -> 0
+        end,
+    Keys =
+        case ecai_learning_store:relation_keys(Scope) of
+            {ok, Ks} -> length(Ks);
+            not_found -> 0
+        end,
     #{relation_count => Relations, relation_key_count => Keys}.
 
 predicate_is(Relation, Predicate) ->
@@ -335,6 +344,8 @@ ratio(_Numerator, 0) -> 1.0;
 ratio(Numerator, Denominator) -> Numerator / Denominator.
 
 now_iso8601() ->
-    unicode:characters_to_binary(calendar:system_time_to_rfc3339(
-        erlang:system_time(second), [{unit, second}, {offset, "Z"}]
-    )).
+    unicode:characters_to_binary(
+        calendar:system_time_to_rfc3339(
+            erlang:system_time(second), [{unit, second}, {offset, "Z"}]
+        )
+    ).

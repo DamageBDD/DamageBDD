@@ -46,9 +46,9 @@ analysis_to_relations_test() ->
 has_relation(Relations, Subject, Predicate, Object) ->
     lists:any(
         fun(R) ->
-            ecai_relation:entity_equal(ecai_relation:subject(R), Subject)
-                andalso ecai_relation:entity_equal(ecai_relation:predicate(R), Predicate)
-                andalso ecai_relation:entity_equal(ecai_relation:object(R), Object)
+            ecai_relation:entity_equal(ecai_relation:subject(R), Subject) andalso
+                ecai_relation:entity_equal(ecai_relation:predicate(R), Predicate) andalso
+                ecai_relation:entity_equal(ecai_relation:object(R), Object)
         end,
         Relations
     ).

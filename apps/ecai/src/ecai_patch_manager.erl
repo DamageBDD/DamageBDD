@@ -2,8 +2,14 @@
 -behaviour(gen_server).
 
 -export([start_link/0, start_link/1, scan_now/0, status/0]).
--export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-         terminate/2, code_change/3]).
+-export([
+    init/1,
+    handle_call/3,
+    handle_cast/2,
+    handle_info/2,
+    terminate/2,
+    code_change/3
+]).
 
 -ifdef(TEST).
 -export([
@@ -45,16 +51,27 @@ scan_now() -> gen_server:cast(?SERVER, scan_now).
 status() -> gen_server:call(?SERVER, status).
 
 init(Opts) ->
-    Interval = maps:get(interval_ms, Opts,
-        application:get_env(ecai, code_patch_scan_interval_ms, ?DEFAULT_INTERVAL)),
+    Interval = maps:get(
+        interval_ms,
+        Opts,
+        application:get_env(ecai, code_patch_scan_interval_ms, ?DEFAULT_INTERVAL)
+    ),
     RetryTick = positive_int(
-        maps:get(retry_tick_ms, Opts,
-            application:get_env(ecai, code_patch_retry_tick_ms, ?DEFAULT_RETRY_TICK)),
-        ?DEFAULT_RETRY_TICK),
+        maps:get(
+            retry_tick_ms,
+            Opts,
+            application:get_env(ecai, code_patch_retry_tick_ms, ?DEFAULT_RETRY_TICK)
+        ),
+        ?DEFAULT_RETRY_TICK
+    ),
     MaxConcurrent = positive_int(
-        maps:get(max_concurrent, Opts,
-            application:get_env(ecai, code_patch_max_concurrent, ?DEFAULT_MAX_CONCURRENT)),
-        ?DEFAULT_MAX_CONCURRENT),
+        maps:get(
+            max_concurrent,
+            Opts,
+            application:get_env(ecai, code_patch_max_concurrent, ?DEFAULT_MAX_CONCURRENT)
+        ),
+        ?DEFAULT_MAX_CONCURRENT
+    ),
     erlang:send_after(1000, self(), retry_tick),
     erlang:send_after(10000, self(), scan),
     {ok, #state{
@@ -71,28 +88,30 @@ handle_call(status, _From, State) ->
     RetryWait = status_count(retry_wait, Counts),
     RunningPersisted = status_count(running, Counts),
     Active = active_patch_workers(),
-    {reply, #{
-        cycles => State#state.cycles,
-        %% Historical counters are preserved for backwards compatibility.
-        queued => State#state.queued,
-        queued_total => State#state.queued,
-        retried => State#state.retried,
-        retried_total => State#state.retried,
-        %% Live queue/worker health is reported separately so a growing
-        %% persisted backlog cannot be confused with cumulative counters.
-        queued_live => QueuedLive,
-        retry_wait => RetryWait,
-        pending => QueuedLive + RetryWait,
-        active => Active,
-        running_persisted => RunningPersisted,
-        stale_running => stale_running_count(Repairs),
-        max_concurrent => State#state.max_concurrent,
-        repair_statuses => Counts,
-        failure_summary => failure_summary(Repairs, State#state.opts),
-        last_run_at => State#state.last_run_at,
-        last_retry_at => State#state.last_retry_at,
-        last_error => State#state.last_error
-    }, State};
+    {reply,
+        #{
+            cycles => State#state.cycles,
+            %% Historical counters are preserved for backwards compatibility.
+            queued => State#state.queued,
+            queued_total => State#state.queued,
+            retried => State#state.retried,
+            retried_total => State#state.retried,
+            %% Live queue/worker health is reported separately so a growing
+            %% persisted backlog cannot be confused with cumulative counters.
+            queued_live => QueuedLive,
+            retry_wait => RetryWait,
+            pending => QueuedLive + RetryWait,
+            active => Active,
+            running_persisted => RunningPersisted,
+            stale_running => stale_running_count(Repairs),
+            max_concurrent => State#state.max_concurrent,
+            repair_statuses => Counts,
+            failure_summary => failure_summary(Repairs, State#state.opts),
+            last_run_at => State#state.last_run_at,
+            last_retry_at => State#state.last_retry_at,
+            last_error => State#state.last_error
+        },
+        State};
 handle_call(_Req, _From, State) ->
     {reply, {error, unsupported_call}, State}.
 
@@ -106,8 +125,10 @@ handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info(retry_tick, State0) ->
-    {Started, Errors} = dispatch_persisted(State0#state.opts,
-                                           State0#state.max_concurrent),
+    {Started, Errors} = dispatch_persisted(
+        State0#state.opts,
+        State0#state.max_concurrent
+    ),
     State1 = State0#state{
         retried = State0#state.retried + Started,
         last_retry_at = now_iso8601(),
@@ -129,27 +150,39 @@ handle_info(scan, State0) ->
             %% Persist the complete candidate set before filling worker slots.
             %% Otherwise report enumeration order can consume all available
             %% workers before repair priority is considered.
-            {Queued, AdmissionErrors} = lists:foldl(fun(App, {Q, E}) ->
-                case safe_app_findings(App) of
-                    {ok, Reports} ->
-                        {Q1, E1} = process_reports(
-                            App, Reports, State0#state.opts,
-                            State0#state.max_concurrent),
-                        {Q + Q1, E1 ++ E};
-                    {error, Reason} ->
-                        {Q, [{App, Reason} | E]}
-                end
-            end, {0, []}, ?APPS),
+            {Queued, AdmissionErrors} = lists:foldl(
+                fun(App, {Q, E}) ->
+                    case safe_app_findings(App) of
+                        {ok, Reports} ->
+                            {Q1, E1} = process_reports(
+                                App,
+                                Reports,
+                                State0#state.opts,
+                                State0#state.max_concurrent
+                            ),
+                            {Q + Q1, E1 ++ E};
+                        {error, Reason} ->
+                            {Q, [{App, Reason} | E]}
+                    end
+                end,
+                {0, []},
+                ?APPS
+            ),
             {_Started, DispatchErrors} =
                 dispatch_persisted(
                     State0#state.opts,
-                    State0#state.max_concurrent),
+                    State0#state.max_concurrent
+                ),
             Errors = DispatchErrors ++ AdmissionErrors,
             State1 = State0#state{
                 cycles = State0#state.cycles + 1,
                 queued = State0#state.queued + Queued,
                 last_run_at = now_iso8601(),
-                last_error = case Errors of [] -> undefined; _ -> Errors end
+                last_error =
+                    case Errors of
+                        [] -> undefined;
+                        _ -> Errors
+                    end
             },
             erlang:send_after(State1#state.interval_ms, self(), scan),
             {noreply, State1}
@@ -161,8 +194,11 @@ terminate(_Reason, _State) -> ok.
 code_change(_Old, State, _Extra) -> {ok, State}.
 
 learning_ready(Opts) ->
-    Require = maps:get(require_global_learning, Opts,
-        application:get_env(ecai, code_patch_require_global_learning, true)),
+    Require = maps:get(
+        require_global_learning,
+        Opts,
+        application:get_env(ecai, code_patch_require_global_learning, true)
+    ),
     case Require of
         false -> true;
         true -> safe_learning_ready()
@@ -174,14 +210,21 @@ safe_learning_ready() ->
             false;
         _Pid ->
             try
-                LearnerReady = case ecai_codebase_learner:status() of
-                    #{phase := idle, ready := true, last_completed_at := Completed}
-                      when Completed =/= undefined -> true;
-                    _ -> false
-                end,
-                AppsReady = lists:all(fun(App) ->
-                    ecai_learning_store:get_app_knowledge(App) =/= not_found
-                end, ?APPS),
+                LearnerReady =
+                    case ecai_codebase_learner:status() of
+                        #{phase := idle, ready := true, last_completed_at := Completed} when
+                            Completed =/= undefined
+                        ->
+                            true;
+                        _ ->
+                            false
+                    end,
+                AppsReady = lists:all(
+                    fun(App) ->
+                        ecai_learning_store:get_app_knowledge(App) =/= not_found
+                    end,
+                    ?APPS
+                ),
                 LearnerReady andalso AppsReady andalso
                     ecai_learning_store:get_global_knowledge() =/= not_found
             catch
@@ -205,34 +248,51 @@ safe_app_findings(App) ->
     end.
 
 process_reports(App, Reports, Opts, MaxConcurrent) ->
-    lists:foldl(fun(Report, {Q, E}) ->
-        ModuleBin = mget(<<"module">>, Report, <<>>),
-        ReportSourceSha = report_source_sha256(Report),
-        case existing_module_atom(ModuleBin) of
-            {error, Reason} -> {Q, [Reason | E]};
-            {ok, Module} ->
-                Findings = mget(<<"findings">>, Report, []),
-                process_findings(
-                    App,
-                    Module,
-                    Findings,
-                    ReportSourceSha,
-                    Opts,
-                    MaxConcurrent,
-                    Q,
-                    E
-                )
-        end
-    end, {0, []}, Reports).
+    lists:foldl(
+        fun(Report, {Q, E}) ->
+            ModuleBin = mget(<<"module">>, Report, <<>>),
+            ReportSourceSha = report_source_sha256(Report),
+            case existing_module_atom(ModuleBin) of
+                {error, Reason} ->
+                    {Q, [Reason | E]};
+                {ok, Module} ->
+                    Findings = mget(<<"findings">>, Report, []),
+                    process_findings(
+                        App,
+                        Module,
+                        Findings,
+                        ReportSourceSha,
+                        Opts,
+                        MaxConcurrent,
+                        Q,
+                        E
+                    )
+            end
+        end,
+        {0, []},
+        Reports
+    ).
 
 process_findings(
-    _App, _Module, [], _ReportSourceSha,
-    _Opts, _MaxConcurrent, Q, E
+    _App,
+    _Module,
+    [],
+    _ReportSourceSha,
+    _Opts,
+    _MaxConcurrent,
+    Q,
+    E
 ) ->
     {Q, E};
 process_findings(
-    App, Module, [Finding | Rest], ReportSourceSha,
-    Opts, MaxConcurrent, Q0, E0
+    App,
+    Module,
+    [Finding | Rest],
+    ReportSourceSha,
+    Opts,
+    MaxConcurrent,
+    Q0,
+    E0
 ) ->
     {Q1, E1} =
         case patchable(Finding, Opts) of
@@ -255,45 +315,49 @@ process_findings(
                         {Q0, E0};
                     accept ->
                         case ecai_learning_store:get_analysis(App, Module) of
-                    not_found ->
-                        ecai_codebase_learner:module_changed(App, Module),
-                        {Q0, E0};
-                    {ok, Analysis} ->
-                        case analysis_matches_report_source(
-                                 ReportSourceSha, Analysis) of
-                            true ->
-                                queue_if_needed(
-                                    App,
-                                    Module,
-                                    Finding,
-                                    Analysis,
-                                    Opts,
-                                    MaxConcurrent,
-                                    Q0,
-                                    E0
-                                );
-                            false ->
-                                logger:notice(
-                                    "ECAI repair admission deferred source "
-                                    "identity mismatch app=~p module=~p "
-                                    "report_sha=~p analysis_sha=~p",
-                                    [
-                                        App,
-                                        Module,
-                                        ReportSourceSha,
-                                        maps:get(
-                                            source_sha256,
+                            not_found ->
+                                ecai_codebase_learner:module_changed(App, Module),
+                                {Q0, E0};
+                            {ok, Analysis} ->
+                                case
+                                    analysis_matches_report_source(
+                                        ReportSourceSha, Analysis
+                                    )
+                                of
+                                    true ->
+                                        queue_if_needed(
+                                            App,
+                                            Module,
+                                            Finding,
                                             Analysis,
-                                            undefined
-                                        )
-                                    ]
-                                ),
-                                ecai_codebase_learner:module_changed(
-                                    App, Module),
-                                {Q0, E0}
+                                            Opts,
+                                            MaxConcurrent,
+                                            Q0,
+                                            E0
+                                        );
+                                    false ->
+                                        logger:notice(
+                                            "ECAI repair admission deferred source "
+                                            "identity mismatch app=~p module=~p "
+                                            "report_sha=~p analysis_sha=~p",
+                                            [
+                                                App,
+                                                Module,
+                                                ReportSourceSha,
+                                                maps:get(
+                                                    source_sha256,
+                                                    Analysis,
+                                                    undefined
+                                                )
+                                            ]
+                                        ),
+                                        ecai_codebase_learner:module_changed(
+                                            App, Module
+                                        ),
+                                        {Q0, E0}
+                                end
                         end
                 end
-        end
         end,
     process_findings(
         App,
@@ -317,16 +381,23 @@ analysis_matches_report_source(undefined, _Analysis) ->
     %% Legacy reports without a source identity remain compatible; the
     %% immutable source-snapshot preflight is still authoritative.
     true;
-analysis_matches_report_source(ReportSourceSha, Analysis)
-  when is_binary(ReportSourceSha), is_map(Analysis) ->
+analysis_matches_report_source(ReportSourceSha, Analysis) when
+    is_binary(ReportSourceSha), is_map(Analysis)
+->
     ReportSourceSha =:=
         maps:get(source_sha256, Analysis, undefined);
 analysis_matches_report_source(_ReportSourceSha, _Analysis) ->
     false.
 
 queue_if_needed(
-    App, Module, Finding, Analysis,
-    _Opts, _MaxConcurrent, Q, E
+    App,
+    Module,
+    Finding,
+    Analysis,
+    _Opts,
+    _MaxConcurrent,
+    Q,
+    E
 ) ->
     Fp = finding_fingerprint(Module, Finding),
     Version = ecai_code_context:finding_version(App, Module, Finding),
@@ -335,7 +406,8 @@ queue_if_needed(
         {ok, Existing0} ->
             Existing = ensure_repair_provenance(Existing0, Provenance),
             maybe_persist_enriched_repair(
-                Fp, Version, Existing0, Existing),
+                Fp, Version, Existing0, Existing
+            ),
             {Q, E};
         not_found ->
             Queued0 = #{
@@ -351,18 +423,22 @@ queue_if_needed(
             },
             Queued = maps:merge(Queued0, Provenance),
             ok = ecai_learning_store:put_repair(
-                Fp, Version, Queued),
+                Fp, Version, Queued
+            ),
             {Q + 1, E}
     end.
 
 analysis_repair_provenance(Analysis) when is_map(Analysis) ->
     Provenance0 = #{},
     Provenance1 = maybe_put_provenance(
-        base_commit, maps:get(base_commit, Analysis, undefined), Provenance0),
+        base_commit, maps:get(base_commit, Analysis, undefined), Provenance0
+    ),
     Provenance2 = maybe_put_provenance(
-        source_sha256, maps:get(source_sha256, Analysis, undefined), Provenance1),
+        source_sha256, maps:get(source_sha256, Analysis, undefined), Provenance1
+    ),
     maybe_put_provenance(
-        source_path, analysis_source_path(Analysis), Provenance2);
+        source_path, analysis_source_path(Analysis), Provenance2
+    );
 analysis_repair_provenance(_) ->
     #{}.
 
@@ -398,7 +474,6 @@ maybe_persist_enriched_repair(
 ) ->
     ecai_learning_store:put_repair(Fp, Version, After).
 
-
 dispatch_persisted(Opts, MaxConcurrent) ->
     Repairs0 = safe_repairs(),
     %% A persisted running state is only authoritative while its supervised
@@ -426,11 +501,13 @@ dispatch_persisted(Opts, MaxConcurrent) ->
                     {Started, Errors};
                 false ->
                     dispatch_persisted_repair(
-                        Repair, Opts, MaxConcurrent, Started, Errors)
+                        Repair, Opts, MaxConcurrent, Started, Errors
+                    )
             end
         end,
         {0, PreflightErrors},
-        Repairs).
+        Repairs
+    ).
 
 terminalize_exhausted_retry_waits(Repairs, Opts) ->
     Limit = positive_int(ecai_patch_retry:retry_limit(Opts), 1),
@@ -441,13 +518,14 @@ terminalize_exhausted_retry_waits(Repairs, Opts) ->
         Repairs
     ).
 
-terminalize_exhausted_retry_wait(Repair, Limit)
-  when is_map(Repair), is_integer(Limit), Limit > 0 ->
+terminalize_exhausted_retry_wait(Repair, Limit) when
+    is_map(Repair), is_integer(Limit), Limit > 0
+->
     Status = maps:get(status, Repair, undefined),
     RetryCount = nonneg_int(maps:get(retry_count, Repair, 0), 0),
     IsRetryWait =
         (Status =:= retry_wait) orelse
-        (Status =:= <<"retry_wait">>),
+            (Status =:= <<"retry_wait">>),
     case IsRetryWait andalso RetryCount >= Limit of
         false ->
             Repair;
@@ -489,14 +567,18 @@ terminalize_exhausted_retry_wait(Repair, _Limit) ->
     Repair.
 
 persist_terminalized_retry(Repair) ->
-    case {
-        maps:get(fingerprint, Repair, undefined),
-        maps:get(finding_version, Repair, undefined)
-    } of
-        {Fp, Version}
-          when is_binary(Fp), is_binary(Version) ->
+    case
+        {
+            maps:get(fingerprint, Repair, undefined),
+            maps:get(finding_version, Repair, undefined)
+        }
+    of
+        {Fp, Version} when
+            is_binary(Fp), is_binary(Version)
+        ->
             ok = ecai_learning_store:put_repair(
-                Fp, Version, Repair),
+                Fp, Version, Repair
+            ),
             logger:notice(
                 "ECAI terminalized exhausted retry_wait "
                 "fingerprint=~p version=~p retry_count=~p",
@@ -536,18 +618,27 @@ preflight_orphan_retry_batch(Repairs, Opts) ->
     end.
 
 preflight_orphan_retry(Repair, Opts, {Changed, Errors}) ->
-    case {
-        maps:get(application, Repair, undefined),
-        maps:get(module, Repair, undefined),
-        maps:get(finding, Repair, undefined),
-        maps:get(fingerprint, Repair, undefined),
-        maps:get(finding_version, Repair, undefined)
-    } of
-        {App, Module, Finding, Fp, Version}
-          when is_atom(App), is_atom(Module), is_map(Finding),
-               is_binary(Fp), is_binary(Version) ->
-            try ecai_repair_preflight:check(
-                    App, Module, Finding, Fp, Version, Opts) of
+    case
+        {
+            maps:get(application, Repair, undefined),
+            maps:get(module, Repair, undefined),
+            maps:get(finding, Repair, undefined),
+            maps:get(fingerprint, Repair, undefined),
+            maps:get(finding_version, Repair, undefined)
+        }
+    of
+        {App, Module, Finding, Fp, Version} when
+            is_atom(App),
+            is_atom(Module),
+            is_map(Finding),
+            is_binary(Fp),
+            is_binary(Version)
+        ->
+            try
+                ecai_repair_preflight:check(
+                    App, Module, Finding, Fp, Version, Opts
+                )
+            of
                 {blocked, _Blocked} ->
                     {Changed + 1, Errors};
                 {superseded, _Superseded} ->
@@ -555,7 +646,8 @@ preflight_orphan_retry(Repair, Opts, {Changed, Errors}) ->
                 {allow, #{preflight := passed}} ->
                     Recovered = recover_orphan_retry(Repair),
                     ok = ecai_learning_store:put_repair(
-                        Fp, Version, Recovered),
+                        Fp, Version, Recovered
+                    ),
                     logger:notice(
                         "ECAI repair recovered legacy orphan retry "
                         "fingerprint=~p version=~p module=~p",
@@ -570,8 +662,7 @@ preflight_orphan_retry(Repair, Opts, {Changed, Errors}) ->
                     {
                         Changed,
                         [
-                            {orphan_preflight_unexpected,
-                             Fp, Version, Other}
+                            {orphan_preflight_unexpected, Fp, Version, Other}
                             | Errors
                         ]
                     }
@@ -580,9 +671,7 @@ preflight_orphan_retry(Repair, Opts, {Changed, Errors}) ->
                     {
                         Changed,
                         [
-                            {orphan_preflight_failed,
-                             Fp, Version,
-                             Class, Reason, Stacktrace}
+                            {orphan_preflight_failed, Fp, Version, Class, Reason, Stacktrace}
                             | Errors
                         ]
                     }
@@ -595,16 +684,17 @@ is_orphan_retry_wait(Repair) when is_map(Repair) ->
     Status = maps:get(status, Repair, undefined),
     IsRetryWait =
         (Status =:= retry_wait) orelse
-        (Status =:= <<"retry_wait">>),
+            (Status =:= <<"retry_wait">>),
     FailureClass = maps:get(failure_class, Repair, undefined),
     LastError = maps:get(
-        last_error, Repair, maps:get(error, Repair, undefined)),
+        last_error, Repair, maps:get(error, Repair, undefined)
+    ),
     IsOrphan =
         (FailureClass =:= orphaned_worker) orelse
-        case LastError of
-            {orphaned_worker, _} -> true;
-            _ -> false
-        end,
+            case LastError of
+                {orphaned_worker, _} -> true;
+                _ -> false
+            end,
     IsRetryWait andalso IsOrphan;
 is_orphan_retry_wait(_) ->
     false.
@@ -649,8 +739,12 @@ orphan_preflight_batch(Opts) ->
     ),
     %% Hard cap protects the patch-manager gen_server from another unbounded
     %% synchronous Git-preflight sweep.
-    erlang:min(64, nonneg_int(
-        Configured, ?DEFAULT_ORPHAN_PREFLIGHT_BATCH)).
+    erlang:min(
+        64,
+        nonneg_int(
+            Configured, ?DEFAULT_ORPHAN_PREFLIGHT_BATCH
+        )
+    ).
 
 reconcile_stale_running(Repairs, Opts) ->
     lists:map(
@@ -662,13 +756,16 @@ reconcile_stale_running(Repairs, Opts) ->
                     Repair
             end
         end,
-        Repairs).
+        Repairs
+    ).
 
 reconcile_stale_running_repair(Repair, Opts) ->
-    case {
-        maps:get(fingerprint, Repair, undefined),
-        maps:get(finding_version, Repair, undefined)
-    } of
+    case
+        {
+            maps:get(fingerprint, Repair, undefined),
+            maps:get(finding_version, Repair, undefined)
+        }
+    of
         {Fp, Version} when is_binary(Fp), is_binary(Version) ->
             RetryCount = nonneg_int(maps:get(retry_count, Repair, 0), 0) + 1,
             Limit = positive_int(ecai_patch_retry:retry_limit(Opts), 1),
@@ -704,7 +801,8 @@ reconcile_stale_running_repair(Repair, Opts) ->
                             last_failed_at => Now,
                             next_retry_at_ms =>
                                 ecai_patch_retry:next_retry_at_ms(
-                                    RetryCount, NowMs, Opts),
+                                    RetryCount, NowMs, Opts
+                                ),
                             updated_at => Now
                         }
                 end,
@@ -725,14 +823,17 @@ migrate_legacy_retries(Repairs, Opts) ->
             RetryCount = maps:get(retry_count, Repair, 0),
             LegacyFailed =
                 (Status =:= failed) orelse
-                (Status =:= <<"failed">>),
-            case LegacyFailed andalso
-                 RetryCount < Limit andalso
-                 ecai_patch_retry:is_retryable(Error) of
+                    (Status =:= <<"failed">>),
+            case
+                LegacyFailed andalso
+                    RetryCount < Limit andalso
+                    ecai_patch_retry:is_retryable(Error)
+            of
                 true ->
                     Migrated0 = maps:without(
                         [completed_at, worker_pid, worker_started_at],
-                        Repair),
+                        Repair
+                    ),
                     Migrated = Migrated0#{
                         status => retry_wait,
                         stage => inference_wait,
@@ -742,14 +843,18 @@ migrate_legacy_retries(Repairs, Opts) ->
                             maps:get(next_retry_at_ms, Repair, NowMs),
                         updated_at => Now
                     },
-                    case {
-                        maps:get(fingerprint, Repair, undefined),
-                        maps:get(finding_version, Repair, undefined)
-                    } of
-                        {Fp, Version}
-                                when is_binary(Fp), is_binary(Version) ->
+                    case
+                        {
+                            maps:get(fingerprint, Repair, undefined),
+                            maps:get(finding_version, Repair, undefined)
+                        }
+                    of
+                        {Fp, Version} when
+                            is_binary(Fp), is_binary(Version)
+                        ->
                             _ = ecai_learning_store:put_repair(
-                                Fp, Version, Migrated),
+                                Fp, Version, Migrated
+                            ),
                             Migrated;
                         _ ->
                             Repair
@@ -758,28 +863,54 @@ migrate_legacy_retries(Repairs, Opts) ->
                     Repair
             end
         end,
-        Repairs).
+        Repairs
+    ).
 
 dispatch_persisted_repair(Repair, Opts, MaxConcurrent, Started, Errors) ->
-    case {
-        maps:get(application, Repair, undefined),
-        maps:get(module, Repair, undefined),
-        maps:get(finding, Repair, undefined),
-        maps:get(fingerprint, Repair, undefined),
-        maps:get(finding_version, Repair, undefined)
-    } of
-        {App, Module, Finding, Fp, Version}
-                when is_atom(App), is_atom(Module), is_map(Finding),
-                     is_binary(Fp), is_binary(Version) ->
+    case
+        {
+            maps:get(application, Repair, undefined),
+            maps:get(module, Repair, undefined),
+            maps:get(finding, Repair, undefined),
+            maps:get(fingerprint, Repair, undefined),
+            maps:get(finding_version, Repair, undefined)
+        }
+    of
+        {App, Module, Finding, Fp, Version} when
+            is_atom(App),
+            is_atom(Module),
+            is_map(Finding),
+            is_binary(Fp),
+            is_binary(Version)
+        ->
             maybe_dispatch(
-                App, Module, Finding, Fp, Version, Repair,
-                Opts, MaxConcurrent, Started, Errors);
+                App,
+                Module,
+                Finding,
+                Fp,
+                Version,
+                Repair,
+                Opts,
+                MaxConcurrent,
+                Started,
+                Errors
+            );
         _ ->
             {Started, Errors}
     end.
 
-maybe_dispatch(App, Module, Finding, Fp, Version, Repair,
-               Opts, MaxConcurrent, Q, E) ->
+maybe_dispatch(
+    App,
+    Module,
+    Finding,
+    Fp,
+    Version,
+    Repair,
+    Opts,
+    MaxConcurrent,
+    Q,
+    E
+) ->
     NowMs = erlang:system_time(millisecond),
     case dispatchable(Repair, Fp, Version, NowMs, Opts) of
         false ->
@@ -790,8 +921,16 @@ maybe_dispatch(App, Module, Finding, Fp, Version, Repair,
                     {Q, E};
                 false ->
                     start_repair(
-                        App, Module, Finding, Fp, Version, Repair,
-                        Opts, Q, E)
+                        App,
+                        Module,
+                        Finding,
+                        Fp,
+                        Version,
+                        Repair,
+                        Opts,
+                        Q,
+                        E
+                    )
             end
     end.
 
@@ -802,8 +941,10 @@ dispatchable(Repair, _Fp, _Version, NowMs, Opts) ->
     case Status of
         %% Running records are reconciled by reconcile_stale_running/2.
         %% Never bypass retry accounting by dispatching one directly here.
-        running -> false;
-        <<"running">> -> false;
+        running ->
+            false;
+        <<"running">> ->
+            false;
         failed ->
             RetryAllowed andalso
                 ecai_patch_retry:is_retryable(maps:get(error, Repair, undefined));
@@ -827,38 +968,52 @@ start_repair(App, Module, Finding, Fp, Version, Repair, Opts, Q, E) ->
     ok = ecai_learning_store:put_repair(Fp, Version, Running),
     WorkerOpts = maps:merge(
         Opts,
-        #{resume_repair => Repair, worker_id => {Fp, Version}}),
+        #{resume_repair => Repair, worker_id => {Fp, Version}}
+    ),
     case ecai_patch_sup:propose(App, Module, Finding, WorkerOpts) of
-        {ok, blocked, Blocked}
-          when is_map(Blocked) ->
+        {ok, blocked, Blocked} when
+            is_map(Blocked)
+        ->
             %% Preflight persisted a terminal source/base block. Never
             %% overwrite it with the provisional running state and never count
             %% it as a started worker.
             ok = ecai_learning_store:put_repair(
-                Fp, Version, normalize_preflight_terminal(
-                    blocked, Blocked, Running)),
+                Fp,
+                Version,
+                normalize_preflight_terminal(
+                    blocked, Blocked, Running
+                )
+            ),
             {Q, E};
-        {ok, superseded, Superseded}
-          when is_map(Superseded) ->
+        {ok, superseded, Superseded} when
+            is_map(Superseded)
+        ->
             %% Same rule for stale finding/source identity: this repair is
             %% terminal for the queued version and no worker exists.
             ok = ecai_learning_store:put_repair(
-                Fp, Version, normalize_preflight_terminal(
-                    superseded, Superseded, Running)),
+                Fp,
+                Version,
+                normalize_preflight_terminal(
+                    superseded, Superseded, Running
+                )
+            ),
             {Q, E};
         {ok, Pid} when is_pid(Pid) ->
             ok = ecai_learning_store:put_repair(
-                Fp, Version, Running#{worker_pid => Pid}),
+                Fp, Version, Running#{worker_pid => Pid}
+            ),
             {Q + 1, E};
         {ok, Pid, _Info} when is_pid(Pid) ->
             ok = ecai_learning_store:put_repair(
-                Fp, Version, Running#{worker_pid => Pid}),
+                Fp, Version, Running#{worker_pid => Pid}
+            ),
             {Q + 1, E};
         {ok, NonPid} ->
             Reason = {invalid_worker_start_result, {ok, NonPid}},
             StartFailed = start_failure_record(Running, Reason, Opts),
             ok = ecai_learning_store:put_repair(
-                Fp, Version, StartFailed),
+                Fp, Version, StartFailed
+            ),
             {Q, [{App, Module, Fp, Reason} | E]};
         {ok, NonPid, Info} ->
             Reason = {
@@ -867,7 +1022,8 @@ start_repair(App, Module, Finding, Fp, Version, Repair, Opts, Q, E) ->
             },
             StartFailed = start_failure_record(Running, Reason, Opts),
             ok = ecai_learning_store:put_repair(
-                Fp, Version, StartFailed),
+                Fp, Version, StartFailed
+            ),
             {Q, [{App, Module, Fp, Reason} | E]};
         {error, {already_started, _Pid}} ->
             {Q, E};
@@ -935,7 +1091,8 @@ start_failure_record(Repair, Reason, Opts) ->
                 last_failed_at => Now,
                 next_retry_at_ms =>
                     ecai_patch_retry:next_retry_at_ms(
-                        RetryCount, NowMs, Opts),
+                        RetryCount, NowMs, Opts
+                    ),
                 updated_at => Now
             }
     end.
@@ -944,13 +1101,15 @@ worker_alive(Fp, Version) ->
     Id = {ecai_patch_worker, Fp, Version},
     lists:any(
         fun
-            ({Id0, Pid, _Type, _Modules})
-                    when Id0 =:= Id, is_pid(Pid) ->
+            ({Id0, Pid, _Type, _Modules}) when
+                Id0 =:= Id, is_pid(Pid)
+            ->
                 true;
             (_) ->
                 false
         end,
-        safe_patch_children()).
+        safe_patch_children()
+    ).
 
 active_patch_workers() ->
     length([
@@ -988,7 +1147,8 @@ repair_counts(Repairs) ->
             maps:update_with(Status, fun(N) -> N + 1 end, 1, Acc)
         end,
         #{},
-        Repairs).
+        Repairs
+    ).
 
 status_count(Status, Counts) ->
     maps:get(Status, Counts, 0) + maps:get(atom_to_binary(Status, utf8), Counts, 0).
@@ -997,11 +1157,13 @@ stale_running_count(Repairs) ->
     length([Repair || Repair <- Repairs, stale_running(Repair)]).
 
 stale_running(Repair) when is_map(Repair) ->
-    case {
-        is_running_status(maps:get(status, Repair, undefined)),
-        maps:get(fingerprint, Repair, undefined),
-        maps:get(finding_version, Repair, undefined)
-    } of
+    case
+        {
+            is_running_status(maps:get(status, Repair, undefined)),
+            maps:get(fingerprint, Repair, undefined),
+            maps:get(finding_version, Repair, undefined)
+        }
+    of
         {true, Fp, Version} when is_binary(Fp), is_binary(Version) ->
             not worker_alive(Fp, Version);
         _ ->
@@ -1025,29 +1187,34 @@ failure_summary(Repairs, Opts) ->
                 true ->
                     RetryCount = nonneg_int(maps:get(retry_count, Repair, 0), 0),
                     Error = maps:get(
-                        last_error, Repair, maps:get(error, Repair, undefined)),
+                        last_error, Repair, maps:get(error, Repair, undefined)
+                    ),
                     Retryable =
                         RetryCount < Limit andalso
-                        (maps:get(retryable, Repair, false) =:= true orelse
-                         safe_retryable(Error)),
+                            (maps:get(retryable, Repair, false) =:= true orelse
+                                safe_retryable(Error)),
                     Class = repair_failure_class(Repair),
                     Acc1 =
                         case {is_failed_status(Status), is_retry_wait_status(Status), Retryable} of
                             {true, _, true} ->
                                 maps:update_with(
-                                    retryable_failed, fun(N) -> N + 1 end, 1, Acc0);
+                                    retryable_failed, fun(N) -> N + 1 end, 1, Acc0
+                                );
                             {true, _, false} ->
                                 maps:update_with(
-                                    failed_terminal, fun(N) -> N + 1 end, 1, Acc0);
+                                    failed_terminal, fun(N) -> N + 1 end, 1, Acc0
+                                );
                             {false, true, _} ->
                                 maps:update_with(
-                                    retry_wait, fun(N) -> N + 1 end, 1, Acc0);
+                                    retry_wait, fun(N) -> N + 1 end, 1, Acc0
+                                );
                             _ ->
                                 Acc0
                         end,
                     ByClass0 = maps:get(by_class, Acc1, #{}),
                     ByClass1 = maps:update_with(
-                        Class, fun(N) -> N + 1 end, 1, ByClass0),
+                        Class, fun(N) -> N + 1 end, 1, ByClass0
+                    ),
                     Acc1#{by_class => ByClass1}
             end
         end,
@@ -1057,7 +1224,8 @@ failure_summary(Repairs, Opts) ->
             retry_wait => 0,
             by_class => #{}
         },
-        Repairs).
+        Repairs
+    ).
 
 safe_retryable(Error) ->
     try ecai_patch_retry:is_retryable(Error) of
@@ -1085,7 +1253,8 @@ repair_failure_class(Repair) ->
     case maps:get(failure_class, Repair, undefined) of
         undefined ->
             failure_class(
-                maps:get(last_error, Repair, maps:get(error, Repair, undefined)));
+                maps:get(last_error, Repair, maps:get(error, Repair, undefined))
+            );
         Class ->
             Class
     end.
@@ -1120,11 +1289,13 @@ repair_order_key(Repair) ->
 %% repairable, but cannot monopolize workers while src/ findings are due.
 source_priority(Path0) ->
     Path = to_binary(Path0),
-    case {
-        binary:match(Path, <<"/src/">>),
-        binary:match(Path, <<"/test/">>),
-        binary:match(Path, <<"/tests/">>)
-    } of
+    case
+        {
+            binary:match(Path, <<"/src/">>),
+            binary:match(Path, <<"/test/">>),
+            binary:match(Path, <<"/tests/">>)
+        }
+    of
         {{_, _}, _, _} -> 0;
         {_, {_, _}, _} -> 2;
         {_, _, {_, _}} -> 2;
@@ -1140,11 +1311,13 @@ repair_source_path(Repair) ->
         _ ->
             lookup_analysis_source_path(
                 maps:get(application, Repair, undefined),
-                maps:get(module, Repair, undefined))
+                maps:get(module, Repair, undefined)
+            )
     end.
 
-lookup_analysis_source_path(App, Module)
-  when is_atom(App), is_atom(Module) ->
+lookup_analysis_source_path(App, Module) when
+    is_atom(App), is_atom(Module)
+->
     try ecai_learning_store:get_analysis(App, Module) of
         {ok, Analysis} when is_map(Analysis) ->
             analysis_source_path(Analysis);
@@ -1168,11 +1341,13 @@ analysis_source_path(_) ->
 
 first_source_path([]) ->
     <<>>;
-first_source_path([Path | _Rest])
-  when is_binary(Path), byte_size(Path) > 0 ->
+first_source_path([Path | _Rest]) when
+    is_binary(Path), byte_size(Path) > 0
+->
     Path;
-first_source_path([Path | _Rest])
-  when is_list(Path), Path =/= [] ->
+first_source_path([Path | _Rest]) when
+    is_list(Path), Path =/= []
+->
     to_binary(Path);
 first_source_path([_ | Rest]) ->
     first_source_path(Rest).
@@ -1194,7 +1369,8 @@ severity_priority(Severity0) ->
 
 lower_binary(Bin) when is_binary(Bin) ->
     unicode:characters_to_binary(
-        string:lowercase(binary_to_list(Bin))).
+        string:lowercase(binary_to_list(Bin))
+    ).
 
 status_priority(retry_wait) -> 0;
 status_priority(<<"retry_wait">>) -> 0;
@@ -1215,32 +1391,46 @@ finding_fingerprint(Module, Finding) ->
         _ ->
             Issue = to_binary(mget(<<"issue_key">>, Finding, <<"unknown">>)),
             Data = <<(atom_to_binary(Module, utf8))/binary, 0, Issue/binary>>,
-            iolist_to_binary([io_lib:format("~2.16.0b", [B]) ||
-                              <<B>> <= crypto:hash(sha256, Data)])
+            iolist_to_binary([
+                io_lib:format("~2.16.0b", [B])
+             || <<B>> <= crypto:hash(sha256, Data)
+            ])
     end.
 
 patchable(Finding, Opts) when is_map(Finding) ->
     Status = mget(<<"status">>, Finding, <<"open">>),
     Severity = mget(<<"severity">>, Finding, <<"info">>),
-    IncludeInfo = maps:get(include_info, Opts,
-        application:get_env(ecai, code_patch_include_info, false)),
+    IncludeInfo = maps:get(
+        include_info,
+        Opts,
+        application:get_env(ecai, code_patch_include_info, false)
+    ),
     Status =/= <<"resolved">> andalso (IncludeInfo orelse Severity =/= <<"info">>);
-patchable(_, _) -> false.
+patchable(_, _) ->
+    false.
 
 existing_module_atom(Bin) when is_binary(Bin), byte_size(Bin) > 0 ->
-    try {ok, binary_to_existing_atom(Bin, utf8)}
-    catch error:badarg -> {error, {unknown_module, Bin}} end;
-existing_module_atom(Other) -> {error, {invalid_module, Other}}.
+    try
+        {ok, binary_to_existing_atom(Bin, utf8)}
+    catch
+        error:badarg -> {error, {unknown_module, Bin}}
+    end;
+existing_module_atom(Other) ->
+    {error, {invalid_module, Other}}.
 
 mget(Key, Map, Default) when is_map(Map), is_binary(Key) ->
     case maps:find(Key, Map) of
-        {ok, V} -> V;
+        {ok, V} ->
+            V;
         error ->
             try binary_to_existing_atom(Key, utf8) of
                 A -> maps:get(A, Map, Default)
-            catch error:badarg -> Default end
+            catch
+                error:badarg -> Default
+            end
     end;
-mget(_Key, _Map, Default) -> Default.
+mget(_Key, _Map, Default) ->
+    Default.
 
 nonneg_int(V, _Default) when is_integer(V), V >= 0 -> V;
 nonneg_int(_, Default) -> Default.
@@ -1249,9 +1439,11 @@ positive_int(V, _Default) when is_integer(V), V > 0 -> V;
 positive_int(_, Default) -> Default.
 
 now_iso8601() ->
-    to_binary(calendar:system_time_to_rfc3339(
-        erlang:system_time(second), [{unit, second}, {offset, "Z"}]
-    )).
+    to_binary(
+        calendar:system_time_to_rfc3339(
+            erlang:system_time(second), [{unit, second}, {offset, "Z"}]
+        )
+    ).
 
 to_binary(B) when is_binary(B) -> B;
 to_binary(L) when is_list(L) -> unicode:characters_to_binary(L);
@@ -1309,11 +1501,11 @@ retry_precedes_new_queue_within_same_class_test() ->
 unknown_source_sits_between_src_and_test_test() ->
     ?assert(
         source_priority(<<"apps/ecai/src/a.erl">>) <
-        source_priority(<<>>)
+            source_priority(<<>>)
     ),
     ?assert(
         source_priority(<<>>) <
-        source_priority(<<"apps/ecai/test/a_tests.erl">>)
+            source_priority(<<"apps/ecai/test/a_tests.erl">>)
     ).
 
 analysis_repair_provenance_test() ->

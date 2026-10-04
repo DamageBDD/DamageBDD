@@ -388,7 +388,9 @@ load_all_schedules() ->
 is_valid_schedule(#{error := Reason} = S) ->
     ?LOG_ERROR("Skipping invalid schedule ~p reason ~p", [S, Reason]),
     false;
-is_valid_schedule(#{cron := [once | _], execution_counter := Count}) when is_integer(Count), Count > 0 ->
+is_valid_schedule(#{cron := [once | _], execution_counter := Count}) when
+    is_integer(Count), Count > 0
+->
     false;
 is_valid_schedule(#{cron := Cron}) when is_list(Cron) ->
     true;
@@ -851,7 +853,6 @@ decrypt_schedule_field_compat(Account, IdHash, StableId, Field, CipherText) ->
             end
     end.
 
-
 decrypt_legacy_schedule_field(Account, IdHash, Field, CipherText) ->
     ?LOG_WARNING(
         "Using legacy unbound schedule ciphertext account=~p id_hash=~p field=~p; queued for migration",
@@ -929,7 +930,8 @@ normalize_concurrency(L) when is_list(L) ->
     catch
         _:_ -> 1
     end;
-normalize_concurrency(_) -> 1.
+normalize_concurrency(_) ->
+    1.
 
 migrate_schedule_record(#{
     account := Account,
@@ -959,14 +961,18 @@ migrate_schedule_record(#{
     ),
     migration_write_result(Result).
 
-migration_write_result(#{"return_type" := "ok"}) -> ok;
-migration_write_result(#{<<"return_type">> := <<"ok">>}) -> ok;
+migration_write_result(#{"return_type" := "ok"}) ->
+    ok;
+migration_write_result(#{<<"return_type">> := <<"ok">>}) ->
+    ok;
 migration_write_result(#{"return_type" := "revert", "return_value" := Reason}) ->
     {error, Reason};
 migration_write_result(#{<<"return_type">> := <<"revert">>, <<"return_value">> := Reason}) ->
     {error, Reason};
-migration_write_result({error, Reason}) -> {error, Reason};
-migration_write_result(Other) -> {error, {unexpected_contract_response, Other}}.
+migration_write_result({error, Reason}) ->
+    {error, Reason};
+migration_write_result(Other) ->
+    {error, {unexpected_contract_response, Other}}.
 
 decode_optional_int({variant, [0, 1], 0, {}}) -> undefined;
 decode_optional_int({variant, [0, 1], 1, {V}}) -> V;
@@ -1332,18 +1338,27 @@ handle_cast({migrate_schedule, Migration}, State = #state{ets_table = Tab}) ->
                     catch
                         Class:Reason:Stack -> {error, {Class, Reason, Stack}}
                     end,
-                gen_server:cast(Parent, {schedule_migration_result, MigrationKey, Migration, Result})
+                gen_server:cast(
+                    Parent, {schedule_migration_result, MigrationKey, Migration, Result}
+                )
             end),
             {noreply, State};
         _ ->
             {noreply, State}
     end;
-handle_cast({schedule_migration_result, MigrationKey, Migration, ok}, State = #state{ets_table = Tab}) ->
+handle_cast(
+    {schedule_migration_result, MigrationKey, Migration, ok}, State = #state{ets_table = Tab}
+) ->
     Account = maps:get(account, Migration),
     StableId = maps:get(stable_id, Migration),
     ?LOG_INFO(
         "Migrated schedule storage account=~p id=~p crypto=~p cron=~p",
-        [Account, StableId, maps:get(crypto_formats, Migration, undefined), maps:get(cron, Migration)]
+        [
+            Account,
+            StableId,
+            maps:get(crypto_formats, Migration, undefined),
+            maps:get(cron, Migration)
+        ]
     ),
     ets:insert(Tab, {MigrationKey, done}),
     invalidate_schedule_keys(State, Account, StableId),
@@ -1562,14 +1577,18 @@ account_private_key(AeAccount) ->
             end
     end.
 
-lock_related_reason(node_locked) -> true;
-lock_related_reason(secrets_not_ready) -> true;
-lock_related_reason({error, Reason}) -> lock_related_reason(Reason);
+lock_related_reason(node_locked) ->
+    true;
+lock_related_reason(secrets_not_ready) ->
+    true;
+lock_related_reason({error, Reason}) ->
+    lock_related_reason(Reason);
 lock_related_reason(Tuple) when is_tuple(Tuple) ->
     lists:any(fun lock_related_reason/1, tuple_to_list(Tuple));
 lock_related_reason(List) when is_list(List) ->
     lists:any(fun lock_related_reason/1, List);
-lock_related_reason(_) -> false.
+lock_related_reason(_) ->
+    false.
 
 schedule_service_unavailable_reply(Req0, State, Reason) ->
     {ErrorCode, Message} =

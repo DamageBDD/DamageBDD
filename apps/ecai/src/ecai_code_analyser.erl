@@ -16,22 +16,26 @@ analyse(App, Module) ->
 
 analyse_module(App, Module) when is_atom(App), is_atom(Module) ->
     case lists:member(App, ?ALLOWED_APPS) of
-        false -> {error, {unsupported_application, App}};
+        false ->
+            {error, {unsupported_application, App}};
         true ->
             case module_source(Module) of
                 {ok, SourceKind, SourceName, SourceBin, Forms} ->
                     build_analysis(App, Module, SourceKind, SourceName, SourceBin, Forms);
-                {error, _} = Error -> Error
+                {error, _} = Error ->
+                    Error
             end
     end.
 
 analyse_file(App, Path0) when is_atom(App) ->
     Path = path_to_list(Path0),
     case lists:member(App, ?ALLOWED_APPS) of
-        false -> {error, {unsupported_application, App}};
+        false ->
+            {error, {unsupported_application, App}};
         true ->
             case file:read_file(Path) of
-                {error, Reason} -> {error, {cannot_read_source, Path, Reason}};
+                {error, Reason} ->
+                    {error, {cannot_read_source, Path, Reason}};
                 {ok, SourceBin0} ->
                     SourceBin = normalize_source(SourceBin0),
                     IncludeDirs = include_dirs(Path),
@@ -39,7 +43,9 @@ analyse_file(App, Path0) when is_atom(App) ->
                         {ok, Forms} ->
                             case module_attribute(Forms) of
                                 {ok, Module} ->
-                                    build_analysis(App, Module, repo_source, Path, SourceBin, Forms);
+                                    build_analysis(
+                                        App, Module, repo_source, Path, SourceBin, Forms
+                                    );
                                 not_found ->
                                     {error, {module_attribute_not_found, Path}}
                             end;
@@ -51,7 +57,8 @@ analyse_file(App, Path0) when is_atom(App) ->
 
 repo_source_files(App, RepoRoot0) when is_atom(App) ->
     case lists:member(App, ?ALLOWED_APPS) of
-        false -> {error, {unsupported_application, App}};
+        false ->
+            {error, {unsupported_application, App}};
         true ->
             RepoRoot = filename:absname(path_to_list(RepoRoot0)),
             AppRoot = filename:join([RepoRoot, "apps", atom_to_list(App)]),
@@ -68,7 +75,8 @@ repo_source_files(App, RepoRoot0) when is_atom(App) ->
 
 application_modules(App) when is_atom(App) ->
     case lists:member(App, ?ALLOWED_APPS) of
-        false -> {error, {unsupported_application, App}};
+        false ->
+            {error, {unsupported_application, App}};
         true ->
             case application:get_key(App, modules) of
                 {ok, Modules} when is_list(Modules) -> {ok, lists:sort(Modules)};
@@ -163,7 +171,8 @@ erl_files_recursive(Dir) ->
                 begin
                     Path = filename:join(Dir, Name),
                     case filelib:is_dir(Path) of
-                        true -> erl_files_recursive(Path);
+                        true ->
+                            erl_files_recursive(Path);
                         false ->
                             case filename:extension(Name) of
                                 ".erl" -> [Path];
@@ -171,8 +180,10 @@ erl_files_recursive(Dir) ->
                             end
                     end
                 end
-             || Name <- Names, Name =/= ".", Name =/= ".."]);
-        {error, _} -> []
+             || Name <- Names, Name =/= ".", Name =/= ".."
+            ]);
+        {error, _} ->
+            []
     end.
 
 source_path(CompileInfo) when is_list(CompileInfo) ->
@@ -182,7 +193,8 @@ source_path(CompileInfo) when is_list(CompileInfo) ->
         Source when is_list(Source) -> {ok, Source};
         _ -> not_found
     end;
-source_path(_) -> not_found.
+source_path(_) ->
+    not_found.
 
 abstract_forms({raw_abstract_v1, Forms}) when is_list(Forms) -> Forms;
 abstract_forms(_) -> [].
@@ -201,11 +213,13 @@ abstract_source(Module, BeamPath, Other) ->
     {error, {unsupported_abstract_code, Module, BeamPath, Other}}.
 
 exports(Forms) ->
-    uniq(lists:flatten([
-        [{Name, Arity} || {Name, Arity} <- Values]
-     || {attribute, _, export, Values} <- Forms,
-        is_list(Values)
-    ])).
+    uniq(
+        lists:flatten([
+            [{Name, Arity} || {Name, Arity} <- Values]
+         || {attribute, _, export, Values} <- Forms,
+            is_list(Values)
+        ])
+    ).
 
 functions(Forms) ->
     lists:sort([
@@ -228,18 +242,31 @@ specs(Forms) ->
     ]).
 
 types(Forms) ->
-    lists:sort(lists:filtermap(
-        fun
-            ({attribute, Line, type, {Name, _Body, Vars}}) when is_atom(Name), is_list(Vars) ->
-                {true, #{name => Name, arity => length(Vars), kind => type,
-                         line => line_number(Line)}};
-            ({attribute, Line, opaque, {Name, _Body, Vars}}) when is_atom(Name), is_list(Vars) ->
-                {true, #{name => Name, arity => length(Vars), kind => opaque,
-                         line => line_number(Line)}};
-            (_) -> false
-        end,
-        Forms
-    )).
+    lists:sort(
+        lists:filtermap(
+            fun
+                ({attribute, Line, type, {Name, _Body, Vars}}) when is_atom(Name), is_list(Vars) ->
+                    {true, #{
+                        name => Name,
+                        arity => length(Vars),
+                        kind => type,
+                        line => line_number(Line)
+                    }};
+                ({attribute, Line, opaque, {Name, _Body, Vars}}) when
+                    is_atom(Name), is_list(Vars)
+                ->
+                    {true, #{
+                        name => Name,
+                        arity => length(Vars),
+                        kind => opaque,
+                        line => line_number(Line)
+                    }};
+                (_) ->
+                    false
+            end,
+            Forms
+        )
+    ).
 
 records(Forms) ->
     lists:sort([
@@ -259,10 +286,12 @@ remote_calls(Forms) ->
     Calls = collect(Forms, fun remote_call_node/1),
     uniq(Calls).
 
-remote_call_node({call, Line, {remote, _, {atom, _, Mod}, {atom, _, Fun}}, Args})
-  when is_atom(Mod), is_atom(Fun), is_list(Args) ->
+remote_call_node({call, Line, {remote, _, {atom, _, Mod}, {atom, _, Fun}}, Args}) when
+    is_atom(Mod), is_atom(Fun), is_list(Args)
+->
     {match, #{module => Mod, function => Fun, arity => length(Args), line => line_number(Line)}};
-remote_call_node(_) -> nomatch.
+remote_call_node(_) ->
+    nomatch.
 
 local_calls(Forms) ->
     Calls = collect(Forms, fun local_call_node/1),
@@ -270,30 +299,40 @@ local_calls(Forms) ->
 
 local_call_node({call, Line, {atom, _, Fun}, Args}) when is_atom(Fun), is_list(Args) ->
     {match, #{function => Fun, arity => length(Args), line => line_number(Line)}};
-local_call_node(_) -> nomatch.
+local_call_node(_) ->
+    nomatch.
 
 config_calls(Forms, get) ->
     uniq(collect(Forms, fun(Node) -> config_node(Node, get) end));
 config_calls(Forms, set) ->
     uniq(collect(Forms, fun(Node) -> config_node(Node, set) end)).
 
-config_node({call, Line, {remote, _, {atom, _, application}, {atom, _, Fun}}, Args}, Mode)
-  when is_list(Args) ->
+config_node({call, Line, {remote, _, {atom, _, application}, {atom, _, Fun}}, Args}, Mode) when
+    is_list(Args)
+->
     IsGet = lists:member(Fun, [get_env, get_all_env]),
     IsSet = lists:member(Fun, [set_env, unset_env]),
     case ((Mode =:= get) andalso IsGet) orelse ((Mode =:= set) andalso IsSet) of
         true ->
-            {match, #{function => Fun, arity => length(Args), line => line_number(Line),
-                      application => config_application(Fun, Args), key => config_key(Fun, Args)}};
-        false -> nomatch
+            {match, #{
+                function => Fun,
+                arity => length(Args),
+                line => line_number(Line),
+                application => config_application(Fun, Args),
+                key => config_key(Fun, Args)
+            }};
+        false ->
+            nomatch
     end;
-config_node(_, _) -> nomatch.
+config_node(_, _) ->
+    nomatch.
 
 config_application(get_env, [_Key]) -> undefined;
 config_application(get_all_env, []) -> undefined;
 config_application(_Fun, Args) -> literal_atom_arg(Args, 1).
 
-config_key(get_all_env, _Args) -> undefined;
+config_key(get_all_env, _Args) ->
+    undefined;
 config_key(_Fun, Args) ->
     case Args of
         [_App, Key | _] -> literal_value(Key);
@@ -321,24 +360,35 @@ has_message_send(Forms) ->
     end) =/= [].
 
 uses_nif(Forms, Calls) ->
-    HasNifAttr = lists:any(fun
-        ({attribute, _, nif, _}) -> true;
-        (_) -> false
-    end, Forms),
-    HasLoadNif = lists:any(fun
-        (#{module := erlang, function := load_nif}) -> true;
-        (_) -> false
-    end, Calls),
+    HasNifAttr = lists:any(
+        fun
+            ({attribute, _, nif, _}) -> true;
+            (_) -> false
+        end,
+        Forms
+    ),
+    HasLoadNif = lists:any(
+        fun
+            (#{module := erlang, function := load_nif}) -> true;
+            (_) -> false
+        end,
+        Calls
+    ),
     HasNifAttr orelse HasLoadNif.
 
 security_boundaries(Calls, Forms) ->
     Modules = [maps:get(module, C) || C <- Calls],
     Base0 = [],
     Base1 = add_boundary(filesystem, any_member(Modules, [file, filelib]), Base0),
-    Base2 = add_boundary(network, any_member(Modules, [gen_tcp, gen_udp, ssl, httpc, gun, damage_gun]), Base1),
+    Base2 = add_boundary(
+        network, any_member(Modules, [gen_tcp, gen_udp, ssl, httpc, gun, damage_gun]), Base1
+    ),
     Base3 = add_boundary(crypto, any_member(Modules, [crypto, public_key, ssl]), Base2),
-    Base4 = add_boundary(process_execution,
-        any_call(Calls, os, cmd) orelse any_call(Calls, erlang, open_port), Base3),
+    Base4 = add_boundary(
+        process_execution,
+        any_call(Calls, os, cmd) orelse any_call(Calls, erlang, open_port),
+        Base3
+    ),
     Base5 = add_boundary(persistent_storage, any_member(Modules, [dets, mnesia, disk_log]), Base4),
     Base6 = add_boundary(shared_memory, any_member(Modules, [ets, persistent_term]), Base5),
     Base7 = add_boundary(code_loading, any_member(Modules, [code, beam_lib]), Base6),
@@ -352,46 +402,66 @@ any_member(Values, Candidates) ->
     lists:any(fun(V) -> lists:member(V, Candidates) end, Values).
 
 any_call(Calls, Mod, Fun) ->
-    lists:any(fun
-        (#{module := Mod0, function := Fun0}) when Mod0 =:= Mod, Fun0 =:= Fun -> true;
-        (_) -> false
-    end, Calls).
+    lists:any(
+        fun
+            (#{module := Mod0, function := Fun0}) when Mod0 =:= Mod, Fun0 =:= Fun -> true;
+            (_) -> false
+        end,
+        Calls
+    ).
 
 is_test_module(Module, SourceName0) ->
     Name = atom_to_list(Module),
     SourceName = path_to_list(SourceName0),
     lists:suffix("_test", Name) orelse
-    lists:suffix("_tests", Name) orelse
-    string:str(SourceName, "/test/") > 0 orelse
-    string:str(SourceName, "/tests/") > 0.
+        lists:suffix("_tests", Name) orelse
+        string:str(SourceName, "/test/") > 0 orelse
+        string:str(SourceName, "/tests/") > 0.
 
 collect(Term, Matcher) ->
     lists:reverse(collect_walk(Term, Matcher, [])).
 
 collect_walk(Term, Matcher, Acc0) ->
-    Acc1 = case Matcher(Term) of
-        {match, Value} -> [Value | Acc0];
-        nomatch -> Acc0
-    end,
+    Acc1 =
+        case Matcher(Term) of
+            {match, Value} -> [Value | Acc0];
+            nomatch -> Acc0
+        end,
     case Term of
         Tuple when is_tuple(Tuple) ->
-            lists:foldl(fun(Elem, Acc) -> collect_walk(Elem, Matcher, Acc) end,
-                        Acc1, tuple_to_list(Tuple));
+            lists:foldl(
+                fun(Elem, Acc) -> collect_walk(Elem, Matcher, Acc) end,
+                Acc1,
+                tuple_to_list(Tuple)
+            );
         List when is_list(List) ->
-            lists:foldl(fun(Elem, Acc) -> collect_walk(Elem, Matcher, Acc) end,
-                        Acc1, List);
-        _ -> Acc1
+            lists:foldl(
+                fun(Elem, Acc) -> collect_walk(Elem, Matcher, Acc) end,
+                Acc1,
+                List
+            );
+        _ ->
+            Acc1
     end.
 
 nth(N, List) when N > 0 ->
-    try lists:nth(N, List) catch error:function_clause -> undefined; error:badarg -> undefined end.
+    try
+        lists:nth(N, List)
+    catch
+        error:function_clause -> undefined;
+        error:badarg -> undefined
+    end.
 
 uniq(List) ->
     lists:usort(List).
 
 line_number(Line) when is_integer(Line) -> Line;
 line_number(Anno) ->
-    try erl_anno:line(Anno) catch _:_ -> 0 end.
+    try
+        erl_anno:line(Anno)
+    catch
+        _:_ -> 0
+    end.
 
 normalize_source(Bin) when is_binary(Bin) -> unicode:characters_to_binary(Bin);
 normalize_source(IoData) -> unicode:characters_to_binary(IoData).
@@ -402,9 +472,11 @@ hex(Bin) ->
     iolist_to_binary([io_lib:format("~2.16.0b", [Byte]) || <<Byte>> <= Bin]).
 
 now_iso8601() ->
-    to_binary(calendar:system_time_to_rfc3339(
-        erlang:system_time(second), [{unit, second}, {offset, "Z"}]
-    )).
+    to_binary(
+        calendar:system_time_to_rfc3339(
+            erlang:system_time(second), [{unit, second}, {offset, "Z"}]
+        )
+    ).
 
 path_to_list(P) when is_list(P) -> P;
 path_to_list(P) when is_binary(P) -> binary_to_list(P).

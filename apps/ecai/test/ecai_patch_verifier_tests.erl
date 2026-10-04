@@ -23,8 +23,10 @@ reject_outside_repo_boundary_test() ->
         "-old\n"
         "+new\n"
     >>,
-    ?assertMatch({error, {patch_path_not_allowed, _}},
-                 ecai_patch_verifier:validate_patch(Patch)).
+    ?assertMatch(
+        {error, {patch_path_not_allowed, _}},
+        ecai_patch_verifier:validate_patch(Patch)
+    ).
 
 reject_parent_traversal_test() ->
     Patch = <<
@@ -35,5 +37,7 @@ reject_parent_traversal_test() ->
         "-old\n"
         "+new\n"
     >>,
-    ?assertMatch({error, {patch_path_not_allowed, _}},
-                 ecai_patch_verifier:validate_patch(Patch)).
+    ?assertMatch(
+        {error, {patch_path_not_allowed, _}},
+        ecai_patch_verifier:validate_patch(Patch)
+    ).

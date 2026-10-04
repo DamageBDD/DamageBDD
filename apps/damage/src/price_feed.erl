@@ -40,14 +40,20 @@ get_prices() ->
 -spec damage_to_sats_quote(number(), pos_integer()) ->
     {ok, map()} | {error, term()}.
 damage_to_sats_quote(Damage, MaxAgeMs) when
-    is_number(Damage), Damage > 0,
-    is_integer(MaxAgeMs), MaxAgeMs > 0
+    is_number(Damage),
+    Damage > 0,
+    is_integer(MaxAgeMs),
+    MaxAgeMs > 0
 ->
     try get_prices() of
-        {ok, #{btc_usdt := BTCUSDT, damage_usdt := DamageUSDT, updated_ms := UpdatedMs}}
-            when is_number(BTCUSDT), BTCUSDT > 0,
-                 is_number(DamageUSDT), DamageUSDT > 0,
-                 is_integer(UpdatedMs), UpdatedMs > 0 ->
+        {ok, #{btc_usdt := BTCUSDT, damage_usdt := DamageUSDT, updated_ms := UpdatedMs}} when
+            is_number(BTCUSDT),
+            BTCUSDT > 0,
+            is_number(DamageUSDT),
+            DamageUSDT > 0,
+            is_integer(UpdatedMs),
+            UpdatedMs > 0
+        ->
             NowMs = erlang:system_time(millisecond),
             AgeMs = max(0, NowMs - UpdatedMs),
             case AgeMs =< MaxAgeMs of

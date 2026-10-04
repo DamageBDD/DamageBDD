@@ -6,11 +6,15 @@
 -spec keypair(map()) -> {ok, map()} | {error, atom()}.
 keypair(#{owner := Owner, corpus := Corpus, key_name := Name}) ->
     case secrets:retrieve_decrypt({agent, Owner, Corpus}, Name) of
-        {ok, #{public_key := Pub, private_key := Priv} = Pair}
-          when is_binary(Pub), byte_size(Pub) > 0,
-               is_binary(Priv), byte_size(Priv) > 0 ->
+        {ok, #{public_key := Pub, private_key := Priv} = Pair} when
+            is_binary(Pub),
+            byte_size(Pub) > 0,
+            is_binary(Priv),
+            byte_size(Priv) > 0
+        ->
             {ok, maps:with([public_key, private_key], Pair)};
-        _ -> {error, private_key_unavailable}
+        _ ->
+            {error, private_key_unavailable}
     end.
 
 %% The module is operator configuration, never a request parameter. A remote
@@ -20,11 +24,15 @@ keypair(#{owner := Owner, corpus := Corpus, key_name := Name}) ->
 load(Config) ->
     Module = application:get_env(ecai, private_key_provider_module, ?MODULE),
     case Module:keypair(Config) of
-        {ok, #{public_key := Pub, private_key := Priv} = Pair}
-          when is_binary(Pub), byte_size(Pub) > 0,
-               is_binary(Priv), byte_size(Priv) > 0 ->
+        {ok, #{public_key := Pub, private_key := Priv} = Pair} when
+            is_binary(Pub),
+            byte_size(Pub) > 0,
+            is_binary(Priv),
+            byte_size(Priv) > 0
+        ->
             maps:with([public_key, private_key], Pair);
-        _ -> ecai_private_policy:fail(private_key_unavailable)
+        _ ->
+            ecai_private_policy:fail(private_key_unavailable)
     end.
 
 %% Trusted operator API only. Generates a fresh randomly named vault entry and
@@ -39,6 +47,9 @@ provision(Owner, Corpus) ->
         #{public_key := Pub, private_key := _} = Pair = secrets_pqc:generate_keypair(),
         ok = secrets:encrypt_store({agent, Owner, Corpus}, Name, Pair),
         {ok, Pair} = secrets:retrieve_decrypt({agent, Owner, Corpus}, Name),
-        {ok, #{key_name => Name, key_id => Name,
-               public_key_sha256 => binary:encode_hex(crypto:hash(sha256, Pub))}}
+        {ok, #{
+            key_name => Name,
+            key_id => Name,
+            public_key_sha256 => binary:encode_hex(crypto:hash(sha256, Pub))
+        }}
     end).

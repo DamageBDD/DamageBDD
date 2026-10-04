@@ -39,24 +39,41 @@ ensure_event_id(Event0) ->
 %% Returns the normalized event so callers do not need to normalize twice.
 verify(Event0) when is_map(Event0) ->
     Event = normalize_event(Event0),
-    case {
-        maps:find(id, Event),
-        maps:find(pubkey, Event),
-        maps:find(created_at, Event),
-        maps:find(kind, Event),
-        maps:find(tags, Event),
-        maps:find(content, Event),
-        maps:find(sig, Event)
-    } of
+    case
         {
-            {ok, EventId}, {ok, Pubkey}, {ok, CreatedAt}, {ok, Kind},
-            {ok, Tags}, {ok, Content}, {ok, Sig}
+            maps:find(id, Event),
+            maps:find(pubkey, Event),
+            maps:find(created_at, Event),
+            maps:find(kind, Event),
+            maps:find(tags, Event),
+            maps:find(content, Event),
+            maps:find(sig, Event)
+        }
+    of
+        {
+            {ok, EventId},
+            {ok, Pubkey},
+            {ok, CreatedAt},
+            {ok, Kind},
+            {ok, Tags},
+            {ok, Content},
+            {ok, Sig}
         } when
-            is_binary(EventId), is_binary(Pubkey), is_integer(CreatedAt),
-            is_integer(Kind), is_list(Tags), is_binary(Content), is_binary(Sig)
+            is_binary(EventId),
+            is_binary(Pubkey),
+            is_integer(CreatedAt),
+            is_integer(Kind),
+            is_list(Tags),
+            is_binary(Content),
+            is_binary(Sig)
         ->
-            case {lower_hex_string(EventId, 64), lower_hex_string(Pubkey, 64),
-                  lower_hex_string(Sig, 128)} of
+            case
+                {
+                    lower_hex_string(EventId, 64),
+                    lower_hex_string(Pubkey, 64),
+                    lower_hex_string(Sig, 128)
+                }
+            of
                 {true, true, true} ->
                     try id(Event) of
                         EventId -> verify_schnorr(Event, EventId, Pubkey, Sig);
@@ -103,7 +120,7 @@ verify_schnorr(Event, EventId, Pubkey, Sig) ->
     end.
 
 hex_to_binary(Bin) when is_binary(Bin), byte_size(Bin) rem 2 =:= 0 ->
-    << <<(hex_byte(Hi, Lo))>> || <<Hi, Lo>> <= Bin >>;
+    <<<<(hex_byte(Hi, Lo))>> || <<Hi, Lo>> <= Bin>>;
 hex_to_binary(_) ->
     error(bad_hex).
 

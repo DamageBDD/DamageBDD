@@ -1,17 +1,34 @@
 %% Separate private REST surface. No anonymous/operator-mode owner fallback;
 %% identity comes exclusively from damage_auth's authenticated request state.
 -module(ecai_private_http).
--export([trails/0, init/2, is_authorized/2, allowed_methods/2,
-         content_types_accepted/2, content_types_provided/2,
-         from_json/2, to_json/2, dispatch/4]).
+-export([
+    trails/0,
+    init/2,
+    is_authorized/2,
+    allowed_methods/2,
+    content_types_accepted/2,
+    content_types_provided/2,
+    from_json/2,
+    to_json/2,
+    dispatch/4
+]).
 -define(MAX_BODY_BYTES, 1048576).
 
 trails() ->
-    [trails:trail("/ecai/private/:corpus/" ++ atom_to_list(Action),
-        ?MODULE, #{action => Action},
-        #{post => #{tags => ["ECAI Private Index"],
-                    produces => ["application/json"]}})
-     || Action <- [index, search, fetch, ask]].
+    [
+        trails:trail(
+            "/ecai/private/:corpus/" ++ atom_to_list(Action),
+            ?MODULE,
+            #{action => Action},
+            #{
+                post => #{
+                    tags => ["ECAI Private Index"],
+                    produces => ["application/json"]
+                }
+            }
+        )
+     || Action <- [index, search, fetch, ask]
+    ].
 init(Req, State) ->
     process_flag(sensitive, true),
     {cowboy_rest, Req, State}.
@@ -29,14 +46,19 @@ from_json(Req0, #{action := Action} = State) ->
             Corpus = cowboy_req:binding(corpus, Req0),
             case read_body(Req0, [], 0, erlang:monotonic_time(millisecond) + 15000) of
                 {ok, Body, Req1} ->
-                    Result = try
-                        Data = jsx:decode(Body, [return_maps]),
-                        dispatch(Action, Corpus, Principal, Data)
-                    catch _:_ -> {error, invalid_request} end,
+                    Result =
+                        try
+                            Data = jsx:decode(Body, [return_maps]),
+                            dispatch(Action, Corpus, Principal, Data)
+                        catch
+                            _:_ -> {error, invalid_request}
+                        end,
                     reply(Req1, State, Result);
-                {error, Req1} -> reply(Req1, State, {error, payload_too_large})
+                {error, Req1} ->
+                    reply(Req1, State, {error, payload_too_large})
             end;
-        _ -> reply(Req0, State, {error, unauthenticated})
+        _ ->
+            reply(Req0, State, {error, unauthenticated})
     end.
 
 read_body(Req0, Acc, Size, Deadline) ->
@@ -51,58 +73,97 @@ read_body_part(Req0, Acc, Size, Deadline, Period) ->
         {Status, Part, Req1} when Status =:= ok; Status =:= more ->
             NewSize = Size + byte_size(Part),
             case NewSize > ?MAX_BODY_BYTES of
-                true -> {error, Req1};
+                true ->
+                    {error, Req1};
                 false when Status =:= ok ->
                     {ok, iolist_to_binary(lists:reverse([Part | Acc])), Req1};
-                false -> read_body(Req1, [Part | Acc], NewSize, Deadline)
+                false ->
+                    read_body(Req1, [Part | Acc], NewSize, Deadline)
             end
     end.
 
 %% Exported for boundary tests. Caller-supplied owner/key/path/provider fields
 %% are rejected, not ignored. Batch IDs are 32 lowercase random hex characters.
-dispatch(index, Corpus, Principal,
-         #{<<"batch_id">> := Batch, <<"records">> := Records} = Data)
-  when map_size(Data) =:= 2 ->
+dispatch(
+    index,
+    Corpus,
+    Principal,
+    #{<<"batch_id">> := Batch, <<"records">> := Records} = Data
+) when
+    map_size(Data) =:= 2
+->
     ecai_disk_indexer:index_private(Corpus, Principal, Batch, Records);
 dispatch(search, Corpus, Principal, #{<<"query">> := Query} = Data) ->
     case lists:sort(maps:keys(Data)) -- [<<"query">>, <<"limit">>] of
-        [] -> ecai_private_index:search(Corpus, Principal, Query,
-                                        maps:get(<<"limit">>, Data, 8));
-        _ -> {error, invalid_request}
+        [] ->
+            ecai_private_index:search(
+                Corpus,
+                Principal,
+                Query,
+                maps:get(<<"limit">>, Data, 8)
+            );
+        _ ->
+            {error, invalid_request}
     end;
-dispatch(fetch, Corpus, Principal, #{<<"id">> := Id} = Data)
-  when map_size(Data) =:= 1 ->
+dispatch(fetch, Corpus, Principal, #{<<"id">> := Id} = Data) when
+    map_size(Data) =:= 1
+->
     ecai_private_index:fetch(Corpus, Principal, Id);
-dispatch(ask, Corpus, Principal,
-         #{<<"question">> := Question, <<"destination">> := Dest} = Data)
-  when map_size(Data) =:= 2 ->
+dispatch(
+    ask,
+    Corpus,
+    Principal,
+    #{<<"question">> := Question, <<"destination">> := Dest} = Data
+) when
+    map_size(Data) =:= 2
+->
     ecai_llm_bridge:ask(Corpus, Principal, Question, Dest);
-dispatch(_, _, _, _) -> {error, invalid_request}.
+dispatch(_, _, _, _) ->
+    {error, invalid_request}.
 
 reply(Req, State, Result) ->
-    {Code, Payload} = case Result of
-        {ok, Value} -> {200, #{ok => true, result => json_safe(Value)}};
-        {error, Reason} when is_atom(Reason) ->
-            {status(Reason), #{ok => false, error => atom_to_binary(Reason, utf8)}};
-        _ -> {503, #{ok => false, error => <<"private_operation_failed">>}}
-    end,
-    Req1 = cowboy_req:reply(Code,
-        #{<<"content-type">> => <<"application/json">>,
-          <<"cache-control">> => <<"no-store, private">>,
-          <<"pragma">> => <<"no-cache">>,
-          <<"x-content-type-options">> => <<"nosniff">>},
-        jsx:encode(Payload), Req),
+    {Code, Payload} =
+        case Result of
+            {ok, Value} ->
+                {200, #{ok => true, result => json_safe(Value)}};
+            {error, Reason} when is_atom(Reason) ->
+                {status(Reason), #{ok => false, error => atom_to_binary(Reason, utf8)}};
+            _ ->
+                {503, #{ok => false, error => <<"private_operation_failed">>}}
+        end,
+    Req1 = cowboy_req:reply(
+        Code,
+        #{
+            <<"content-type">> => <<"application/json">>,
+            <<"cache-control">> => <<"no-store, private">>,
+            <<"pragma">> => <<"no-cache">>,
+            <<"x-content-type-options">> => <<"nosniff">>
+        },
+        jsx:encode(Payload),
+        Req
+    ),
     {stop, Req1, State}.
 
 %% Existing ingest commitments are raw bytes; encode those fields for JSON.
 json_safe(Map) when is_map(Map) ->
-    maps:from_list([{K, case lists:member(K, [chunk_content_sha256,
-                         index_fields_sha256, chunk_id, event_id]) of
-        true when is_binary(V) -> binary:encode_hex(V);
-        _ -> json_safe(V)
-    end} || {K, V} <- maps:to_list(Map)]);
+    maps:from_list([
+        {K,
+            case
+                lists:member(K, [
+                    chunk_content_sha256,
+                    index_fields_sha256,
+                    chunk_id,
+                    event_id
+                ])
+            of
+                true when is_binary(V) -> binary:encode_hex(V);
+                _ -> json_safe(V)
+            end}
+     || {K, V} <- maps:to_list(Map)
+    ]);
 json_safe(List) when is_list(List) -> [json_safe(V) || V <- List];
-json_safe(V) -> V.
+json_safe(V) ->
+    V.
 
 status(unauthenticated) -> 401;
 status(forbidden) -> 403;

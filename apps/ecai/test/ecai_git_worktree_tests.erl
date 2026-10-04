@@ -22,8 +22,12 @@ clean_tracked_only_by_default_test() ->
         ?assert(
             lists:any(
                 fun
-                    (#{path := <<"apps/ecai/src/dirty.erl">>,
-                       reason := dirty_tracked}) ->
+                    (
+                        #{
+                            path := <<"apps/ecai/src/dirty.erl">>,
+                            reason := dirty_tracked
+                        }
+                    ) ->
                         true;
                     (_) ->
                         false
@@ -34,11 +38,13 @@ clean_tracked_only_by_default_test() ->
         ?assert(
             lists:any(
                 fun
-                    (#{
-                        path :=
-                            <<"apps/damage/src/damage_build_info.erl">>,
-                        reason := untracked_or_generated
-                    }) ->
+                    (
+                        #{
+                            path :=
+                                <<"apps/damage/src/damage_build_info.erl">>,
+                            reason := untracked_or_generated
+                        }
+                    ) ->
                         true;
                     (_) ->
                         false
@@ -132,9 +138,13 @@ with_repo(Fun) ->
     ok = git(
         Repo,
         [
-            "-c", "commit.gpgsign=false",
-            "-c", "core.hooksPath=/dev/null",
-            "commit", "-qm", "base"
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-qm",
+            "base"
         ]
     ),
     try
@@ -162,8 +172,7 @@ git(Cwd, Args) ->
             ),
             case collect_git(Port, <<>>) of
                 {ok, _} -> ok;
-                {error, Reason} ->
-                    erlang:error({git_failed, Args, Reason})
+                {error, Reason} -> erlang:error({git_failed, Args, Reason})
             end
     end.
 
@@ -176,7 +185,8 @@ collect_git(Port, Acc) ->
         {Port, {exit_status, Status}} ->
             {error, {exit_status, Status, Acc}}
     after 30000 ->
-        try port_close(Port)
+        try
+            port_close(Port)
         catch
             _:_ -> ok
         end,

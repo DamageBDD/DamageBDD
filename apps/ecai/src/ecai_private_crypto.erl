@@ -7,15 +7,19 @@
 max_bytes() -> ?MAX_BYTES.
 
 scope(Config, PublicKey) ->
-    #{<<"domain">> => <<"ecai:private-index:v1">>,
-      <<"owner">> => maps:get(owner, Config),
-      <<"corpus">> => maps:get(corpus, Config),
-      <<"key_id">> => maps:get(key_id, Config),
-      <<"recipient_sha256">> => crypto:hash(sha256, PublicKey)}.
+    #{
+        <<"domain">> => <<"ecai:private-index:v1">>,
+        <<"owner">> => maps:get(owner, Config),
+        <<"corpus">> => maps:get(corpus, Config),
+        <<"key_id">> => maps:get(key_id, Config),
+        <<"recipient_sha256">> => crypto:hash(sha256, PublicKey)
+    }.
 
 context(Config, PublicKey, SegmentId) ->
-    (scope(Config, PublicKey))#{<<"segment">> => SegmentId,
-                             <<"purpose">> => <<"records-and-postings">>}.
+    (scope(Config, PublicKey))#{
+        <<"segment">> => SegmentId,
+        <<"purpose">> => <<"records-and-postings">>
+    }.
 
 -spec seal(term(), binary(), map()) -> binary().
 seal(Term, PublicKey, Context) ->
@@ -28,8 +32,9 @@ seal(Term, PublicKey, Context) ->
     <<"ECP1", Encoded/binary>>.
 
 -spec open(binary(), binary(), map()) -> term().
-open(<<"ECP1", Encoded/binary>>, PrivateKey, Context)
-  when byte_size(Encoded) =< ?MAX_BYTES ->
+open(<<"ECP1", Encoded/binary>>, PrivateKey, Context) when
+    byte_size(Encoded) =< ?MAX_BYTES
+->
     try
         Envelope = decode(Encoded),
         validate_envelope(Envelope),
@@ -38,23 +43,42 @@ open(<<"ECP1", Encoded/binary>>, PrivateKey, Context)
     catch
         _:_ -> ecai_private_policy:fail(private_authentication_failed)
     end;
-open(_, _, _) -> ecai_private_policy:fail(private_authentication_failed).
+open(_, _, _) ->
+    ecai_private_policy:fail(private_authentication_failed).
 
 %% Reject compressed ETF before decoding, reject trailing bytes and never
 %% create new atoms from disk. [safe] alone does NOT prevent decompression bombs.
-decode(Bin = <<131, Tag, _/binary>>)
-  when Tag =/= 80, byte_size(Bin) =< ?MAX_BYTES ->
+decode(Bin = <<131, Tag, _/binary>>) when
+    Tag =/= 80, byte_size(Bin) =< ?MAX_BYTES
+->
     {Value, Used} = binary_to_term(Bin, [safe, used]),
     true = Used =:= byte_size(Bin),
     Value;
-decode(_) -> ecai_private_policy:fail(invalid_private_encoding).
+decode(_) ->
+    ecai_private_policy:fail(invalid_private_encoding).
 
-validate_envelope(#{v := 1, alg := pqc_hybrid_aes_256_gcm, kem := ml_kem_768,
-                    kem_ct := Kct, iv := IV, tag := Tag, ct := Ct,
-                    aad_sha256 := Hash})
-  when is_binary(Kct), byte_size(Kct) > 0, byte_size(Kct) =< 4096,
-       is_binary(IV), byte_size(IV) =:= 12,
-       is_binary(Tag), byte_size(Tag) =:= 16,
-       is_binary(Hash), byte_size(Hash) =:= 32,
-       is_binary(Ct), byte_size(Ct) =< ?MAX_BYTES -> ok;
-validate_envelope(_) -> ecai_private_policy:fail(invalid_private_envelope).
+validate_envelope(#{
+    v := 1,
+    alg := pqc_hybrid_aes_256_gcm,
+    kem := ml_kem_768,
+    kem_ct := Kct,
+    iv := IV,
+    tag := Tag,
+    ct := Ct,
+    aad_sha256 := Hash
+}) when
+    is_binary(Kct),
+    byte_size(Kct) > 0,
+    byte_size(Kct) =< 4096,
+    is_binary(IV),
+    byte_size(IV) =:= 12,
+    is_binary(Tag),
+    byte_size(Tag) =:= 16,
+    is_binary(Hash),
+    byte_size(Hash) =:= 32,
+    is_binary(Ct),
+    byte_size(Ct) =< ?MAX_BYTES
+->
+    ok;
+validate_envelope(_) ->
+    ecai_private_policy:fail(invalid_private_envelope).

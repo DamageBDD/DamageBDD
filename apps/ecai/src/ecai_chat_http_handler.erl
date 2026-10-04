@@ -177,7 +177,9 @@ handle_chat_json(Raw, Req, State) ->
     end.
 
 ask_ecai(SessionID, UserID, Message) ->
-    case ecai_otp_compat:catch_value(fun() -> ecai_chat:get_reply(SessionID, UserID, Message) end) of
+    case
+        ecai_otp_compat:catch_value(fun() -> ecai_chat:get_reply(SessionID, UserID, Message) end)
+    of
         {ok, Reply} when is_binary(Reply) ->
             #{
                 status => <<"ok">>,

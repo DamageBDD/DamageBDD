@@ -50,7 +50,14 @@
     encrypt/1, encrypt/2, decrypt/1, decrypt/2, encrypt_bound/2, decrypt_bound/2, change_password/3
 ]).
 -export([encrypt/3, decrypt/3]).
--export([has_node_password/0, set_node_password/1, has_node_keypair/0, ready/0, keystore_path/0, secrets_dets_path/0]).
+-export([
+    has_node_password/0,
+    set_node_password/1,
+    has_node_keypair/0,
+    ready/0,
+    keystore_path/0,
+    secrets_dets_path/0
+]).
 -import(damage_utils, [to_bin/1]).
 
 -ifdef(TEST).
@@ -348,7 +355,6 @@ handle_call({set_node_password, Pw0}, _From, State0) ->
                     {reply, Error, State0}
             end
     end;
-
 handle_call(clear_cache, _From, _State) ->
     %% Drop stale signing keys, recovery metadata and any old plaintext cache.
     %% An environment password can still unlock again on a later request.
@@ -423,19 +429,22 @@ handle_call(node_keypair, _From, State) ->
 %% Read an existing encrypted keystore on every export. Export never creates a
 %% replacement identity, and a swapped keystore must match any active cache.
 handle_call(export_node_wallet_seedphrase, _From, State) ->
-    Reply = case get_node_password_cached(State) of
-        {error, _} = Error -> Error;
-        {Password, _} ->
-            Path = keystore_path(),
-            case read_keypair(Path, Password) of
-                #{public_key := Pub, private_key := Priv} = KeyPair ->
-                    case cached_identity_matches(State, Pub, Priv) of
-                        true -> damage_ae_wallet:export_seedphrase(KeyPair);
-                        false -> {error, keystore_identity_mismatch}
-                    end;
-                {error, _} = Error -> Error
-            end
-    end,
+    Reply =
+        case get_node_password_cached(State) of
+            {error, _} = Error ->
+                Error;
+            {Password, _} ->
+                Path = keystore_path(),
+                case read_keypair(Path, Password) of
+                    #{public_key := Pub, private_key := Priv} = KeyPair ->
+                        case cached_identity_matches(State, Pub, Priv) of
+                            true -> damage_ae_wallet:export_seedphrase(KeyPair);
+                            false -> {error, keystore_identity_mismatch}
+                        end;
+                    {error, _} = Error ->
+                        Error
+                end
+        end,
     {reply, Reply, State};
 handle_call(Request, _From, State) ->
     %% Never log request payloads or State here: State may contain node_password
@@ -456,7 +465,8 @@ terminate(Reason, _State) ->
 code_change(_OldVsn, State, _Extra) when is_map(State) ->
     %% Also remove mnemonic/plaintext fields left by the reviewed implementation.
     {ok, maps:with([node_password, public_key, private_key], State)};
-code_change(_OldVsn, _State, _Extra) -> {ok, #{}}.
+code_change(_OldVsn, _State, _Extra) ->
+    {ok, #{}}.
 
 unlock_state(Pw, State0) ->
     Path = keystore_path(),
@@ -482,13 +492,22 @@ notify_unlock_dependents() ->
 
 notify_process(Name, Message) ->
     case whereis(Name) of
-        Pid when is_pid(Pid) -> Pid ! Message, ok;
-        _ -> ok
+        Pid when is_pid(Pid) ->
+            Pid ! Message,
+            ok;
+        _ ->
+            ok
     end.
 %% Preserve the OTP status-map keys, but expose no sensitive values. This also
 %% covers exception arguments, last messages and debug log entries.
 format_status(Status) ->
-    maps:map(fun(log, _) -> []; (_, _) -> redacted end, Status).
+    maps:map(
+        fun
+            (log, _) -> [];
+            (_, _) -> redacted
+        end,
+        Status
+    ).
 
 cached_identity_matches(#{public_key := CachedPub, private_key := CachedPriv}, Pub, Priv) ->
     to_bin(CachedPub) =:= to_bin(Pub) andalso CachedPriv =:= Priv;
@@ -557,15 +576,22 @@ decode_node_keypair(Encoded, NodePassword) ->
         {module, damage_ae_wallet} = code:ensure_loaded(damage_ae_wallet),
         case binary_to_term(Encoded, [safe]) of
             {Salt, IV, Tag, CipherText} = Envelope when
-                is_binary(Salt), byte_size(Salt) =:= ?SALT_SIZE,
-                is_binary(IV), byte_size(IV) =:= ?IV_SIZE,
-                is_binary(Tag), byte_size(Tag) =:= 16, is_binary(CipherText) ->
+                is_binary(Salt),
+                byte_size(Salt) =:= ?SALT_SIZE,
+                is_binary(IV),
+                byte_size(IV) =:= ?IV_SIZE,
+                is_binary(Tag),
+                byte_size(Tag) =:= 16,
+                is_binary(CipherText)
+            ->
                 case secrets:decrypt(NodePassword, Envelope) of
                     Plain when is_binary(Plain) ->
                         validate_stored_keypair(binary_to_term(Plain, [safe]));
-                    _ -> {error, decrypt_keypair}
+                    _ ->
+                        {error, decrypt_keypair}
                 end;
-            _ -> {error, corrupt_keypair}
+            _ ->
+                {error, corrupt_keypair}
         end
     catch
         _:_ -> {error, corrupt_keypair}
@@ -574,16 +600,23 @@ decode_node_keypair(Encoded, NodePassword) ->
 validate_stored_keypair(KeyPair) ->
     case damage_ae_wallet:validate_keypair(KeyPair) of
         ok ->
-            case lists:any(fun(K) -> maps:is_key(K, KeyPair) end,
-                           [mnemonic, seed_phrase, wallet_scheme]) of
-                false -> KeyPair;  %% Existing random-key wallets remain valid.
+            case
+                lists:any(
+                    fun(K) -> maps:is_key(K, KeyPair) end,
+                    [mnemonic, seed_phrase, wallet_scheme]
+                )
+            of
+                %% Existing random-key wallets remain valid.
+                false ->
+                    KeyPair;
                 true ->
                     case damage_ae_wallet:export_seedphrase(KeyPair) of
                         {ok, _} -> KeyPair;
                         {error, Why} -> {error, {invalid_wallet_backup, Why}}
                     end
             end;
-        {error, _} -> {error, corrupt_keypair}
+        {error, _} ->
+            {error, corrupt_keypair}
     end.
 
 create_keypair(Path, NodePassword) ->
@@ -596,9 +629,11 @@ create_keypair(Path, NodePassword) ->
                     catch
                         _:_ -> {error, keypair_encrypt_failed}
                     end;
-                {error, _} = Error -> Error
+                {error, _} = Error ->
+                    Error
             end;
-        {error, Reason} -> {error, {keypair_directory_failed, Reason}}
+        {error, Reason} ->
+            {error, {keypair_directory_failed, Reason}}
     end.
 
 %% O_EXCL: never truncate a wallet created by another initializer. Set 0600
@@ -607,18 +642,27 @@ create_keypair(Path, NodePassword) ->
 write_new_keypair(Path, Encoded, Data) ->
     case file:open(Path, [write, binary, raw, exclusive]) of
         {ok, Io} ->
-            WriteResult = try write_keypair_contents(Path, Io, Encoded)
-                          catch _:_ -> {error, keypair_write_failed} end,
+            WriteResult =
+                try
+                    write_keypair_contents(Path, Io, Encoded)
+                catch
+                    _:_ -> {error, keypair_write_failed}
+                end,
             CloseResult = file:close(Io),
             case {WriteResult, CloseResult} of
-                {ok, ok} -> Data;
+                {ok, ok} ->
+                    Data;
                 {{error, _} = Error, _} ->
-                    _ = file:delete(Path), Error;
+                    _ = file:delete(Path),
+                    Error;
                 {ok, {error, Reason}} ->
-                    _ = file:delete(Path), {error, {keypair_close_failed, Reason}}
+                    _ = file:delete(Path),
+                    {error, {keypair_close_failed, Reason}}
             end;
-        {error, eexist} -> {error, keypair_already_exists};
-        {error, Reason} -> {error, {keypair_write_failed, Reason}}
+        {error, eexist} ->
+            {error, keypair_already_exists};
+        {error, Reason} ->
+            {error, {keypair_write_failed, Reason}}
     end.
 
 write_keypair_contents(Path, Io, Encoded) ->
@@ -630,9 +674,11 @@ write_keypair_contents(Path, Io, Encoded) ->
                         ok -> ok;
                         {error, Reason} -> {error, {keypair_sync_failed, Reason}}
                     end;
-                {error, Reason} -> {error, {keypair_write_failed, Reason}}
+                {error, Reason} ->
+                    {error, {keypair_write_failed, Reason}}
             end;
-        {error, Reason} -> {error, {keypair_chmod_failed, Reason}}
+        {error, Reason} ->
+            {error, {keypair_chmod_failed, Reason}}
     end.
 
 %% This function returns root recovery material. Only trusted operator tooling

@@ -58,7 +58,9 @@ init([]) ->
             MediaSpecs = media_specs(),
             LegacySpecs = legacy_specs(),
             OptionalSpecs = [optional_services_child_spec()],
-            Children = MediaSpecs ++ erm_tts:child_specs() ++ whisper_child_specs() ++ LegacySpecs ++ OptionalSpecs,
+            Children =
+                MediaSpecs ++ erm_tts:child_specs() ++ whisper_child_specs() ++ LegacySpecs ++
+                    OptionalSpecs,
 
             ?LOG_DEBUG("erm core child specifications: ~p", [Children]),
             {ok, {SupFlags, Children}}
@@ -327,7 +329,8 @@ fallback_lens_child_spec(LensConfig) ->
 
 gtknode4_run_decision(Config) ->
     case maps:get(enabled, Config, false) of
-        false -> disabled;
+        false ->
+            disabled;
         true ->
             case maps:get(allow_headless, Config, false) orelse graphical_session_available() of
                 true -> run;
@@ -379,14 +382,18 @@ reclaim_registered_supervisor(Name, Pid) ->
             ?LOG_WARNING("Unexpected stop result for stale ~p pid=~p result=~p", [Name, Pid, Other])
     catch
         Class:Reason ->
-            ?LOG_WARNING("Could not stop stale ~p cleanly pid=~p class=~p reason=~p",
-                         [Name, Pid, Class, Reason]),
+            ?LOG_WARNING(
+                "Could not stop stale ~p cleanly pid=~p class=~p reason=~p",
+                [Name, Pid, Class, Reason]
+            ),
             try exit(Pid, shutdown) of
                 _ -> ok
             catch
                 ExitClass:ExitReason ->
-                    ?LOG_WARNING("Could not signal stale ~p pid=~p class=~p reason=~p",
-                                 [Name, Pid, ExitClass, ExitReason])
+                    ?LOG_WARNING(
+                        "Could not signal stale ~p pid=~p class=~p reason=~p",
+                        [Name, Pid, ExitClass, ExitReason]
+                    )
             end
     end,
     wait_unregistered(Name, 100).
@@ -408,7 +415,8 @@ wait_unregistered(Name, Attempts) ->
 
 media_specs() ->
     case media_enabled() of
-        true -> media_child_specs();
+        true ->
+            media_child_specs();
         false ->
             ?LOG_INFO("ERM media workers are disabled for this runtime", []),
             []
@@ -444,10 +452,14 @@ media_child_specs() ->
 
 media_enabled() ->
     case application:get_env(erm, media_enabled) of
-        {ok, true} -> true;
-        {ok, false} -> false;
-        {ok, auto} -> graphical_session_available();
-        undefined -> graphical_session_available();
+        {ok, true} ->
+            true;
+        {ok, false} ->
+            false;
+        {ok, auto} ->
+            graphical_session_available();
+        undefined ->
+            graphical_session_available();
         {ok, Invalid} ->
             ?LOG_WARNING(
                 "Ignoring invalid erm.media_enabled value: ~p; using automatic detection",
@@ -525,7 +537,8 @@ whisper_child_specs() ->
             Opts = maps:remove(enabled, Opts0),
             whisper_child_specs(Enabled, Opts);
         {error, Reason} ->
-            whisper_log(warning,
+            whisper_log(
+                warning,
                 "Ignoring invalid erm whisper_trigger configuration: ~p",
                 [Reason]
             ),
@@ -536,29 +549,38 @@ whisper_child_specs(false, _Opts) ->
     whisper_log(debug, "Whisper trigger disabled by configuration.", []),
     [];
 whisper_child_specs(true, #{backend := native} = Opts) ->
-    Native = case maps:get(native, Opts, []) of
-        M when is_map(M) -> M;
-        L when is_list(L) -> proplists:to_map(L)
-    end,
+    Native =
+        case maps:get(native, Opts, []) of
+            M when is_map(M) -> M;
+            L when is_list(L) -> proplists:to_map(L)
+        end,
     NativeOpts = Native#{trigger_phrases => maps:get(trigger_phrases, Opts, ["bob"])},
-    voice_child_specs(Opts) ++ [#{id => erm_native_voice,
-        start => {erm_native_voice, start_link, [NativeOpts]},
-        restart => permanent, shutdown => 5000, type => worker,
-        modules => [erm_native_voice]}];
+    voice_child_specs(Opts) ++
+        [
+            #{
+                id => erm_native_voice,
+                start => {erm_native_voice, start_link, [NativeOpts]},
+                restart => permanent,
+                shutdown => 5000,
+                type => worker,
+                modules => [erm_native_voice]
+            }
+        ];
 whisper_child_specs(true, Opts) ->
     case whisper_trigger_srv:availability(Opts) of
         {ok, Runtime} ->
             whisper_log(info, "Whisper trigger available: ~p", [Runtime]),
-            voice_child_specs(Opts) ++ [
-                #{
-                    id => whisper_trigger_srv,
-                    start => {whisper_trigger_srv, start_link, [Opts]},
-                    restart => permanent,
-                    shutdown => 5000,
-                    type => worker,
-                    modules => [whisper_trigger_srv]
-                }
-            ];
+            voice_child_specs(Opts) ++
+                [
+                    #{
+                        id => whisper_trigger_srv,
+                        start => {whisper_trigger_srv, start_link, [Opts]},
+                        restart => permanent,
+                        shutdown => 5000,
+                        type => worker,
+                        modules => [whisper_trigger_srv]
+                    }
+                ];
         {error, Reason} ->
             whisper_log(info, "Whisper trigger unavailable; not starting: ~p", [Reason]),
             []
@@ -572,10 +594,19 @@ voice_child_specs(WhisperOpts) ->
     case erm_voice:options(maps:get(voice, WhisperOpts, [])) of
         {ok, VoiceOpts} ->
             case maps:get(enabled, VoiceOpts, true) of
-                false -> [];
-                true -> [#{id => erm_voice, start => {erm_voice, start_link, [VoiceOpts]},
-                           restart => permanent, shutdown => 5000, type => worker,
-                           modules => [erm_voice]}]
+                false ->
+                    [];
+                true ->
+                    [
+                        #{
+                            id => erm_voice,
+                            start => {erm_voice, start_link, [VoiceOpts]},
+                            restart => permanent,
+                            shutdown => 5000,
+                            type => worker,
+                            modules => [erm_voice]
+                        }
+                    ]
             end;
         {error, Reason} ->
             logger:log(warning, "Voice actions disabled: ~p", [Reason], #{domain => [erm, voice]}),

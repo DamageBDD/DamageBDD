@@ -105,7 +105,8 @@ query(App, ContractId0, ContractFile, Func, Args) ->
 normalize_contract_id(ContractId) when is_binary(ContractId) ->
     validate_contract_id(ContractId);
 normalize_contract_id(ContractId) when is_list(ContractId) ->
-    try validate_contract_id(unicode:characters_to_binary(ContractId))
+    try
+        validate_contract_id(unicode:characters_to_binary(ContractId))
     catch
         _:_ -> {error, {invalid_contract_id, ContractId}}
     end;
@@ -183,7 +184,8 @@ wait_deploy_and_remember(App, EnvKey, TxHash) ->
 
 deployed_contract_id(Reply) when is_map(Reply) ->
     case find_contract_id(Reply) of
-        {ok, _} = Ok -> Ok;
+        {ok, _} = Ok ->
+            Ok;
         error ->
             case find_tx_hash(Reply) of
                 {ok, TxHash} -> {pending, TxHash};

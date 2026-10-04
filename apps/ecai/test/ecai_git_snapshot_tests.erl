@@ -68,9 +68,13 @@ with_repo(Fun) ->
     ok = git(Base, ["config", "user.name", "ECAI Test"]),
     ok = git(Base, ["add", "."]),
     ok = git(Base, [
-        "-c", "commit.gpgsign=false",
-        "-c", "core.hooksPath=/dev/null",
-        "commit", "-qm", "base"
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        "core.hooksPath=/dev/null",
+        "commit",
+        "-qm",
+        "base"
     ]),
     Commit = unicode:characters_to_binary(
         git_output(Base, ["rev-parse", "HEAD"])
@@ -123,7 +127,8 @@ collect_git(Port, Acc) ->
         {Port, {exit_status, Status}} ->
             {error, {exit_status, Status, Acc}}
     after 30000 ->
-        try port_close(Port)
+        try
+            port_close(Port)
         catch
             _:_ -> ok
         end,
@@ -132,6 +137,8 @@ collect_git(Port, Acc) ->
 
 sha256_hex(Bin) ->
     iolist_to_binary(
-        [io_lib:format("~2.16.0b", [Byte]) ||
-         <<Byte>> <= crypto:hash(sha256, Bin)]
+        [
+            io_lib:format("~2.16.0b", [Byte])
+         || <<Byte>> <= crypto:hash(sha256, Bin)
+        ]
     ).

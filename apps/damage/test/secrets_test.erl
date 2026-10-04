@@ -8,22 +8,29 @@
 
 secrets_storage_test_() ->
     {timeout, 45,
-        {setup, fun setup/0, fun teardown/1,
-            fun({Peer, Dir}) ->
-                Path = filename:join(Dir, "secrets.dets"),
-                {inorder, [
-                    {"encrypted DETS storage, reopen, and deletion",
-                        {timeout, 15, fun() ->
-                            ?assertEqual(ok, peer:call(
-                                Peer, ?MODULE, storage_checks, [Path], 10000))
-                        end}},
-                    {"wrong keys and tampered envelopes are rejected",
-                        {timeout, 15, fun() ->
-                            ?assertEqual(ok, peer:call(
-                                Peer, ?MODULE, authentication_checks, [], 10000))
-                        end}}
-                ]}
-            end}}.
+        {setup, fun setup/0, fun teardown/1, fun({Peer, Dir}) ->
+            Path = filename:join(Dir, "secrets.dets"),
+            {inorder, [
+                {"encrypted DETS storage, reopen, and deletion",
+                    {timeout, 15, fun() ->
+                        ?assertEqual(
+                            ok,
+                            peer:call(
+                                Peer, ?MODULE, storage_checks, [Path], 10000
+                            )
+                        )
+                    end}},
+                {"wrong keys and tampered envelopes are rejected",
+                    {timeout, 15, fun() ->
+                        ?assertEqual(
+                            ok,
+                            peer:call(
+                                Peer, ?MODULE, authentication_checks, [], 10000
+                            )
+                        )
+                    end}}
+            ]}
+        end}}.
 
 setup() ->
     {ok, _} = application:ensure_all_started(crypto),
@@ -36,7 +43,9 @@ setup() ->
             args => ["+S", "2:2"],
             env => [
                 {"DAMAGE_SECRET_KEY", ""},
-                {"ERL_FLAGS", ""}, {"ERL_AFLAGS", ""}, {"ERL_ZFLAGS", ""}
+                {"ERL_FLAGS", ""},
+                {"ERL_AFLAGS", ""},
+                {"ERL_ZFLAGS", ""}
             ],
             wait_boot => 15000
         }),
@@ -76,8 +85,7 @@ add_peer_module_path(Peer, Module) ->
                         true ->
                             case peer:call(Peer, code, ensure_loaded, [Module]) of
                                 {module, Module} -> ok;
-                                {error, Why} ->
-                                    erlang:error({test_peer_module_load, Module, Why})
+                                {error, Why} -> erlang:error({test_peer_module_load, Module, Why})
                             end;
                         {error, Why} ->
                             erlang:error({test_peer_code_path, Module, Dir, Why})
@@ -91,7 +99,8 @@ add_peer_module_path(Peer, Module) ->
 
 teardown({Peer, Dir}) ->
     %% Stop the VM (and any remaining DETS owners) before deleting its file.
-    try peer:stop(Peer)
+    try
+        peer:stop(Peer)
     after
         ok = clean_dir(Dir)
     end.
@@ -132,10 +141,18 @@ authentication_checks() ->
     ?assertEqual(16, byte_size(Tag)),
     ?assertEqual(Plain, secrets:decrypt_secret(Envelope, Key)),
     ?assertEqual(error, secrets:decrypt_secret(Envelope, flip_first_byte(Key))),
-    ?assertEqual(error, secrets:decrypt_secret(
-        {IV, flip_first_byte(Cipher), Tag}, Key)),
-    ?assertEqual(error, secrets:decrypt_secret(
-        {IV, Cipher, flip_first_byte(Tag)}, Key)),
+    ?assertEqual(
+        error,
+        secrets:decrypt_secret(
+            {IV, flip_first_byte(Cipher), Tag}, Key
+        )
+    ),
+    ?assertEqual(
+        error,
+        secrets:decrypt_secret(
+            {IV, Cipher, flip_first_byte(Tag)}, Key
+        )
+    ),
     ok.
 
 flip_first_byte(<<Byte, Rest/binary>>) ->
@@ -143,7 +160,8 @@ flip_first_byte(<<Byte, Rest/binary>>) ->
 
 close_table(Path, Attempts) when Attempts > 0 ->
     case dets:info(Path) of
-        undefined -> ok;
+        undefined ->
+            ok;
         _ ->
             ok = dets:close(Path),
             close_table(Path, Attempts - 1)
@@ -155,23 +173,27 @@ close_table(Path, 0) ->
     end.
 
 temp_dir(Attempts) when Attempts > 0 ->
-    Root = case os:getenv("TMPDIR") of
-        false -> "/tmp";
-        "" -> "/tmp";
-        Value -> Value
-    end,
+    Root =
+        case os:getenv("TMPDIR") of
+            false -> "/tmp";
+            "" -> "/tmp";
+            Value -> Value
+        end,
     Suffix = binary_to_list(binary:encode_hex(crypto:strong_rand_bytes(16))),
     Dir = filename:join(filename:absname(Root), "damage-secrets-test-" ++ Suffix),
     case file:make_dir(Dir) of
         ok ->
             case file:change_mode(Dir, 8#700) of
-                ok -> Dir;
+                ok ->
+                    Dir;
                 {error, Reason} ->
                     _ = file:del_dir(Dir),
                     erlang:error({test_directory_permissions, Reason})
             end;
-        {error, eexist} -> temp_dir(Attempts - 1);
-        {error, Reason} -> erlang:error({test_directory_create, Reason})
+        {error, eexist} ->
+            temp_dir(Attempts - 1);
+        {error, Reason} ->
+            erlang:error({test_directory_create, Reason})
     end;
 temp_dir(0) ->
     erlang:error(test_directory_collision_limit).

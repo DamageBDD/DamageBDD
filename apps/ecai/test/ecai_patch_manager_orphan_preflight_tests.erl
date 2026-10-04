@@ -54,9 +54,11 @@ recover_orphan_retry_removes_false_failure_test() ->
         orphaned_worker,
         maps:get(recovered_from, Recovered)
     ),
-    ?assert(is_integer(
-        maps:get(next_retry_at_ms, Recovered)
-    )),
+    ?assert(
+        is_integer(
+            maps:get(next_retry_at_ms, Recovered)
+        )
+    ),
     ?assertNot(maps:is_key(failure_class, Recovered)),
     ?assertNot(maps:is_key(error, Recovered)),
     ?assertNot(maps:is_key(last_error, Recovered)),

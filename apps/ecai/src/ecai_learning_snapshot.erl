@@ -43,9 +43,11 @@ write(Opts) ->
                         ok -> {ok, File, Snapshot};
                         {error, _} = Error -> Error
                     end;
-                {error, _} = Error -> Error
+                {error, _} = Error ->
+                    Error
             end;
-        {error, _} = Error -> Error
+        {error, _} = Error ->
+            Error
     end.
 
 path() ->
@@ -58,20 +60,29 @@ safe_pool_status() ->
     try ecai_ollama_pool:status() of
         Status -> Status
     catch
-        Class:Reason -> #{available => false, error => to_binary(io_lib:format("~p:~p", [Class, Reason]))}
+        Class:Reason ->
+            #{available => false, error => to_binary(io_lib:format("~p:~p", [Class, Reason]))}
     end.
 
 safe_pool_identity() ->
     case safe_pool_status() of
         #{nodes := Nodes} when is_list(Nodes) ->
             lists:sort([
-                maps:with([
-                    id, provider, default_model, configured_models,
-                    configured_digests, discovered_models
-                ], Node)
+                maps:with(
+                    [
+                        id,
+                        provider,
+                        default_model,
+                        configured_models,
+                        configured_digests,
+                        discovered_models
+                    ],
+                    Node
+                )
              || Node <- Nodes
             ]);
-        _ -> []
+        _ ->
+            []
     end.
 
 normalize_lists(Data) ->
@@ -82,25 +93,35 @@ normalize_lists(Data) ->
     }.
 
 sort_by_module(List) ->
-    lists:sort(fun(A, B) ->
-        {maps:get(application, A, undefined), maps:get(module, A, undefined)} =<
-        {maps:get(application, B, undefined), maps:get(module, B, undefined)}
-    end, List).
+    lists:sort(
+        fun(A, B) ->
+            {maps:get(application, A, undefined), maps:get(module, A, undefined)} =<
+                {maps:get(application, B, undefined), maps:get(module, B, undefined)}
+        end,
+        List
+    ).
 
 sort_repairs(List) ->
-    lists:sort(fun(A, B) ->
-        {maps:get(fingerprint, A, <<>>), maps:get(finding_version, A, <<>>)} =<
-        {maps:get(fingerprint, B, <<>>), maps:get(finding_version, B, <<>>)}
-    end, List).
+    lists:sort(
+        fun(A, B) ->
+            {maps:get(fingerprint, A, <<>>), maps:get(finding_version, A, <<>>)} =<
+                {maps:get(fingerprint, B, <<>>), maps:get(finding_version, B, <<>>)}
+        end,
+        List
+    ).
 
 repo_root(Opts) ->
-    Root0 = maps:get(repo_root, Opts,
-        application:get_env(ecai, code_repo_root, ".")),
+    Root0 = maps:get(
+        repo_root,
+        Opts,
+        application:get_env(ecai, code_repo_root, ".")
+    ),
     filename:absname(path_to_list(Root0)).
 
 git_info(RepoRoot) ->
     case filelib:is_dir(filename:join(RepoRoot, ".git")) of
-        false -> #{repo_root => to_binary(RepoRoot), available => false};
+        false ->
+            #{repo_root => to_binary(RepoRoot), available => false};
         true ->
             Commit = command(RepoRoot, "git", ["rev-parse", "HEAD"]),
             Status = command(RepoRoot, "git", ["status", "--porcelain"]),
@@ -118,10 +139,16 @@ command_value({error, Reason}) -> to_binary(io_lib:format("error:~p", [Reason]))
 
 command(Cwd, ExeName, Args) ->
     case os:find_executable(ExeName) of
-        false -> {error, {executable_not_found, ExeName}};
+        false ->
+            {error, {executable_not_found, ExeName}};
         Exe ->
-            Port = open_port({spawn_executable, Exe}, [binary, exit_status, stderr_to_stdout,
-                {args, Args}, {cd, Cwd}]),
+            Port = open_port({spawn_executable, Exe}, [
+                binary,
+                exit_status,
+                stderr_to_stdout,
+                {args, Args},
+                {cd, Cwd}
+            ]),
             collect_port(Port, <<>>, 30000)
     end.
 
@@ -142,14 +169,19 @@ json_safe(Map) when is_map(Map) ->
     maps:from_list([{json_key(K), json_safe(V)} || {K, V} <- maps:to_list(Map)]);
 json_safe(List) when is_list(List) -> [json_safe(V) || V <- List];
 json_safe(Tuple) when is_tuple(Tuple) -> [json_safe(V) || V <- tuple_to_list(Tuple)];
-json_safe(true) -> true;
-json_safe(false) -> false;
-json_safe(null) -> null;
-json_safe(undefined) -> null;
+json_safe(true) ->
+    true;
+json_safe(false) ->
+    false;
+json_safe(null) ->
+    null;
+json_safe(undefined) ->
+    null;
 json_safe(Atom) when is_atom(Atom) -> atom_to_binary(Atom, utf8);
 json_safe(Bin) when is_binary(Bin) -> Bin;
 json_safe(Number) when is_number(Number) -> Number;
-json_safe(Other) -> to_binary(Other).
+json_safe(Other) ->
+    to_binary(Other).
 
 json_key(K) when is_binary(K) -> K;
 json_key(K) when is_atom(K) -> atom_to_binary(K, utf8);
@@ -160,9 +192,11 @@ sha256_hex(Bin) ->
     iolist_to_binary([io_lib:format("~2.16.0b", [B]) || <<B>> <= crypto:hash(sha256, Bin)]).
 
 now_iso8601() ->
-    to_binary(calendar:system_time_to_rfc3339(
-        erlang:system_time(second), [{unit, second}, {offset, "Z"}]
-    )).
+    to_binary(
+        calendar:system_time_to_rfc3339(
+            erlang:system_time(second), [{unit, second}, {offset, "Z"}]
+        )
+    ).
 
 path_to_list(P) when is_list(P) -> P;
 path_to_list(P) when is_binary(P) -> binary_to_list(P).

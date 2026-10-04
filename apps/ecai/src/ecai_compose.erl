@@ -59,12 +59,14 @@ compose(Left, Right) when is_map(Left), is_map(Right) ->
                 {ok, ResultPredicate} ->
                     Subject = ecai_relation:subject(Left),
                     Object = ecai_relation:object(Right),
-                    case ecai_relation:new(
-                        Subject,
-                        ResultPredicate,
-                        Object,
-                        #{source => deterministic_composition}
-                    ) of
+                    case
+                        ecai_relation:new(
+                            Subject,
+                            ResultPredicate,
+                            Object,
+                            #{source => deterministic_composition}
+                        )
+                    of
                         {ok, Relation0} ->
                             Proof = #{
                                 kind => deterministic_relation_composition,
@@ -91,8 +93,9 @@ closure(Relations) ->
 
 -spec closure([ecai_relation:relation()], non_neg_integer()) ->
     [ecai_relation:relation()].
-closure(Relations, MaxDepth)
-    when is_list(Relations), is_integer(MaxDepth), MaxDepth >= 0 ->
+closure(Relations, MaxDepth) when
+    is_list(Relations), is_integer(MaxDepth), MaxDepth >= 0
+->
     Base = ecai_relation:dedupe(Relations),
     closure_round(Base, Base, 0, MaxDepth).
 
@@ -116,12 +119,14 @@ derive(Relations, Subject, Predicate, MaxDepth) ->
 %%--------------------------------------------------------------------
 
 result_predicate(P1, P2) ->
-    case [
-        Result
-     || {LeftPredicate, RightPredicate, Result} <- rules(),
-        ecai_relation:entity_equal(P1, LeftPredicate),
-        ecai_relation:entity_equal(P2, RightPredicate)
-    ] of
+    case
+        [
+            Result
+         || {LeftPredicate, RightPredicate, Result} <- rules(),
+            ecai_relation:entity_equal(P1, LeftPredicate),
+            ecai_relation:entity_equal(P2, RightPredicate)
+        ]
+    of
         [Result | _] -> {ok, Result};
         [] -> not_found
     end.
@@ -140,7 +145,8 @@ closure_round(All, Frontier, Depth, MaxDepth) ->
         not maps:is_key(ecai_relation:key(R), Existing)
     ],
     case New of
-        [] -> All;
+        [] ->
+            All;
         _ ->
             All1 = ecai_relation:dedupe(All ++ New),
             closure_round(All1, New, Depth + 1, MaxDepth)

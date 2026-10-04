@@ -23,6 +23,10 @@ resume() -> ecai_content_manager:resume().
 learning_updated() -> ecai_content_manager:learning_updated().
 job(JobId) -> ecai_content_store:get_job(JobId).
 jobs() -> ecai_content_store:jobs().
-status() -> #{manager => ecai_content_manager:status(), store => ecai_content_store:status(),
-              blossom_server => ecai_blossom_client:default_server()}.
+status() ->
+    #{
+        manager => ecai_content_manager:status(),
+        store => ecai_content_store:status(),
+        blossom_server => ecai_blossom_client:default_server()
+    }.
 artifact_dir(JobId) -> ecai_content_store:artifact_dir(JobId).

@@ -66,7 +66,9 @@ get_access_token(Req) ->
         <<"Bearer ", Token/binary>> ->
             {access_token, Token};
         _ ->
-            case damage_otp_compat:catch_value(fun() -> cowboy_req:match_qs([access_token], Req) end) of
+            case
+                damage_otp_compat:catch_value(fun() -> cowboy_req:match_qs([access_token], Req) end)
+            of
                 #{access_token := null} ->
                     {error, missing};
                 #{access_token := Token} ->
@@ -82,7 +84,11 @@ get_access_token(Req) ->
 verify_token(TokenBin) when is_binary(TokenBin) ->
     case binary:split(TokenBin, <<".">>, [global]) of
         [<<"ae1">>, PayloadB64, Sig] ->
-            case damage_otp_compat:catch_value(fun() -> jsx:decode(base64url_decode(PayloadB64), [{labels, atom}, return_maps]) end) of
+            case
+                damage_otp_compat:catch_value(fun() ->
+                    jsx:decode(base64url_decode(PayloadB64), [{labels, atom}, return_maps])
+                end)
+            of
                 #{sub := Account, exp := Exp} = Payload ->
                     Now = date_util:now_to_seconds(os:timestamp()),
                     case Exp > Now of

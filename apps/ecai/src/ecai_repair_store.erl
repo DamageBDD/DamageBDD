@@ -31,7 +31,8 @@ persist_capsule(Root0, Capsule) ->
                 ok -> {ok, unicode:characters_to_binary(Path)};
                 Error -> Error
             end;
-        Error -> Error
+        Error ->
+            Error
     end.
 
 -spec load_capsule(file:filename_all(), binary() | list()) -> {ok, map()} | {error, term()}.
@@ -43,10 +44,12 @@ load_capsule(Root0, Id0) ->
                 ok -> {ok, Capsule};
                 Error -> Error
             end;
-        Error -> Error
+        Error ->
+            Error
     end.
 
--spec persist_event(file:filename_all(), binary() | list(), map()) -> {ok, binary()} | {error, term()}.
+-spec persist_event(file:filename_all(), binary() | list(), map()) ->
+    {ok, binary()} | {error, term()}.
 persist_event(Root0, Family0, Event) ->
     Root = to_list(Root0),
     Family = safe_component(to_list(Family0)),
@@ -62,10 +65,13 @@ persist_event(Root0, Family0, Event) ->
 read_term(Path0) ->
     case file:read_file(to_list(Path0)) of
         {ok, Bin} ->
-            try {ok, binary_to_term(Bin, [safe])}
-            catch Class:Reason -> {error, {invalid_term_file, Class, Reason}}
+            try
+                {ok, binary_to_term(Bin, [safe])}
+            catch
+                Class:Reason -> {error, {invalid_term_file, Class, Reason}}
             end;
-        Error -> Error
+        Error ->
+            Error
     end.
 
 write_term(Path, Term) ->
@@ -74,22 +80,32 @@ write_term(Path, Term) ->
     Bin = term_to_binary(Term, [compressed]),
     case file:open(Tmp, [write, raw, binary, exclusive]) of
         {ok, Io} ->
-            Result = case file:write(Io, Bin) of
-                ok -> file:sync(Io);
-                Error -> Error
-            end,
+            Result =
+                case file:write(Io, Bin) of
+                    ok -> file:sync(Io);
+                    Error -> Error
+                end,
             Close = file:close(Io),
             case {Result, Close} of
                 {ok, ok} ->
                     case file:rename(Tmp, Path) of
-                        ok -> ok;
-                        {error, eexist} -> file:delete(Tmp), ok;
-                        Error0 -> file:delete(Tmp), Error0
+                        ok ->
+                            ok;
+                        {error, eexist} ->
+                            file:delete(Tmp),
+                            ok;
+                        Error0 ->
+                            file:delete(Tmp),
+                            Error0
                     end;
-                {Error1, _} -> file:delete(Tmp), Error1
+                {Error1, _} ->
+                    file:delete(Tmp),
+                    Error1
             end;
-        {error, eexist} -> write_term(Path, Term);
-        Error -> Error
+        {error, eexist} ->
+            write_term(Path, Term);
+        Error ->
+            Error
     end.
 
 default_data_root() ->
@@ -99,15 +115,21 @@ default_data_root() ->
                 false -> "/tmp";
                 Home -> filename:join(Home, ".local/state")
             end;
-        Root -> Root
+        Root ->
+            Root
     end.
 
 safe_component(Value) ->
-    [case (C >= $a andalso C =< $z) orelse (C >= $A andalso C =< $Z) orelse
-              (C >= $0 andalso C =< $9) orelse C =:= $- orelse C =:= $_ of
-         true -> C;
-         false -> $_
-     end || C <- Value].
+    [
+        case
+            (C >= $a andalso C =< $z) orelse (C >= $A andalso C =< $Z) orelse
+                (C >= $0 andalso C =< $9) orelse C =:= $- orelse C =:= $_
+        of
+            true -> C;
+            false -> $_
+        end
+     || C <- Value
+    ].
 
 to_list(Value) when is_list(Value) -> Value;
 to_list(Value) when is_binary(Value) -> unicode:characters_to_list(Value).

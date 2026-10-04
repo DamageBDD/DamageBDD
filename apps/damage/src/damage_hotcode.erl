@@ -5,8 +5,16 @@
 -include_lib("kernel/include/file.hrl").
 -include_lib("kernel/include/logger.hrl").
 
--export([prepare/1, reload/1, rollback/1, status/0, allowed/1,
-         source_dir/0, source_path/1, release_source/1]).
+-export([
+    prepare/1,
+    reload/1,
+    rollback/1,
+    status/0,
+    allowed/1,
+    source_dir/0,
+    source_path/1,
+    release_source/1
+]).
 
 -define(DEFAULT_SOURCE_DIR, "/var/lib/damage/overrides/src").
 -define(MAX_SOURCE_BYTES, 4194304).
@@ -22,12 +30,15 @@ allowed(Module) when is_atom(Module) ->
         require(is_list(Config), invalid_operator_hotcode_config),
         require(proplists:get_value(enabled, Config, false) =:= true, hotcode_disabled),
         Allowed = proplists:get_value(allowed_modules, Config, []),
-        require(is_list(Allowed) andalso lists:all(fun erlang:is_atom/1, Allowed),
-                invalid_hotcode_allowlist),
+        require(
+            is_list(Allowed) andalso lists:all(fun erlang:is_atom/1, Allowed),
+            invalid_hotcode_allowlist
+        ),
         require(lists:member(Module, Allowed), {hotcode_module_not_allowed, Module}),
         ok
     end);
-allowed(_) -> {error, invalid_hotcode_module}.
+allowed(_) ->
+    {error, invalid_hotcode_module}.
 
 reload_class(steps_hotcode) -> false;
 reload_class(steps_utils) -> false;
@@ -52,11 +63,13 @@ prepare(Module) ->
             must_ok(filelib:ensure_dir(Dest)),
             %% Exclusive create: concurrent prepare must never clobber an edit.
             case write_exclusive(Dest, Bytes) of
-                ok -> {ok, copied, Dest};
+                ok ->
+                    {ok, copied, Dest};
                 {error, eexist} ->
                     must_ok(regular_file(Dest)),
                     {ok, exists, Dest};
-                {error, Why} -> {error, {copy_override_source_failed, Why}}
+                {error, Why} ->
+                    {error, {copy_override_source_failed, Why}}
             end
         end)
     end).
@@ -86,29 +99,41 @@ rollback(Module) when is_atom(Module) ->
         require(in_application(Module), {module_not_in_damage_application, Module}),
         damage_release_overrides:with_lock(fun() -> rollback_locked(Module) end)
     end);
-rollback(_) -> {error, invalid_hotcode_module}.
+rollback(_) ->
+    {error, invalid_hotcode_module}.
 
 load_override(Module, Filename, Beam, SourceSha, Warnings) ->
     Previous = damage_release_overrides:get(Module),
-    Entry = case Previous of
-        not_found -> capture_base(Module);
-        {ok, Existing} ->
-            require(maps:get(state, Existing, legacy) =:= active,
-                    {override_requires_rollback, Module}),
-            %% Module MD5 alone cannot distinguish different BEAM metadata.
-            {ok, Current} = must(damage_release_overrides:current_generation(Module, Existing)),
-            require(maps:get(filename, Current) =:= maps:get(loaded_filename, Existing, undefined)
-                andalso maps:get(beam_sha256, Current) =:= maps:get(loaded_beam_sha256, Existing),
-                {untracked_current_code, Module}),
-            Existing
-    end,
+    Entry =
+        case Previous of
+            not_found ->
+                capture_base(Module);
+            {ok, Existing} ->
+                require(
+                    maps:get(state, Existing, legacy) =:= active,
+                    {override_requires_rollback, Module}
+                ),
+                %% Module MD5 alone cannot distinguish different BEAM metadata.
+                {ok, Current} = must(damage_release_overrides:current_generation(Module, Existing)),
+                require(
+                    maps:get(filename, Current) =:= maps:get(loaded_filename, Existing, undefined) andalso
+                        maps:get(beam_sha256, Current) =:= maps:get(loaded_beam_sha256, Existing),
+                    {untracked_current_code, Module}
+                ),
+                Existing
+        end,
     {ok, NewMd5} = must(beam_md5(Module, Beam)),
     require(code:soft_purge(Module), old_code_still_in_use),
     OldSha = maps:get(loaded_beam_sha256, Entry),
-    Pending = Entry#{module => Module, state => loading,
-        source_sha256 => SourceSha, beam_sha256 => sha256(Beam),
-        candidate_module_md5 => NewMd5, candidate_filename => Filename,
-        loaded_at => erlang:system_time(second)},
+    Pending = Entry#{
+        module => Module,
+        state => loading,
+        source_sha256 => SourceSha,
+        beam_sha256 => sha256(Beam),
+        candidate_module_md5 => NewMd5,
+        candidate_filename => Filename,
+        loaded_at => erlang:system_time(second)
+    },
     %% Write-ahead marker survives caller death even after the code changes.
     %% Snapshot readers share this lock; an interrupted transition is uncertain.
     ok = damage_release_overrides:record(Pending),
@@ -118,14 +143,26 @@ load_override(Module, Filename, Beam, SourceSha, Warnings) ->
     case code:atomic_load([{Module, Filename, Beam}]) of
         ok ->
             {ok, Loaded} = must(damage_release_overrides:current_generation(Module, Pending)),
-            require(maps:get(filename, Loaded) =:= Filename
-                andalso maps:get(beam_sha256, Loaded) =:= sha256(Beam),
-                {untracked_current_code, Module}),
-            Old = case code:soft_purge(Module) of true -> <<>>; false -> OldSha end,
-            Active = maps:without([candidate_filename, candidate_module_md5],
-                Pending#{state => active, loaded_module_md5 => NewMd5,
-                    loaded_filename => Filename, loaded_beam_sha256 => sha256(Beam),
-                    old_beam_sha256 => Old}),
+            require(
+                maps:get(filename, Loaded) =:= Filename andalso
+                    maps:get(beam_sha256, Loaded) =:= sha256(Beam),
+                {untracked_current_code, Module}
+            ),
+            Old =
+                case code:soft_purge(Module) of
+                    true -> <<>>;
+                    false -> OldSha
+                end,
+            Active = maps:without(
+                [candidate_filename, candidate_module_md5],
+                Pending#{
+                    state => active,
+                    loaded_module_md5 => NewMd5,
+                    loaded_filename => Filename,
+                    loaded_beam_sha256 => sha256(Beam),
+                    old_beam_sha256 => Old
+                }
+            ),
             ok = damage_release_overrides:record(Active),
             ?LOG_NOTICE("Loaded operator override module=~p beam_sha256=~s", [Module, sha256(Beam)]),
             {ok, (public_entry(Module))#{warnings => Warnings}};
@@ -144,19 +181,28 @@ capture_base(Module) ->
     must_ok(regular_file(Path)),
     {ok, Beam} = must(file:read_file(Path)),
     {ok, Md5} = must(beam_md5(Module, Beam)),
-    require(current_md5(Module) =:= Md5 andalso code:is_loaded(Module) =:= {file, Path},
-            {base_beam_not_current, Module}),
+    require(
+        current_md5(Module) =:= Md5 andalso code:is_loaded(Module) =:= {file, Path},
+        {base_beam_not_current, Module}
+    ),
     must_ok(check_plain_beam(Module, Beam)),
-    #{module => Module, base_beam => Beam, base_filename => Path,
-      base_beam_sha256 => sha256(Beam), base_module_md5 => Md5,
-      loaded_module_md5 => Md5, loaded_filename => Path,
-      loaded_beam_sha256 => sha256(Beam)}.
+    #{
+        module => Module,
+        base_beam => Beam,
+        base_filename => Path,
+        base_beam_sha256 => sha256(Beam),
+        base_module_md5 => Md5,
+        loaded_module_md5 => Md5,
+        loaded_filename => Path,
+        loaded_beam_sha256 => sha256(Beam)
+    }.
 
 rollback_locked(Module) ->
-    Entry = case damage_release_overrides:get(Module) of
-        {ok, E} -> E;
-        not_found -> throw({hotcode_error, module_not_overridden})
-    end,
+    Entry =
+        case damage_release_overrides:get(Module) of
+            {ok, E} -> E;
+            not_found -> throw({hotcode_error, module_not_overridden})
+        end,
     BaseBeam = maps:get(base_beam, Entry, undefined),
     require(is_binary(BaseBeam), {base_beam_unavailable, Module}),
     require(sha256(BaseBeam) =:= maps:get(base_beam_sha256, Entry), base_beam_hash_mismatch),
@@ -166,25 +212,31 @@ rollback_locked(Module) ->
     %% Missing or conflicting identities must not be guessed from MD5 alone.
     {ok, Current} = must(damage_release_overrides:current_generation(Module, Entry)),
     CurrentSha = maps:get(beam_sha256, Current),
-    IsBase = maps:get(filename, Current) =:= maps:get(base_filename, Entry) andalso
-        CurrentSha =:= maps:get(base_beam_sha256, Entry),
+    IsBase =
+        maps:get(filename, Current) =:= maps:get(base_filename, Entry) andalso
+            CurrentSha =:= maps:get(base_beam_sha256, Entry),
     case IsBase of
-        true -> finish_rollback(Module, Entry);
+        true ->
+            finish_rollback(Module, Entry);
         false ->
             require(code:soft_purge(Module), old_code_still_in_use),
-            Pending = Entry#{state => rolling_back,
+            Pending = Entry#{
+                state => rolling_back,
                 loaded_module_md5 => maps:get(module_md5, Current),
                 loaded_filename => maps:get(filename, Current),
-                loaded_beam_sha256 => CurrentSha},
+                loaded_beam_sha256 => CurrentSha
+            },
             ok = damage_release_overrides:record(Pending),
             case code:atomic_load([{Module, maps:get(base_filename, Entry), BaseBeam}]) of
                 ok ->
                     %% Keep the former override hash while it is old code.
-                    Restored = Pending#{state => rollback_pending,
+                    Restored = Pending#{
+                        state => rollback_pending,
                         loaded_module_md5 => BaseMd5,
                         loaded_filename => maps:get(base_filename, Entry),
                         loaded_beam_sha256 => maps:get(base_beam_sha256, Entry),
-                        old_beam_sha256 => CurrentSha},
+                        old_beam_sha256 => CurrentSha
+                    },
                     ok = damage_release_overrides:record(Restored),
                     finish_rollback(Module, Restored);
                 {error, Why} ->
@@ -201,18 +253,21 @@ finish_rollback(Module, Entry) ->
             must_ok(damage_release_overrides:remove(Module)),
             {ok, #{module => Module, status => rolled_back}};
         false ->
-            ok = damage_release_overrides:record(Entry#{state => rollback_pending,
+            ok = damage_release_overrides:record(Entry#{
+                state => rollback_pending,
                 loaded_module_md5 => maps:get(base_module_md5, Entry),
                 loaded_filename => maps:get(base_filename, Entry),
                 loaded_beam_sha256 => maps:get(base_beam_sha256, Entry),
-                old_beam_sha256 => rollback_old_sha(Entry)}),
+                old_beam_sha256 => rollback_old_sha(Entry)
+            }),
             {error, rollback_loaded_but_override_still_in_use}
     end.
 
 rollback_old_sha(#{state := rolling_back} = Entry) ->
     %% The caller may have died after loading the base but before committing.
     maps:get(loaded_beam_sha256, Entry, <<"unknown">>);
-rollback_old_sha(Entry) -> maps:get(old_beam_sha256, Entry, <<"unknown">>).
+rollback_old_sha(Entry) ->
+    maps:get(old_beam_sha256, Entry, <<"unknown">>).
 
 restore_journal(Module, not_found) -> must_ok(damage_release_overrides:remove(Module));
 restore_journal(_Module, {ok, Meta}) -> damage_release_overrides:record(Meta).
@@ -241,8 +296,12 @@ release_source(Module) when is_atom(Module) ->
     case app_subdir("src") of
         Dir when is_list(Dir) ->
             Path = filename:join(Dir, atom_to_list(Module) ++ ".erl"),
-            case regular_file(Path) of ok -> {ok, Path}; Error -> Error end;
-        _ -> {error, release_source_dir_unavailable}
+            case regular_file(Path) of
+                ok -> {ok, Path};
+                Error -> Error
+            end;
+        _ ->
+            {error, release_source_dir_unavailable}
     end.
 
 app_subdir(SubDir) ->
@@ -269,7 +328,9 @@ read_source(Path) ->
                 eof -> {ok, <<>>};
                 {error, _} = Error -> Error
             end
-        after file:close(Fd) end
+        after
+            file:close(Fd)
+        end
     end).
 
 compile_snapshot(Module, Source, Bytes) ->
@@ -281,12 +342,20 @@ compile_snapshot(Module, Source, Bytes) ->
     try
         must_ok(file:change_mode(Dir, 8#700)),
         must_ok(write_exclusive(Path, Bytes)),
-        Include = case app_subdir("include") of
-            D when is_list(D) -> [{i, D}];
-            _ -> []
-        end,
-        Opts = [binary, debug_info, return_errors, return_warnings,
-                {source, Source}, {i, filename:dirname(Source)} | Include],
+        Include =
+            case app_subdir("include") of
+                D when is_list(D) -> [{i, D}];
+                _ -> []
+            end,
+        Opts = [
+            binary,
+            debug_info,
+            return_errors,
+            return_warnings,
+            {source, Source},
+            {i, filename:dirname(Source)}
+            | Include
+        ],
         case compile:noenv_file(Path, Opts) of
             {ok, Module, Beam} when is_binary(Beam) -> {ok, Beam, []};
             {ok, Module, Beam, Warnings} when is_binary(Beam) -> {ok, Beam, Warnings};
@@ -306,24 +375,39 @@ cache_beam(Module, Beam) ->
     Path = filename:join(Dir, atom_to_list(Module) ++ ".beam"),
     must_ok(filelib:ensure_dir(Path)),
     case write_exclusive(Path, Beam) of
-        ok -> {ok, Path};
+        ok ->
+            {ok, Path};
         {error, eexist} ->
             must_ok(regular_file(Path)),
             case file:read_file(Path) of
                 {ok, Beam} -> {ok, Path};
                 _ -> {error, cached_beam_hash_mismatch}
             end;
-        {error, _} = Error -> Error
+        {error, _} = Error ->
+            Error
     end.
 
 write_exclusive(Path, Bytes) ->
     case file:open(Path, [write, binary, exclusive]) of
         {ok, Fd} ->
-            Result = try
-                case file:write(Fd, Bytes) of ok -> file:sync(Fd); Error -> Error end
-            after file:close(Fd) end,
-            case Result of ok -> ok; _ -> file:delete(Path), Result end;
-        {error, _} = Error -> Error
+            Result =
+                try
+                    case file:write(Fd, Bytes) of
+                        ok -> file:sync(Fd);
+                        Error -> Error
+                    end
+                after
+                    file:close(Fd)
+                end,
+            case Result of
+                ok ->
+                    ok;
+                _ ->
+                    file:delete(Path),
+                    Result
+            end;
+        {error, _} = Error ->
+            Error
     end.
 
 %% This helper is intentionally not an OTP state migration/NIF upgrader. Require
@@ -332,13 +416,17 @@ write_exclusive(Path, Bytes) ->
 check_plain_beam(Module, Beam) ->
     case beam_lib:chunks(Beam, [abstract_code]) of
         {ok, {Module, [{abstract_code, {raw_abstract_v1, Forms}}]}} ->
-            Forbidden = [Name || {attribute, _, Name, _} <- Forms,
-                                Name =:= on_load orelse Name =:= nifs],
+            Forbidden = [
+                Name
+             || {attribute, _, Name, _} <- Forms,
+                Name =:= on_load orelse Name =:= nifs
+            ],
             case Forbidden of
                 [] -> ok;
                 _ -> {error, {unsupported_hotcode_attributes, Module, Forbidden}}
             end;
-        _ -> {error, {hotcode_debug_info_required, Module}}
+        _ ->
+            {error, {hotcode_debug_info_required, Module}}
     end.
 
 beam_md5(Module, Beam) ->
@@ -349,8 +437,14 @@ beam_md5(Module, Beam) ->
 
 current_md5(Module) ->
     case code:is_loaded(Module) of
-        false -> undefined;
-        _ -> try hex(Module:module_info(md5)) catch _:_ -> undefined end
+        false ->
+            undefined;
+        _ ->
+            try
+                hex(Module:module_info(md5))
+            catch
+                _:_ -> undefined
+            end
     end.
 
 must_loaded({module, _} = Result) -> Result;
@@ -363,7 +457,8 @@ must_ok({error, Why}) -> throw({hotcode_error, Why}).
 require(true, _) -> ok;
 require(false, Why) -> throw({hotcode_error, Why}).
 guarded(Fun) ->
-    try Fun()
+    try
+        Fun()
     catch
         throw:{hotcode_error, Why} -> {error, Why};
         error:undef -> {error, required_hotcode_component_unavailable};

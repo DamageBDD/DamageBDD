@@ -13,12 +13,14 @@ for_vulnerability(App, Module, Finding) ->
 
 for_vulnerability(App, Module, Finding, Opts) ->
     case effective_analysis(App, Module, Finding) of
-        {error, _} = Error -> Error;
+        {error, _} = Error ->
+            Error;
         {ok, Analysis} ->
-            Graph = case ecai_learning_store:get_graph(App) of
-                {ok, G} -> G;
-                not_found -> ecai_code_graph:build(ecai_learning_store:analyses(App))
-            end,
+            Graph =
+                case ecai_learning_store:get_graph(App) of
+                    {ok, G} -> G;
+                    not_found -> ecai_code_graph:build(ecai_learning_store:analyses(App))
+                end,
             Depth = maps:get(depth, Opts, 1),
             MaxRelated = maps:get(max_related, Opts, 8),
             NeighbourPairs = ecai_code_graph:neighborhood(Graph, Module, Depth),
@@ -46,7 +48,6 @@ for_vulnerability(App, Module, Finding, Opts) ->
             }}
     end.
 
-
 effective_analysis(App, Module, Finding) ->
     Stored = ecai_learning_store:get_analysis(App, Module),
     case integration_source(Finding) of
@@ -56,28 +57,31 @@ effective_analysis(App, Module, Finding) ->
                 not_found -> {error, {analysis_not_found, App, Module}}
             end;
         {ok, SourcePath, Source} ->
-            Base = case Stored of
-                {ok, Analysis0} -> Analysis0;
-                not_found -> #{
-                    application => App,
-                    module => Module,
-                    remote_calls => [],
-                    local_calls => [],
-                    behaviours => [],
-                    security_boundaries => [],
-                    exports => [],
-                    functions => [],
-                    specs => [],
-                    types => [],
-                    records => [],
-                    includes => [],
-                    config_reads => [],
-                    config_writes => [],
-                    sends_messages => false,
-                    uses_nif => false,
-                    test_module => false
-                }
-            end,
+            Base =
+                case Stored of
+                    {ok, Analysis0} ->
+                        Analysis0;
+                    not_found ->
+                        #{
+                            application => App,
+                            module => Module,
+                            remote_calls => [],
+                            local_calls => [],
+                            behaviours => [],
+                            security_boundaries => [],
+                            exports => [],
+                            functions => [],
+                            specs => [],
+                            types => [],
+                            records => [],
+                            includes => [],
+                            config_reads => [],
+                            config_writes => [],
+                            sends_messages => false,
+                            uses_nif => false,
+                            test_module => false
+                        }
+                end,
             Analysis1 = Base#{
                 application => App,
                 module => Module,
@@ -86,21 +90,29 @@ effective_analysis(App, Module, Finding) ->
                 source => Source,
                 source_sha256 => sha256_hex(Source)
             },
-            AnalysisHash = sha256_hex(term_to_binary(maps:remove(source, Analysis1), [deterministic])),
+            AnalysisHash = sha256_hex(
+                term_to_binary(maps:remove(source, Analysis1), [deterministic])
+            ),
             {ok, Analysis1#{analysis_sha256 => AnalysisHash}}
     end.
 
 integration_source(Finding) when is_map(Finding) ->
     Context = mget(<<"integration_context">>, Finding, #{}),
-    case {mget(<<"target_source_path">>, Context, undefined),
-          mget(<<"target_source">>, Context, undefined)} of
+    case
+        {
+            mget(<<"target_source_path">>, Context, undefined),
+            mget(<<"target_source">>, Context, undefined)
+        }
+    of
         {Path, Source} when is_binary(Path), is_binary(Source), byte_size(Source) > 0 ->
             {ok, Path, Source};
         {Path, Source} when is_list(Path), is_binary(Source), byte_size(Source) > 0 ->
             {ok, unicode:characters_to_binary(Path), Source};
-        _ -> not_found
+        _ ->
+            not_found
     end;
-integration_source(_) -> not_found.
+integration_source(_) ->
+    not_found.
 
 finding_version(App, Module, Finding) ->
     case ecai_learning_store:get_analysis(App, Module) of
@@ -114,7 +126,8 @@ finding_version_from(Analysis, Finding) ->
 
 related_module(Module, Opts) ->
     case find_analysis(Module) of
-        not_found -> #{module => Module, unavailable => true};
+        not_found ->
+            #{module => Module, unavailable => true};
         {ok, App, Analysis} ->
             MaxBytes = maps:get(max_related_source_bytes, Opts, 24000),
             Source = truncate(maps:get(source, Analysis, <<>>), MaxBytes),
@@ -131,7 +144,8 @@ related_module(Module, Opts) ->
 find_analysis(Module) ->
     find_analysis(?APPS, Module).
 
-find_analysis([], _Module) -> not_found;
+find_analysis([], _Module) ->
+    not_found;
 find_analysis([App | Rest], Module) ->
     case ecai_learning_store:get_analysis(App, Module) of
         {ok, Analysis} -> {ok, App, Analysis};
@@ -142,7 +156,8 @@ cross_application_relations(Module, CurrentAnalysis) ->
     DirectTargets = [
         maps:get(module, Call)
      || Call <- maps:get(remote_calls, CurrentAnalysis, []),
-        is_map(Call), maps:is_key(module, Call)
+        is_map(Call),
+        maps:is_key(module, Call)
     ],
     All = [{App, A} || App <- ?APPS, A <- ecai_learning_store:analyses(App)],
     Known = maps:from_list([{maps:get(module, A), true} || {_App, A} <- All]),
@@ -150,8 +165,10 @@ cross_application_relations(Module, CurrentAnalysis) ->
     Callers = [
         maps:get(module, A)
      || {_App, A} <- All,
-        lists:any(fun(C) -> maps:get(module, C, undefined) =:= Module end,
-                  maps:get(remote_calls, A, []))
+        lists:any(
+            fun(C) -> maps:get(module, C, undefined) =:= Module end,
+            maps:get(remote_calls, A, [])
+        )
     ],
     lists:usort(InternalTargets ++ Callers).
 
@@ -170,15 +187,30 @@ repair_matches(Repair, Cwe, IssueKey) ->
     RCwe = mget(<<"cwe">>, RFinding, undefined),
     RKey = mget(<<"issue_key">>, RFinding, undefined),
     ((Cwe =/= undefined) andalso (Cwe =:= RCwe)) orelse
-    ((IssueKey =/= undefined) andalso (IssueKey =:= RKey)).
+        ((IssueKey =/= undefined) andalso (IssueKey =:= RKey)).
 
 comparable_finding(Finding) when is_map(Finding) ->
-    maps:without([
-        <<"status">>, <<"change">>, <<"first_seen">>, <<"last_seen">>,
-        <<"resolved_at">>, <<"reopen_count">>, <<"proposed_patch">>,
-        status, change, first_seen, last_seen, resolved_at, reopen_count, proposed_patch
-    ], Finding);
-comparable_finding(Other) -> Other.
+    maps:without(
+        [
+            <<"status">>,
+            <<"change">>,
+            <<"first_seen">>,
+            <<"last_seen">>,
+            <<"resolved_at">>,
+            <<"reopen_count">>,
+            <<"proposed_patch">>,
+            status,
+            change,
+            first_seen,
+            last_seen,
+            resolved_at,
+            reopen_count,
+            proposed_patch
+        ],
+        Finding
+    );
+comparable_finding(Other) ->
+    Other.
 
 value_or_empty({ok, Value}) -> Value;
 value_or_empty(not_found) -> #{}.
@@ -187,17 +219,22 @@ truncate(Bin, Max) when is_binary(Bin), byte_size(Bin) =< Max -> Bin;
 truncate(Bin, Max) when is_binary(Bin), Max > 0 ->
     <<Prefix:Max/binary, _/binary>> = Bin,
     <<Prefix/binary, "\n%% ... truncated by ecai_code_context ...\n">>;
-truncate(Other, _Max) -> Other.
+truncate(Other, _Max) ->
+    Other.
 
 mget(Key, Map, Default) when is_map(Map), is_binary(Key) ->
     case maps:find(Key, Map) of
-        {ok, V} -> V;
+        {ok, V} ->
+            V;
         error ->
             try binary_to_existing_atom(Key, utf8) of
                 A -> maps:get(A, Map, Default)
-            catch error:badarg -> Default end
+            catch
+                error:badarg -> Default
+            end
     end;
-mget(_Key, _Map, Default) -> Default.
+mget(_Key, _Map, Default) ->
+    Default.
 
 sha256_hex(Bin) ->
     iolist_to_binary([io_lib:format("~2.16.0b", [B]) || <<B>> <= crypto:hash(sha256, Bin)]).

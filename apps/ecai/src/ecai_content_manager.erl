@@ -1,8 +1,16 @@
 -module(ecai_content_manager).
 -behaviour(gen_server).
 
--export([start_link/0, start_link/1, generate/0, generate/1, run/0, run/1,
-         publish/1, resume/0, retry/1, learning_updated/0, status/0]).
+-export([
+    start_link/0, start_link/1,
+    generate/0, generate/1,
+    run/0, run/1,
+    publish/1,
+    resume/0,
+    retry/1,
+    learning_updated/0,
+    status/0
+]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -define(SERVER, ?MODULE).
@@ -30,18 +38,28 @@ init(_Opts) ->
 
 handle_call(status, _From, State) ->
     Jobs = ecai_content_store:jobs(),
-    Counts = lists:foldl(fun(Job, Acc) ->
-        S = maps:get(status, Job, unknown),
-        maps:update_with(S, fun(N) -> N + 1 end, 1, Acc)
-    end, #{}, Jobs),
-    {reply, #{running => maps:keys(State#state.running), counts => Counts,
-              total_jobs => length(Jobs)}, State};
+    Counts = lists:foldl(
+        fun(Job, Acc) ->
+            S = maps:get(status, Job, unknown),
+            maps:update_with(S, fun(N) -> N + 1 end, 1, Acc)
+        end,
+        #{},
+        Jobs
+    ),
+    {reply,
+        #{
+            running => maps:keys(State#state.running),
+            counts => Counts,
+            total_jobs => length(Jobs)
+        },
+        State};
 handle_call({enqueue, Scope, Publish}, _From, State0) ->
     case create_or_reuse_job(Scope, Publish) of
         {ok, Job} ->
             State1 = maybe_start(Job, State0),
             {reply, {ok, Job}, State1};
-        {error, _} = Error -> {reply, Error, State0}
+        {error, _} = Error ->
+            {reply, Error, State0}
     end;
 handle_call({publish, JobId}, _From, State0) ->
     case ecai_content_store:update_job(JobId, #{publish_requested => true, status => queued}) of
@@ -56,23 +74,28 @@ handle_call({retry, JobId}, _From, State0) ->
 handle_call(resume, _From, State0) ->
     State1 = resume_jobs(State0),
     {reply, ok, State1};
-handle_call(_Other, _From, State) -> {reply, {error, unsupported_call}, State}.
+handle_call(_Other, _From, State) ->
+    {reply, {error, unsupported_call}, State}.
 
 handle_cast(learning_updated, State0) ->
     case application:get_env(ecai, content_auto_generate, false) of
         true ->
             Publish = application:get_env(ecai, content_auto_publish, false),
             case create_or_reuse_job(#{}, Publish) of
-                {ok, Job} -> {noreply, maybe_start(Job, State0)};
+                {ok, Job} ->
+                    {noreply, maybe_start(Job, State0)};
                 {error, Reason} ->
                     logger:error("ECAI content auto-generation enqueue failed reason=~p", [Reason]),
                     {noreply, State0}
             end;
-        false -> {noreply, State0}
+        false ->
+            {noreply, State0}
     end;
-handle_cast(_Msg, State) -> {noreply, State}.
+handle_cast(_Msg, State) ->
+    {noreply, State}.
 
-handle_info(resume_pending, State) -> {noreply, resume_jobs(State)};
+handle_info(resume_pending, State) ->
+    {noreply, resume_jobs(State)};
 handle_info(retry_tick, State0) ->
     State1 = resume_jobs(State0),
     erlang:send_after(State1#state.retry_interval_ms, self(), retry_tick),
@@ -80,7 +103,8 @@ handle_info(retry_tick, State0) ->
 handle_info({'DOWN', Ref, process, _Pid, _Reason}, State0) ->
     Running1 = maps:filter(fun(_JobId, V) -> maps:get(ref, V) =/= Ref end, State0#state.running),
     {noreply, State0#state{running = Running1}};
-handle_info(_Info, State) -> {noreply, State}.
+handle_info(_Info, State) ->
+    {noreply, State}.
 
 terminate(_Reason, _State) -> ok.
 code_change(_Old, State, _Extra) -> {ok, State}.
@@ -90,13 +114,20 @@ create_or_reuse_job(Scope, Publish) ->
         {ok, Evidence} ->
             SnapshotId = ecai_content_util:to_binary(maps:get(snapshot_id, Evidence)),
             ScopeNorm = maps:get(scope, Evidence, #{}),
-            JobId = ecai_content_util:sha256_hex(term_to_binary(
-                {SnapshotId, ScopeNorm, 1}, [deterministic])),
+            JobId = ecai_content_util:sha256_hex(
+                term_to_binary(
+                    {SnapshotId, ScopeNorm, 1}, [deterministic]
+                )
+            ),
             case ecai_content_store:get_job(JobId) of
                 {ok, Existing} ->
                     case Publish andalso not maps:get(publish_requested, Existing, false) of
-                        true -> ecai_content_store:update_job(JobId, #{publish_requested => true, status => queued});
-                        false -> {ok, Existing}
+                        true ->
+                            ecai_content_store:update_job(JobId, #{
+                                publish_requested => true, status => queued
+                            });
+                        false ->
+                            {ok, Existing}
                     end;
                 not_found ->
                     Now = ecai_content_util:now_iso8601(),
@@ -119,28 +150,38 @@ create_or_reuse_job(Scope, Publish) ->
                         ok -> ecai_content_store:put_job(Job);
                         {error, _} = Error -> Error
                     end;
-                {error, _} = Error -> Error
+                {error, _} = Error ->
+                    Error
             end;
-        {error, _} = Error -> Error
+        {error, _} = Error ->
+            Error
     end.
 
 write_evidence(JobId, Evidence) ->
     case ecai_content_store:artifact_path(JobId, <<"evidence.json">>) of
-        {ok, Path} -> ecai_content_util:atomic_write(Path,
-            jsx:encode(ecai_content_util:json_safe(Evidence)));
-        {error, _} = Error -> Error
+        {ok, Path} ->
+            ecai_content_util:atomic_write(
+                Path,
+                jsx:encode(ecai_content_util:json_safe(Evidence))
+            );
+        {error, _} = Error ->
+            Error
     end.
 
 resume_jobs(State0) ->
-    lists:foldl(fun(Job, State) -> maybe_start(Job, State) end,
-                State0, ecai_content_store:resumable_jobs()).
+    lists:foldl(
+        fun(Job, State) -> maybe_start(Job, State) end,
+        State0,
+        ecai_content_store:resumable_jobs()
+    ).
 
 maybe_start(Job, State = #state{running = Running}) ->
     JobId = maps:get(id, Job),
     Status = maps:get(status, Job, queued),
     Terminal = lists:member(Status, [awaiting_publish, complete, cancelled, manual_reconcile]),
     case maps:is_key(JobId, Running) orelse Terminal of
-        true -> State;
+        true ->
+            State;
         false ->
             {Pid, Ref} = spawn_monitor(fun() -> ecai_content_worker:run(JobId) end),
             State#state{running = Running#{JobId => #{pid => Pid, ref => Ref}}}

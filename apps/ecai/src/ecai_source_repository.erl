@@ -116,9 +116,12 @@ base_for_commit(Commit0, Opts) when is_map(Opts) ->
                     Error;
                 {ok, Ctx} ->
                     Lock = {{?MODULE, maps:get(mirror_root, Ctx)}, self()},
-                    case global:trans(
-                             Lock,
-                             fun() -> ensure_commit_base(Ctx, Commit, Opts) end) of
+                    case
+                        global:trans(
+                            Lock,
+                            fun() -> ensure_commit_base(Ctx, Commit, Opts) end
+                        )
+                    of
                         aborted ->
                             {error, source_repository_lock_aborted};
                         Result ->
@@ -130,8 +133,9 @@ base_for_commit(Commit0, Opts) when is_map(Opts) ->
 module_source(App, Module) ->
     module_source(App, Module, #{}).
 
-module_source(App, Module, Opts)
-  when is_atom(App), is_atom(Module), is_map(Opts) ->
+module_source(App, Module, Opts) when
+    is_atom(App), is_atom(Module), is_map(Opts)
+->
     case allowed_app(App) of
         false ->
             {error, {unsupported_application, App}};
@@ -147,8 +151,9 @@ module_source(App, Module, Opts)
 module_source_at_commit(App, Module, Commit) ->
     module_source_at_commit(App, Module, Commit, #{}).
 
-module_source_at_commit(App, Module, Commit, Opts)
-  when is_atom(App), is_atom(Module), is_map(Opts) ->
+module_source_at_commit(App, Module, Commit, Opts) when
+    is_atom(App), is_atom(Module), is_map(Opts)
+->
     case allowed_app(App) of
         false ->
             {error, {unsupported_application, App}};
@@ -164,8 +169,9 @@ module_source_at_commit(App, Module, Commit, Opts)
 application_modules(App) ->
     application_modules(App, #{}).
 
-application_modules(App, Opts)
-  when is_atom(App), is_map(Opts) ->
+application_modules(App, Opts) when
+    is_atom(App), is_map(Opts)
+->
     case allowed_app(App) of
         false ->
             {error, {unsupported_application, App}};
@@ -181,8 +187,9 @@ application_modules(App, Opts)
 application_modules_at_commit(App, Commit) ->
     application_modules_at_commit(App, Commit, #{}).
 
-application_modules_at_commit(App, Commit, Opts)
-  when is_atom(App), is_map(Opts) ->
+application_modules_at_commit(App, Commit, Opts) when
+    is_atom(App), is_map(Opts)
+->
     case allowed_app(App) of
         false ->
             {error, {unsupported_application, App}};
@@ -212,8 +219,9 @@ application_modules_from_base(App, Base) ->
 inspect_module(App, Module) ->
     inspect_module(App, Module, #{}).
 
-inspect_module(App, Module, Opts)
-  when is_atom(App), is_atom(Module), is_map(Opts) ->
+inspect_module(App, Module, Opts) when
+    is_atom(App), is_atom(Module), is_map(Opts)
+->
     case developer_overlay(Opts) of
         ignore_dirty ->
             {error, developer_overlay_disabled};
@@ -229,8 +237,7 @@ inspect_module(App, Module, Opts)
                         {ok, RelPath, FullPath} ->
                             case file:read_file(FullPath) of
                                 {error, Reason} ->
-                                    {error, {cannot_read_developer_source,
-                                             FullPath, Reason}};
+                                    {error, {cannot_read_developer_source, FullPath, Reason}};
                                 {ok, Source} ->
                                     PathStatus = run_git(
                                         Root,
@@ -375,7 +382,9 @@ ensure_commit_present(Ctx, Commit, Opts) ->
             Fetch = run_git_dir(
                 Mirror,
                 [
-                    "fetch", "--no-tags", Source,
+                    "fetch",
+                    "--no-tags",
+                    Source,
                     binary_to_list(Commit)
                 ],
                 Timeout
@@ -385,11 +394,11 @@ ensure_commit_present(Ctx, Commit, Opts) ->
                     {error, {cannot_fetch_canonical_commit, Commit, Fetch}};
                 true ->
                     Check2 = run_git_dir(
-                        Mirror, ["cat-file", "-e", Object], Timeout),
+                        Mirror, ["cat-file", "-e", Object], Timeout
+                    ),
                     case step_ok(Check2) of
                         true -> ok;
-                        false ->
-                            {error, {canonical_commit_missing, Commit, Check2}}
+                        false -> {error, {canonical_commit_missing, Commit, Check2}}
                     end
             end
     end.
@@ -409,28 +418,35 @@ ensure_base(Ctx, Commit, Opts) ->
             Add = run_git_dir(
                 Mirror,
                 [
-                    "worktree", "add", "--detach",
-                    Root, binary_to_list(Commit)
+                    "worktree",
+                    "add",
+                    "--detach",
+                    Root,
+                    binary_to_list(Commit)
                 ],
                 Timeout
             ),
             case step_ok(Add) of
                 true -> {ok, Root};
-                false -> {error, {cannot_materialize_canonical_base,
-                                  Commit, Root, Add}}
+                false -> {error, {cannot_materialize_canonical_base, Commit, Root, Add}}
             end
     end.
 
 base_matches_commit(Root, Commit, Timeout) ->
-    case filelib:is_file(filename:join(Root, ".git")) orelse
-         filelib:is_dir(filename:join(Root, ".git")) of
+    case
+        filelib:is_file(filename:join(Root, ".git")) orelse
+            filelib:is_dir(filename:join(Root, ".git"))
+    of
         false ->
             false;
         true ->
-            case run_git(
-                     Root,
-                     ["rev-parse", "--verify", "HEAD^{commit}"],
-                     Timeout) of
+            case
+                run_git(
+                    Root,
+                    ["rev-parse", "--verify", "HEAD^{commit}"],
+                    Timeout
+                )
+            of
                 #{ok := true, output := Output} ->
                     trim_binary(Output) =:= Commit;
                 _ ->
@@ -446,13 +462,11 @@ read_module_from_base(App, Module, Base) ->
     Root = path_to_list(maps:get(root, Base)),
     case first_existing_module_path(Root, App, Module) of
         not_found ->
-            {error, {source_not_found, App, Module,
-                     maps:get(commit, Base, undefined)}};
+            {error, {source_not_found, App, Module, maps:get(commit, Base, undefined)}};
         {ok, RelPath, FullPath} ->
             case file:read_file(FullPath) of
                 {error, Reason} ->
-                    {error, {cannot_read_canonical_source,
-                             FullPath, Reason}};
+                    {error, {cannot_read_canonical_source, FullPath, Reason}};
                 {ok, Source} ->
                     {ok, #{
                         authoritative => true,
@@ -487,11 +501,13 @@ first_existing_module_path(Root, App, Module) ->
 find_nested_module_path(Root, App, ModuleFile) ->
     case ecai_code_analyser:repo_source_files(App, Root) of
         {ok, Files} ->
-            case [
-                Path
-             || Path <- Files,
-                filename:basename(Path) =:= ModuleFile
-            ] of
+            case
+                [
+                    Path
+                 || Path <- Files,
+                    filename:basename(Path) =:= ModuleFile
+                ]
+            of
                 [FullPath | _] ->
                     case repo_relative_path(Root, FullPath) of
                         {ok, RelPath} ->
@@ -534,11 +550,15 @@ repository_context(Opts) ->
         {error, _} = Error ->
             Error;
         {ok, StateRoot} ->
-            SourceRoot = filename:absname(path_to_list(maps:get(
-                repo_root,
-                Opts,
-                application:get_env(ecai, code_repo_root, ".")
-            ))),
+            SourceRoot = filename:absname(
+                path_to_list(
+                    maps:get(
+                        repo_root,
+                        Opts,
+                        application:get_env(ecai, code_repo_root, ".")
+                    )
+                )
+            ),
             case repository_available(SourceRoot) of
                 false ->
                     {error, {git_repository_not_found, SourceRoot}};
@@ -566,10 +586,13 @@ cache_key(Ctx) ->
     }.
 
 source_head(SourceRoot, Timeout) ->
-    case run_git(
-             SourceRoot,
-             ["rev-parse", "--verify", "HEAD^{commit}"],
-             Timeout) of
+    case
+        run_git(
+            SourceRoot,
+            ["rev-parse", "--verify", "HEAD^{commit}"],
+            Timeout
+        )
+    of
         #{ok := true, output := Output} ->
             {ok, trim_binary(Output)};
         Result ->
@@ -582,15 +605,21 @@ developer_status(SourceRoot, Timeout) ->
             Status = trim_binary(Output),
             #{dirty => Status =/= <<>>, status => Status};
         Result ->
-            #{dirty => undefined, status => <<>>,
-              error => compact_result(Result)}
+            #{
+                dirty => undefined,
+                status => <<>>,
+                error => compact_result(Result)
+            }
     end.
 
 source_mode(Opts) ->
-    case maps:get(
-             source_mode,
-             Opts,
-             application:get_env(ecai, code_source_mode, committed)) of
+    case
+        maps:get(
+            source_mode,
+            Opts,
+            application:get_env(ecai, code_source_mode, committed)
+        )
+    of
         development -> development;
         <<"development">> -> development;
         "development" -> development;
@@ -598,11 +627,15 @@ source_mode(Opts) ->
     end.
 
 developer_overlay(Opts) ->
-    case maps:get(
-             developer_overlay,
-             Opts,
-             application:get_env(
-                 ecai, code_dev_overlay, inspect_only)) of
+    case
+        maps:get(
+            developer_overlay,
+            Opts,
+            application:get_env(
+                ecai, code_dev_overlay, inspect_only
+            )
+        )
+    of
         ignore_dirty -> ignore_dirty;
         <<"ignore_dirty">> -> ignore_dirty;
         "ignore_dirty" -> ignore_dirty;
@@ -613,10 +646,13 @@ allowed_app(App) ->
     lists:member(App, ?ALLOWED_APPS).
 
 valid_commit_id(Commit) when is_binary(Commit) ->
-    case re:run(
-             Commit,
-             <<"^[0-9a-fA-F]{7,64}$">>,
-             [{capture, none}]) of
+    case
+        re:run(
+            Commit,
+            <<"^[0-9a-fA-F]{7,64}$">>,
+            [{capture, none}]
+        )
+    of
         match -> true;
         nomatch -> false
     end;
@@ -625,11 +661,11 @@ valid_commit_id(_) ->
 
 repository_available(Root) ->
     filelib:is_dir(filename:join(Root, ".git")) orelse
-    filelib:is_file(filename:join(Root, ".git")).
+        filelib:is_file(filename:join(Root, ".git")).
 
 mirror_available(Root) ->
     filelib:is_file(filename:join(Root, "HEAD")) andalso
-    filelib:is_dir(filename:join(Root, "objects")).
+        filelib:is_dir(filename:join(Root, "objects")).
 
 remove_partial_path(Path) ->
     case filelib:is_dir(Path) of
@@ -646,11 +682,15 @@ ensure_dir(Dir) ->
     filelib:ensure_dir(filename:join(Dir, ".keep")).
 
 command_timeout(Opts) ->
-    case maps:get(
-             command_timeout_ms,
-             Opts,
-             application:get_env(
-                 ecai, code_source_git_timeout_ms, ?DEFAULT_TIMEOUT_MS)) of
+    case
+        maps:get(
+            command_timeout_ms,
+            Opts,
+            application:get_env(
+                ecai, code_source_git_timeout_ms, ?DEFAULT_TIMEOUT_MS
+            )
+        )
+    of
         N when is_integer(N), N > 0 -> N;
         _ -> ?DEFAULT_TIMEOUT_MS
     end.
@@ -693,7 +733,8 @@ collect_port(Port, Acc, Timeout) ->
         {Port, {exit_status, Status}} ->
             #{ok => false, exit_status => Status, output => Acc}
     after Timeout ->
-        try port_close(Port)
+        try
+            port_close(Port)
         catch
             _:_ -> ok
         end,
@@ -718,14 +759,18 @@ trim_binary(Bin) when is_binary(Bin) ->
 
 sha256_hex(Bin) when is_binary(Bin) ->
     iolist_to_binary(
-        [io_lib:format("~2.16.0b", [Byte]) ||
-         <<Byte>> <= crypto:hash(sha256, Bin)]
+        [
+            io_lib:format("~2.16.0b", [Byte])
+         || <<Byte>> <= crypto:hash(sha256, Bin)
+        ]
     ).
 
 now_iso8601() ->
-    unicode:characters_to_binary(calendar:system_time_to_rfc3339(
-        erlang:system_time(second), [{unit, second}, {offset, "Z"}]
-    )).
+    unicode:characters_to_binary(
+        calendar:system_time_to_rfc3339(
+            erlang:system_time(second), [{unit, second}, {offset, "Z"}]
+        )
+    ).
 
 path_to_list(P) when is_list(P) -> P;
 path_to_list(P) when is_binary(P) -> binary_to_list(P);

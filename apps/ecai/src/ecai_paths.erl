@@ -22,11 +22,13 @@
 
 -spec state_dir() -> file:filename().
 state_dir() ->
-    case configured_path([
-        {ecai, state_dir},
-        {damage, state_dir},
-        {damage, secrets_state_dir}
-    ]) of
+    case
+        configured_path([
+            {ecai, state_dir},
+            {damage, state_dir},
+            {damage, secrets_state_dir}
+        ])
+    of
         {ok, Path} ->
             Path;
         not_found ->

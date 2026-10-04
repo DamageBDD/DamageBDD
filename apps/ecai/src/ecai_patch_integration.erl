@@ -12,8 +12,14 @@
     job/1
 ]).
 
--export([init/1, handle_call/3, handle_cast/2, handle_info/2,
-         terminate/2, code_change/3]).
+-export([
+    init/1,
+    handle_call/3,
+    handle_cast/2,
+    handle_info/2,
+    terminate/2,
+    code_change/3
+]).
 
 -define(SERVER, ?MODULE).
 -define(TABLE, ecai_patch_integration_dets).
@@ -57,25 +63,40 @@ job(JobId) -> gen_server:call(?SERVER, {job, to_binary(JobId)}).
 init(Opts) ->
     process_flag(trap_exit, true),
     case ecai_code_paths:state_root(Opts) of
-        {error, Reason} -> {stop, {cannot_resolve_state_root, Reason}};
+        {error, Reason} ->
+            {stop, {cannot_resolve_state_root, Reason}};
         {ok, Root} ->
             File = ecai_code_paths:dets_file(Root, "code_integration_jobs.dets"),
             RepoRoot = repo_root(Opts),
-            Interval = maps:get(interval_ms, Opts,
-                application:get_env(ecai, code_integration_interval_ms, ?DEFAULT_INTERVAL)),
+            Interval = maps:get(
+                interval_ms,
+                Opts,
+                application:get_env(ecai, code_integration_interval_ms, ?DEFAULT_INTERVAL)
+            ),
             case dets:open_file(?TABLE, [{file, File}, {type, set}, {auto_save, 10000}]) of
-                {error, Reason} -> {stop, {cannot_open_integration_store, File, Reason}};
+                {error, Reason} ->
+                    {stop, {cannot_open_integration_store, File, Reason}};
                 {ok, ?TABLE} ->
                     ok = recover_interrupted_jobs(?TABLE),
-                    State = #state{tab = ?TABLE, state_root = Root, file = File,
-                                   repo_root = RepoRoot, interval_ms = Interval, opts = Opts},
+                    State = #state{
+                        tab = ?TABLE,
+                        state_root = Root,
+                        file = File,
+                        repo_root = RepoRoot,
+                        interval_ms = Interval,
+                        opts = Opts
+                    },
                     erlang:send_after(5000, self(), scan),
                     {ok, State}
             end
     end.
 
 handle_call(status, _From, State) ->
-    Info = case dets:info(State#state.tab) of undefined -> []; I -> I end,
+    Info =
+        case dets:info(State#state.tab) of
+            undefined -> [];
+            I -> I
+        end,
     Reply = #{
         current => current_summary(State#state.current),
         cycles => State#state.cycles,
@@ -98,32 +119,42 @@ handle_call(_Request, _From, State) ->
 handle_cast({run_now, RunOpts}, State) ->
     self() ! {scan, RunOpts},
     {noreply, State};
-handle_cast(_Msg, State) -> {noreply, State}.
+handle_cast(_Msg, State) ->
+    {noreply, State}.
 
 handle_info(scan, State) ->
     handle_scan(#{}, State);
 handle_info({scan, RunOpts}, State) ->
     handle_scan(RunOpts, State);
-handle_info({integration_result, Ref, JobId, ExecResult},
-            State = #state{current = #{ref := Ref, job_id := JobId}}) ->
+handle_info(
+    {integration_result, Ref, JobId, ExecResult},
+    State = #state{current = #{ref := Ref, job_id := JobId}}
+) ->
     _ = erlang:demonitor(maps:get(mon, State#state.current), [flush]),
     State1 = complete_job(JobId, ExecResult, State),
     schedule_next(State1#state.interval_ms),
     {noreply, State1#state{current = undefined}};
-handle_info({'DOWN', Mon, process, _Pid, Reason},
-            State = #state{current = #{mon := Mon, job_id := JobId}}) ->
+handle_info(
+    {'DOWN', Mon, process, _Pid, Reason},
+    State = #state{current = #{mon := Mon, job_id := JobId}}
+) ->
     case Reason of
-        normal -> {noreply, State};
+        normal ->
+            {noreply, State};
         _ ->
             Job0 = value_or_empty(lookup_job(State#state.tab, JobId)),
-            Job1 = Job0#{status => queued, last_error => {worker_down, Reason},
-                         resumed_at => now_iso8601(),
-                         resume_count => maps:get(resume_count, Job0, 0) + 1},
+            Job1 = Job0#{
+                status => queued,
+                last_error => {worker_down, Reason},
+                resumed_at => now_iso8601(),
+                resume_count => maps:get(resume_count, Job0, 0) + 1
+            },
             ok = put_job(State#state.tab, Job1),
             schedule_next(1000),
             {noreply, State#state{current = undefined, last_error = {JobId, Reason}}}
     end;
-handle_info(_Info, State) -> {noreply, State}.
+handle_info(_Info, State) ->
+    {noreply, State}.
 
 terminate(_Reason, State) ->
     _ = dets:sync(State#state.tab),
@@ -143,13 +174,19 @@ handle_scan(RunOpts, State0) ->
     StateA = maybe_resume_feedback(StateR),
     case current_patchset(StateA, RunOpts) of
         {no_patches, _BaseCommit} ->
-            State1 = StateA#state{cycles = StateA#state.cycles + 1,
-                                  last_run_at = now_iso8601(), last_error = undefined},
+            State1 = StateA#state{
+                cycles = StateA#state.cycles + 1,
+                last_run_at = now_iso8601(),
+                last_error = undefined
+            },
             schedule_next(State1#state.interval_ms),
             {noreply, State1};
         {error, Reason} ->
-            State1 = StateA#state{cycles = StateA#state.cycles + 1,
-                                  last_run_at = now_iso8601(), last_error = Reason},
+            State1 = StateA#state{
+                cycles = StateA#state.cycles + 1,
+                last_run_at = now_iso8601(),
+                last_error = Reason
+            },
             schedule_next(State1#state.interval_ms),
             {noreply, State1};
         {ok, Job0} ->
@@ -158,21 +195,30 @@ handle_scan(RunOpts, State0) ->
                 {ok, Existing} when Force =:= false ->
                     case maps:get(status, Existing, queued) of
                         clean ->
-                            State1 = StateA#state{cycles = StateA#state.cycles + 1,
-                                                  last_run_at = now_iso8601(),
-                                                  last_error = undefined},
+                            State1 = StateA#state{
+                                cycles = StateA#state.cycles + 1,
+                                last_run_at = now_iso8601(),
+                                last_error = undefined
+                            },
                             schedule_next(State1#state.interval_ms),
                             {noreply, State1};
                         broken ->
                             State1 = maybe_dispatch_feedback(Existing, StateA),
                             schedule_next(State1#state.interval_ms),
-                            {noreply, State1#state{cycles = State1#state.cycles + 1,
-                                                  last_run_at = now_iso8601()}};
-                        _ -> start_job(Existing, RunOpts, StateA)
+                            {noreply, State1#state{
+                                cycles = State1#state.cycles + 1,
+                                last_run_at = now_iso8601()
+                            }};
+                        _ ->
+                            start_job(Existing, RunOpts, StateA)
                     end;
                 _ ->
-                    Job = Job0#{status => queued, created_at => now_iso8601(),
-                                resume_count => 0, feedback => #{state => none}},
+                    Job = Job0#{
+                        status => queued,
+                        created_at => now_iso8601(),
+                        resume_count => 0,
+                        feedback => #{state => none}
+                    },
                     ok = put_job(StateA#state.tab, Job),
                     start_job(Job, RunOpts, StateA)
             end
@@ -185,13 +231,16 @@ start_job(Job0, RunOpts, State0) ->
     Parent = self(),
     ExecOpts = maps:merge(State0#state.opts, RunOpts),
     {Pid, Mon} = spawn_monitor(fun() ->
-        Parent ! {integration_result, Ref, maps:get(job_id, Job), execute_job(Job, State0, ExecOpts)}
+        Parent !
+            {integration_result, Ref, maps:get(job_id, Job), execute_job(Job, State0, ExecOpts)}
     end),
     Current = #{job_id => maps:get(job_id, Job), ref => Ref, mon => Mon, pid => Pid},
-    {noreply, State0#state{current = Current,
-                           cycles = State0#state.cycles + 1,
-                           last_run_at = now_iso8601(),
-                           last_error = undefined}}.
+    {noreply, State0#state{
+        current = Current,
+        cycles = State0#state.cycles + 1,
+        last_run_at = now_iso8601(),
+        last_error = undefined
+    }}.
 
 execute_job(Job, State, Opts) ->
     PatchFiles = [binary_to_list(maps:get(patch_file, P)) || P <- maps:get(patches, Job, [])],
@@ -202,28 +251,46 @@ execute_job(Job, State, Opts) ->
         worktree_root => ecai_code_paths:integration_worktree_root(State#state.state_root),
         worktree_prefix => "integration",
         keep_worktree => false,
-        run_eunit => maps:get(run_eunit, Opts,
-            application:get_env(ecai, code_integration_run_eunit, true)),
-        run_ct => maps:get(run_ct, Opts,
-            application:get_env(ecai, code_integration_run_ct, false)),
-        command_timeout_ms => maps:get(command_timeout_ms, Opts,
-            application:get_env(ecai, code_integration_command_timeout_ms, 600000))
+        run_eunit => maps:get(
+            run_eunit,
+            Opts,
+            application:get_env(ecai, code_integration_run_eunit, true)
+        ),
+        run_ct => maps:get(
+            run_ct,
+            Opts,
+            application:get_env(ecai, code_integration_run_ct, false)
+        ),
+        command_timeout_ms => maps:get(
+            command_timeout_ms,
+            Opts,
+            application:get_env(ecai, code_integration_command_timeout_ms, 600000)
+        )
     }),
     ecai_patch_verifier:verify_patchset(PatchFiles, VerifyOpts).
 
 complete_job(JobId, {ok, #{status := validated} = Verification}, State) ->
     Job0 = value_or_empty(lookup_job(State#state.tab, JobId)),
-    Job = Job0#{status => clean, completed_at => now_iso8601(),
-                verification => Verification, last_error => undefined},
+    Job = Job0#{
+        status => clean,
+        completed_at => now_iso8601(),
+        verification => Verification,
+        last_error => undefined
+    },
     ok = put_job(State#state.tab, Job),
     _ = write_job_report(Job, State),
     State#state{last_error = undefined};
 complete_job(JobId, {ok, #{status := failed} = Verification}, State0) ->
     Job0 = value_or_empty(lookup_job(State0#state.tab, JobId)),
     Breakage = build_breakage(Job0, Verification),
-    Job1 = Job0#{status => broken, completed_at => now_iso8601(),
-                 verification => Verification, breakage => Breakage,
-                 feedback => #{state => pending}, last_error => undefined},
+    Job1 = Job0#{
+        status => broken,
+        completed_at => now_iso8601(),
+        verification => Verification,
+        breakage => Breakage,
+        feedback => #{state => pending},
+        last_error => undefined
+    },
     ok = put_job(State0#state.tab, Job1),
     _ = write_job_report(Job1, State0),
     maybe_dispatch_feedback(Job1, State0);
@@ -237,9 +304,12 @@ complete_job(JobId, Other, State) ->
     complete_job(JobId, {error, {unexpected_integration_result, Other}}, State).
 
 maybe_resume_feedback(State) ->
-    Pending = [J || J <- collect_jobs(State#state.tab),
-                    maps:get(status, J, undefined) =:= broken,
-                    feedback_retryable(maps:get(feedback, J, #{}))],
+    Pending = [
+        J
+     || J <- collect_jobs(State#state.tab),
+        maps:get(status, J, undefined) =:= broken,
+        feedback_retryable(maps:get(feedback, J, #{}))
+    ],
     case Pending of
         [Job | _] -> maybe_dispatch_feedback(Job, State);
         [] -> State
@@ -257,8 +327,15 @@ maybe_dispatch_feedback(Job, State) ->
             Version = ecai_code_context:finding_version(App, Module, Finding),
             case ecai_learning_store:get_repair(Fingerprint, Version) of
                 {ok, _Existing} ->
-                    update_feedback(Job, #{state => already_queued, fingerprint => Fingerprint,
-                                           finding_version => Version}, State);
+                    update_feedback(
+                        Job,
+                        #{
+                            state => already_queued,
+                            fingerprint => Fingerprint,
+                            finding_version => Version
+                        },
+                        State
+                    );
                 not_found ->
                     PatchFiles = [maps:get(patch_file, P) || P <- maps:get(patches, Job, [])],
                     RepairOpts0 = maps:get(repair_opts, State#state.opts, #{}),
@@ -268,30 +345,55 @@ maybe_dispatch_feedback(Job, State) ->
                         run_eunit => application:get_env(ecai, code_integration_run_eunit, true),
                         run_ct => application:get_env(ecai, code_integration_run_ct, false)
                     }),
-                    RepairOpts = RepairOpts0#{verifier => Verifier,
-                                              integration_job_id => maps:get(job_id, Job),
-                                              integration_breakage => Breakage},
-                    Dispatching = Job#{feedback => #{state => dispatching,
-                                                     fingerprint => Fingerprint,
-                                                     finding_version => Version}},
+                    RepairOpts = RepairOpts0#{
+                        verifier => Verifier,
+                        integration_job_id => maps:get(job_id, Job),
+                        integration_breakage => Breakage
+                    },
+                    Dispatching = Job#{
+                        feedback => #{
+                            state => dispatching,
+                            fingerprint => Fingerprint,
+                            finding_version => Version
+                        }
+                    },
                     ok = put_job(State#state.tab, Dispatching),
                     case ecai_code_repair:propose_finding(App, Module, Finding, RepairOpts) of
                         {ok, _Pid} ->
-                            update_feedback(Dispatching, #{state => dispatched,
-                                                          fingerprint => Fingerprint,
-                                                          finding_version => Version}, State);
+                            update_feedback(
+                                Dispatching,
+                                #{
+                                    state => dispatched,
+                                    fingerprint => Fingerprint,
+                                    finding_version => Version
+                                },
+                                State
+                            );
                         {ok, _Pid, _Info} ->
-                            update_feedback(Dispatching, #{state => dispatched,
-                                                          fingerprint => Fingerprint,
-                                                          finding_version => Version}, State);
+                            update_feedback(
+                                Dispatching,
+                                #{
+                                    state => dispatched,
+                                    fingerprint => Fingerprint,
+                                    finding_version => Version
+                                },
+                                State
+                            );
                         {error, Reason} ->
-                            update_feedback(Dispatching, #{state => failed,
-                                                          fingerprint => Fingerprint,
-                                                          finding_version => Version,
-                                                          error => Reason}, State)
+                            update_feedback(
+                                Dispatching,
+                                #{
+                                    state => failed,
+                                    fingerprint => Fingerprint,
+                                    finding_version => Version,
+                                    error => Reason
+                                },
+                                State
+                            )
                     end
             end;
-        _ -> State
+        _ ->
+            State
     end.
 
 update_feedback(Job, Feedback, State) ->
@@ -303,7 +405,8 @@ update_feedback(Job, Feedback, State) ->
 current_patchset(State, RunOpts) ->
     EffectiveOpts = maps:merge(State#state.opts, RunOpts),
     case resolve_base_commit(State#state.repo_root, EffectiveOpts) of
-        {error, _} = Error -> Error;
+        {error, _} = Error ->
+            Error;
         {ok, BaseCommit} ->
             case safe_repairs() of
                 {error, _} = Error ->
@@ -320,16 +423,29 @@ current_patchset(State, RunOpts) ->
                         {ok, Patches0} ->
                             Patches = lists:sort(fun patch_before/2, Patches0),
                             case Patches of
-                                [] -> {no_patches, BaseCommit};
+                                [] ->
+                                    {no_patches, BaseCommit};
                                 _ ->
                                     PatchIdentity = [
-                                        {maps:get(fingerprint, P), maps:get(finding_version, P), maps:get(patch_sha256, P)}
+                                        {
+                                            maps:get(fingerprint, P),
+                                            maps:get(finding_version, P),
+                                            maps:get(patch_sha256, P)
+                                        }
                                      || P <- Patches
                                     ],
-                                    PatchsetSha = sha256_hex(term_to_binary(PatchIdentity, [deterministic])),
-                                    JobId = sha256_hex(term_to_binary({BaseCommit, PatchsetSha}, [deterministic])),
-                                    {ok, #{job_id => JobId, base_commit => BaseCommit,
-                                           patchset_sha256 => PatchsetSha, patches => Patches}}
+                                    PatchsetSha = sha256_hex(
+                                        term_to_binary(PatchIdentity, [deterministic])
+                                    ),
+                                    JobId = sha256_hex(
+                                        term_to_binary({BaseCommit, PatchsetSha}, [deterministic])
+                                    ),
+                                    {ok, #{
+                                        job_id => JobId,
+                                        base_commit => BaseCommit,
+                                        patchset_sha256 => PatchsetSha,
+                                        patches => Patches
+                                    }}
                             end
                     end
             end
@@ -349,7 +465,8 @@ validated_repair(Repair) when is_map(Repair) ->
     Status = get_any(status, Repair, undefined),
     PatchFile = get_any(patch_file, Repair, undefined),
     status_is_validated(Status) andalso PatchFile =/= undefined;
-validated_repair(_) -> false.
+validated_repair(_) ->
+    false.
 
 validated_repair_for_base(Repair, BaseCommit) ->
     validated_repair(Repair) andalso
@@ -386,14 +503,16 @@ repair_descriptor(Repair) ->
             {error, {validated_patch_unavailable, Fp, Version, to_binary(PatchFile), Reason}};
         {ok, Patch} ->
             ActualSha = sha256_hex(Patch),
-            ExpectedSha = case get_any(patch_sha256, Repair, undefined) of
-                undefined -> ActualSha;
-                Value -> to_binary(Value)
-            end,
+            ExpectedSha =
+                case get_any(patch_sha256, Repair, undefined) of
+                    undefined -> ActualSha;
+                    Value -> to_binary(Value)
+                end,
             case ExpectedSha =:= ActualSha of
                 false ->
-                    {error, {validated_patch_digest_mismatch, Fp, Version,
-                             ExpectedSha, ActualSha, to_binary(PatchFile)}};
+                    {error,
+                        {validated_patch_digest_mismatch, Fp, Version, ExpectedSha, ActualSha,
+                            to_binary(PatchFile)}};
                 true ->
                     {ok, #{
                         fingerprint => Fp,
@@ -403,15 +522,26 @@ repair_descriptor(Repair) ->
                         created_at => to_binary(get_any(created_at, Repair, <<>>)),
                         application => get_any(application, Repair, undefined),
                         module => get_any(module, Repair, undefined),
-                        touched_paths => [to_binary(P) || P <- ecai_patch_verifier:patch_paths(Patch)],
+                        touched_paths => [
+                            to_binary(P)
+                         || P <- ecai_patch_verifier:patch_paths(Patch)
+                        ],
                         patch_excerpt => truncate_binary(Patch, ?MAX_PATCH_EXCERPT_BYTES)
                     }}
             end
     end.
 
 patch_before(A, B) ->
-    {maps:get(created_at, A, <<>>), maps:get(fingerprint, A, <<>>), maps:get(finding_version, A, <<>>)} =<
-    {maps:get(created_at, B, <<>>), maps:get(fingerprint, B, <<>>), maps:get(finding_version, B, <<>>)}.
+    {
+        maps:get(created_at, A, <<>>),
+        maps:get(fingerprint, A, <<>>),
+        maps:get(finding_version, A, <<>>)
+    } =<
+        {
+            maps:get(created_at, B, <<>>),
+            maps:get(fingerprint, B, <<>>),
+            maps:get(finding_version, B, <<>>)
+        }.
 
 build_breakage(Job, Verification) ->
     Failure = maps:get(failure, Verification, #{}),
@@ -450,28 +580,47 @@ build_breakage(Job, Verification) ->
         <<"evidence">> => Output,
         <<"attack_preconditions">> => <<"Patchset integration validation must reach this stage.">>,
         <<"impact">> => <<"The validated patchset cannot be safely integrated as a whole.">>,
-        <<"remediation">> => <<"Repair the integration breakage without reverting unrelated validated fixes.">>,
+        <<"remediation">> =>
+            <<"Repair the integration breakage without reverting unrelated validated fixes.">>,
         <<"proposed_patch">> => <<>>,
         <<"status">> => <<"open">>,
         <<"change">> => <<"new">>,
         <<"integration_context">> => IntegrationContext
     },
-    #{application => App, module => Module, path => Path, phase => Phase,
-      diagnostic => Output, finding => Finding}.
+    #{
+        application => App,
+        module => Module,
+        path => Path,
+        phase => Phase,
+        diagnostic => Output,
+        finding => Finding
+    }.
 
 choose_target([Source | _], _Patches) ->
     path_target(maps:get(path, Source, <<>>), maps:get(source, Source, <<>>));
 choose_target([], Patches) ->
     case first_touched_erl(Patches) of
-        undefined -> #{application => ecai, module => ecai_patch_integration,
-                       path => <<"apps/ecai/src/ecai_patch_integration.erl">>, source => <<>>};
-        Path -> path_target(Path, <<>>)
+        undefined ->
+            #{
+                application => ecai,
+                module => ecai_patch_integration,
+                path => <<"apps/ecai/src/ecai_patch_integration.erl">>,
+                source => <<>>
+            };
+        Path ->
+            path_target(Path, <<>>)
     end.
 
-first_touched_erl([]) -> undefined;
+first_touched_erl([]) ->
+    undefined;
 first_touched_erl([Patch | Rest]) ->
-    case [P || P <- maps:get(touched_paths, Patch, []),
-               filename:extension(binary_to_list(P)) =:= ".erl"] of
+    case
+        [
+            P
+         || P <- maps:get(touched_paths, Patch, []),
+            filename:extension(binary_to_list(P)) =:= ".erl"
+        ]
+    of
         [P | _] -> P;
         [] -> first_touched_erl(Rest)
     end.
@@ -479,20 +628,25 @@ first_touched_erl([Patch | Rest]) ->
 path_target(Path0, Source) ->
     Path = to_binary(Path0),
     Segments = filename:split(binary_to_list(Path)),
-    App = case Segments of
-        ["apps", "damage" | _] -> damage;
-        ["apps", "erm" | _] -> erm;
-        ["apps", "ecai" | _] -> ecai;
-        _ -> ecai
-    end,
+    App =
+        case Segments of
+            ["apps", "damage" | _] -> damage;
+            ["apps", "erm" | _] -> erm;
+            ["apps", "ecai" | _] -> ecai;
+            _ -> ecai
+        end,
     ModuleName = filename:basename(binary_to_list(Path), ".erl"),
     Module = safe_module_atom(ModuleName, App),
     #{application => App, module => Module, path => Path, source => Source}.
 
-safe_module_atom([], App) -> anchor_module(App);
+safe_module_atom([], App) ->
+    anchor_module(App);
 safe_module_atom(Name, App) ->
-    try list_to_existing_atom(Name)
-    catch error:badarg -> anchor_module(App) end.
+    try
+        list_to_existing_atom(Name)
+    catch
+        error:badarg -> anchor_module(App)
+    end.
 
 anchor_module(damage) -> damage;
 anchor_module(erm) -> erm;
@@ -515,13 +669,20 @@ breakage_patch_context(Patch) ->
         <<"patch_excerpt">> => maps:get(patch_excerpt, Patch, <<>>)
     }.
 
-integration_title(patch_apply_check) -> <<"Patchset application conflict">>;
-integration_title(patch_apply) -> <<"Patchset application failure">>;
-integration_title(diff_check) -> <<"Patchset produces invalid Git diff">>;
-integration_title(compile) -> <<"Patchset compilation failure">>;
-integration_title(eunit) -> <<"Patchset EUnit regression">>;
-integration_title(ct) -> <<"Patchset Common Test regression">>;
-integration_title(Other) -> iolist_to_binary([<<"Patchset integration failure: ">>, to_binary(Other)]).
+integration_title(patch_apply_check) ->
+    <<"Patchset application conflict">>;
+integration_title(patch_apply) ->
+    <<"Patchset application failure">>;
+integration_title(diff_check) ->
+    <<"Patchset produces invalid Git diff">>;
+integration_title(compile) ->
+    <<"Patchset compilation failure">>;
+integration_title(eunit) ->
+    <<"Patchset EUnit regression">>;
+integration_title(ct) ->
+    <<"Patchset Common Test regression">>;
+integration_title(Other) ->
+    iolist_to_binary([<<"Patchset integration failure: ">>, to_binary(Other)]).
 
 integration_severity(patch_apply_check) -> <<"high">>;
 integration_severity(patch_apply) -> <<"high">>;
@@ -534,25 +695,34 @@ resolve_base_commit(RepoRoot, Opts) ->
     Base = path_to_list(Base0),
     Result = run_git(
         RepoRoot,
-        ["rev-parse", "--verify", "--end-of-options",
-         Base ++ "^{commit}"],
+        [
+            "rev-parse",
+            "--verify",
+            "--end-of-options",
+            Base ++ "^{commit}"
+        ],
         30000
     ),
     case Result of
         {ok, Output} -> {ok, trim_binary(Output)};
-        {error, Reason} ->
-            {error, {cannot_resolve_integration_base, Base0, Reason}}
+        {error, Reason} -> {error, {cannot_resolve_integration_base, Base0, Reason}}
     end.
 
 integration_base(Opts) ->
     case maps:get(base_commit, Opts, undefined) of
         undefined ->
             case application:get_env(ecai, code_integration_base_commit) of
-                {ok, Value} when Value =/= "HEAD",
-                                 Value =/= <<"HEAD">> ->
+                {ok, Value} when
+                    Value =/= "HEAD",
+                    Value =/= <<"HEAD">>
+                ->
                     Value;
                 _ ->
-                    case ecai_otp_compat:catch_value(fun() -> ecai_source_repository:current(Opts) end) of
+                    case
+                        ecai_otp_compat:catch_value(fun() ->
+                            ecai_source_repository:current(Opts)
+                        end)
+                    of
                         {ok, #{commit := Commit}} -> Commit;
                         _ -> "HEAD"
                     end
@@ -563,10 +733,16 @@ integration_base(Opts) ->
 
 run_git(RepoRoot, Args, Timeout) ->
     case os:find_executable("git") of
-        false -> {error, git_not_found};
+        false ->
+            {error, git_not_found};
         Git ->
-            Port = open_port({spawn_executable, Git}, [binary, exit_status, stderr_to_stdout,
-                {args, ["-C", RepoRoot | Args]}, {cd, RepoRoot}]),
+            Port = open_port({spawn_executable, Git}, [
+                binary,
+                exit_status,
+                stderr_to_stdout,
+                {args, ["-C", RepoRoot | Args]},
+                {cd, RepoRoot}
+            ]),
             collect_git(Port, <<>>, Timeout)
     end.
 
@@ -576,21 +752,37 @@ collect_git(Port, Acc, Timeout) ->
         {Port, {exit_status, 0}} -> {ok, Acc};
         {Port, {exit_status, Status}} -> {error, {exit_status, Status, Acc}}
     after Timeout ->
-        try port_close(Port) catch _:_:_ -> ok end,
+        try
+            port_close(Port)
+        catch
+            _:_:_ -> ok
+        end,
         {error, timeout}
     end.
 
 recover_interrupted_jobs(Tab) ->
-    Updates = dets:foldl(fun
-        ({{job, Id}, Job}, Acc) when is_map(Job) ->
-            case maps:get(status, Job, undefined) of
-                running -> [{Id, Job#{status => queued,
-                                      resumed_at => now_iso8601(),
-                                      resume_count => maps:get(resume_count, Job, 0) + 1}} | Acc];
-                _ -> Acc
-            end;
-        (_, Acc) -> Acc
-    end, [], Tab),
+    Updates = dets:foldl(
+        fun
+            ({{job, Id}, Job}, Acc) when is_map(Job) ->
+                case maps:get(status, Job, undefined) of
+                    running ->
+                        [
+                            {Id, Job#{
+                                status => queued,
+                                resumed_at => now_iso8601(),
+                                resume_count => maps:get(resume_count, Job, 0) + 1
+                            }}
+                            | Acc
+                        ];
+                    _ ->
+                        Acc
+                end;
+            (_, Acc) ->
+                Acc
+        end,
+        [],
+        Tab
+    ),
     lists:foreach(fun({Id, Job}) -> dets:insert(Tab, {{job, Id}, Job}) end, Updates),
     dets:sync(Tab).
 
@@ -607,17 +799,27 @@ lookup_job(Tab, JobId) ->
     end.
 
 collect_jobs(Tab) ->
-    Jobs = dets:foldl(fun
-        ({{job, _}, Job}, Acc) when is_map(Job) -> [Job | Acc];
-        (_, Acc) -> Acc
-    end, [], Tab),
-    lists:sort(fun(A, B) -> maps:get(created_at, A, <<>>) >= maps:get(created_at, B, <<>>) end, Jobs).
+    Jobs = dets:foldl(
+        fun
+            ({{job, _}, Job}, Acc) when is_map(Job) -> [Job | Acc];
+            (_, Acc) -> Acc
+        end,
+        [],
+        Tab
+    ),
+    lists:sort(
+        fun(A, B) -> maps:get(created_at, A, <<>>) >= maps:get(created_at, B, <<>>) end, Jobs
+    ).
 
 job_counts(Tab) ->
-    lists:foldl(fun(Job, Acc) ->
-        Status = maps:get(status, Job, unknown),
-        maps:update_with(Status, fun(N) -> N + 1 end, 1, Acc)
-    end, #{}, collect_jobs(Tab)).
+    lists:foldl(
+        fun(Job, Acc) ->
+            Status = maps:get(status, Job, unknown),
+            maps:update_with(Status, fun(N) -> N + 1 end, 1, Acc)
+        end,
+        #{},
+        collect_jobs(Tab)
+    ).
 
 write_job_report(Job, State) ->
     Dir = ecai_code_paths:integration_log_root(State#state.state_root),
@@ -632,18 +834,24 @@ write_job_report(Job, State) ->
 current_summary(undefined) -> undefined;
 current_summary(Current) when is_map(Current) -> maps:without([pid, mon, ref], Current).
 
-schedule_next(Delay) -> erlang:send_after(Delay, self(), scan), ok.
+schedule_next(Delay) ->
+    erlang:send_after(Delay, self(), scan),
+    ok.
 
 repo_root(Opts) ->
     case ecai_otp_compat:catch_value(fun() -> ecai_source_repository:current(Opts) end) of
         {ok, #{root := Root}} ->
             filename:absname(path_to_list(Root));
         _ ->
-            filename:absname(path_to_list(maps:get(
-                repo_root,
-                Opts,
-                application:get_env(ecai, code_repo_root, ".")
-            )))
+            filename:absname(
+                path_to_list(
+                    maps:get(
+                        repo_root,
+                        Opts,
+                        application:get_env(ecai, code_repo_root, ".")
+                    )
+                )
+            )
     end.
 
 value_or_empty({ok, Value}) -> Value;
@@ -657,27 +865,39 @@ get_any(Key, Map, Default) when is_map(Map), is_atom(Key) ->
 
 mget(Key, Map, Default) when is_binary(Key), is_map(Map) ->
     case maps:find(Key, Map) of
-        {ok, Value} -> Value;
+        {ok, Value} ->
+            Value;
         error ->
             try binary_to_existing_atom(Key, utf8) of
                 Atom -> maps:get(Atom, Map, Default)
-            catch error:badarg -> Default end
+            catch
+                error:badarg -> Default
+            end
     end;
-mget(_Key, _Map, Default) -> Default.
+mget(_Key, _Map, Default) ->
+    Default.
 
 json_safe(Map) when is_map(Map) ->
-    maps:from_list([{json_key(K), json_safe(V)} || {K, V} <- maps:to_list(Map),
-                                                    not transient_key(K)]);
+    maps:from_list([
+        {json_key(K), json_safe(V)}
+     || {K, V} <- maps:to_list(Map),
+        not transient_key(K)
+    ]);
 json_safe(List) when is_list(List) -> [json_safe(V) || V <- List];
 json_safe(Tuple) when is_tuple(Tuple) -> [json_safe(V) || V <- tuple_to_list(Tuple)];
-json_safe(true) -> true;
-json_safe(false) -> false;
-json_safe(null) -> null;
-json_safe(undefined) -> null;
+json_safe(true) ->
+    true;
+json_safe(false) ->
+    false;
+json_safe(null) ->
+    null;
+json_safe(undefined) ->
+    null;
 json_safe(Atom) when is_atom(Atom) -> atom_to_binary(Atom, utf8);
 json_safe(Bin) when is_binary(Bin) -> Bin;
 json_safe(Number) when is_number(Number) -> Number;
-json_safe(Other) -> to_binary(Other).
+json_safe(Other) ->
+    to_binary(Other).
 
 transient_key(pid) -> true;
 transient_key(mon) -> true;
@@ -701,9 +921,11 @@ truncate_binary(Bin, Max) when Max > 0 ->
 trim_binary(Bin) -> unicode:characters_to_binary(string:trim(binary_to_list(Bin))).
 
 now_iso8601() ->
-    to_binary(calendar:system_time_to_rfc3339(
-        erlang:system_time(second), [{unit, second}, {offset, "Z"}]
-    )).
+    to_binary(
+        calendar:system_time_to_rfc3339(
+            erlang:system_time(second), [{unit, second}, {offset, "Z"}]
+        )
+    ).
 
 path_to_list(P) when is_list(P) -> P;
 path_to_list(P) when is_binary(P) -> binary_to_list(P);

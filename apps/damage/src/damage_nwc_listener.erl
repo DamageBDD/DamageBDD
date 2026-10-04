@@ -171,7 +171,9 @@ init(Opts0) ->
     MaxReconnectMs = proplists:get_value(max_reconnect_ms, Opts, ?DEFAULT_MAX_RECONNECT_MS),
     HealthcheckMs = proplists:get_value(healthcheck_ms, Opts, ?DEFAULT_HEALTHCHECK_MS),
     MinConnectedRelays = proplists:get_value(
-        min_connected_relays, Opts, app_env_int(nwc_min_connected_relays, ?DEFAULT_MIN_CONNECTED_RELAYS)
+        min_connected_relays,
+        Opts,
+        app_env_int(nwc_min_connected_relays, ?DEFAULT_MIN_CONNECTED_RELAYS)
     ),
     MaxRetries = proplists:get_value(
         max_retries, Opts, app_env_int(nwc_relay_max_retries, 8)
@@ -404,7 +406,9 @@ resolve_service_pubkey(CryptoHandler) ->
         PubKey when is_binary(PubKey) ->
             PubKey;
         _ ->
-            case damage_otp_compat:catch_value(fun() -> apply(CryptoHandler, public_key_hex, []) end) of
+            case
+                damage_otp_compat:catch_value(fun() -> apply(CryptoHandler, public_key_hex, []) end)
+            of
                 PubKey when is_binary(PubKey) ->
                     PubKey;
                 _ ->
@@ -731,7 +735,9 @@ nwc_error_summary(Reason) ->
 
 decode_request(CryptoHandler, Event) ->
     ClientPub = maps:get(<<"pubkey">>, Event, undefined),
-    case damage_otp_compat:catch_value(fun() -> apply(CryptoHandler, nwc_decode_request, [Event]) end) of
+    case
+        damage_otp_compat:catch_value(fun() -> apply(CryptoHandler, nwc_decode_request, [Event]) end)
+    of
         {ok, Req0} when is_map(Req0) ->
             {ok, ensure_client_pubkey(Req0, ClientPub)};
         {ok, _Req} = Ok ->
@@ -781,7 +787,11 @@ send_response(Event, Payload, _State = #state{crypto_handler = CryptoHandler, co
     end.
 
 encode_response(CryptoHandler, Event, Payload) ->
-    case damage_otp_compat:catch_value(fun() -> apply(CryptoHandler, nwc_encode_response, [Event, Payload, ?RESPONSE_KIND]) end) of
+    case
+        damage_otp_compat:catch_value(fun() ->
+            apply(CryptoHandler, nwc_encode_response, [Event, Payload, ?RESPONSE_KIND])
+        end)
+    of
         {ok, _Event} = Ok ->
             Ok;
         {'EXIT', Reason} ->
@@ -791,7 +801,11 @@ encode_response(CryptoHandler, Event, Payload) ->
     end.
 
 create_signed_event(CryptoHandler, Kind, Content, Tags) ->
-    case damage_otp_compat:catch_value(fun() -> apply(CryptoHandler, create_signed_event, [Kind, Content, Tags]) end) of
+    case
+        damage_otp_compat:catch_value(fun() ->
+            apply(CryptoHandler, create_signed_event, [Kind, Content, Tags])
+        end)
+    of
         {ok, _Event} = Ok ->
             Ok;
         {'EXIT', Reason} ->
@@ -1102,7 +1116,12 @@ missing_relay_count(#state{relays = Relays, conns = Conns}) ->
     ]).
 
 relay_for_conn(ConnPid, #state{conns = Conns}) ->
-    case [Relay || {_Url, #{conn_pid := Pid, relay := Relay}} <- maps:to_list(Conns), Pid =:= ConnPid] of
+    case
+        [
+            Relay
+         || {_Url, #{conn_pid := Pid, relay := Relay}} <- maps:to_list(Conns), Pid =:= ConnPid
+        ]
+    of
         [Relay | _] -> {ok, Relay};
         [] -> error
     end.
@@ -1149,13 +1168,21 @@ log_health_transition(State = #state{health_status = Old}) ->
         {_, healthy} ->
             ?LOG_INFO(
                 "NWC listener relay health recovered connected=~p required=~p missing_relays=~p",
-                [connected_relay_count(State), required_connected_relays(State), missing_relay_count(State)]
+                [
+                    connected_relay_count(State),
+                    required_connected_relays(State),
+                    missing_relay_count(State)
+                ]
             ),
             State#state{health_status = healthy};
         {_, degraded} ->
             ?LOG_WARNING(
                 "NWC listener relay health degraded connected=~p required=~p missing_relays=~p",
-                [connected_relay_count(State), required_connected_relays(State), missing_relay_count(State)]
+                [
+                    connected_relay_count(State),
+                    required_connected_relays(State),
+                    missing_relay_count(State)
+                ]
             ),
             State#state{health_status = degraded};
         {_, no_relays} ->
@@ -1170,17 +1197,22 @@ relay_retry_action(Url, #state{relay_failures = Failures}) ->
         _ -> try_connect
     end.
 
-record_relay_failure(Relay, Reason, State = #state{
-    relay_failures = Failures0,
-    max_retries = MaxRetries,
-    circuit_open_ms = CircuitOpenMs
-}) ->
+record_relay_failure(
+    Relay,
+    Reason,
+    State = #state{
+        relay_failures = Failures0,
+        max_retries = MaxRetries,
+        circuit_open_ms = CircuitOpenMs
+    }
+) ->
     Url = maps:get(url, Relay),
     Prev = maps:get(Url, Failures0, #{}),
     case classify_relay_failure(Reason) of
         permanent ->
             case maps:get(disabled, Prev, false) of
-                true -> ok;
+                true ->
+                    ok;
                 false ->
                     ?LOG_ERROR(
                         "NWC relay disabled after unrecoverable failure relay=~p reason=~p",
@@ -1251,7 +1283,8 @@ has_retryable_missing_relays(State = #state{relays = Relays, conns = Conns}) ->
             Url = maps:get(url, Relay),
             Connected =
                 case maps:get(Url, Conns, undefined) of
-                    #{subscribed := true, conn_pid := Pid} when is_pid(Pid) -> is_process_alive(Pid);
+                    #{subscribed := true, conn_pid := Pid} when is_pid(Pid) ->
+                        is_process_alive(Pid);
                     _ -> false
                 end,
             (not Connected) andalso relay_retry_action(Url, State) =/= disabled
@@ -1259,36 +1292,62 @@ has_retryable_missing_relays(State = #state{relays = Relays, conns = Conns}) ->
         sanitize_nwc_relays(Relays)
     ).
 
-classify_relay_failure({connect_failed, Reason}) -> classify_relay_failure(Reason);
-classify_relay_failure({await_up_failed, Reason}) -> classify_relay_failure(Reason);
-classify_relay_failure({await_up_exit, Reason}) -> classify_relay_failure(Reason);
-classify_relay_failure({gun_error, Reason}) -> classify_relay_failure(Reason);
-classify_relay_failure({connection_exit, Reason}) -> classify_relay_failure(Reason);
-classify_relay_failure(timeout) -> retryable;
-classify_relay_failure(closed) -> retryable;
-classify_relay_failure(econnrefused) -> retryable;
-classify_relay_failure(econnreset) -> retryable;
-classify_relay_failure(enetunreach) -> retryable;
-classify_relay_failure(ehostunreach) -> retryable;
-classify_relay_failure({websocket_upgrade_rejected, _, 429}) -> retryable;
+classify_relay_failure({connect_failed, Reason}) ->
+    classify_relay_failure(Reason);
+classify_relay_failure({await_up_failed, Reason}) ->
+    classify_relay_failure(Reason);
+classify_relay_failure({await_up_exit, Reason}) ->
+    classify_relay_failure(Reason);
+classify_relay_failure({gun_error, Reason}) ->
+    classify_relay_failure(Reason);
+classify_relay_failure({connection_exit, Reason}) ->
+    classify_relay_failure(Reason);
+classify_relay_failure(timeout) ->
+    retryable;
+classify_relay_failure(closed) ->
+    retryable;
+classify_relay_failure(econnrefused) ->
+    retryable;
+classify_relay_failure(econnreset) ->
+    retryable;
+classify_relay_failure(enetunreach) ->
+    retryable;
+classify_relay_failure(ehostunreach) ->
+    retryable;
+classify_relay_failure({websocket_upgrade_rejected, _, 429}) ->
+    retryable;
 classify_relay_failure({websocket_upgrade_rejected, _, Status}) when Status >= 500 -> retryable;
 classify_relay_failure({upgrade_failed, Status, _}) when Status =:= 429 -> retryable;
 classify_relay_failure({upgrade_failed, Status, _}) when Status >= 500 -> retryable;
-classify_relay_failure({websocket_upgrade_rejected, _, Status}) when Status >= 400, Status < 500 -> permanent;
+classify_relay_failure({websocket_upgrade_rejected, _, Status}) when Status >= 400, Status < 500 ->
+    permanent;
 classify_relay_failure({upgrade_failed, Status, _}) when Status >= 400, Status < 500 -> permanent;
-classify_relay_failure({invalid_ws_protocol, _}) -> permanent;
-classify_relay_failure({unsupported_scheme, _}) -> permanent;
-classify_relay_failure({bad_relay_url, _}) -> permanent;
-classify_relay_failure(_) -> retryable.
+classify_relay_failure({invalid_ws_protocol, _}) ->
+    permanent;
+classify_relay_failure({unsupported_scheme, _}) ->
+    permanent;
+classify_relay_failure({bad_relay_url, _}) ->
+    permanent;
+classify_relay_failure(_) ->
+    retryable.
 
 app_env_int(Key, Default) ->
     case application:get_env(damage, Key) of
         {ok, V} when is_integer(V) -> V;
         {ok, V} when is_binary(V) ->
-            try binary_to_integer(V) catch _:_ -> Default end;
+            try
+                binary_to_integer(V)
+            catch
+                _:_ -> Default
+            end;
         {ok, V} when is_list(V) ->
-            try list_to_integer(V) catch _:_ -> Default end;
-        _ -> Default
+            try
+                list_to_integer(V)
+            catch
+                _:_ -> Default
+            end;
+        _ ->
+            Default
     end.
 
 conn_known_pid(ConnPid, #state{conn_pid = ConnPid}) when is_pid(ConnPid) ->

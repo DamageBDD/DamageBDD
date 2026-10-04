@@ -155,7 +155,11 @@ enrich_issue(Other) ->
 from_json(Req, State) ->
     {ok, Body, _Req2} = cowboy_req:read_body(Req),
     Decoded =
-        case damage_otp_compat:catch_value(fun() -> jsx:decode(Body, [{labels, atom}, return_maps]) end) of
+        case
+            damage_otp_compat:catch_value(fun() ->
+                jsx:decode(Body, [{labels, atom}, return_maps])
+            end)
+        of
             {'EXIT', _} -> {error, bad_json};
             Map when is_map(Map) -> {ok, Map}
         end,

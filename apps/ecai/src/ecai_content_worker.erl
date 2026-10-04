@@ -8,8 +8,10 @@ run(JobId0) ->
         {ok, Job0} ->
             _ = ecai_content_store:update_job(JobId, #{status => running, last_error => undefined}),
             advance(Job0);
-        not_found -> {error, {job_not_found, JobId}};
-        {error, _} = Error -> Error
+        not_found ->
+            {error, {job_not_found, JobId}};
+        {error, _} = Error ->
+            Error
     end.
 
 advance(Job = #{stage := evidence_ready}) ->
@@ -31,8 +33,10 @@ advance(Job = #{stage := nostr_published}) ->
     with_job(Job, linkedin_publish, fun linkedin_stage/1);
 advance(Job = #{stage := linkedin_published}) ->
     complete(Job);
-advance(Job = #{stage := complete}) -> {ok, Job};
-advance(Job) -> fail(Job, {unknown_stage, maps:get(stage, Job, undefined)}).
+advance(Job = #{stage := complete}) ->
+    {ok, Job};
+advance(Job) ->
+    fail(Job, {unknown_stage, maps:get(stage, Job, undefined)}).
 
 with_job(Job, Operation, Fun) ->
     try Fun(Job) of
@@ -52,15 +56,21 @@ generate_stage(Job) ->
                 ok -> update(Job, #{stage => generated, content => Pack});
                 {error, _} = Error -> Error
             end;
-        {error, _} = Error -> Error
+        {error, _} = Error ->
+            Error
     end.
 
 validate_stage(Job) ->
     Pack = maps:get(content, Job),
     Evidence = maps:get(evidence, Job),
     case ecai_content_validator:validate(Pack, Evidence) of
-        ok -> update(Job, #{stage => validated, validation => #{status => ok, at => ecai_content_util:now_iso8601()}});
-        {error, _} = Error -> Error
+        ok ->
+            update(Job, #{
+                stage => validated,
+                validation => #{status => ok, at => ecai_content_util:now_iso8601()}
+            });
+        {error, _} = Error ->
+            Error
     end.
 
 render_stage(Job) ->
@@ -85,7 +95,8 @@ blossom_stage(Job) ->
 
 nostr_prepare_stage(Job) ->
     case application:get_env(ecai, content_nostr_enabled, true) of
-        false -> update(Job, #{stage => nostr_published, nostr => #{skipped => disabled}});
+        false ->
+            update(Job, #{stage => nostr_published, nostr => #{skipped => disabled}});
         true ->
             Pack = maps:get(content, Job),
             Media = maps:get(blossom, Job),
@@ -106,11 +117,15 @@ nostr_stage(Job) ->
 
 linkedin_stage(Job) ->
     case application:get_env(ecai, content_linkedin_enabled, false) of
-        false -> update(Job, #{stage => linkedin_published, linkedin => #{skipped => disabled}});
+        false ->
+            update(Job, #{stage => linkedin_published, linkedin => #{skipped => disabled}});
         true ->
             Opts = maps:get(options, Job, #{}),
-            case ecai_linkedin_client:publish_image_post(
-                maps:get(content, Job), maps:get(image, Job), maps:get(linkedin, Opts, #{})) of
+            case
+                ecai_linkedin_client:publish_image_post(
+                    maps:get(content, Job), maps:get(image, Job), maps:get(linkedin, Opts, #{})
+                )
+            of
                 {ok, Receipt} -> update(Job, #{stage => linkedin_published, linkedin => Receipt});
                 {error, _} = Error -> Error
             end
@@ -123,8 +138,13 @@ finish_waiting(Job) ->
     end.
 
 complete(Job) ->
-    case ecai_content_store:update_job(maps:get(id, Job), #{status => complete, stage => complete,
-            completed_at => ecai_content_util:now_iso8601()}) of
+    case
+        ecai_content_store:update_job(maps:get(id, Job), #{
+            status => complete,
+            stage => complete,
+            completed_at => ecai_content_util:now_iso8601()
+        })
+    of
         {ok, Next} -> {ok, Next};
         {error, _} = Error -> Error
     end.
@@ -132,9 +152,17 @@ complete(Job) ->
 fail(Job, Reason) ->
     JobId = maps:get(id, Job),
     RetryCount = maps:get(retry_count, Job, 0) + 1,
-    Status = case linkedin_ambiguous(Reason) of true -> manual_reconcile; false -> retry end,
-    _ = ecai_content_store:update_job(JobId, #{status => Status, retry_count => RetryCount,
-            last_error => sanitize_reason(Reason), last_failed_at => ecai_content_util:now_iso8601()}),
+    Status =
+        case linkedin_ambiguous(Reason) of
+            true -> manual_reconcile;
+            false -> retry
+        end,
+    _ = ecai_content_store:update_job(JobId, #{
+        status => Status,
+        retry_count => RetryCount,
+        last_error => sanitize_reason(Reason),
+        last_failed_at => ecai_content_util:now_iso8601()
+    }),
     {error, Reason}.
 
 linkedin_ambiguous({linkedin_publish, {linkedin_post_ambiguous, _}}) -> true;
@@ -144,19 +172,27 @@ update(Job, Patch) ->
     ecai_content_store:update_job(maps:get(id, Job), Patch).
 
 publish_requested(Job) ->
-    maps:get(publish_requested, Job, false) orelse application:get_env(ecai, content_auto_publish, false).
+    maps:get(publish_requested, Job, false) orelse
+        application:get_env(ecai, content_auto_publish, false).
 
 write_pack_artifacts(JobId, Pack) ->
     Files = [
         {<<"content.json">>, jsx:encode(ecai_content_util:json_safe(Pack))},
         {<<"article.md">>, ecai_content_util:mget(<<"article_markdown">>, Pack, <<>>)},
         {<<"docs.md">>, ecai_content_util:mget(<<"documentation_markdown">>, Pack, <<>>)},
-        {<<"linkedin.txt">>, ecai_content_util:mget(<<"commentary">>, ecai_content_util:mget(<<"linkedin">>, Pack, #{}), <<>>)},
-        {<<"image-prompt.txt">>, ecai_content_util:mget(<<"prompt">>, ecai_content_util:mget(<<"image">>, Pack, #{}), <<>>)}
+        {<<"linkedin.txt">>,
+            ecai_content_util:mget(
+                <<"commentary">>, ecai_content_util:mget(<<"linkedin">>, Pack, #{}), <<>>
+            )},
+        {<<"image-prompt.txt">>,
+            ecai_content_util:mget(
+                <<"prompt">>, ecai_content_util:mget(<<"image">>, Pack, #{}), <<>>
+            )}
     ],
     write_files(JobId, Files).
 
-write_files(_JobId, []) -> ok;
+write_files(_JobId, []) ->
+    ok;
 write_files(JobId, [{Name, Data} | Rest]) ->
     case ecai_content_store:artifact_path(JobId, Name) of
         {ok, Path} ->
@@ -164,7 +200,8 @@ write_files(JobId, [{Name, Data} | Rest]) ->
                 ok -> write_files(JobId, Rest);
                 {error, _} = Error -> Error
             end;
-        {error, _} = Error -> Error
+        {error, _} = Error ->
+            Error
     end.
 
 sanitize_reason(Reason) -> ecai_content_util:to_binary(io_lib:format("~p", [Reason])).

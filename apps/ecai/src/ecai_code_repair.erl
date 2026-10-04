@@ -30,14 +30,16 @@ propose(App, Module, Fingerprint0, Opts) when is_atom(App), is_atom(Module), is_
                 {ok, Finding} -> ecai_patch_sup:propose(App, Module, Finding, Opts);
                 not_found -> {error, {finding_not_found, Fingerprint}}
             end;
-        Other -> {error, {cannot_load_findings, Other}}
+        Other ->
+            {error, {cannot_load_findings, Other}}
     end.
 
 propose_finding(App, Module, Finding) ->
     propose_finding(App, Module, Finding, #{}).
 
-propose_finding(App, Module, Finding, Opts)
-  when is_atom(App), is_atom(Module), is_map(Finding), is_map(Opts) ->
+propose_finding(App, Module, Finding, Opts) when
+    is_atom(App), is_atom(Module), is_map(Finding), is_map(Opts)
+->
     ecai_patch_sup:propose(App, Module, Finding, Opts).
 
 integrate() ->
@@ -53,23 +55,29 @@ integration_job(JobId) -> ecai_patch_integration:job(JobId).
 repairs() -> ecai_learning_store:repairs().
 repairs(Fingerprint) -> ecai_learning_store:repairs(Fingerprint).
 
-find_finding(_Fingerprint, []) -> not_found;
+find_finding(_Fingerprint, []) ->
+    not_found;
 find_finding(Fingerprint, [Finding | Rest]) when is_map(Finding) ->
     case mget(<<"fingerprint">>, Finding, <<>>) of
         Fingerprint -> {ok, Finding};
         _ -> find_finding(Fingerprint, Rest)
     end;
-find_finding(Fingerprint, [_ | Rest]) -> find_finding(Fingerprint, Rest).
+find_finding(Fingerprint, [_ | Rest]) ->
+    find_finding(Fingerprint, Rest).
 
 mget(Key, Map, Default) when is_map(Map), is_binary(Key) ->
     case maps:find(Key, Map) of
-        {ok, V} -> V;
+        {ok, V} ->
+            V;
         error ->
             try binary_to_existing_atom(Key, utf8) of
                 A -> maps:get(A, Map, Default)
-            catch error:badarg -> Default end
+            catch
+                error:badarg -> Default
+            end
     end;
-mget(_Key, _Map, Default) -> Default.
+mget(_Key, _Map, Default) ->
+    Default.
 
 to_binary(B) when is_binary(B) -> B;
 to_binary(L) when is_list(L) -> unicode:characters_to_binary(L);

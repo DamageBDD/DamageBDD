@@ -21,7 +21,8 @@ state_root() ->
 
 state_root(Opts) when is_map(Opts) ->
     case maps:get(state_root, Opts, undefined) of
-        undefined -> resolve_default_state_root();
+        undefined ->
+            resolve_default_state_root();
         Root0 ->
             Root = path_to_list(Root0),
             case ensure_layout(Root) of
@@ -88,21 +89,22 @@ integration_log_root(Root) ->
 
 resolve_default_state_root() ->
     case ensure_layout(?SYSTEM_STATE_ROOT) of
-        ok -> {ok, ?SYSTEM_STATE_ROOT};
+        ok ->
+            {ok, ?SYSTEM_STATE_ROOT};
         {error, SystemReason} ->
             case user_state_root() of
                 {ok, Root} ->
                     case ensure_layout(Root) of
-                        ok -> {ok, Root};
+                        ok ->
+                            {ok, Root};
                         {error, UserReason} ->
-                            {error, {no_usable_state_root,
-                                {?SYSTEM_STATE_ROOT, SystemReason},
-                                {Root, UserReason}}}
+                            {error,
+                                {no_usable_state_root, {?SYSTEM_STATE_ROOT, SystemReason},
+                                    {Root, UserReason}}}
                     end;
                 {error, UserRootReason} ->
-                    {error, {no_usable_state_root,
-                        {?SYSTEM_STATE_ROOT, SystemReason},
-                        UserRootReason}}
+                    {error,
+                        {no_usable_state_root, {?SYSTEM_STATE_ROOT, SystemReason}, UserRootReason}}
             end
     end.
 
@@ -113,7 +115,8 @@ user_state_root() ->
                 absolute -> {ok, filename:join(Xdg, "damage")};
                 _ -> user_state_root_from_home()
             end;
-        _ -> user_state_root_from_home()
+        _ ->
+            user_state_root_from_home()
     end.
 
 user_state_root_from_home() ->
@@ -124,7 +127,8 @@ user_state_root_from_home() ->
             {error, no_xdg_state_home_or_home}
     end.
 
-ensure_dirs(_Root, []) -> ok;
+ensure_dirs(_Root, []) ->
+    ok;
 ensure_dirs(Root, [Rel | Rest]) ->
     Dir = filename:join(Root, Rel),
     Dummy = filename:join(Dir, ".keep"),
@@ -133,7 +137,8 @@ ensure_dirs(Root, [Rel | Rest]) ->
         {error, Reason} -> {error, {cannot_create_directory, Dir, Reason}}
     end.
 
-ensure_writable_dirs(_Root, []) -> ok;
+ensure_writable_dirs(_Root, []) ->
+    ok;
 ensure_writable_dirs(Root, [Rel | Rest]) ->
     Dir = filename:join(Root, Rel),
     case writable_probe(Dir) of

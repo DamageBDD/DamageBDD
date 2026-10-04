@@ -318,7 +318,9 @@ do_post_action(_Action, Data, _Req, _State) ->
 
 from_json(Req, #{action := Action} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
-    case damage_otp_compat:catch_value(fun() -> jsx:decode(Data, [return_maps, {labels, atom}]) end) of
+    case
+        damage_otp_compat:catch_value(fun() -> jsx:decode(Data, [return_maps, {labels, atom}]) end)
+    of
         badarg ->
             Response =
                 cowboy_req:set_resp_body(

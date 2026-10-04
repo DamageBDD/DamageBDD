@@ -211,7 +211,6 @@ init_allowed_app(App, Opts) ->
 
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
-
 handle_call(status, _From, State) ->
     Reply = #{
         app => State#state.app,
@@ -232,13 +231,10 @@ handle_call(status, _From, State) ->
         next_run_at_ms => State#state.next_run_at_ms
     },
     {reply, Reply, State};
-
 handle_call(findings, _From, State) ->
     {reply, all_reports(State#state.dets_tab), State};
-
 handle_call({findings, Module}, _From, State) ->
     {reply, load_module_report(State#state.dets_tab, Module), State};
-
 handle_call(_Request, _From, State) ->
     {reply, {error, unsupported_call}, State}.
 
@@ -249,7 +245,6 @@ handle_cast(scan_now, State0) ->
     _ = store_scan_checkpoint(State1),
     self() ! start_cycle,
     {noreply, State1};
-
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -267,9 +262,12 @@ handle_info(start_cycle, State0) ->
             _ = store_scan_checkpoint(State1),
             {noreply, State1};
         {ok, #{commit := CanonicalCommit}} ->
-            case ecai_source_repository:application_modules_at_commit(
-                     StateA#state.app,
-                     CanonicalCommit) of
+            case
+                ecai_source_repository:application_modules_at_commit(
+                    StateA#state.app,
+                    CanonicalCommit
+                )
+            of
                 {ok, Modules} ->
                     Now = now_iso8601(),
                     State1 = StateA#state{
@@ -297,7 +295,6 @@ handle_info(start_cycle, State0) ->
                     {noreply, State1}
             end
     end;
-
 handle_info(scan_next, State = #state{queue = []}) ->
     CompletedAt = now_iso8601(),
     State1 = State#state{
@@ -309,7 +306,6 @@ handle_info(scan_next, State = #state{queue = []}) ->
     State2 = schedule_next_cycle(State1),
     _ = store_scan_checkpoint(State2),
     {noreply, State2};
-
 handle_info(scan_next, State0 = #state{queue = [Module | Rest]}) ->
     State1 = State0#state{current = Module, queue = Rest, phase = scanning},
     ok = store_scan_checkpoint(State1),
@@ -327,7 +323,9 @@ handle_info(scan_next, State0 = #state{queue = [Module | Rest]}) ->
                 ),
                 %% Keep the deterministic code-learning substrate hot whenever
                 %% the vulnerability monitor observes a newly scanned source.
-                _ = ecai_otp_compat:catch_value(fun() -> ecai_codebase_learner:module_changed(State1#state.app, Module) end),
+                _ = ecai_otp_compat:catch_value(fun() ->
+                    ecai_codebase_learner:module_changed(State1#state.app, Module)
+                end),
                 State1#state{last_error = undefined};
             {skip, unchanged} ->
                 logger:debug(
@@ -348,7 +346,6 @@ handle_info(scan_next, State0 = #state{queue = [Module | Rest]}) ->
     ok = store_scan_checkpoint(State2),
     self() ! scan_next,
     {noreply, State2};
-
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -369,10 +366,13 @@ code_change(_OldVsn, State, _Extra) ->
 %%====================================================================
 
 scan_module(Module, State) ->
-    case authoritative_module_source(
-             State#state.app,
-             Module,
-             State#state.canonical_commit) of
+    case
+        authoritative_module_source(
+            State#state.app,
+            Module,
+            State#state.canonical_commit
+        )
+    of
         {ok, SourceKind, SourceName, SourceBin0} ->
             SourceBin = normalize_source(SourceBin0),
             Hash = sha256_hex(SourceBin),
@@ -413,10 +413,14 @@ scan_module(Module, State) ->
             Error
     end.
 
-authoritative_module_source(App, Module, Commit)
-  when is_binary(Commit), byte_size(Commit) > 0 ->
-    case ecai_source_repository:module_source_at_commit(
-             App, Module, Commit) of
+authoritative_module_source(App, Module, Commit) when
+    is_binary(Commit), byte_size(Commit) > 0
+->
+    case
+        ecai_source_repository:module_source_at_commit(
+            App, Module, Commit
+        )
+    of
         {ok, Meta} ->
             {
                 ok,
@@ -426,15 +430,20 @@ authoritative_module_source(App, Module, Commit)
             };
         {error, CanonicalReason} ->
             maybe_runtime_module_source(
-                App, Module, CanonicalReason)
+                App, Module, CanonicalReason
+            )
     end;
 authoritative_module_source(App, Module, _Commit) ->
     maybe_runtime_module_source(
-        App, Module, canonical_commit_missing).
+        App, Module, canonical_commit_missing
+    ).
 
 maybe_runtime_module_source(App, Module, CanonicalReason) ->
-    case application:get_env(
-             ecai, code_source_allow_runtime_fallback, false) of
+    case
+        application:get_env(
+            ecai, code_source_allow_runtime_fallback, false
+        )
+    of
         true ->
             module_source(Module);
         false ->
@@ -543,12 +552,24 @@ vulnerability_prompt(App, Module, SourceKind, SourceName, SourceBin, Previous) -
         <<"  ],\n">>,
         <<"  \"notes\": [\"important audit limitation, if any\"]\n">>,
         <<"}\n\n">>,
-        <<"APP: ">>, atom_to_binary(App, utf8), <<"\n">>,
-        <<"MODULE: ">>, atom_to_binary(Module, utf8), <<"\n">>,
-        <<"SOURCE_KIND: ">>, atom_to_binary(SourceKind, utf8), <<"\n">>,
-        <<"SOURCE_NAME: ">>, to_binary(SourceName), <<"\n\n">>,
-        <<"PREVIOUS_OPEN_FINDINGS_JSON:\n">>, PreviousJson, <<"\n\n">>,
-        <<"SOURCE_WITH_LINE_NUMBERS:\n">>, Numbered, <<"\n">>
+        <<"APP: ">>,
+        atom_to_binary(App, utf8),
+        <<"\n">>,
+        <<"MODULE: ">>,
+        atom_to_binary(Module, utf8),
+        <<"\n">>,
+        <<"SOURCE_KIND: ">>,
+        atom_to_binary(SourceKind, utf8),
+        <<"\n">>,
+        <<"SOURCE_NAME: ">>,
+        to_binary(SourceName),
+        <<"\n\n">>,
+        <<"PREVIOUS_OPEN_FINDINGS_JSON:\n">>,
+        PreviousJson,
+        <<"\n\n">>,
+        <<"SOURCE_WITH_LINE_NUMBERS:\n">>,
+        Numbered,
+        <<"\n">>
     ]).
 
 previous_open_findings(Report) when is_map(Report) ->
@@ -591,10 +612,11 @@ ollama_audit(Prompt, State) ->
         timeout => State#state.request_timeout_ms,
         connect_timeout => State#state.connect_timeout_ms
     },
-    Opts = case State#state.ollama_model of
-        undefined -> Opts0;
-        Model -> Opts0#{model => to_binary(Model)}
-    end,
+    Opts =
+        case State#state.ollama_model of
+            undefined -> Opts0;
+            Model -> Opts0#{model => to_binary(Model)}
+        end,
     ecai_ollama_pool:generate_json(audit, Prompt, Opts).
 
 %%====================================================================
@@ -618,7 +640,10 @@ reconcile_report(App, Module, SourceKind, SourceName, Hash, Audit, Inference, Pr
     Findings = Current ++ ResolvedOrHistorical,
 
     OpenCount = length([F || F <- Findings, mget(<<"status">>, F, <<"open">>) =/= <<"resolved">>]),
-    ResolvedCount = length([F || F <- Findings, mget(<<"status">>, F, <<"open">>) =:= <<"resolved">>]),
+    ResolvedCount = length([
+        F
+     || F <- Findings, mget(<<"status">>, F, <<"open">>) =:= <<"resolved">>
+    ]),
 
     PreviousHash = mget(<<"source_sha256">>, Previous, undefined),
     ScanChange =
@@ -668,8 +693,10 @@ normalize_current_finding(Module, Finding0, PrevByFp, Now) ->
 
     Change =
         case PrevStatus of
-            undefined -> <<"new">>;
-            <<"resolved">> -> <<"reopened">>;
+            undefined ->
+                <<"new">>;
+            <<"resolved">> ->
+                <<"reopened">>;
             _ ->
                 case comparable_finding(Prev) =:= comparable_finding(Base) of
                     true -> <<"unchanged">>;
@@ -692,12 +719,16 @@ normalize_current_finding(Module, Finding0, PrevByFp, Now) ->
 sanitize_finding(F) ->
     #{
         <<"title">> => to_binary(mget(<<"title">>, F, <<"Untitled finding">>)),
-        <<"severity">> => normalize_enum(mget(<<"severity">>, F, <<"info">>),
-                                        [<<"critical">>, <<"high">>, <<"medium">>, <<"low">>, <<"info">>],
-                                        <<"info">>),
-        <<"confidence">> => normalize_enum(mget(<<"confidence">>, F, <<"low">>),
-                                          [<<"high">>, <<"medium">>, <<"low">>],
-                                          <<"low">>),
+        <<"severity">> => normalize_enum(
+            mget(<<"severity">>, F, <<"info">>),
+            [<<"critical">>, <<"high">>, <<"medium">>, <<"low">>, <<"info">>],
+            <<"info">>
+        ),
+        <<"confidence">> => normalize_enum(
+            mget(<<"confidence">>, F, <<"low">>),
+            [<<"high">>, <<"medium">>, <<"low">>],
+            <<"low">>
+        ),
         <<"cwe">> => nullable_binary(mget(<<"cwe">>, F, null)),
         <<"function">> => nullable_binary(mget(<<"function">>, F, null)),
         <<"line_start">> => normalize_line(mget(<<"line_start">>, F, null)),
@@ -711,25 +742,26 @@ sanitize_finding(F) ->
 
 reconcile_missing_previous(PrevFindings, CurrentFps, Now) ->
     lists:filtermap(
-        fun(F) when is_map(F) ->
-            Fp = mget(<<"fingerprint">>, F, <<>>),
-            case maps:is_key(Fp, CurrentFps) of
-                true ->
-                    false;
-                false ->
-                    case mget(<<"status">>, F, <<"open">>) of
-                        <<"resolved">> ->
-                            {true, F};
-                        _ ->
-                            {true, F#{
-                                <<"status">> => <<"resolved">>,
-                                <<"change">> => <<"resolved">>,
-                                <<"resolved_at">> => Now
-                            }}
-                    end
-            end;
-           (_) ->
-            false
+        fun
+            (F) when is_map(F) ->
+                Fp = mget(<<"fingerprint">>, F, <<>>),
+                case maps:is_key(Fp, CurrentFps) of
+                    true ->
+                        false;
+                    false ->
+                        case mget(<<"status">>, F, <<"open">>) of
+                            <<"resolved">> ->
+                                {true, F};
+                            _ ->
+                                {true, F#{
+                                    <<"status">> => <<"resolved">>,
+                                    <<"change">> => <<"resolved">>,
+                                    <<"resolved_at">> => Now
+                                }}
+                        end
+                end;
+            (_) ->
+                false
         end,
         PrevFindings
     ).
@@ -918,14 +950,14 @@ cancel_scan_timer(State = #state{timer_ref = TRef}) ->
     _ = erlang:cancel_timer(TRef),
     State#state{timer_ref = undefined, next_run_at_ms = undefined}.
 
-cancel_timer_preserve_deadline(State = #state{timer_ref = undefined}) -> State;
+cancel_timer_preserve_deadline(State = #state{timer_ref = undefined}) ->
+    State;
 cancel_timer_preserve_deadline(State = #state{timer_ref = TRef}) ->
     _ = erlang:cancel_timer(TRef),
     State#state{timer_ref = undefined}.
 
-
-
-store_scan_checkpoint(#state{dets_tab = undefined}) -> ok;
+store_scan_checkpoint(#state{dets_tab = undefined}) ->
+    ok;
 store_scan_checkpoint(State) ->
     Checkpoint = #{
         schema_version => 1,
@@ -965,7 +997,11 @@ restore_scan_checkpoint(State0) ->
             Queue = prepend_current(Current, Queue0),
             State1 = State0#state{
                 modules = maps:get(modules, Cp, []),
-                queue = case Phase of scanning -> Queue; _ -> [] end,
+                queue =
+                    case Phase of
+                        scanning -> Queue;
+                        _ -> []
+                    end,
                 current = undefined,
                 phase = Phase,
                 cycle = maps:get(cycle, Cp, 0),
@@ -978,8 +1014,9 @@ restore_scan_checkpoint(State0) ->
                 resume_count = maps:get(resume_count, Cp, 0) + 1
             },
             case {Phase, State1#state.canonical_commit} of
-                {scanning, Commit}
-                  when is_binary(Commit), byte_size(Commit) > 0 ->
+                {scanning, Commit} when
+                    is_binary(Commit), byte_size(Commit) > 0
+                ->
                     {State1, resume};
                 {scanning, _MissingCommit} ->
                     %% Checkpoints written before canonical source pinning (or
@@ -1007,7 +1044,8 @@ restore_scan_checkpoint(State0) ->
             end
     end.
 
-restore_scan_schedule(State, fresh) -> State;
+restore_scan_schedule(State, fresh) ->
+    State;
 restore_scan_schedule(State, resume) ->
     State#state{timer_ref = undefined, next_run_at_ms = undefined};
 restore_scan_schedule(State = #state{next_run_at_ms = undefined}, idle) ->
@@ -1017,7 +1055,8 @@ restore_scan_schedule(State = #state{next_run_at_ms = Next}, idle) ->
     TRef = erlang:send_after(Delay, self(), start_cycle),
     State#state{timer_ref = TRef}.
 
-prepend_current(undefined, Queue) -> Queue;
+prepend_current(undefined, Queue) ->
+    Queue;
 prepend_current(Current, Queue) ->
     case Queue of
         [Current | _] -> Queue;
@@ -1033,7 +1072,8 @@ opt(Key, Opts, Default) ->
 
 mget(Key, Map, Default) when is_map(Map), is_binary(Key) ->
     case maps:find(Key, Map) of
-        {ok, Value} -> Value;
+        {ok, Value} ->
+            Value;
         error ->
             try binary_to_existing_atom(Key, utf8) of
                 AtomKey -> maps:get(AtomKey, Map, Default)
@@ -1082,14 +1122,19 @@ json_safe(Map) when is_map(Map) ->
     maps:from_list([{json_key(K), json_safe(V)} || {K, V} <- maps:to_list(Map)]);
 json_safe(List) when is_list(List) -> [json_safe(V) || V <- List];
 json_safe(Tuple) when is_tuple(Tuple) -> [json_safe(V) || V <- tuple_to_list(Tuple)];
-json_safe(true) -> true;
-json_safe(false) -> false;
-json_safe(null) -> null;
-json_safe(undefined) -> null;
+json_safe(true) ->
+    true;
+json_safe(false) ->
+    false;
+json_safe(null) ->
+    null;
+json_safe(undefined) ->
+    null;
 json_safe(Atom) when is_atom(Atom) -> atom_to_binary(Atom, utf8);
 json_safe(Bin) when is_binary(Bin) -> Bin;
 json_safe(Number) when is_number(Number) -> Number;
-json_safe(Other) -> to_binary(Other).
+json_safe(Other) ->
+    to_binary(Other).
 
 json_key(K) when is_binary(K) -> K;
 json_key(K) when is_atom(K) -> atom_to_binary(K, utf8);

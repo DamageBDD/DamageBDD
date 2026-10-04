@@ -123,22 +123,80 @@ has_known_ext(Path) ->
 is_image_ext(Path) ->
     Ext = string:lowercase(filename:extension(Path)),
     lists:member(Ext, [
-        ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff",
-        ".heic", ".heif", ".avif", ".svg"
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".gif",
+        ".webp",
+        ".bmp",
+        ".tif",
+        ".tiff",
+        ".heic",
+        ".heif",
+        ".avif",
+        ".svg"
     ]).
 
 known_exts() ->
     Audio = [
-        ".mp3", ".flac", ".wav", ".ogg", ".oga", ".opus", ".m4a", ".aac",
-        ".ac3", ".eac3", ".dts", ".aiff", ".aif", ".aifc", ".alac", ".ape",
-        ".wv", ".tta", ".spx", ".mp2", ".mpga", ".mka", ".caf", ".snd",
-        ".amr", ".mid", ".midi", ".pcm", ".wma"
+        ".mp3",
+        ".flac",
+        ".wav",
+        ".ogg",
+        ".oga",
+        ".opus",
+        ".m4a",
+        ".aac",
+        ".ac3",
+        ".eac3",
+        ".dts",
+        ".aiff",
+        ".aif",
+        ".aifc",
+        ".alac",
+        ".ape",
+        ".wv",
+        ".tta",
+        ".spx",
+        ".mp2",
+        ".mpga",
+        ".mka",
+        ".caf",
+        ".snd",
+        ".amr",
+        ".mid",
+        ".midi",
+        ".pcm",
+        ".wma"
     ],
     Video = [
-        ".mp4", ".m4v", ".mkv", ".webm", ".avi", ".mov", ".qt", ".wmv",
-        ".flv", ".ts", ".m2ts", ".mts", ".vob", ".ogv", ".3gp", ".3g2",
-        ".mpeg", ".mpg", ".mpe", ".mpv", ".rmvb", ".divx", ".asf", ".f4v",
-        ".h264", ".hevc", ".y4m"
+        ".mp4",
+        ".m4v",
+        ".mkv",
+        ".webm",
+        ".avi",
+        ".mov",
+        ".qt",
+        ".wmv",
+        ".flv",
+        ".ts",
+        ".m2ts",
+        ".mts",
+        ".vob",
+        ".ogv",
+        ".3gp",
+        ".3g2",
+        ".mpeg",
+        ".mpg",
+        ".mpe",
+        ".mpv",
+        ".rmvb",
+        ".divx",
+        ".asf",
+        ".f4v",
+        ".h264",
+        ".hevc",
+        ".y4m"
     ],
     Audio ++ Video.
 
@@ -190,14 +248,14 @@ has_uri_scheme(Path) when is_list(Path) ->
 
 path_kind(Path) ->
     case filelib:is_dir(Path) of
-        true -> directory;
+        true ->
+            directory;
         false ->
             case filelib:is_file(Path) of
                 true -> file;
                 false -> other
             end
     end.
- 
 
 shell_quote(Path) ->
     L = normalize_path(Path),

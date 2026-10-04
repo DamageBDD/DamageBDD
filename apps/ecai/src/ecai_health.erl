@@ -170,8 +170,9 @@ diagnostics() ->
         summary => Summary
     }.
 
-probe_patch_queue(IntervalMs)
-  when is_integer(IntervalMs), IntervalMs >= 0, IntervalMs =< 600000 ->
+probe_patch_queue(IntervalMs) when
+    is_integer(IntervalMs), IntervalMs >= 0, IntervalMs =< 600000
+->
     Before = probe_snapshot(),
     timer:sleep(IntervalMs),
     After = probe_snapshot(),
@@ -194,15 +195,12 @@ probe_patch_queue(IntervalMs) ->
 %%--------------------------------------------------------------------
 
 process_diagnostics() ->
-    Required = maps:from_list([
-        {Name, process_state(Name)} || Name <- ?REQUIRED_PROCESSES
-    ]),
-    Optional = maps:from_list([
-        {Name, process_state(Name)} || Name <- ?OPTIONAL_PROCESSES
-    ]),
+    Required = maps:from_list([{Name, process_state(Name)} || Name <- ?REQUIRED_PROCESSES]),
+    Optional = maps:from_list([{Name, process_state(Name)} || Name <- ?OPTIONAL_PROCESSES]),
     Missing = [
-        Name || {Name, State} <- maps:to_list(Required),
-                State =/= up
+        Name
+     || {Name, State} <- maps:to_list(Required),
+        State =/= up
     ],
     #{
         required => Required,
@@ -265,17 +263,19 @@ is_patch_worker_id(_) -> false.
 
 repair_diagnostics({ok, Repairs}) when is_list(Repairs) ->
     Counts = lists:foldl(
-        fun(Repair, Acc) when is_map(Repair) ->
+        fun
+            (Repair, Acc) when is_map(Repair) ->
                 Status = maps:get(status, Repair, undefined),
                 Acc#{Status => maps:get(Status, Acc, 0) + 1};
-           (_, Acc) ->
+            (_, Acc) ->
                 Acc
         end,
         #{},
         Repairs
     ),
     FailureClasses = lists:foldl(
-        fun(Repair, Acc) when is_map(Repair) ->
+        fun
+            (Repair, Acc) when is_map(Repair) ->
                 case maps:get(status, Repair, undefined) of
                     failed ->
                         Key = error_class(maps:get(error, Repair, undefined)),
@@ -286,7 +286,7 @@ repair_diagnostics({ok, Repairs}) when is_list(Repairs) ->
                     _ ->
                         Acc
                 end;
-           (_, Acc) ->
+            (_, Acc) ->
                 Acc
         end,
         #{},
@@ -299,11 +299,21 @@ repair_diagnostics({ok, Repairs}) when is_list(Repairs) ->
         failure_classes => FailureClasses
     };
 repair_diagnostics({ok, Other}) ->
-    #{status => error, error => {unexpected_repairs_response, Other},
-      total => 0, counts => #{}, failure_classes => #{}};
+    #{
+        status => error,
+        error => {unexpected_repairs_response, Other},
+        total => 0,
+        counts => #{},
+        failure_classes => #{}
+    };
 repair_diagnostics({error, Reason}) ->
-    #{status => error, error => Reason,
-      total => 0, counts => #{}, failure_classes => #{}}.
+    #{
+        status => error,
+        error => Reason,
+        total => 0,
+        counts => #{},
+        failure_classes => #{}
+    }.
 
 error_class({Key, _}) when is_atom(Key) -> Key;
 error_class({Key, _, _}) when is_atom(Key) -> Key;
@@ -321,10 +331,11 @@ inference_diagnostics({ok, Pool}) when is_map(Pool) ->
     Sent = maps:get(sent, ReceiptStatuses, 0),
     Uncertain = maps:get(uncertain, ReceiptStatuses, 0),
     #{
-        status => case maps:get(healthy, Pool, 0) of
-            N when is_integer(N), N > 0 -> healthy;
-            _ -> unavailable
-        end,
+        status =>
+            case maps:get(healthy, Pool, 0) of
+                N when is_integer(N), N > 0 -> healthy;
+                _ -> unavailable
+            end,
         healthy_nodes => maps:get(healthy, Pool, 0),
         degraded_nodes => maps:get(degraded, Pool, 0),
         down_nodes => maps:get(down, Pool, 0),
@@ -340,10 +351,11 @@ inference_diagnostics({error, Reason}) ->
 
 role_capacity(Role, Nodes) ->
     Eligible = [
-        Node || Node <- Nodes,
-                is_map(Node),
-                lists:member(Role, maps:get(roles, Node, [])),
-                maps:get(health, Node, unknown) =:= healthy
+        Node
+     || Node <- Nodes,
+        is_map(Node),
+        lists:member(Role, maps:get(roles, Node, [])),
+        maps:get(health, Node, unknown) =:= healthy
     ],
     Total = lists:sum([
         positive_int(maps:get(max_inflight, Node, 1), 1)
@@ -437,8 +449,12 @@ classify_patch_queue(I) ->
     PatchFree = maps:get(patch_free_capacity, I, 0),
     LastError = maps:get(manager_last_error, I, undefined),
     case true of
-        _ when Active > 0, Live > 0,
-               Active =:= Live, Active =:= Running ->
+        _ when
+            Active > 0,
+            Live > 0,
+            Active =:= Live,
+            Active =:= Running
+        ->
             working;
         _ when Active > 0, Live > 0 ->
             working_transitional;
@@ -452,8 +468,11 @@ classify_patch_queue(I) ->
             blocked_learning;
         _ when Pending > 0, LearnerReady =:= true, PatchFree =:= 0 ->
             blocked_inference;
-        _ when Pending > 0, LearnerReady =:= true,
-               LastError =/= undefined ->
+        _ when
+            Pending > 0,
+            LearnerReady =:= true,
+            LastError =/= undefined
+        ->
             blocked_manager;
         _ when Pending > 0, LearnerReady =:= true, PatchFree > 0 ->
             stalled;
@@ -471,9 +490,7 @@ integration_diagnostics(Integration0, Repairs) ->
     Validated = status_count(validated, Counts),
     Current = maps:get(current, Integration, undefined),
     JobCounts = maps:get(job_counts, Integration, #{}),
-    JobCount = lists:sum([
-        int_value(V) || {_K, V} <- maps:to_list(JobCounts)
-    ]),
+    JobCount = lists:sum([int_value(V) || {_K, V} <- maps:to_list(JobCounts)]),
     DiagnosticState =
         case {Validated, Current, JobCount} of
             {0, undefined, 0} -> waiting_for_validated_repairs;
@@ -518,21 +535,29 @@ classify_overall(D) ->
             degraded;
         _ when IntegrationState =:= validated_repairs_pending_integration ->
             degraded;
-        _ when PQState =:= active_without_worker;
-               PQState =:= worker_without_manager;
-               PQState =:= stale_running ->
+        _ when
+            PQState =:= active_without_worker;
+            PQState =:= worker_without_manager;
+            PQState =:= stale_running
+        ->
             degraded;
-        _ when PQState =:= stalled;
-               PQState =:= blocked_manager ->
+        _ when
+            PQState =:= stalled;
+            PQState =:= blocked_manager
+        ->
             degraded;
         _ when PQState =:= blocked_inference ->
             degraded;
-        _ when PQState =:= working;
-               PQState =:= working_transitional ->
+        _ when
+            PQState =:= working;
+            PQState =:= working_transitional
+        ->
             busy;
-        _ when LearnerPhase =:= learning;
-               LearnerPhase =:= queued;
-               LearnerPhase =:= finalizing ->
+        _ when
+            LearnerPhase =:= learning;
+            LearnerPhase =:= queued;
+            LearnerPhase =:= finalizing
+        ->
             busy;
         _ when LearnerReady =:= false ->
             degraded;
@@ -549,8 +574,8 @@ log_learning_healthy(LogLearning) when is_map(LogLearning) ->
             MaxQueue = maps:get(max_queue, LogLearning, 0),
             AtCapacity =
                 is_integer(Queued) andalso Queued > 0 andalso
-                is_integer(MaxQueue) andalso MaxQueue > 0 andalso
-                Queued >= MaxQueue,
+                    is_integer(MaxQueue) andalso MaxQueue > 0 andalso
+                    Queued >= MaxQueue,
             maps:get(last_error, LogLearning, undefined) =:= undefined andalso
                 not AtCapacity;
         _ ->
@@ -564,9 +589,9 @@ patch_ready(D) ->
     Inference = maps:get(inference, D, #{}),
     Processes = maps:get(processes, D, #{}),
     maps:get(all_required_up, Processes, false) andalso
-    components_responding(D) andalso
-    maps:get(ready, Learner, false) =:= true andalso
-    get_in(Inference, [roles, patch, total], 0) > 0.
+        components_responding(D) andalso
+        maps:get(ready, Learner, false) =:= true andalso
+        get_in(Inference, [roles, patch, total], 0) > 0.
 
 components_responding(D) ->
     lists:all(
@@ -642,12 +667,12 @@ progress_signals(Before, After) ->
             maps:get(retried, After, 0) > maps:get(retried, Before, 0),
         cluster_inference_completed =>
             maps:get(inference_completed, After, 0) >
-                maps:get(inference_completed, Before, 0),
+            maps:get(inference_completed, Before, 0),
         repair_counts_changed =>
             repair_count_signature(Before) =/= repair_count_signature(After),
         worker_set_changed =>
             maps:get(live_worker_ids, Before, []) =/=
-                maps:get(live_worker_ids, After, [])
+            maps:get(live_worker_ids, After, [])
     }.
 
 repair_count_signature(S) ->
@@ -741,9 +766,11 @@ flush_health_result(Ref) ->
     end.
 
 health_call_timeout_ms() ->
-    case application:get_env(
-        ecai, ecai_health_call_timeout_ms, ?DEFAULT_CALL_TIMEOUT_MS
-    ) of
+    case
+        application:get_env(
+            ecai, ecai_health_call_timeout_ms, ?DEFAULT_CALL_TIMEOUT_MS
+        )
+    of
         N when is_integer(N), N > 0 -> N;
         _ -> ?DEFAULT_CALL_TIMEOUT_MS
     end.
@@ -752,10 +779,8 @@ component_value({ok, Value}) -> Value;
 component_value({error, Reason}) -> #{status => error, error => Reason}.
 
 component_map({ok, M}) when is_map(M) -> M;
-component_map({ok, Other}) ->
-    #{status => error, error => {unexpected_component_response, Other}};
-component_map({error, Reason}) ->
-    #{status => error, error => Reason}.
+component_map({ok, Other}) -> #{status => error, error => {unexpected_component_response, Other}};
+component_map({error, Reason}) -> #{status => error, error => Reason}.
 
 map_or_empty({ok, M}) when is_map(M) -> M;
 map_or_empty(_) -> #{}.
@@ -775,13 +800,15 @@ positive_int(_V, Default) -> Default.
 int_value(V) when is_integer(V), V >= 0 -> V;
 int_value(_) -> 0.
 
-get_in(Map, [], _Default) -> Map;
+get_in(Map, [], _Default) ->
+    Map;
 get_in(Map, [Key | Rest], Default) when is_map(Map) ->
     case maps:find(Key, Map) of
         {ok, Value} -> get_in(Value, Rest, Default);
         error -> Default
     end;
-get_in(_Other, _Path, Default) -> Default.
+get_in(_Other, _Path, Default) ->
+    Default.
 
 now_iso8601() ->
     unicode:characters_to_binary(

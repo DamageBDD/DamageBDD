@@ -4,9 +4,18 @@
 -include_lib("kernel/include/logger.hrl").
 -export([trails/0, init/2]).
 -ifdef(TEST).
--export([query_params/1, response/2, parse_token/1, transfer_body/1, discovery_response/4,
-         authorize_transfer/3, transfer_content_type/1, read_transfer_body/3,
-         custodial_transfer/5, executed_transfer_response/5]).
+-export([
+    query_params/1,
+    response/2,
+    parse_token/1,
+    transfer_body/1,
+    discovery_response/4,
+    authorize_transfer/3,
+    transfer_content_type/1,
+    read_transfer_body/3,
+    custodial_transfer/5,
+    executed_transfer_response/5
+]).
 -endif.
 
 -define(MAX_TRANSFER_BODY_BYTES, 4096).
@@ -48,7 +57,9 @@ trails() ->
     [
         trails:trail("/api/releases/current", ?MODULE, #{action => current}, CurrentMeta),
         trails:trail("/api/releases/latest", ?MODULE, #{action => latest}, Meta),
-        trails:trail("/api/releases/nfts/:token/transfer", ?MODULE, #{action => transfer}, TransferMeta),
+        trails:trail(
+            "/api/releases/nfts/:token/transfer", ?MODULE, #{action => transfer}, TransferMeta
+        ),
         trails:trail("/api/releases/:release", ?MODULE, #{action => versioned}, Meta)
     ].
 
@@ -79,7 +90,12 @@ serve(_Req, #{action := current}) ->
 serve(Req, Opts) ->
     %% Only malformed query parsing is a client error. Exceptions in discovery
     %% or rendering are backend failures, never an "invalid request" response.
-    Parsed = try {ok, cowboy_req:parse_qs(Req)} catch _:_ -> error end,
+    Parsed =
+        try
+            {ok, cowboy_req:parse_qs(Req)}
+        catch
+            _:_ -> error
+        end,
     case Parsed of
         {ok, Pairs} ->
             Lookup = fun
@@ -87,29 +103,33 @@ serve(Req, Opts) ->
                 ({release, Version}, Platform) -> damage_release_nft:release(Version, Platform)
             end,
             Action = maps:get(action, Opts),
-            Version = case Action of
-                versioned -> cowboy_req:binding(release, Req);
-                latest -> undefined
-            end,
+            Version =
+                case Action of
+                    versioned -> cowboy_req:binding(release, Req);
+                    latest -> undefined
+                end,
             discovery_response(Action, Version, Pairs, Lookup);
-        error -> response({error, invalid_request}, json)
+        error ->
+            response({error, invalid_request}, json)
     end.
 
 discovery_response(Action, Version, Pairs, Lookup) ->
     case query_params(Pairs) of
         {ok, Platform, Format} ->
             try
-                Selector = case Action of
-                    latest -> latest;
-                    versioned -> {release, Version}
-                end,
+                Selector =
+                    case Action of
+                        latest -> latest;
+                        versioned -> {release, Version}
+                    end,
                 response(Lookup(Selector, Platform), Format)
             catch
                 Class:_ ->
                     ?LOG_WARNING("Release HTTP discovery failed class=~p", [Class]),
                     response({error, release_backend_failed}, Format)
             end;
-        {error, _} -> response({error, invalid_request}, json)
+        {error, _} ->
+            response({error, invalid_request}, json)
     end.
 
 %% This mutation accepts an explicit Bearer header only. Never allow the
@@ -120,8 +140,7 @@ serve_transfer(Req0, Opts) ->
         {ok, Req1, #{public_key := From} = AuthState} ->
             case transfer_content_type(Req1) of
                 ok -> serve_transfer_body(Req1, AuthState, From);
-                {error, _} ->
-                    transfer_error(415, <<"application_json_required">>, Req1)
+                {error, _} -> transfer_error(415, <<"application_json_required">>, Req1)
             end;
         {error, unauthorized, Req1} ->
             {Status, Headers, Body, Req2} = transfer_error(401, <<"unauthorized">>, Req1),
@@ -142,8 +161,9 @@ authorize_transfer(Req0, _Opts, Authenticate) ->
             case cowboy_req:qs(Req0) of
                 <<>> ->
                     try Authenticate(Req0, #{action => transfer}) of
-                        {true, Req1, #{public_key := From} = State}
-                                when is_binary(From) ->
+                        {true, Req1, #{public_key := From} = State} when
+                            is_binary(From)
+                        ->
                             {ok, Req1, State};
                         {_Failure, Req1, _State} ->
                             {error, unauthorized, Req1};
@@ -159,7 +179,8 @@ authorize_transfer(Req0, _Opts, Authenticate) ->
     end.
 
 bearer_header(<<"Bearer ", Token/binary>>) when
-        byte_size(Token) > 0, byte_size(Token) =< 8192, Token =/= <<"null">> ->
+    byte_size(Token) > 0, byte_size(Token) =< 8192, Token =/= <<"null">>
+->
     %% Match the scheme understood by damage_http, and reject whitespace and
     %% combined Authorization values instead of falling back to another source.
     re:run(Token, <<"\\A[A-Za-z0-9._~+/-]+=*\\z">>, [{capture, none}]) =:= match;
@@ -167,12 +188,18 @@ bearer_header(_) ->
     false.
 
 transfer_content_type(Req) ->
-    try {cowboy_req:parse_header(<<"content-type">>, Req),
-         cowboy_req:header(<<"content-encoding">>, Req)} of
-        {{<<"application">>, <<"json">>, _Params}, Encoding}
-                when Encoding =:= undefined; Encoding =:= <<"identity">> ->
+    try
+        {
+            cowboy_req:parse_header(<<"content-type">>, Req),
+            cowboy_req:header(<<"content-encoding">>, Req)
+        }
+    of
+        {{<<"application">>, <<"json">>, _Params}, Encoding} when
+            Encoding =:= undefined; Encoding =:= <<"identity">>
+        ->
             ok;
-        _ -> {error, unsupported_media_type}
+        _ ->
+            {error, unsupported_media_type}
     catch
         _:_ -> {error, unsupported_media_type}
     end.
@@ -183,7 +210,8 @@ serve_transfer_body(Req0, AuthState, From) ->
             case {parse_token(cowboy_req:binding(token, Req1)), transfer_body(Json)} of
                 {{ok, Token}, {ok, To}} ->
                     transfer_for_authenticated_user(AuthState, From, Token, To, Req1);
-                _ -> transfer_error(400, <<"invalid_transfer_request">>, Req1)
+                _ ->
+                    transfer_error(400, <<"invalid_transfer_request">>, Req1)
             end;
         {error, payload_too_large, Req1} ->
             transfer_error(413, <<"transfer_request_too_large">>, Req1);
@@ -200,36 +228,65 @@ transfer_for_authenticated_user(AuthState, From, Token, To, Req) ->
             %% returned bytes, not a separately built transaction, pass preflight.
             case damage_release_nft:prepare_transfer(From, Token, To) of
                 {ok, Intent} ->
-                    Body = Intent#{ok => true, status => <<"signature_required">>,
-                                   signing => <<"wallet">>},
+                    Body = Intent#{
+                        ok => true,
+                        status => <<"signature_required">>,
+                        signing => <<"wallet">>
+                    },
                     {202, json_headers(), jsx:encode(Body), Req};
-                Error -> transfer_result_error(Error, Req)
+                Error ->
+                    transfer_result_error(Error, Req)
             end;
         Username ->
-            Result = custodial_transfer(From, Username, {Token, To},
+            Result = custodial_transfer(
+                From,
+                Username,
+                {Token, To},
                 fun identity_server:get_account_by_email/1,
-                fun damage_release_nft:transfer/3),
+                fun damage_release_nft:transfer/3
+            ),
             executed_transfer_response(Result, From, Token, To, Req)
     end.
 
 custodial_transfer(From, Username, {Token, To}, Lookup, Transfer) ->
     %% Catch only the key lookup here. Do not turn an exception AFTER a write
     %% into a false claim that signing was unavailable.
-    Account = try Lookup(Username) catch _:_ -> unavailable end,
+    Account =
+        try
+            Lookup(Username)
+        catch
+            _:_ -> unavailable
+        end,
     case Account of
         {From, _Password, Private} when is_binary(Private), byte_size(Private) =:= 64 ->
-            try Transfer(#{public_key => From, private_key => Private}, Token, To)
-            catch _:_ -> {error, transfer_outcome_unknown}
+            try
+                Transfer(#{public_key => From, private_key => Private}, Token, To)
+            catch
+                _:_ -> {error, transfer_outcome_unknown}
             end;
-        _ -> {error, transfer_signing_unavailable}
+        _ ->
+            {error, transfer_signing_unavailable}
     end.
 
-executed_transfer_response({ok, #{status := State, tx_hash := Hash} = Outcome}, From, Token, To, Req)
-        when is_binary(Hash),
-             (State =:= confirmed orelse State =:= submitted orelse State =:= submission_unknown) ->
-    Status = case State of confirmed -> 200; _ -> 202 end,
-    Body0 = #{ok => true, status => atom_to_binary(State, utf8),
-              token_id => Token, from => From, to => To, tx_hash => Hash},
+executed_transfer_response(
+    {ok, #{status := State, tx_hash := Hash} = Outcome}, From, Token, To, Req
+) when
+    is_binary(Hash),
+    (State =:= confirmed orelse State =:= submitted orelse State =:= submission_unknown)
+->
+    Status =
+        case State of
+            confirmed -> 200;
+            _ -> 202
+        end,
+    Body0 = #{
+        ok => true,
+        status => atom_to_binary(State, utf8),
+        token_id => Token,
+        from => From,
+        to => To,
+        tx_hash => Hash
+    },
     Body = maps:merge(Body0, transfer_submission_fields(Outcome)),
     {Status, json_headers(), jsx:encode(Body), Req};
 executed_transfer_response(Error, _From, _Token, _To, Req) ->
@@ -243,10 +300,11 @@ transfer_result_error({error, Invalid}, Req) when
 transfer_result_error({error, {release_transfer_rejected, Rejection}}, Req) ->
     %% Include only safe, explicitly selected fields. Never return raw VM data.
     Body0 = #{ok => false, status => <<"rejected">>, error => <<"transfer_rejected">>},
-    Body = case maps:find(tx_hash, Rejection) of
-        {ok, Hash} when is_binary(Hash) -> Body0#{tx_hash => Hash};
-        _ -> Body0
-    end,
+    Body =
+        case maps:find(tx_hash, Rejection) of
+            {ok, Hash} when is_binary(Hash) -> Body0#{tx_hash => Hash};
+            _ -> Body0
+        end,
     WithSubmission = maps:merge(Body, transfer_submission_fields(Rejection)),
     {409, json_headers(), jsx:encode(WithSubmission), Req};
 transfer_result_error({error, {release_transfer_failed, {revert, _}}}, Req) ->
@@ -256,8 +314,12 @@ transfer_result_error({error, {release_transfer_failed, transfer_outcome_unknown
 transfer_result_error({error, transfer_outcome_unknown}, Req) ->
     %% A process failure can lose the reply, even after submission. This
     %% is deliberately NOT 'rejected' or 'not submitted'; reconcile before retry.
-    {503, json_headers(), jsx:encode(#{ok => false, status => <<"outcome_unknown">>,
-                                     error => <<"transfer_outcome_unknown">>}), Req};
+    {503, json_headers(),
+        jsx:encode(#{
+            ok => false,
+            status => <<"outcome_unknown">>,
+            error => <<"transfer_outcome_unknown">>
+        }), Req};
 transfer_result_error({error, transfer_signing_unavailable}, Req) ->
     transfer_error(403, <<"transfer_signing_unavailable">>, Req);
 transfer_result_error({error, invalid_release_signing_keypair}, Req) ->
@@ -274,30 +336,47 @@ transfer_submission_fields(#{submission := #{stage := submission, status := Stat
         true ->
             Base = #{stage => <<"submission">>, status => atom_to_binary(Status, utf8)},
             Code = maps:get(error_code, D, undefined),
-            Coded = case lists:member(Code, [
-                <<"nonce_too_high">>, <<"nonce_too_low">>, <<"nonce_already_used">>,
-                <<"account_nonce_too_high">>, <<"account_nonce_too_low">>,
-                <<"missing_hash">>, <<"hash_mismatch">>, <<"transport_unavailable">>,
-                <<"session_unavailable">>, <<"post_exception">>,
-                <<"unexpected_response">>, <<"unknown_error">>]) of
-                true -> Base#{error_code => Code};
-                false -> Base#{error_code => <<"unknown_error">>}
-            end,
-            Public = case maps:get(http_status, D, undefined) of
-                N when is_integer(N), N >= 100, N =< 599 -> Coded#{http_status => N};
-                _ -> Coded
-            end,
+            Coded =
+                case
+                    lists:member(Code, [
+                        <<"nonce_too_high">>,
+                        <<"nonce_too_low">>,
+                        <<"nonce_already_used">>,
+                        <<"account_nonce_too_high">>,
+                        <<"account_nonce_too_low">>,
+                        <<"missing_hash">>,
+                        <<"hash_mismatch">>,
+                        <<"transport_unavailable">>,
+                        <<"session_unavailable">>,
+                        <<"post_exception">>,
+                        <<"unexpected_response">>,
+                        <<"unknown_error">>
+                    ])
+                of
+                    true -> Base#{error_code => Code};
+                    false -> Base#{error_code => <<"unknown_error">>}
+                end,
+            Public =
+                case maps:get(http_status, D, undefined) of
+                    N when is_integer(N), N >= 100, N =< 599 -> Coded#{http_status => N};
+                    _ -> Coded
+                end,
             #{submission => Public};
-        false -> #{}
+        false ->
+            #{}
     end;
-transfer_submission_fields(_) -> #{}.
+transfer_submission_fields(_) ->
+    #{}.
 
 transfer_error(Status, Code, Req) ->
     {Status, json_headers(), jsx:encode(#{ok => false, error => Code}), Req}.
 
 read_transfer_body(Req) ->
-    read_transfer_body(Req, fun cowboy_req:read_body/2,
-                       fun() -> erlang:monotonic_time(millisecond) end).
+    read_transfer_body(
+        Req,
+        fun cowboy_req:read_body/2,
+        fun() -> erlang:monotonic_time(millisecond) end
+    ).
 
 %% Callbacks are private implementation seams, exported only for unit tests.
 %% The request, context and application configuration cannot override them.
@@ -308,38 +387,56 @@ read_transfer_body(Req, Read, Now) ->
 read_transfer_chunks(Req0, Read, Now, Deadline, Size, Acc) ->
     Remaining = Deadline - Now(),
     case Remaining > 0 of
-        false -> {error, body_timeout, Req0};
+        false ->
+            {error, body_timeout, Req0};
         true ->
             %% Cowboy's length is a chunk request, NOT a hard body-size limit.
             %% Request one extra byte so an exactly-full body can be distinguished
             %% from a too-large body. Keep timeout > period and within our budget.
-            Opts = #{length => ?MAX_TRANSFER_BODY_BYTES - Size + 1,
-                     period => erlang:min(1000, Remaining div 2),
-                     timeout => Remaining},
-            ReadResult = try Read(Req0, Opts)
-                         catch
-                             exit:timeout -> {error, body_timeout};
-                             exit:{timeout, _} -> {error, body_timeout};
-                             exit:{request_error, timeout, _} -> {error, body_timeout};
-                             exit:{request_error, {timeout, _}, _} -> {error, body_timeout};
-                             error:timeout -> {error, body_timeout};
-                             _:_ -> {error, body_read_failed}
-                         end,
+            Opts = #{
+                length => ?MAX_TRANSFER_BODY_BYTES - Size + 1,
+                period => erlang:min(1000, Remaining div 2),
+                timeout => Remaining
+            },
+            ReadResult =
+                try
+                    Read(Req0, Opts)
+                catch
+                    exit:timeout -> {error, body_timeout};
+                    exit:{timeout, _} -> {error, body_timeout};
+                    exit:{request_error, timeout, _} -> {error, body_timeout};
+                    exit:{request_error, {timeout, _}, _} -> {error, body_timeout};
+                    error:timeout -> {error, body_timeout};
+                    _:_ -> {error, body_read_failed}
+                end,
             case ReadResult of
                 {Tag, Chunk, Req1} when
-                        (Tag =:= ok orelse Tag =:= more), is_binary(Chunk) ->
+                    (Tag =:= ok orelse Tag =:= more), is_binary(Chunk)
+                ->
                     NextSize = Size + byte_size(Chunk),
                     case {NextSize > ?MAX_TRANSFER_BODY_BYTES, Now() >= Deadline} of
-                        {true, _} -> {error, payload_too_large, Req1};
-                        {false, true} -> {error, body_timeout, Req1};
+                        {true, _} ->
+                            {error, payload_too_large, Req1};
+                        {false, true} ->
+                            {error, body_timeout, Req1};
                         {false, false} when Tag =:= ok ->
-                            decode_transfer_body(iolist_to_binary(lists:reverse([Chunk | Acc])), Req1);
+                            decode_transfer_body(
+                                iolist_to_binary(lists:reverse([Chunk | Acc])), Req1
+                            );
                         {false, false} ->
-                            read_transfer_chunks(Req1, Read, Now, Deadline,
-                                                 NextSize, body_chunk(Chunk, Acc))
+                            read_transfer_chunks(
+                                Req1,
+                                Read,
+                                Now,
+                                Deadline,
+                                NextSize,
+                                body_chunk(Chunk, Acc)
+                            )
                     end;
-                {error, body_timeout} -> {error, body_timeout, Req0};
-                _ -> {error, body_read_failed, Req0}
+                {error, body_timeout} ->
+                    {error, body_timeout, Req0};
+                _ ->
+                    {error, body_read_failed, Req0}
             end
     end.
 

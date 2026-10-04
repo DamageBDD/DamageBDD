@@ -129,7 +129,11 @@ maybe_sysctl(Key, Val) ->
                     ?LOG_INFO("sysctl set ~s=~s", [Key, Val]),
                     ok;
                 {error, [{exit_status, _Status}, {stderr, Out}]} ->
-                    case damage_otp_compat:catch_value(fun() -> damage_priv:permission_denied(Out) end) of
+                    case
+                        damage_otp_compat:catch_value(fun() ->
+                            damage_priv:permission_denied(Out)
+                        end)
+                    of
                         true ->
                             ?LOG_WARNING(
                                 "sysctl ~s=~s permission denied; attempting elevation…",
@@ -148,7 +152,11 @@ maybe_sysctl(Key, Val) ->
                             {error, sysctl_failed}
                     end;
                 {error, [{exit_status, _Status}, {stdout, Out}]} ->
-                    case damage_otp_compat:catch_value(fun() -> damage_priv:permission_denied(Out) end) of
+                    case
+                        damage_otp_compat:catch_value(fun() ->
+                            damage_priv:permission_denied(Out)
+                        end)
+                    of
                         true ->
                             ?LOG_WARNING(
                                 "sysctl ~s=~s permission denied; attempting elevation…",
@@ -226,7 +234,9 @@ get_env_int(Key, Default) ->
 
 %% Prefer BEAM’s own view; fall back to /proc/stat; then env; then 4.
 get_cpu_cores() ->
-    case damage_otp_compat:catch_value(fun() -> erlang:system_info(logical_processors_available) end) of
+    case
+        damage_otp_compat:catch_value(fun() -> erlang:system_info(logical_processors_available) end)
+    of
         I when is_integer(I), I > 0 ->
             I;
         _ ->

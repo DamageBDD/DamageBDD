@@ -178,7 +178,8 @@ load_playlist_if_idle(PlaylistFile) ->
     case mpv_status() of
         {ok, Status} ->
             case status_has_loaded_media(Status) of
-                true -> {preserved, Status};
+                true ->
+                    {preserved, Status};
                 false ->
                     case mpv_command(load_list, [PlaylistFile]) of
                         ok -> ok;
@@ -224,7 +225,8 @@ import_playlist_from_mpv(Status) ->
             Paths = [Path || Entry <- Entries, {ok, Path} <- [mpv_playlist_entry_path(Entry)]],
             CurrentPath = status_value(path, Status),
             case Paths of
-                [] -> sync_playlist_from_status(Status);
+                [] ->
+                    sync_playlist_from_status(Status);
                 _ ->
                     case safe_playlist_call(sync_from_paths, [Paths, CurrentPath]) of
                         {ok, _Count} -> ok;
@@ -282,7 +284,8 @@ status_keys(time_pos) -> [time_pos, "time-pos", <<"time-pos">>];
 status_keys(idle_active) -> [idle_active, "idle-active", <<"idle-active">>];
 status_keys(Key) -> [Key].
 
-first_map_value([], _Map, Default) -> Default;
+first_map_value([], _Map, Default) ->
+    Default;
 first_map_value([Key | Rest], Map, Default) ->
     case maps:find(Key, Map) of
         {ok, Value} -> Value;
@@ -351,17 +354,28 @@ safe_playlist_call(Function, Args) ->
 
 default_playlist_mode() ->
     case application:get_env(erm, media_playlist_mode, shuffle) of
-        keep_order -> keep_order;
-        shuffle -> shuffle;
-        random -> random;
-        latest -> latest;
-        random_latest -> random_latest;
-        random_album -> random_album;
-        random_artist -> random_artist;
-        random_genre -> random_genre;
-        random_genere -> random_genre;
-        random_directory -> random_directory;
-        {shuffle_by, Key} -> {shuffle_by, Key};
+        keep_order ->
+            keep_order;
+        shuffle ->
+            shuffle;
+        random ->
+            random;
+        latest ->
+            latest;
+        random_latest ->
+            random_latest;
+        random_album ->
+            random_album;
+        random_artist ->
+            random_artist;
+        random_genre ->
+            random_genre;
+        random_genere ->
+            random_genre;
+        random_directory ->
+            random_directory;
+        {shuffle_by, Key} ->
+            {shuffle_by, Key};
         Invalid ->
             ?LOG_WARNING("Ignoring invalid media_playlist_mode=~p; using shuffle", [Invalid]),
             shuffle

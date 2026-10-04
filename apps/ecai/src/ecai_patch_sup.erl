@@ -16,21 +16,29 @@ propose(App, Module, Finding, Opts) ->
             {Fingerprint0, Version0} ->
                 {ecai_patch_worker, Fingerprint0, Version0};
             undefined ->
-                {ecai_patch_worker,
-                 erlang:unique_integer([positive, monotonic])};
+                {ecai_patch_worker, erlang:unique_integer([positive, monotonic])};
             Other ->
                 {ecai_patch_worker, Other}
         end,
     {Fingerprint, Version} =
         repair_identity(App, Module, Finding, Opts),
-    case ecai_repair_preflight:check(
-             App, Module, Finding, Fingerprint, Version, Opts) of
+    case
+        ecai_repair_preflight:check(
+            App, Module, Finding, Fingerprint, Version, Opts
+        )
+    of
         {allow, _Meta} ->
             Spec = #{
                 id => Id,
-                start => {ecai_patch_worker, start_link,
-                          [#{app => App, module => Module,
-                             finding => Finding, opts => Opts}]},
+                start =>
+                    {ecai_patch_worker, start_link, [
+                        #{
+                            app => App,
+                            module => Module,
+                            finding => Finding,
+                            opts => Opts
+                        }
+                    ]},
                 restart => temporary,
                 shutdown => 5000,
                 type => worker,
@@ -45,14 +53,16 @@ propose(App, Module, Finding, Opts) ->
 
 repair_identity(App, Module, Finding, Opts) ->
     case maps:get(worker_id, Opts, undefined) of
-        {Fingerprint, Version}
-          when is_binary(Fingerprint), is_binary(Version) ->
+        {Fingerprint, Version} when
+            is_binary(Fingerprint), is_binary(Version)
+        ->
             {Fingerprint, Version};
         _ ->
             {
                 finding_fingerprint(Module, Finding),
                 ecai_code_context:finding_version(
-                    App, Module, Finding)
+                    App, Module, Finding
+                )
             }
     end.
 
@@ -66,8 +76,7 @@ finding_fingerprint(Module, Finding) ->
                     mget(<<"issue_key">>, Finding, <<"unknown">>)
                 ),
             Data =
-                <<(atom_to_binary(Module, utf8))/binary,
-                  0, Issue/binary>>,
+                <<(atom_to_binary(Module, utf8))/binary, 0, Issue/binary>>,
             hex_sha256(Data)
     end.
 
@@ -87,8 +96,10 @@ mget(_Key, _Map, Default) ->
 
 hex_sha256(Data) ->
     iolist_to_binary(
-        [io_lib:format("~2.16.0b", [B])
-         || <<B>> <= crypto:hash(sha256, Data)]
+        [
+            io_lib:format("~2.16.0b", [B])
+         || <<B>> <= crypto:hash(sha256, Data)
+        ]
     ).
 
 to_binary(Bin) when is_binary(Bin) ->

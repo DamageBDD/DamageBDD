@@ -11,10 +11,12 @@
 
 -spec adjudicate(map()) -> accept | {reject, map()}.
 adjudicate(Finding) when is_map(Finding) ->
-    case {
-        existing_atom_allocation_claim(Finding),
-        recommends_binary_to_atom(Finding)
-    } of
+    case
+        {
+            existing_atom_allocation_claim(Finding),
+            recommends_binary_to_atom(Finding)
+        }
+    of
         {true, _} ->
             {reject, #{
                 class => invalid_security_premise,

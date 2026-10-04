@@ -6,7 +6,11 @@ relation_records_do_not_corrupt_repair_fold_test() ->
     Base = temp_dir("relations"),
     File = filename:join(Base, "store.dets"),
     Tab = ecai_learning_store_regression_dets,
-    try dets:close(Tab) catch _:_:_ -> ok end,
+    try
+        dets:close(Tab)
+    catch
+        _:_:_ -> ok
+    end,
     {ok, Tab} = dets:open_file(Tab, [{file, File}, {type, set}]),
     try
         ok = dets:insert(Tab, [
@@ -39,7 +43,11 @@ malformed_repair_record_is_ignored_test() ->
     Base = temp_dir("malformed"),
     File = filename:join(Base, "store.dets"),
     Tab = ecai_learning_store_malformed_dets,
-    try dets:close(Tab) catch _:_:_ -> ok end,
+    try
+        dets:close(Tab)
+    catch
+        _:_:_ -> ok
+    end,
     {ok, Tab} = dets:open_file(Tab, [{file, File}, {type, set}]),
     try
         ok = dets:insert(Tab, [
@@ -59,7 +67,11 @@ log_incidents_are_sorted_filterable_and_thinned_in_snapshot_test() ->
     Base = temp_dir("log-incidents"),
     File = filename:join(Base, "store.dets"),
     Tab = ecai_learning_store_log_incident_dets,
-    try dets:close(Tab) catch _:_:_ -> ok end,
+    try
+        dets:close(Tab)
+    catch
+        _:_:_ -> ok
+    end,
     {ok, Tab} = dets:open_file(Tab, [{file, File}, {type, set}]),
     try
         ok = dets:insert(Tab, [
@@ -117,13 +129,15 @@ log_incidents_are_sorted_filterable_and_thinned_in_snapshot_test() ->
         Snapshot = ecai_learning_store:build_snapshot_data(Tab),
         Incidents = maps:get(log_incidents, Snapshot),
         ?assertEqual(2, length(Incidents)),
-        ?assert(lists:all(
-            fun(Incident) ->
-                not maps:is_key(observed_event, Incident) andalso
-                    not maps:is_key(inference, Incident)
-            end,
-            Incidents
-        )),
+        ?assert(
+            lists:all(
+                fun(Incident) ->
+                    not maps:is_key(observed_event, Incident) andalso
+                        not maps:is_key(inference, Incident)
+                end,
+                Incidents
+            )
+        ),
         Checkpoints = maps:get(runtime_checkpoints, Snapshot),
         LogCheckpoint = maps:get(ecai_log_learning, Checkpoints),
         ?assertNot(maps:is_key(queue, LogCheckpoint)),

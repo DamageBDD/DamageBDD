@@ -14,8 +14,9 @@
 %%       Explicitly allow selected dirty or untracked paths. Directory entries
 %%       ending in "/" act as prefixes.
 
-filter_learning_files(RepoRoot0, Files, Opts)
-  when is_list(Files), is_map(Opts) ->
+filter_learning_files(RepoRoot0, Files, Opts) when
+    is_list(Files), is_map(Opts)
+->
     RepoRoot = filename:absname(path_to_list(RepoRoot0)),
     case include_dirty_files(Opts) of
         true ->
@@ -25,17 +26,21 @@ filter_learning_files(RepoRoot0, Files, Opts)
     end.
 
 filter_clean_tracked(RepoRoot, Files, Opts) ->
-    case git_paths(
-        RepoRoot,
-        ["ls-files", "-z", "--"]
-    ) of
+    case
+        git_paths(
+            RepoRoot,
+            ["ls-files", "-z", "--"]
+        )
+    of
         {error, _} = Error ->
             Error;
         {ok, TrackedPaths} ->
-            case git_paths(
-                RepoRoot,
-                ["diff", "--name-only", "-z", "HEAD", "--"]
-            ) of
+            case
+                git_paths(
+                    RepoRoot,
+                    ["diff", "--name-only", "-z", "HEAD", "--"]
+                )
+            of
                 {error, _} = Error ->
                     Error;
                 {ok, DirtyTrackedPaths} ->
@@ -55,18 +60,32 @@ filter_clean_tracked(RepoRoot, Files, Opts) ->
     end.
 
 classify_files(
-    _RepoRoot, [], _Tracked, _DirtyTracked, _Allow,
-    Included0, Skipped0
+    _RepoRoot,
+    [],
+    _Tracked,
+    _DirtyTracked,
+    _Allow,
+    Included0,
+    Skipped0
 ) ->
     {ok, lists:reverse(Included0), lists:reverse(Skipped0)};
 classify_files(
-    RepoRoot, [File | Rest], Tracked, DirtyTracked, Allow,
-    Included0, Skipped0
+    RepoRoot,
+    [File | Rest],
+    Tracked,
+    DirtyTracked,
+    Allow,
+    Included0,
+    Skipped0
 ) ->
     case repo_relative(RepoRoot, File) of
         {error, Reason} ->
             classify_files(
-                RepoRoot, Rest, Tracked, DirtyTracked, Allow,
+                RepoRoot,
+                Rest,
+                Tracked,
+                DirtyTracked,
+                Allow,
                 Included0,
                 [
                     #{
@@ -83,16 +102,26 @@ classify_files(
             case Explicit orelse (IsTracked andalso not IsDirty) of
                 true ->
                     classify_files(
-                        RepoRoot, Rest, Tracked, DirtyTracked, Allow,
-                        [File | Included0], Skipped0
+                        RepoRoot,
+                        Rest,
+                        Tracked,
+                        DirtyTracked,
+                        Allow,
+                        [File | Included0],
+                        Skipped0
                     );
                 false ->
-                    Reason = case IsTracked of
-                        true -> dirty_tracked;
-                        false -> untracked_or_generated
-                    end,
+                    Reason =
+                        case IsTracked of
+                            true -> dirty_tracked;
+                            false -> untracked_or_generated
+                        end,
                     classify_files(
-                        RepoRoot, Rest, Tracked, DirtyTracked, Allow,
+                        RepoRoot,
+                        Rest,
+                        Tracked,
+                        DirtyTracked,
+                        Allow,
                         Included0,
                         [
                             #{
@@ -212,7 +241,8 @@ collect_port(Port, Acc) ->
         {Port, {exit_status, Status}} ->
             {error, {exit_status, Status, Acc}}
     after 30000 ->
-        try port_close(Port)
+        try
+            port_close(Port)
         catch
             _:_ -> ok
         end,

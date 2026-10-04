@@ -127,9 +127,12 @@ events(Type, Id, Limit) -> ecai_learning_store:events(Type, Id, Limit).
 
 checkpoint_summary({ok, Checkpoint}) when is_map(Checkpoint) ->
     {ok, maps:without([queue, inflight_entries], Checkpoint)};
-checkpoint_summary(Other) -> Other.
+checkpoint_summary(Other) ->
+    Other.
 
 safe_call(Fun) ->
-    try Fun() of Value -> Value
-    catch Class:Reason -> {error, {Class, Reason}}
+    try Fun() of
+        Value -> Value
+    catch
+        Class:Reason -> {error, {Class, Reason}}
     end.

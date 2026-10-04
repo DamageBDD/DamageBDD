@@ -15,12 +15,17 @@ walk(Dir, Cfg) ->
 
 walk_entry(P, Name, Cfg) ->
     case lists:member(Name, [".git", "_build", "ebin", "node_modules"]) of
-        true -> [];
+        true ->
+            [];
         false ->
             case file:read_link_info(P) of
-                {ok, #file_info{type = directory}} -> walk(P, Cfg);
+                {ok, #file_info{type = directory}} ->
+                    walk(P, Cfg);
                 {ok, #file_info{type = regular}} ->
-                    case interesting(P, Cfg) of true -> [P]; false -> [] end;
+                    case interesting(P, Cfg) of
+                        true -> [P];
+                        false -> []
+                    end;
                 {ok, #file_info{type = symlink}} ->
                     %% Never recursively follow symlinks below a configured root.
                     case filename:extension(P) of
@@ -28,8 +33,10 @@ walk_entry(P, Name, Cfg) ->
                         ".hrl" -> error({symlink_header, P});
                         _ -> []
                     end;
-                {ok, _} -> [];
-                {error, Why} -> error({scan_failed, P, Why})
+                {ok, _} ->
+                    [];
+                {error, Why} ->
+                    error({scan_failed, P, Why})
             end
     end.
 
@@ -37,8 +44,10 @@ interesting(P0, Cfg) ->
     P = filename:absname(P0),
     Ext = filename:extension(P),
     Base = filename:basename(P, ".erl"),
-    InScope = lists:any(fun(D) -> damage_reload_config:within(P, D) end,
-        maps:get(watch_dirs, Cfg)),
+    InScope = lists:any(
+        fun(D) -> damage_reload_config:within(P, D) end,
+        maps:get(watch_dirs, Cfg)
+    ),
     NotGenerated = Base =/= "damage_build_info",
     InScope andalso NotGenerated andalso (Ext =:= ".erl" orelse Ext =:= ".hrl").
 
@@ -50,8 +59,10 @@ fingerprint(P) ->
 prepare(Cfg, Observed, Pending, Force) ->
     Before = snapshot(Cfg),
     case {Before =:= Observed, Pending, Force} of
-        {_, {Before, Objects}, false} -> {candidate, Before, Objects};
-        {true, none, false} -> {unchanged, Before};
+        {_, {Before, Objects}, false} ->
+            {candidate, Before, Objects};
+        {true, none, false} ->
+            {unchanged, Before};
         _ ->
             try compile_batch(Cfg, Before) of
                 Objects ->
@@ -66,9 +77,15 @@ prepare(Cfg, Observed, Pending, Force) ->
 
 compile_batch(#{mode := sources} = Cfg, Snapshot) ->
     Modules = maps:get(modules, Cfg),
-    Sources = [P || {P, _} <- Snapshot, filename:extension(P) =:= ".erl",
-        lists:any(fun(D) -> damage_reload_config:within(P, D) end,
-            maps:get(source_dirs, Cfg))],
+    Sources = [
+        P
+     || {P, _} <- Snapshot,
+        filename:extension(P) =:= ".erl",
+        lists:any(
+            fun(D) -> damage_reload_config:within(P, D) end,
+            maps:get(source_dirs, Cfg)
+        )
+    ],
     [compile_source(M, source_for(M, Sources), Cfg) || M <- Modules];
 compile_batch(#{mode := rebar} = Cfg, _Snapshot) ->
     run_rebar(Cfg),
@@ -86,21 +103,26 @@ source_for(M, Sources) ->
     end.
 
 compile_source(M, Source, Cfg) ->
-    Stored = case maps:get(reuse_compile_opts, Cfg) of
-        true -> previous_options(M);
-        false -> []
-    end,
+    Stored =
+        case maps:get(reuse_compile_opts, Cfg) of
+            true -> previous_options(M);
+            false -> []
+        end,
     Includes = [{i, D} || D <- maps:get(include_dirs, Cfg)],
     Extra = maps:get(erl_opts, Cfg),
     %% Remove build-host/output paths from recorded options. Explicit options
     %% take precedence, but neither environment nor config may request disk output.
-    Options = [binary, return_errors, return_warnings] ++
-        merge_options(Includes ++ Extra, Stored),
+    Options =
+        [binary, return_errors, return_warnings] ++
+            merge_options(Includes ++ Extra, Stored),
     case compile:noenv_file(Source, Options) of
         {ok, M, Bin} when is_binary(Bin) -> {M, filename:rootname(Source) ++ ".beam", Bin};
-        {ok, M, Bin, _Warnings} when is_binary(Bin) -> {M, filename:rootname(Source) ++ ".beam", Bin};
-        {error, Errors, Warnings} -> error({compile_failed, M, Errors, Warnings});
-        Other -> error({unexpected_compile_result, M, Other})
+        {ok, M, Bin, _Warnings} when is_binary(Bin) ->
+            {M, filename:rootname(Source) ++ ".beam", Bin};
+        {error, Errors, Warnings} ->
+            error({compile_failed, M, Errors, Warnings});
+        Other ->
+            error({unexpected_compile_result, M, Other})
     end.
 
 previous_options(M) ->
@@ -111,24 +133,36 @@ previous_options(M) ->
                     case beam_lib:chunks(B, [compile_info]) of
                         {ok, {M, [{compile_info, Info}]}} ->
                             proplists:get_value(options, Info, []);
-                        _ -> []
+                        _ ->
+                            []
                     end;
-                error -> []
+                error ->
+                    []
             end;
-        _ -> proplists:get_value(options, M:module_info(compile), [])
+        _ ->
+            proplists:get_value(options, M:module_info(compile), [])
     end.
 
 merge_options(Local0, Stored0) ->
     Local = clean_options(Local0),
     Keys = [option_key(O) || O <- Local],
-    Combined = Local ++ [O || O <- clean_options(Stored0),
-        not lists:member(option_key(O), Keys)],
-    {Reverse, _} = lists:foldl(fun(O, {Acc, Seen}) ->
-        case maps:is_key(O, Seen) of
-            true -> {Acc, Seen};
-            false -> {[O | Acc], Seen#{O => true}}
-        end
-    end, {[], #{}}, Combined),
+    Combined =
+        Local ++
+            [
+                O
+             || O <- clean_options(Stored0),
+                not lists:member(option_key(O), Keys)
+            ],
+    {Reverse, _} = lists:foldl(
+        fun(O, {Acc, Seen}) ->
+            case maps:is_key(O, Seen) of
+                true -> {Acc, Seen};
+                false -> {[O | Acc], Seen#{O => true}}
+            end
+        end,
+        {[], #{}},
+        Combined
+    ),
     lists:reverse(Reverse).
 
 option_key({d, Name, _}) -> {d, Name};
@@ -142,31 +176,62 @@ option_key(O) -> O.
 clean_options(Opts) ->
     [O || O <- Opts, keep_option(O)].
 
-keep_option({outdir, _}) -> false;
-keep_option({cwd, _}) -> false;
-keep_option({source, _}) -> false;
+keep_option({outdir, _}) ->
+    false;
+keep_option({cwd, _}) ->
+    false;
+keep_option({source, _}) ->
+    false;
 keep_option({i, P}) ->
     filename:pathtype(P) =:= absolute andalso filelib:is_dir(P);
-keep_option({makedep_output, _}) -> false;
-keep_option({makedep_target, _}) -> false;
+keep_option({makedep_output, _}) ->
+    false;
+keep_option({makedep_target, _}) ->
+    false;
 keep_option(O) when is_atom(O) ->
-    not lists:member(O, [binary, return, return_errors, return_warnings,
-        report, report_errors, report_warnings, makedep, makedep_side_effect,
-        makedep_add_missing, makedep_phony, makedep_quote_target,
-        'P', 'E', 'S', to_pp, to_exp, to_core, to_kernel, to_asm,
-        from_abstr, from_core, from_asm, no_code_generation]);
-keep_option(_) -> true.
+    not lists:member(O, [
+        binary,
+        return,
+        return_errors,
+        return_warnings,
+        report,
+        report_errors,
+        report_warnings,
+        makedep,
+        makedep_side_effect,
+        makedep_add_missing,
+        makedep_phony,
+        makedep_quote_target,
+        'P',
+        'E',
+        'S',
+        to_pp,
+        to_exp,
+        to_core,
+        to_kernel,
+        to_asm,
+        from_abstr,
+        from_core,
+        from_asm,
+        no_code_generation
+    ]);
+keep_option(_) ->
+    true.
 
 app_objects(App, Base, Cfg) ->
     AppRoot = filename:join(Base, atom_to_list(App)),
     Ebin = filename:join(AppRoot, "ebin"),
     %% The app resource is the build's manifest, avoiding stale orphan .beam files.
     {ok, [{application, App, Props}]} = file:consult(
-        filename:join(Ebin, atom_to_list(App) ++ ".app")),
+        filename:join(Ebin, atom_to_list(App) ++ ".app")
+    ),
     Mods = proplists:get_value(modules, Props, []),
     true = Mods =/= [],
-    [read_object(M, filename:join(Ebin, atom_to_list(M) ++ ".beam")) || M <- Mods,
-        not lists:member(M, maps:get(exclude_modules, Cfg))].
+    [
+        read_object(M, filename:join(Ebin, atom_to_list(M) ++ ".beam"))
+     || M <- Mods,
+        not lists:member(M, maps:get(exclude_modules, Cfg))
+    ].
 
 read_object(M, P) ->
     {ok, B} = file:read_file(P),
@@ -185,29 +250,46 @@ run_rebar(Cfg) ->
     Build = maps:get(build_dir, Cfg),
     ok = filelib:ensure_dir(filename:join(Build, ".ensure")),
     Executable0 = maps:get(rebar3, Cfg),
-    Executable = case filename:pathtype(Executable0) of
-        absolute -> Executable0;
-        _ ->
-            case os:find_executable(Executable0) of
-                false -> error({executable_not_found, Executable0});
-                Found -> Found
-            end
-    end,
+    Executable =
+        case filename:pathtype(Executable0) of
+            absolute ->
+                Executable0;
+            _ ->
+                case os:find_executable(Executable0) of
+                    false -> error({executable_not_found, Executable0});
+                    Found -> Found
+                end
+        end,
     Profile = maps:get(profile, Cfg),
-    Args = case Profile of
-        "default" -> ["compile"];
-        _ -> ["as", Profile, "compile"]
-    end,
-    Env = [{"REBAR_BASE_DIR", Build}, {"REBAR_PROFILE", false}, {"REBAR_CONFIG", false},
-        {"ERL_FLAGS", false}, {"ERL_AFLAGS", false}, {"ERL_ZFLAGS", false},
-        {"ERL_LIBS", false}],
+    Args =
+        case Profile of
+            "default" -> ["compile"];
+            _ -> ["as", Profile, "compile"]
+        end,
+    Env = [
+        {"REBAR_BASE_DIR", Build},
+        {"REBAR_PROFILE", false},
+        {"REBAR_CONFIG", false},
+        {"ERL_FLAGS", false},
+        {"ERL_AFLAGS", false},
+        {"ERL_ZFLAGS", false},
+        {"ERL_LIBS", false}
+    ],
     %% erlexec is already a project dependency. An argv list avoids SHELL parsing.
-    {ok, Pid, OsPid} = exec:run_link([Executable | Args],
-        [monitor, stdout, stderr, {cd, Root}, {env, Env}, {group, 0}, kill_group]),
+    {ok, Pid, OsPid} = exec:run_link(
+        [Executable | Args],
+        [monitor, stdout, stderr, {cd, Root}, {env, Env}, {group, 0}, kill_group]
+    ),
     Deadline = erlang:monotonic_time(millisecond) + maps:get(build_timeout_ms, Cfg),
-    try wait_rebar(Pid, OsPid, Deadline, <<>>) after
+    try
+        wait_rebar(Pid, OsPid, Deadline, <<>>)
+    after
         unlink(Pid),
-        try exec:stop_and_wait(Pid, 10000) of _ -> ok catch _:_ -> ok end
+        try exec:stop_and_wait(Pid, 10000) of
+            _ -> ok
+        catch
+            _:_ -> ok
+        end
     end.
 
 wait_rebar(Pid, OsPid, Deadline, Tail) ->
@@ -225,7 +307,10 @@ wait_rebar(Pid, OsPid, Deadline, Tail) ->
 tail(Old, New) ->
     B = iolist_to_binary([Old, New]),
     N = byte_size(B),
-    case N > 16384 of true -> binary:part(B, N - 16384, 16384); false -> B end.
+    case N > 16384 of
+        true -> binary:part(B, N - 16384, 16384);
+        false -> B
+    end.
 
 %% No disk writes, no code path additions, and no force-purge fallback.
 publish(Cfg, Objects0) ->
@@ -248,7 +333,8 @@ changed({M, _, B}) ->
                 {M, Existing, _} -> beam_lib:md5(Existing) =/= {ok, {M, Hash}};
                 error -> true
             end;
-        _ -> M:module_info(md5) =/= Hash
+        _ ->
+            M:module_info(md5) =/= Hash
     end.
 
 validate_object(Cfg, {M, _, B}) ->
@@ -266,7 +352,8 @@ validate_object(Cfg, {M, _, B}) ->
                 true -> ok;
                 false -> error({module_not_allowed, M})
             end;
-        rebar -> ok
+        rebar ->
+            ok
     end,
     {ok, {M, Chunks}} = beam_lib:chunks(B, [attributes, imports]),
     Imports = proplists:get_value(imports, Chunks, []),
@@ -278,7 +365,8 @@ validate_object(Cfg, {M, _, B}) ->
         false -> ok
     end.
 
-publish_objects([]) -> {ok, []};
+publish_objects([]) ->
+    {ok, []};
 publish_objects(Objects) ->
     case code:prepare_loading(Objects) of
         {ok, Prepared} ->
@@ -286,14 +374,17 @@ publish_objects(Objects) ->
             case Busy of
                 [] ->
                     case code:finish_loading(Prepared) of
-                        ok -> {ok, [M || {M, _, _} <- Objects]};
+                        ok ->
+                            {ok, [M || {M, _, _} <- Objects]};
                         {error, Reasons} ->
                             case lists:all(fun({_, R}) -> R =:= not_purged end, Reasons) of
                                 true -> {deferred, [M || {M, _} <- Reasons]};
                                 false -> {error, {finish_loading_failed, Reasons}}
                             end
                     end;
-                _ -> {deferred, Busy}
+                _ ->
+                    {deferred, Busy}
             end;
-        {error, Reasons} -> {error, {prepare_loading_failed, Reasons}}
+        {error, Reasons} ->
+            {error, {prepare_loading_failed, Reasons}}
     end.

@@ -2,15 +2,21 @@
 -include_lib("eunit/include/eunit.hrl").
 -include("erm_playlist.hrl").
 
-opts() -> #{settle_ms => 1000, command_window_ms => 8000,
-            rearm_silence_ms => 6000, command_dedupe_ms => 6000,
-            max_command_bytes => 512}.
+opts() ->
+    #{
+        settle_ms => 1000,
+        command_window_ms => 8000,
+        rearm_silence_ms => 6000,
+        command_dedupe_ms => 6000,
+        max_command_bytes => 512
+    }.
 feed(Text, Time, S) -> erm_voice_boundary:feed(Text, ["bob"], Time, S, opts()).
 tick(Time, S) -> erm_voice_boundary:tick(Time, S, opts()).
 
 wake_test_() ->
-    [?_assertEqual(Expected, erm_voice_boundary:wake(Text, ["bob"])) ||
-        {Text, Expected} <- [
+    [
+        ?_assertEqual(Expected, erm_voice_boundary:wake(Text, ["bob"]))
+     || {Text, Expected} <- [
             {"BOB, next song!", {wake, <<"next song!">>}},
             {"Hey Bob, pause.", {wake, <<"pause.">>}},
             {"okay bob stop", {wake, <<"stop">>}},
@@ -19,12 +25,15 @@ wake_test_() ->
             {"bob_name", nomatch},
             {"I was talking to Bob", nomatch},
             {"play a Bob Dylan song", nomatch},
-            {[16#FF22,16#FF2F,16#FF22], {wake, <<>>}},
-            {[$b,$o,$b,16#0301], nomatch}
-        ]].
+            {[16#FF22, 16#FF2F, 16#FF22], {wake, <<>>}},
+            {[$b, $o, $b, 16#0301], nomatch}
+        ]
+    ].
 longer_alias_test() ->
-    ?assertEqual({wake, <<"next">>},
-                 erm_voice_boundary:wake("bob junior next", ["bob", "bob junior"])).
+    ?assertEqual(
+        {wake, <<"next">>},
+        erm_voice_boundary:wake("bob junior next", ["bob", "bob junior"])
+    ).
 
 settling_revision_test() ->
     S1 = feed("bob play", 0, erm_voice_boundary:new()),
@@ -40,10 +49,15 @@ wake_separate_record_test() ->
 rolling_redraw_exactly_once_test() ->
     S1 = feed("bob next", 0, erm_voice_boundary:new()),
     {{command, _}, S2} = tick(1000, S1),
-    S3 = lists:foldl(fun(T, S) ->
-        S0 = feed("bob next", T, S),
-        {none, SNext} = tick(T, S0), SNext
-    end, S2, lists:seq(1100, 15000, 100)),
+    S3 = lists:foldl(
+        fun(T, S) ->
+            S0 = feed("bob next", T, S),
+            {none, SNext} = tick(T, S0),
+            SNext
+        end,
+        S2,
+        lists:seq(1100, 15000, 100)
+    ),
     ?assertEqual(locked, maps:get(phase, S3)).
 context_closed_after_command_test() ->
     S1 = feed("bob next", 0, erm_voice_boundary:new()),
@@ -82,31 +96,67 @@ long_command_rejected_test() ->
     ?assertMatch({none, _}, tick(1500, S)).
 
 fast_intents_test_() ->
-    [?_assertEqual({ok, #{action => A}}, erm_voice_intent:parse(T)) ||
-        {T, A} <- [{"play", play}, {"start", play}, {"resume", play},
-                   {"PAUSE!", pause}, {"stop music", stop}, {"next song", next},
-                   {"previous track", previous}, {"show player", show_player}]].
+    [
+        ?_assertEqual({ok, #{action => A}}, erm_voice_intent:parse(T))
+     || {T, A} <- [
+            {"play", play},
+            {"start", play},
+            {"resume", play},
+            {"PAUSE!", pause},
+            {"stop music", stop},
+            {"next song", next},
+            {"previous track", previous},
+            {"show player", show_player}
+        ]
+    ].
 volume_validation_test() ->
-    ?assertEqual({ok, #{action => volume, value => 35}}, erm_voice_intent:parse("set volume to 35")),
+    ?assertEqual(
+        {ok, #{action => volume, value => 35}}, erm_voice_intent:parse("set volume to 35")
+    ),
     ?assertMatch({error, _}, erm_voice_intent:parse("volume 101")).
 negated_command_test() ->
     ?assertEqual({error, negated_command}, erm_voice_intent:parse("don't play")),
     ?assertMatch({ok, #{action := play_song}}, erm_voice_intent:parse("play don't stop me now")).
 model_allowlist_test() ->
-    ?assertMatch({error, _}, erm_voice_intent:validate(
-        #{<<"action">> => <<"os:cmd">>, <<"query">> => <<"rm -rf /">>, <<"value">> => 0}, #{})),
-    ?assertMatch({error, _}, erm_voice_intent:validate(
-        #{<<"action">> => <<"volume">>, <<"query">> => <<>>, <<"value">> => -1}, #{})),
-    ?assertMatch({error, _}, erm_voice_intent:validate(
-        #{<<"action">> => <<"next">>, <<"query">> => <<>>, <<"value">> => 0,
-          <<"code">> => <<"anything">>}, #{})).
+    ?assertMatch(
+        {error, _},
+        erm_voice_intent:validate(
+            #{<<"action">> => <<"os:cmd">>, <<"query">> => <<"rm -rf /">>, <<"value">> => 0}, #{}
+        )
+    ),
+    ?assertMatch(
+        {error, _},
+        erm_voice_intent:validate(
+            #{<<"action">> => <<"volume">>, <<"query">> => <<>>, <<"value">> => -1}, #{}
+        )
+    ),
+    ?assertMatch(
+        {error, _},
+        erm_voice_intent:validate(
+            #{
+                <<"action">> => <<"next">>,
+                <<"query">> => <<>>,
+                <<"value">> => 0,
+                <<"code">> => <<"anything">>
+            },
+            #{}
+        )
+    ).
 custom_action_test() ->
     O = #{actions => [{<<"lights_on">>, "Turn on lights", {test_lights, on}}]},
-    ?assertMatch({ok, #{action := custom, name := <<"lights_on">>}},
-        erm_voice_intent:validate(#{<<"action">> => <<"lights_on">>,
-                                   <<"query">> => <<"office">>, <<"value">> => 0}, O)),
+    ?assertMatch(
+        {ok, #{action := custom, name := <<"lights_on">>}},
+        erm_voice_intent:validate(
+            #{
+                <<"action">> => <<"lights_on">>,
+                <<"query">> => <<"office">>,
+                <<"value">> => 0
+            },
+            O
+        )
+    ),
     ?assertMatch({ok, _}, erm_voice:options(O)),
-    ?assertMatch({error, _}, erm_voice:options(#{actions => [{<<"stop">>, "override", {m,f}}]})).
+    ?assertMatch({error, _}, erm_voice:options(#{actions => [{<<"stop">>, "override", {m, f}}]})).
 
 song_selection_test() ->
     T1 = #track{id = 1, path = "/music/Wonderwall.flac", artist = "Oasis"},
@@ -128,13 +178,23 @@ late_revision_not_second_action_test() ->
     S3 = feed("bob play wonderwall by oasis", 1400, S2),
     ?assertMatch({none, _}, tick(2500, S3)).
 split_multiword_wake_test() ->
-    S1 = erm_voice_boundary:feed("hey thread", ["thread ripper"], 0,
-                                erm_voice_boundary:new(), opts()),
+    S1 = erm_voice_boundary:feed(
+        "hey thread",
+        ["thread ripper"],
+        0,
+        erm_voice_boundary:new(),
+        opts()
+    ),
     S2 = erm_voice_boundary:feed("ripper next", ["thread ripper"], 600, S1, opts()),
     ?assertMatch({{command, <<"next">>}, _}, tick(1700, S2)).
 expired_multiword_prefix_test() ->
-    S1 = erm_voice_boundary:feed("thread", ["thread ripper"], 0,
-                                erm_voice_boundary:new(), opts()),
+    S1 = erm_voice_boundary:feed(
+        "thread",
+        ["thread ripper"],
+        0,
+        erm_voice_boundary:new(),
+        opts()
+    ),
     S2 = erm_voice_boundary:feed("ripper next", ["thread ripper"], 2000, S1, opts()),
     ?assertMatch({none, _}, tick(3100, S2)).
 
@@ -195,16 +255,25 @@ strict_mode_rejects_unfinalized_text_test() ->
     ?assertMatch({none, _}, erm_voice_boundary:tick(1500, S, O)).
 
 punctuation_preserved_test() ->
-    ?assertEqual({wake, <<"ask Is -5 < 0?">>},
-                 erm_voice_boundary:wake("Bob, ask Is -5 < 0?", ["bob"])),
-    ?assertEqual({ok, #{action => ask, query => <<"Is -5 < 0?">>}},
-                 erm_voice_intent:parse("ask Is -5 < 0?")),
-    ?assertEqual({ok, #{action => play_song, query => <<"Don't Stop Me Now">>}},
-                 erm_voice_intent:parse("play Don't Stop Me Now")).
+    ?assertEqual(
+        {wake, <<"ask Is -5 < 0?">>},
+        erm_voice_boundary:wake("Bob, ask Is -5 < 0?", ["bob"])
+    ),
+    ?assertEqual(
+        {ok, #{action => ask, query => <<"Is -5 < 0?">>}},
+        erm_voice_intent:parse("ask Is -5 < 0?")
+    ),
+    ?assertEqual(
+        {ok, #{action => play_song, query => <<"Don't Stop Me Now">>}},
+        erm_voice_intent:parse("play Don't Stop Me Now")
+    ).
 
 invalid_volume_never_reaches_model_test_() ->
-    [?_assertMatch({error, _}, erm_voice_intent:plan(T, #{})) || T <-
-        ["volume -5", "set volume to +5", "volume 3.5", "volume 1/2", "volume 101"]].
+    [
+        ?_assertMatch({error, _}, erm_voice_intent:plan(T, #{}))
+     || T <-
+            ["volume -5", "set volume to +5", "volume 3.5", "volume 1/2", "volume 101"]
+    ].
 
 require_final_configuration_test() ->
     ?assertMatch({ok, _}, erm_voice:options(#{require_final => true})),

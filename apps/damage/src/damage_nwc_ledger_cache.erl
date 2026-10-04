@@ -193,7 +193,11 @@ fetch_ledger_events(LedgerCt, Limit, Direction) ->
         {module, damage_nwc_http} ->
             case erlang:function_exported(damage_nwc_http, ledger_events, 3) of
                 true ->
-                    case damage_otp_compat:catch_value(fun() -> damage_nwc_http:ledger_events(LedgerCt, Limit, Direction) end) of
+                    case
+                        damage_otp_compat:catch_value(fun() ->
+                            damage_nwc_http:ledger_events(LedgerCt, Limit, Direction)
+                        end)
+                    of
                         {ok, Events} when is_list(Events) -> {ok, Events};
                         {error, _} = Error -> Error;
                         {'EXIT', Why} -> {error, {ledger_events_exit, Why}};

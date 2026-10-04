@@ -42,5 +42,7 @@ missing_git_diff_header_is_rejected_test() ->
         "-old\n"
         "+new\n"
     >>,
-    ?assertEqual({error, missing_git_diff_header},
-                 ecai_patch_verifier:validate_patch(Patch)).
+    ?assertEqual(
+        {error, missing_git_diff_header},
+        ecai_patch_verifier:validate_patch(Patch)
+    ).

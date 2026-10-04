@@ -385,7 +385,9 @@ build_ui(GtkServer) ->
     ]),
     _VoiceCommand = widget(label, voice_command_label, voice_card, [
         {text, "Say your wake phrase, then a command."},
-        {xalign, 0.0}, {wrap, true}, {selectable, true}
+        {xalign, 0.0},
+        {wrap, true},
+        {selectable, true}
     ]),
     _VoiceResult = widget(label, voice_result_label, voice_card, [
         {text, "Ready"}, {xalign, 0.0}, {wrap, true}, {selectable, true}
@@ -509,38 +511,61 @@ voice_status() ->
     try gen_server:call(erm_voice, status, 100) of
         V when is_map(V) -> V;
         _ -> #{}
-    catch exit:_ -> #{} end.
+    catch
+        exit:_ -> #{}
+    end.
 
 update_voice_status(Voice) ->
     Command = maps:get(last_command, Voice, undefined),
-    safe_config(voice_command_label, [{text, case Command of
-        undefined -> "Say your wake phrase, then a command.";
-        _ -> Command
-    end}]),
-    Text = case Voice of
-        #{busy := true} -> "Working…";
-        #{phase := capturing} -> "Listening for your command…";
-        #{last_result := Result} -> voice_result_text(Result);
-        _ -> "Voice actions are unavailable or disabled."
-    end,
+    safe_config(voice_command_label, [
+        {text,
+            case Command of
+                undefined -> "Say your wake phrase, then a command.";
+                _ -> Command
+            end}
+    ]),
+    Text =
+        case Voice of
+            #{busy := true} -> "Working…";
+            #{phase := capturing} -> "Listening for your command…";
+            #{last_result := Result} -> voice_result_text(Result);
+            _ -> "Voice actions are unavailable or disabled."
+        end,
     safe_config(voice_result_label, [{text, Text}]).
-voice_result_text(undefined) -> "Ready";
-voice_result_text(ok) -> "Done";
-voice_result_text({ok, #{action := answer, text := Text}}) -> Text;
-voice_result_text({ok, #{playing := Title}}) -> ["Playing: ", Title];
-voice_result_text({ok, #{title := Title, artist := Artist}}) -> [Title, " — ", Artist];
-voice_result_text({ok, _}) -> "Done";
-voice_result_text({error, song_not_found}) -> "No matching song in the playlist.";
-voice_result_text({error, {ambiguous_song, _}}) -> "Several songs match. Repeat with the artist name.";
-voice_result_text({error, busy}) -> "A command is already running. Please try again.";
-voice_result_text({error, cancelled}) -> "Cancelled";
-voice_result_text({error, negated_command}) -> "No action taken.";
-voice_result_text({error, no_action}) -> "Please say one clear command.";
-voice_result_text({error, no_ecai_sources}) -> "No matching knowledge sources were found.";
-voice_result_text({error, ecai_base_dir_not_configured}) -> "Set the ECAI index directory to use knowledge questions.";
-voice_result_text({error, {action, timeout}}) -> "The action timed out; its outcome is uncertain. Check the player before repeating.";
-voice_result_text({error, _}) -> "The command could not be completed. Details are in the log.";
-voice_result_text(_) -> "Command completed.".
+voice_result_text(undefined) ->
+    "Ready";
+voice_result_text(ok) ->
+    "Done";
+voice_result_text({ok, #{action := answer, text := Text}}) ->
+    Text;
+voice_result_text({ok, #{playing := Title}}) ->
+    ["Playing: ", Title];
+voice_result_text({ok, #{title := Title, artist := Artist}}) ->
+    [Title, " — ", Artist];
+voice_result_text({ok, _}) ->
+    "Done";
+voice_result_text({error, song_not_found}) ->
+    "No matching song in the playlist.";
+voice_result_text({error, {ambiguous_song, _}}) ->
+    "Several songs match. Repeat with the artist name.";
+voice_result_text({error, busy}) ->
+    "A command is already running. Please try again.";
+voice_result_text({error, cancelled}) ->
+    "Cancelled";
+voice_result_text({error, negated_command}) ->
+    "No action taken.";
+voice_result_text({error, no_action}) ->
+    "Please say one clear command.";
+voice_result_text({error, no_ecai_sources}) ->
+    "No matching knowledge sources were found.";
+voice_result_text({error, ecai_base_dir_not_configured}) ->
+    "Set the ECAI index directory to use knowledge questions.";
+voice_result_text({error, {action, timeout}}) ->
+    "The action timed out; its outcome is uncertain. Check the player before repeating.";
+voice_result_text({error, _}) ->
+    "The command could not be completed. Details are in the log.";
+voice_result_text(_) ->
+    "Command completed.".
 
 status_title(true, _LastError) -> "● Listening";
 status_title(false, undefined) -> "○ Ready · listening stopped";

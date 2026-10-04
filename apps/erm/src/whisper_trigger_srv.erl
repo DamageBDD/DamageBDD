@@ -119,11 +119,16 @@ normalize_options(Opts) when is_map(Opts) ->
     {ok, Opts};
 normalize_options(Opts) when is_list(Opts) ->
     %% Standard proplist semantics: atom shorthand and first occurrence wins.
-    case lists:all(fun
-        (Key) when is_atom(Key) -> true;
-        ({Key, _}) when is_atom(Key) -> true;
-        (_) -> false
-    end, Opts) of
+    case
+        lists:all(
+            fun
+                (Key) when is_atom(Key) -> true;
+                ({Key, _}) when is_atom(Key) -> true;
+                (_) -> false
+            end,
+            Opts
+        )
+    of
         true -> {ok, proplists:to_map(Opts)};
         false -> {error, {invalid_configuration, Opts}}
     end;
@@ -140,12 +145,20 @@ start_link(Options) ->
     case normalize_options(Options) of
         {ok, Opts} ->
             case maps:get(enabled, Opts, true) of
-                false -> ignore;
-                true -> gen_server:start_link({local, ?MODULE}, ?MODULE,
-                                              maps:remove(enabled, Opts), []);
-                Invalid -> {error, {invalid_option, enabled, Invalid}}
+                false ->
+                    ignore;
+                true ->
+                    gen_server:start_link(
+                        {local, ?MODULE},
+                        ?MODULE,
+                        maps:remove(enabled, Opts),
+                        []
+                    );
+                Invalid ->
+                    {error, {invalid_option, enabled, Invalid}}
             end;
-        Error -> Error
+        Error ->
+            Error
     end.
 
 stop() ->
@@ -367,16 +380,24 @@ handle_call(cleanup_existing, _From, State) ->
     {reply, {ok, Pids}, State};
 %% Small health snapshot: no device enumeration and no transcript contents.
 handle_call(health, _From, State) ->
-    Listening = is_port(State#state.port) andalso
-                erlang:port_info(State#state.port) =/= undefined,
-    {reply, #{ready => true, listening => Listening, os_pid => State#state.os_pid,
-              bin => State#state.bin, model => State#state.model,
-              last_error => State#state.last_error,
-              transcript_count => State#state.transcript_count,
-              trigger_count => State#state.trigger_count,
-              last_transcript_at_ms => State#state.last_transcript_at_ms,
-              last_output_at_ms => State#state.last_output_at_ms,
-              uptime_ms => uptime_ms(State#state.started_at_ms)}, State};
+    Listening =
+        is_port(State#state.port) andalso
+            erlang:port_info(State#state.port) =/= undefined,
+    {reply,
+        #{
+            ready => true,
+            listening => Listening,
+            os_pid => State#state.os_pid,
+            bin => State#state.bin,
+            model => State#state.model,
+            last_error => State#state.last_error,
+            transcript_count => State#state.transcript_count,
+            trigger_count => State#state.trigger_count,
+            last_transcript_at_ms => State#state.last_transcript_at_ms,
+            last_output_at_ms => State#state.last_output_at_ms,
+            uptime_ms => uptime_ms(State#state.started_at_ms)
+        },
+        State};
 handle_call(status, _From, State) ->
     Reply = #{
         backend => whisper_cpp,
@@ -418,7 +439,8 @@ handle_info({Port, {data, Data}}, State0 = #state{port = Port, buffer = Buffer0}
     %% Read the lease directly so isolated voice builds need no TTS module.
     Now = erlang:monotonic_time(millisecond),
     case Now < persistent_term:get({erm_tts, suppress_until}, Now) of
-        true -> {noreply, State0#state{buffer = <<>>, recent_output = #{}}};
+        true ->
+            {noreply, State0#state{buffer = <<>>, recent_output = #{}}};
         false ->
             Buffer1 = <<Buffer0/binary, Data/binary>>,
             {Records, Buffer2} = split_records(Buffer1),
@@ -484,10 +506,11 @@ configure_state(Opts, Bin, Model) ->
         maps:get(output_dedupe_ms, Opts, ?DEFAULT_OUTPUT_DEDUPE_MS)
     ),
     Capture = capture_option(maps:get(capture, Opts, -1)),
-    VoiceEnabled = case erm_voice:options(maps:get(voice, Opts, [])) of
-        {ok, VoiceOpts} -> maps:get(enabled, VoiceOpts, true);
-        {error, _} -> false
-    end,
+    VoiceEnabled =
+        case erm_voice:options(maps:get(voice, Opts, [])) of
+            {ok, VoiceOpts} -> maps:get(enabled, VoiceOpts, true);
+            {error, _} -> false
+        end,
     RuntimeOpts = Opts#{capture => Capture, voice_enabled => VoiceEnabled},
     Host = normalize_text(maps:get(hostname, Opts, hostname())),
     Phrases0 = maps:get(trigger_phrases, Opts, [Host]),
@@ -545,7 +568,8 @@ open_stream(
     of
         Port ->
             OsPid = port_os_pid(Port),
-            subsystem_log(info,
+            subsystem_log(
+                info,
                 "whisper trigger listening for ~p using ~ts and ~ts (OS pid ~p)",
                 [Phrases, Bin, Model, OsPid]
             ),
@@ -850,14 +874,16 @@ process_output_record(Record0, State0) ->
             })
     end.
 
-maybe_voice_record(_Record, #state{opts = #{voice_enabled := false}}) -> ok;
+maybe_voice_record(_Record, #state{opts = #{voice_enabled := false}}) ->
+    ok;
 maybe_voice_record(Record, #state{trigger_phrases = Phrases}) ->
     case transcript_text(Record) of
         {ok, Text} ->
             Result = erm_voice:transcript(Text, Phrases),
             whisper_trace(forward_transcript, #{text => Text, result => Result}),
             Result;
-        ignore -> whisper_trace(stream_record, Record)
+        ignore ->
+            whisper_trace(stream_record, Record)
     end.
 
 deduplicate_output_record(<<>>, State) ->
@@ -984,10 +1010,13 @@ handle_transcript(
     end.
 
 matching_phrase(Text0, Phrases) ->
-    Ordered = lists:sort(fun(A, B) -> byte_size(A) > byte_size(B) end,
-                         normalize_phrases(Phrases)),
+    Ordered = lists:sort(
+        fun(A, B) -> byte_size(A) > byte_size(B) end,
+        normalize_phrases(Phrases)
+    ),
     matching_addressed_phrase(Text0, Ordered).
-matching_addressed_phrase(_Text, []) -> nomatch;
+matching_addressed_phrase(_Text, []) ->
+    nomatch;
 matching_addressed_phrase(Text, [Phrase | Rest]) ->
     case erm_voice_boundary:wake(Text, [Phrase]) of
         {wake, _Command} -> {match, Phrase};
@@ -1006,7 +1035,8 @@ run_handler(Handler, Text, Hostname) ->
             _ -> ok
         catch
             Class:Reason:Stacktrace ->
-                subsystem_log(error,
+                subsystem_log(
+                    error,
                     "speech trigger handler failed: ~p:~p~n~p",
                     [Class, Reason, Stacktrace]
                 )
@@ -1320,10 +1350,14 @@ close_port(Port) ->
 -include_lib("eunit/include/eunit.hrl").
 
 proplist_options_test() ->
-    ?assertEqual({ok, #{enabled => true, trigger_phrases => ["bob"]}},
-                 normalize_options([{enabled, true}, {trigger_phrases, ["bob"]}])),
-    ?assertEqual({ok, #{enabled => false}},
-                 normalize_options([{enabled, false}, {enabled, true}])),
+    ?assertEqual(
+        {ok, #{enabled => true, trigger_phrases => ["bob"]}},
+        normalize_options([{enabled, true}, {trigger_phrases, ["bob"]}])
+    ),
+    ?assertEqual(
+        {ok, #{enabled => false}},
+        normalize_options([{enabled, false}, {enabled, true}])
+    ),
     ?assertEqual({ok, #{enabled => true}}, normalize_options([enabled])),
     ?assertEqual({ok, #{enabled => false}}, normalize_options(#{enabled => false})),
     ?assertMatch({error, {invalid_configuration, _}}, normalize_options([42])),
@@ -1331,8 +1365,9 @@ proplist_options_test() ->
 
 trigger_boundaries_test_() ->
     Phrases = normalize_phrases(["bob"]),
-    [?_assertEqual(Expected, matching_phrase(Text, Phrases)) ||
-        {Text, Expected} <- [
+    [
+        ?_assertEqual(Expected, matching_phrase(Text, Phrases))
+     || {Text, Expected} <- [
             {"bob", {match, <<"bob">>}},
             {"BOB", {match, <<"bob">>}},
             {"Hey, Bob!", {match, <<"bob">>}},
@@ -1343,45 +1378,67 @@ trigger_boundaries_test_() ->
             {"bob42", nomatch},
             {"bob_name", nomatch},
             {"", nomatch}
-        ]].
+        ]
+    ].
 
 phrase_normalization_test() ->
-    ?assertEqual({match, <<"hey bob">>},
-                 matching_phrase("HEY,   Bob!", normalize_phrases(["Hey Bob"]))),
+    ?assertEqual(
+        {match, <<"hey bob">>},
+        matching_phrase("HEY,   Bob!", normalize_phrases(["Hey Bob"]))
+    ),
     ?assertEqual(nomatch, matching_phrase("nodeX0", normalize_phrases(["node.0"]))),
-    ?assertEqual({match, <<"node.0">>},
-                 matching_phrase("NODE.0!", normalize_phrases(["node.0"]))),
-    ?assertEqual({match, <<"bob">>},
-                 matching_phrase([16#FF22,16#FF2F,16#FF22], normalize_phrases(["bob"]))),
-    ?assertEqual(nomatch,
-                 matching_phrase([$b,$o,$b,16#0301], normalize_phrases(["bob"]))),
-    ?assertEqual(nomatch, matching_phrase("bob", normalize_phrases([" "])) ).
+    ?assertEqual(
+        {match, <<"node.0">>},
+        matching_phrase("NODE.0!", normalize_phrases(["node.0"]))
+    ),
+    ?assertEqual(
+        {match, <<"bob">>},
+        matching_phrase([16#FF22, 16#FF2F, 16#FF22], normalize_phrases(["bob"]))
+    ),
+    ?assertEqual(
+        nomatch,
+        matching_phrase([$b, $o, $b, 16#0301], normalize_phrases(["bob"]))
+    ),
+    ?assertEqual(nomatch, matching_phrase("bob", normalize_phrases([" "]))).
 tts_suppression_test() ->
-    persistent_term:put({erm_tts,suppress_until},erlang:monotonic_time(millisecond)+1000),
+    persistent_term:put({erm_tts, suppress_until}, erlang:monotonic_time(millisecond) + 1000),
     try
-        S=#state{port=fake_port,buffer = <<"partial">>,recent_output=#{<<"old">>=>1}},
-        {noreply,N}=handle_info({fake_port,{data,<<"bob play\n">>}},S),
-        ?assertEqual(<<>>,N#state.buffer),?assertEqual(#{},N#state.recent_output)
-    after persistent_term:erase({erm_tts,suppress_until}) end.
+        S = #state{port = fake_port, buffer = <<"partial">>, recent_output = #{<<"old">> => 1}},
+        {noreply, N} = handle_info({fake_port, {data, <<"bob play\n">>}}, S),
+        ?assertEqual(<<>>, N#state.buffer),
+        ?assertEqual(#{}, N#state.recent_output)
+    after
+        persistent_term:erase({erm_tts, suppress_until})
+    end.
 -endif.
 
 %% Configuration is read here so it can be toggled without restarting capture.
-whisper_trace(_Event, <<>>) -> ok;
+whisper_trace(_Event, <<>>) ->
+    ok;
 whisper_trace(Event, Value) ->
     Config = application:get_env(erm, whisper_trigger, []),
-    Enabled = case Config of
-        M when is_map(M) -> maps:get(debug_utterances, M, false);
-        L when is_list(L) -> proplists:get_value(debug_utterances, L, false);
-        _ -> false
-    end,
+    Enabled =
+        case Config of
+            M when is_map(M) -> maps:get(debug_utterances, M, false);
+            L when is_list(L) -> proplists:get_value(debug_utterances, L, false);
+            _ -> false
+        end,
     case Enabled of
         true ->
             case whisper_trace_changed(Event, Value) of
-                true -> subsystem_log(debug, "whisper_trace event=~p data=~P", [Event, Value, 12],
-                                      #{domain => [erm, whisper]});
-                false -> ok
+                true ->
+                    subsystem_log(
+                        debug,
+                        "whisper_trace event=~p data=~P",
+                        [Event, Value, 12],
+                        #{domain => [erm, whisper]}
+                    );
+                false ->
+                    ok
             end;
-        _ -> erase({?MODULE, trace_last, Event}), ok
+        _ ->
+            erase({?MODULE, trace_last, Event}),
+            ok
     end.
 
 %% Per-process diagnostic state only: never skip transcript delivery or alter
@@ -1390,13 +1447,17 @@ whisper_trace(Event, Value) ->
 whisper_trace_changed(Event, Value) ->
     Key = {?MODULE, trace_last, Event},
     case get(Key) of
-        {seen, Value} -> false;
-        _ -> put(Key, {seen, Value}), true
+        {seen, Value} ->
+            false;
+        _ ->
+            put(Key, {seen, Value}),
+            true
     end.
 
 -ifdef(TEST).
 trace_redraw_dedupe_test() ->
-    Key = {?MODULE, trace_last, forward_transcript}, erase(Key),
+    Key = {?MODULE, trace_last, forward_transcript},
+    erase(Key),
     V = #{text => <<"Thank you.">>, result => ok},
     try
         ?assert(whisper_trace_changed(forward_transcript, V)),
@@ -1406,18 +1467,29 @@ trace_redraw_dedupe_test() ->
         ?assert(whisper_trace_changed(forward_transcript, V#{result => {error, not_started}})),
         ?assert(whisper_trace_changed(forward_transcript, V)),
         ?assert(whisper_trace_changed(forward_transcript, V#{text => <<"hey bob pause">>}))
-    after erase(Key) end.
+    after
+        erase(Key)
+    end.
 
 trace_preserves_delivery_test() ->
     %% Repeated redraws must still reach the coordinator before output dedupe.
-    undefined = whereis(erm_voice), true = register(erm_voice, self()),
+    undefined = whereis(erm_voice),
+    true = register(erm_voice, self()),
     try
         S = #state{trigger_phrases = [<<"bob">>]},
         ok = maybe_voice_record(<<"Thank you.">>, S),
         ok = maybe_voice_record(<<"Thank you.">>, S),
-        receive {'$gen_cast', {transcript, _, _}} -> ok after 100 -> error(first_missing) end,
-        receive {'$gen_cast', {transcript, _, _}} -> ok after 100 -> error(second_missing) end
-    after unregister(erm_voice) end.
+        receive
+            {'$gen_cast', {transcript, _, _}} -> ok
+        after 100 -> error(first_missing)
+        end,
+        receive
+            {'$gen_cast', {transcript, _, _}} -> ok
+        after 100 -> error(second_missing)
+        end
+    after
+        unregister(erm_voice)
+    end.
 -endif.
 
 subsystem_log(Level, Format, Args) ->

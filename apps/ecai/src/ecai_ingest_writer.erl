@@ -172,19 +172,19 @@ init_canonical_base_dir(BaseDir, Opts) ->
         ok ->
             case ecai_wal:open(BaseDir, WalOpts) of
                 {ok, Wal, Recovery} ->
-            EventTab = ets:new(ecai_ingest_event_ids, [set, private]),
-            RecordsTab = ets:new(ecai_ingest_records, [ordered_set, private]),
-            Records = maps:get(records, Recovery),
-            {NextDocId, Unique, Duplicates} = install_recovered(
-                Records,
-                EventTab,
-                RecordsTab,
-                1,
-                0,
-                0
-            ),
-            RepairedBytes = maps:get(repaired_bytes, Recovery),
-            log_recovery(BaseDir, Recovery, Unique, Duplicates),
+                    EventTab = ets:new(ecai_ingest_event_ids, [set, private]),
+                    RecordsTab = ets:new(ecai_ingest_records, [ordered_set, private]),
+                    Records = maps:get(records, Recovery),
+                    {NextDocId, Unique, Duplicates} = install_recovered(
+                        Records,
+                        EventTab,
+                        RecordsTab,
+                        1,
+                        0,
+                        0
+                    ),
+                    RepairedBytes = maps:get(repaired_bytes, Recovery),
+                    log_recovery(BaseDir, Recovery, Unique, Duplicates),
                     {ok, #st{
                         base_dir = BaseDir,
                         wal = Wal,

@@ -700,7 +700,9 @@ step(_Config, Context, _, _N, ?STEP_RESPONSE_JSON_SHOULD_BE, Args) ->
 %%------------------------------------------------------------------------------
 step(_Config, Context, _, _N, ?STEP_VAR_EQ_JSON_LIT, _) ->
     Actual = maps:get(list_to_atom(Variable), Context, none),
-    case damage_otp_compat:catch_value(fun() -> jsx:decode(list_to_binary(Value), [return_maps]) end) of
+    case
+        damage_otp_compat:catch_value(fun() -> jsx:decode(list_to_binary(Value), [return_maps]) end)
+    of
         {'EXIT', Reason} ->
             maps:put(
                 fail,
@@ -1235,8 +1237,7 @@ http_body_timeout(Context) ->
         undefined ->
             case context_timeout_value(Context, http_timeout_ms) of
                 undefined -> ?DEFAULT_HTTP_BODY_TIMEOUT;
-                GeneralTimeout ->
-                    normalize_timeout_ms(GeneralTimeout, ?DEFAULT_HTTP_BODY_TIMEOUT)
+                GeneralTimeout -> normalize_timeout_ms(GeneralTimeout, ?DEFAULT_HTTP_BODY_TIMEOUT)
             end;
         BodyTimeout ->
             normalize_timeout_ms(BodyTimeout, ?DEFAULT_HTTP_BODY_TIMEOUT)
@@ -1252,7 +1253,8 @@ context_timeout_value(Context, Key) when is_atom(Key) ->
     BinKey = atom_to_binary(Key, utf8),
     ListKey = atom_to_list(Key),
     case maps:find(Key, Context) of
-        {ok, AtomValue} -> AtomValue;
+        {ok, AtomValue} ->
+            AtomValue;
         error ->
             case maps:find(BinKey, Context) of
                 {ok, BinaryValue} -> BinaryValue;

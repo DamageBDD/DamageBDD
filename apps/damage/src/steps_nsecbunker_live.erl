@@ -206,27 +206,45 @@ step(
 %% Identity / filter assertions
 %% ====================================================================
 
-step(_Config, Context, _Keyword, _Line,
-    ["the live bunker MUST use AWS with no local DETS vault passphrase"], _Args) ->
+step(
+    _Config,
+    Context,
+    _Keyword,
+    _Line,
+    ["the live bunker MUST use AWS with no local DETS vault passphrase"],
+    _Args
+) ->
     %% Fail closed; never decrypt, retain, or report a secret-store record.
     try
         Status = damage_nsecbunker:status(),
         case {maps:get(ready, Status, false), maps:get(secret_provider, Status, undefined)} of
             {true, aws_secrets_manager} ->
                 case secrets:retrieve_secret(nsecbunker_vault_passphrase) of
-                    [] -> put_live(Context, #{local_vault_entry_absent => true,
-                        custody_provider => aws_secrets_manager,
-                        bunker_started_at => maps:get(started_at, Status, undefined)});
-                    [_ | _] -> fail(Context, local_vault_entry_present);
-                    _ -> fail(Context, local_vault_lookup_failed)
+                    [] ->
+                        put_live(Context, #{
+                            local_vault_entry_absent => true,
+                            custody_provider => aws_secrets_manager,
+                            bunker_started_at => maps:get(started_at, Status, undefined)
+                        });
+                    [_ | _] ->
+                        fail(Context, local_vault_entry_present);
+                    _ ->
+                        fail(Context, local_vault_lookup_failed)
                 end;
-            _ -> fail(Context, live_bunker_not_ready_with_aws)
+            _ ->
+                fail(Context, live_bunker_not_ready_with_aws)
         end
     catch
         _:_ -> fail(Context, aws_custody_check_failed)
     end;
-step(_Config, Context, _Keyword, _Line,
-    ["the live bunker public key MUST be", Expected0], _Args) ->
+step(
+    _Config,
+    Context,
+    _Keyword,
+    _Line,
+    ["the live bunker public key MUST be", Expected0],
+    _Args
+) ->
     Expected = lower_hex_bin(strip(Expected0)),
     Status = damage_nsecbunker:status(),
     %% status/0 reports the active server policy, whereas policy/0 reloads config.
@@ -234,29 +252,48 @@ step(_Config, Context, _Keyword, _Line,
     Guard = maps:get(guard_state, maps:get(vault, Status, #{}), #{}),
     Actual = lower_hex_bin(maps:get(bunker_pubkey_hex, Policy, <<>>)),
     GuardPub = lower_hex_bin(maps:get(pubkey_hex, Guard, <<>>)),
-    case is_lower_hex_64(Expected) andalso maps:get(ready, Status, false) =:= true
-        andalso Actual =:= Expected andalso GuardPub =:= Expected of
+    case
+        is_lower_hex_64(Expected) andalso maps:get(ready, Status, false) =:= true andalso
+            Actual =:= Expected andalso GuardPub =:= Expected
+    of
         true -> put_live(Context, #{verified_bunker_pubkey_hex => Expected});
         false -> fail(Context, {live_bunker_identity_mismatch, Expected, Actual, GuardPub})
     end;
-step(_Config, Context, _Keyword, _Line,
-    ["the live bunker MUST authorise client", Client0], _Args) ->
+step(
+    _Config,
+    Context,
+    _Keyword,
+    _Line,
+    ["the live bunker MUST authorise client", Client0],
+    _Args
+) ->
     Client = lower_hex_bin(strip(Client0)),
     case is_lower_hex_64(Client) of
-        false -> fail(Context, invalid_handoff_client_pubkey);
+        false ->
+            fail(Context, invalid_handoff_client_pubkey);
         true ->
             %% Probe the running policy gate using its existing local API.
             %% This proves authorization, not external possession of the client key.
             RequestId = make_run_id(),
-            Request = #{requester_pubkey => Client, request_id => RequestId,
-                method => <<"ping">>, created_at => erlang:system_time(second),
-                skip_rate_limit => true},
+            Request = #{
+                requester_pubkey => Client,
+                request_id => RequestId,
+                method => <<"ping">>,
+                created_at => erlang:system_time(second),
+                skip_rate_limit => true
+            },
             Reply = plain_response_map(damage_nsecbunker:handle_plain_request(Request)),
-            case not response_rejected(Reply) andalso response_id(Reply) =:= RequestId
-                andalso response_result_bin(Reply) =:= <<"pong">> of
-                true -> put_live(Context, #{verified_authorised_client_pubkey_hex => Client,
-                    authorisation_probe_id => RequestId});
-                false -> fail(Context, {live_client_authorisation_probe_failed, Client})
+            case
+                not response_rejected(Reply) andalso response_id(Reply) =:= RequestId andalso
+                    response_result_bin(Reply) =:= <<"pong">>
+            of
+                true ->
+                    put_live(Context, #{
+                        verified_authorised_client_pubkey_hex => Client,
+                        authorisation_probe_id => RequestId
+                    });
+                false ->
+                    fail(Context, {live_client_authorisation_probe_failed, Client})
             end
     end;
 step(
@@ -461,17 +498,20 @@ step(
     _Args
 ) ->
     case maps:is_key(last_nip46_reply_event, live(Context)) of
-    true ->
-        Resp = require_live(last_nip46_response, Context),
-        assert_equal(
-            Context,
-            response_id(Resp),
-            require_live(last_request_id, Context),
-            live_nip46_reply_request_id_mismatch
-        );
-    false ->
-        fail(Context, {live_nip46_reply_not_received,
-            maps:get(last_nip46_reply_error, live(Context), undefined)})
+        true ->
+            Resp = require_live(last_nip46_response, Context),
+            assert_equal(
+                Context,
+                response_id(Resp),
+                require_live(last_request_id, Context),
+                live_nip46_reply_request_id_mismatch
+            );
+        false ->
+            fail(
+                Context,
+                {live_nip46_reply_not_received,
+                    maps:get(last_nip46_reply_error, live(Context), undefined)}
+            )
     end;
 step(
     _Config,
@@ -844,11 +884,14 @@ publish_black_box_canary(Context) ->
 publish_black_box_live_nip46(Context0, Method, Opts) ->
     Context = maps:put(
         ?NS,
-        maps:without([
-            last_nip46_reply_event,
-            last_nip46_response,
-            last_nip46_reply_error
-        ], live(Context0)),
+        maps:without(
+            [
+                last_nip46_reply_event,
+                last_nip46_response,
+                last_nip46_reply_error
+            ],
+            live(Context0)
+        ),
         Context0
     ),
     RequestId = make_request_id(Context, <<"blackbox-nip46">>, Method),
@@ -858,9 +901,12 @@ publish_black_box_live_nip46(Context0, Method, Opts) ->
         {ok, Event} ->
             Ref = make_ref(),
             Parent = self(),
-            Workers = [spawn(fun() ->
-                nip46_reply_listener(Parent, Ref, Relay, Context, RequestId, Since)
-            end) || Relay <- require_live(relays, Context)],
+            Workers = [
+                spawn(fun() ->
+                    nip46_reply_listener(Parent, Ref, Relay, Context, RequestId, Since)
+                end)
+             || Relay <- require_live(relays, Context)
+            ],
             try
                 Deadline = erlang:monotonic_time(millisecond) + ?DEFAULT_TIMEOUT_MS,
                 case await_nip46_listeners(Ref, Workers, Deadline, [], []) of
@@ -1013,8 +1059,18 @@ nip46_reply_listener(Parent, Ref, Relay, Context, RequestId, Since) ->
                     Filter = (nip46_reply_filter(Context, Since))#{<<"limit">> => 0},
                     ok = safe_ws_send(ConnPid, StreamRef, jsx:encode([<<"REQ">>, SubId, Filter])),
                     Deadline = erlang:monotonic_time(millisecond) + ?DEFAULT_TIMEOUT_MS,
-                    nip46_reply_listener_loop(Parent, Monitor, Ref, ConnPid, StreamRef,
-                        SubId, Context, RequestId, Deadline, false)
+                    nip46_reply_listener_loop(
+                        Parent,
+                        Monitor,
+                        Ref,
+                        ConnPid,
+                        StreamRef,
+                        SubId,
+                        Context,
+                        RequestId,
+                        Deadline,
+                        false
+                    )
                 after
                     safe_close_gun(ConnPid)
                 end;
@@ -1027,33 +1083,77 @@ nip46_reply_listener(Parent, Ref, Relay, Context, RequestId, Since) ->
         erlang:demonitor(Monitor, [flush])
     end.
 
-nip46_reply_listener_loop(Parent, Monitor, Ref, ConnPid, StreamRef,
-    SubId, Context, RequestId, Deadline, Ready) ->
-    Wait = case Ready of
-        true -> infinity;
-        false -> max(0, Deadline - erlang:monotonic_time(millisecond))
-    end,
+nip46_reply_listener_loop(
+    Parent,
+    Monitor,
+    Ref,
+    ConnPid,
+    StreamRef,
+    SubId,
+    Context,
+    RequestId,
+    Deadline,
+    Ready
+) ->
+    Wait =
+        case Ready of
+            true -> infinity;
+            false -> max(0, Deadline - erlang:monotonic_time(millisecond))
+        end,
     receive
-        {Ref, stop} -> ok;
-        {'DOWN', Monitor, process, Parent, _} -> ok;
+        {Ref, stop} ->
+            ok;
+        {'DOWN', Monitor, process, Parent, _} ->
+            ok;
         {gun_ws, ConnPid, StreamRef, {text, Msg}} ->
             case safe_decode(Msg) of
                 [<<"EOSE">>, SubId] when Ready =:= false ->
                     Parent ! {Ref, self(), ready},
-                    nip46_reply_listener_loop(Parent, Monitor, Ref, ConnPid, StreamRef,
-                        SubId, Context, RequestId, Deadline, true);
+                    nip46_reply_listener_loop(
+                        Parent,
+                        Monitor,
+                        Ref,
+                        ConnPid,
+                        StreamRef,
+                        SubId,
+                        Context,
+                        RequestId,
+                        Deadline,
+                        true
+                    );
                 [<<"EVENT">>, SubId, Event] when Ready =:= true ->
                     case find_matching_decrypted_reply([Event], RequestId, Context) of
-                        {ok, _, _} = Reply -> Parent ! {Ref, self(), Reply};
+                        {ok, _, _} = Reply ->
+                            Parent ! {Ref, self(), Reply};
                         {error, _} ->
-                            nip46_reply_listener_loop(Parent, Monitor, Ref, ConnPid, StreamRef,
-                                SubId, Context, RequestId, Deadline, Ready)
+                            nip46_reply_listener_loop(
+                                Parent,
+                                Monitor,
+                                Ref,
+                                ConnPid,
+                                StreamRef,
+                                SubId,
+                                Context,
+                                RequestId,
+                                Deadline,
+                                Ready
+                            )
                     end;
                 [<<"CLOSED">>, SubId, Reason] ->
                     Parent ! {Ref, self(), {error, {subscription_closed, Reason}}};
                 _ ->
-                    nip46_reply_listener_loop(Parent, Monitor, Ref, ConnPid, StreamRef,
-                        SubId, Context, RequestId, Deadline, Ready)
+                    nip46_reply_listener_loop(
+                        Parent,
+                        Monitor,
+                        Ref,
+                        ConnPid,
+                        StreamRef,
+                        SubId,
+                        Context,
+                        RequestId,
+                        Deadline,
+                        Ready
+                    )
             end;
         {gun_error, ConnPid, StreamRef, Reason} ->
             Parent ! {Ref, self(), {error, Reason}};
@@ -1081,8 +1181,13 @@ await_nip46_listeners(Ref, Pending, Deadline, Ready, Errors) ->
         {Ref, Pid, ready} ->
             await_nip46_listeners(Ref, lists:delete(Pid, Pending), Deadline, [Pid | Ready], Errors);
         {Ref, Pid, {error, Reason}} ->
-            await_nip46_listeners(Ref, lists:delete(Pid, Pending), Deadline,
-                lists:delete(Pid, Ready), [Reason | Errors])
+            await_nip46_listeners(
+                Ref,
+                lists:delete(Pid, Pending),
+                Deadline,
+                lists:delete(Pid, Ready),
+                [Reason | Errors]
+            )
     after Wait ->
         [Pid ! {Ref, stop} || Pid <- Pending],
         await_nip46_listeners(Ref, [], Deadline, Ready, [subscription_ready_timeout | Errors])
@@ -1093,7 +1198,8 @@ await_nip46_reply(_Ref, [], _Deadline, Errors) ->
 await_nip46_reply(Ref, Pending, Deadline, Errors) ->
     Wait = max(0, Deadline - erlang:monotonic_time(millisecond)),
     receive
-        {Ref, _Pid, {ok, _, _} = Reply} -> Reply;
+        {Ref, _Pid, {ok, _, _} = Reply} ->
+            Reply;
         {Ref, Pid, {error, Reason}} ->
             await_nip46_reply(Ref, lists:delete(Pid, Pending), Deadline, [Reason | Errors])
     after Wait ->

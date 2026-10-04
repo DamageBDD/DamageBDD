@@ -62,7 +62,6 @@ stale_running_test() ->
     },
     ?assertEqual(stale_running, ecai_health:classify_patch_queue(I)).
 
-
 manager_live_queue_is_not_idle_test() ->
     I = #{
         manager_active => 0,
@@ -120,12 +119,14 @@ component_api_failure_is_degraded_test() ->
 
 runtime_log_learning_error_is_degraded_test() ->
     D0 = healthy_overall_fixture(),
-    D = D0#{log_learning => #{
-        enabled => true,
-        queued => 1,
-        max_queue => 256,
-        last_error => inference_unavailable
-    }},
+    D = D0#{
+        log_learning => #{
+            enabled => true,
+            queued => 1,
+            max_queue => 256,
+            last_error => inference_unavailable
+        }
+    },
     ?assertEqual(degraded, ecai_health:classify_overall(D)).
 
 healthy_overall_fixture() ->
@@ -147,16 +148,16 @@ healthy_overall_fixture() ->
         patch_queue => #{state => idle}
     }.
 
-
 patch_queue_uses_live_manager_queue_not_cumulative_test() ->
-    ManagerR = {ok, #{
-        active => 0,
-        queued => 7,
-        queued_total => 7,
-        queued_live => 0,
-        retry_wait => 0,
-        last_error => learning_not_ready
-    }},
+    ManagerR =
+        {ok, #{
+            active => 0,
+            queued => 7,
+            queued_total => 7,
+            queued_live => 0,
+            retry_wait => 0,
+            last_error => learning_not_ready
+        }},
     LearnerR = {ok, #{ready => true}},
     Inference = #{
         roles => #{
@@ -172,7 +173,8 @@ patch_queue_uses_live_manager_queue_not_cumulative_test() ->
         live_worker_ids => []
     },
     Queue = ecai_health:patch_queue_diagnostics(
-        ManagerR, LearnerR, Inference, Repairs, Workers),
+        ManagerR, LearnerR, Inference, Repairs, Workers
+    ),
     ?assertEqual(0, maps:get(manager_queued, Queue)),
     ?assertEqual(7, maps:get(manager_queued_total, Queue)),
     ?assertEqual(0, maps:get(durable_queued, Queue)),

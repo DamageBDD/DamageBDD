@@ -18,12 +18,14 @@
 %-define(CHROMEDRIVER, "http://localhost:9515/").
 start_session(ChromeDriver, Context) when is_list(ChromeDriver) ->
     case
-        damage_otp_compat:catch_value(fun() -> webdrv_session:start_session(
-            default,
-            ChromeDriver,
-            webdrv_cap:default_chrome(),
-            10000
-        ) end)
+        damage_otp_compat:catch_value(fun() ->
+            webdrv_session:start_session(
+                default,
+                ChromeDriver,
+                webdrv_cap:default_chrome(),
+                10000
+            )
+        end)
     of
         {ok, WebDriverPid} ->
             maps:put(chromedriver, WebDriverPid, Context);

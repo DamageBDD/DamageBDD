@@ -248,7 +248,8 @@ subsystem_name(Value) when is_list(Value) ->
     catch
         _:_ -> undefined
     end;
-subsystem_name(_) -> undefined.
+subsystem_name(_) ->
+    undefined.
 
 config_bool(true, _Default) -> true;
 config_bool(false, _Default) -> false;

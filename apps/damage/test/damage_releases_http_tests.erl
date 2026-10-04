@@ -33,7 +33,6 @@ status_test() ->
     ?assertEqual(<<"30">>, maps:get(<<"retry-after">>, Headers)),
     ?assertEqual(nomatch, binary:match(Body, <<"build_release_nft_contract">>)).
 
-
 install_response_test() ->
     Release = damage_release_test_support:installed_release(),
     {200, Headers, Body} = damage_releases_http:response({ok, Release}, install),
@@ -51,6 +50,9 @@ json_response_test() ->
 
 missing_manifest_test() ->
     {422, _, Body} = damage_releases_http:response(
-        {error, installation_manifest_missing}, install),
-    ?assertEqual(#{<<"ok">> => false, <<"error">> => <<"installation_manifest_missing">>},
-        jsx:decode(Body, [return_maps])).
+        {error, installation_manifest_missing}, install
+    ),
+    ?assertEqual(
+        #{<<"ok">> => false, <<"error">> => <<"installation_manifest_missing">>},
+        jsx:decode(Body, [return_maps])
+    ).

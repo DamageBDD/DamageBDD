@@ -11,15 +11,17 @@ resolve(Corpus, Principal, Action) ->
         false -> fail(unauthenticated)
     end,
     Corpora = application:get_env(ecai, private_corpora, #{}),
-    Config = case maps:find(Corpus, Corpora) of
-        {ok, C} when is_map(C) -> C#{corpus => Corpus};
-        _ -> fail(forbidden)
-    end,
+    Config =
+        case maps:find(Corpus, Corpora) of
+            {ok, C} when is_map(C) -> C#{corpus => Corpus};
+            _ -> fail(forbidden)
+        end,
     Owner = maps:get(owner, Config),
-    Members = case Action of
-        read -> maps:get(readers, Config, []);
-        write -> maps:get(writers, Config, [])
-    end,
+    Members =
+        case Action of
+            read -> maps:get(readers, Config, []);
+            write -> maps:get(writers, Config, [])
+        end,
     case Principal =:= Owner orelse lists:member(Principal, Members) of
         true -> Config;
         false -> fail(forbidden)
@@ -37,7 +39,8 @@ destination(Config, Id) when is_binary(Id) ->
         {ok, D} when is_map(D) -> D;
         _ -> fail(llm_destination_unavailable)
     end;
-destination(_, _) -> fail(invalid_request).
+destination(_, _) ->
+    fail(invalid_request).
 
 guard(true) -> ok;
 guard(false) -> fail(invalid_request).
@@ -53,33 +56,50 @@ fail(Reason) when is_atom(Reason) -> throw({ecai_private_error, Reason}).
 run(Fun) when is_function(Fun, 0) ->
     Parent = self(),
     Reply = erlang:alias(),
-    {Pid, Ref} = spawn_opt(fun() ->
-        process_flag(sensitive, true),
-        Result = try Fun()
-                 catch
-                     throw:{ecai_private_error, Reason} -> {error, Reason};
-                     _:_ -> {error, private_operation_failed}
-                 end,
-        Reply ! {Reply, Result}
-    end, [monitor, {max_heap_size, #{size => 16000000, kill => true,
-                                   error_logger => false}}]),
+    {Pid, Ref} = spawn_opt(
+        fun() ->
+            process_flag(sensitive, true),
+            Result =
+                try
+                    Fun()
+                catch
+                    throw:{ecai_private_error, Reason} -> {error, Reason};
+                    _:_ -> {error, private_operation_failed}
+                end,
+            Reply ! {Reply, Result}
+        end,
+        [
+            monitor,
+            {max_heap_size, #{
+                size => 16000000,
+                kill => true,
+                error_logger => false
+            }}
+        ]
+    ),
     _ = spawn(fun() -> watch_worker(Parent, Pid) end),
     try
         receive
             {Reply, Result} ->
-                erlang:demonitor(Ref, [flush]), Result;
+                erlang:demonitor(Ref, [flush]),
+                Result;
             {'DOWN', Ref, process, Pid, _} ->
                 {error, private_worker_failed}
         after 120000 ->
             exit(Pid, kill),
-            receive {'DOWN', Ref, process, Pid, _} -> ok end,
+            receive
+                {'DOWN', Ref, process, Pid, _} -> ok
+            end,
             %% An append may already have committed. Retry with the SAME batch
             %% ID; immutable segment creation never overwrites that batch.
             {error, private_operation_timeout}
         end
     after
         erlang:unalias(Reply),
-        receive {Reply, _Late} -> ok after 0 -> ok end
+        receive
+            {Reply, _Late} -> ok
+        after 0 -> ok
+        end
     end.
 
 watch_worker(Parent, Worker) ->
@@ -94,16 +114,20 @@ watch_worker(Parent, Worker) ->
 %% Explicit privacy flags must never be silently dropped by public writers.
 assert_public_record(Record) when is_map(Record) ->
     Fields = [{private, false}, {privacy, public}, {encryption, none}],
-    lists:foreach(fun({Key, Default}) ->
-        Values = [maps:get(K, Record, Default) || K <- [Key, atom_to_binary(Key, utf8)]],
-        Allowed = case Key of
-            private -> [false];
-            privacy -> [public, <<"public">>, "public"];
-            encryption -> [none]
+    lists:foreach(
+        fun({Key, Default}) ->
+            Values = [maps:get(K, Record, Default) || K <- [Key, atom_to_binary(Key, utf8)]],
+            Allowed =
+                case Key of
+                    private -> [false];
+                    privacy -> [public, <<"public">>, "public"];
+                    encryption -> [none]
+                end,
+            case lists:all(fun(V) -> lists:member(V, Allowed) end, Values) of
+                true -> ok;
+                false -> erlang:error(private_record_requires_private_api)
+            end
         end,
-        case lists:all(fun(V) -> lists:member(V, Allowed) end, Values) of
-            true -> ok;
-            false -> erlang:error(private_record_requires_private_api)
-        end
-    end, Fields),
+        Fields
+    ),
     ok.

@@ -203,11 +203,10 @@ validate_managed_api(Parsed, KuboApiPort) ->
     Scheme = maps:get(scheme, Parsed, undefined),
     Loopback =
         Host =:= "127.0.0.1" orelse Host =:= <<"127.0.0.1">> orelse
-        Host =:= "localhost" orelse Host =:= <<"localhost">>,
+            Host =:= "localhost" orelse Host =:= <<"localhost">>,
     case Scheme =:= "http" andalso Loopback andalso Port =:= KuboApiPort of
         true -> ok;
-        false ->
-            error({invalid_ipfs_config, managed_kubo_requires_loopback_api, KuboApiPort})
+        false -> error({invalid_ipfs_config, managed_kubo_requires_loopback_api, KuboApiPort})
     end.
 
 text(B) when is_binary(B) -> binary_to_list(B);

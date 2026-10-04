@@ -12,14 +12,16 @@ dirty_worktree_does_not_change_canonical_generation_test() ->
             {ok, Base1} = ecai_source_repository:refresh(Opts),
             {ok, Source1} =
                 ecai_source_repository:module_source(
-                    ecai, sample, Opts),
+                    ecai, sample, Opts
+                ),
             ?assertEqual(
                 <<"-module(sample).\nvalue() -> one.\n">>,
                 maps:get(source, Source1)
             ),
 
             DevFile = filename:join(
-                [Repo, "apps", "ecai", "src", "sample.erl"]),
+                [Repo, "apps", "ecai", "src", "sample.erl"]
+            ),
             ok = file:write_file(
                 DevFile,
                 <<"-module(sample).\nvalue() -> dirty.\n">>
@@ -27,7 +29,8 @@ dirty_worktree_does_not_change_canonical_generation_test() ->
 
             {ok, Source2} =
                 ecai_source_repository:module_source(
-                    ecai, sample, Opts),
+                    ecai, sample, Opts
+                ),
             ?assertEqual(
                 maps:get(commit, Base1),
                 maps:get(commit, Source2)
@@ -39,7 +42,8 @@ dirty_worktree_does_not_change_canonical_generation_test() ->
 
             {ok, Dev} =
                 ecai_source_repository:inspect_module(
-                    ecai, sample, Opts),
+                    ecai, sample, Opts
+                ),
             ?assertEqual(false, maps:get(authoritative, Dev)),
             ?assertEqual(true, maps:get(dirty, Dev)),
             ?assertEqual(
@@ -59,11 +63,13 @@ new_commit_creates_new_immutable_generation_test() ->
             {ok, Base1} = ecai_source_repository:refresh(Opts),
             Root1 = path_to_list(maps:get(root, Base1)),
             File1 = filename:join(
-                [Root1, "apps", "ecai", "src", "sample.erl"]),
+                [Root1, "apps", "ecai", "src", "sample.erl"]
+            ),
             {ok, OldBytes} = file:read_file(File1),
 
             DevFile = filename:join(
-                [Repo, "apps", "ecai", "src", "sample.erl"]),
+                [Repo, "apps", "ecai", "src", "sample.erl"]
+            ),
             ok = file:write_file(
                 DevFile,
                 <<"-module(sample).\nvalue() -> two.\n">>
@@ -86,7 +92,8 @@ new_commit_creates_new_immutable_generation_test() ->
 
             {ok, Source2} =
                 ecai_source_repository:module_source(
-                    ecai, sample, Opts),
+                    ecai, sample, Opts
+                ),
             ?assertEqual(
                 <<"-module(sample).\nvalue() -> two.\n">>,
                 maps:get(source, Source2)
@@ -96,12 +103,14 @@ new_commit_creates_new_immutable_generation_test() ->
 
 with_repo(Fun) ->
     N = integer_to_list(
-        erlang:unique_integer([positive, monotonic])),
+        erlang:unique_integer([positive, monotonic])
+    ),
     Root = filename:join("/tmp", "ecai_source_repo_" ++ N),
     Repo = filename:join(Root, "dev"),
     StateRoot = filename:join(Root, "state"),
     Source = filename:join(
-        [Repo, "apps", "ecai", "src", "sample.erl"]),
+        [Repo, "apps", "ecai", "src", "sample.erl"]
+    ),
     ok = filelib:ensure_dir(Source),
     ok = file:write_file(
         Source,
@@ -148,8 +157,10 @@ collect_git(Port, Acc) ->
         {Port, {exit_status, Status}} ->
             erlang:error({git_failed, Status, Acc})
     after 30000 ->
-        try port_close(Port)
-        catch _:_ -> ok
+        try
+            port_close(Port)
+        catch
+            _:_ -> ok
         end,
         erlang:error(git_timeout)
     end.

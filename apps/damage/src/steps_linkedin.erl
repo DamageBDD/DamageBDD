@@ -27,9 +27,9 @@
 %% <code>/context</code> HTTP endpoint:
 %%
 %% <pre>
-%% curl -X POST https://run.damagebdd.com/context 
-%%   -H "Authorization: Bearer $DAMAGE_ACCESS_TOKEN" 
-%%   -H "Content-Type: application/json" 
+%% curl -X POST https://run.damagebdd.com/context
+%%   -H "Authorization: Bearer $DAMAGE_ACCESS_TOKEN"
+%%   -H "Content-Type: application/json"
 %%   -d '{
 %%     "set": {
 %%       "linkedin_client_id": {

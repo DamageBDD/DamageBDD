@@ -34,7 +34,11 @@ authenticated_state_overrides_request_identity() ->
         username => <<"owner@example.test">>
     },
     with_deps(
-        #{context_builder => fun(Context) -> Context#{resolved_for => maps:get(public_key, Context)} end},
+        #{
+            context_builder => fun(Context) ->
+                Context#{resolved_for => maps:get(public_key, Context)}
+            end
+        },
         fun(Ref) ->
             Result = damage_http:effective_context(Request, State),
             [ContextSeen] =
@@ -51,7 +55,11 @@ address_is_used_when_public_key_is_absent() ->
     Account = account(<<"address-only">>),
     Request = #{feature => <<"Feature: address">>, address => Account},
     with_deps(
-        #{context_builder => fun(Context) -> Context#{resolved_for => maps:get(address, Context)} end},
+        #{
+            context_builder => fun(Context) ->
+                Context#{resolved_for => maps:get(address, Context)}
+            end
+        },
         fun(Ref) ->
             Result = damage_http:effective_context(Request, #{}),
             [Forwarded] =
@@ -183,12 +191,23 @@ prepared_inputs(Ref) ->
     lists:reverse(get({?MODULE, Ref})).
 
 assert_no_transport_secrets(Context) ->
-    Keys = [access_token, authorization, private_key, password,
-            sessionid, cookie, l402, l402_macaroon],
-    lists:foreach(fun(Key) ->
-        ?assertNot(maps:is_key(Key, Context)),
-        ?assertNot(maps:is_key(atom_to_binary(Key, utf8), Context))
-    end, Keys).
+    Keys = [
+        access_token,
+        authorization,
+        private_key,
+        password,
+        sessionid,
+        cookie,
+        l402,
+        l402_macaroon
+    ],
+    lists:foreach(
+        fun(Key) ->
+            ?assertNot(maps:is_key(Key, Context)),
+            ?assertNot(maps:is_key(atom_to_binary(Key, utf8), Context))
+        end,
+        Keys
+    ).
 
 account(Label) ->
     <<"ak_http_context_", Label/binary>>.

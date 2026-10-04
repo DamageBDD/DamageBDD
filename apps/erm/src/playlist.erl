@@ -409,7 +409,8 @@ index_of(Needle, [_ | Rest], Idx) -> index_of(Needle, Rest, Idx + 1).
 nth_id(I, Order) ->
     try lists:nth(I + 1, Order) of
         Id when is_integer(Id) -> {ok, Id}
-    catch  _:_:_ -> error
+    catch
+        _:_:_ -> error
     end.
 
 indexed_tracks(Order) ->
@@ -463,7 +464,8 @@ random_track(Tracks) ->
 random_group_track(Key, Tracks) ->
     Groups = group_tracks(Key, Tracks),
     case maps:to_list(Groups) of
-        [] -> error;
+        [] ->
+            error;
         GroupList ->
             {_GroupKey, Members} = lists:nth(rand:uniform(length(GroupList)), GroupList),
             random_track(Members)
@@ -497,8 +499,10 @@ reorder_future(Key, Order, Cur) ->
         {Prefix, [Cur | Tail]} -> Prefix ++ [Cur | reorder_ids(Key, Tail)]
     end.
 
-reorder_ids(track, Ids) -> shuffle_list(Ids);
-reorder_ids(random, Ids) -> shuffle_list(Ids);
+reorder_ids(track, Ids) ->
+    shuffle_list(Ids);
+reorder_ids(random, Ids) ->
+    shuffle_list(Ids);
 reorder_ids(latest, Ids) ->
     Tracks = tracks_for_order(Ids),
     [T#track.id || T <- lists:sort(fun newer_track/2, Tracks)];
@@ -507,7 +511,8 @@ reorder_ids(Key, Ids) when Key =:= album; Key =:= artist; Key =:= genre; Key =:=
     Groups = group_tracks(Key, Tracks),
     Keys = shuffle_list(maps:keys(Groups)),
     lists:append([[T#track.id || T <- maps:get(GroupKey, Groups)] || GroupKey <- Keys]);
-reorder_ids(_Key, Ids) -> Ids.
+reorder_ids(_Key, Ids) ->
+    Ids.
 
 group_tracks(Key, Tracks) ->
     Reversed = lists:foldl(
@@ -541,8 +546,7 @@ fallback_artist(undefined) -> "unknown";
 fallback_artist(Dir) -> filename:basename(filename:dirname(Dir)).
 
 shuffle_list([]) -> [];
-shuffle_list(List) ->
-    [X || {_, X} <- lists:sort([{rand:uniform(), X} || X <- List])].
+shuffle_list(List) -> [X || {_, X} <- lists:sort([{rand:uniform(), X} || X <- List])].
 
 seed_rand() ->
     rand:seed(
@@ -651,7 +655,8 @@ refresh_track_file_fields(T = #track{path = Path}) ->
 
 probe_metadata(Path) ->
     case os:find_executable("ffprobe") of
-        false -> #{};
+        false ->
+            #{};
         Ffprobe ->
             Cmd = lists:flatten([
                 shell_quote(Ffprobe),
@@ -767,7 +772,8 @@ save_state(S = #st{state_file = Path}) ->
             case file:write_file(Tmp, Bin, [binary]) of
                 ok ->
                     case file:rename(Tmp, Path) of
-                        ok -> ok;
+                        ok ->
+                            ok;
                         {error, Reason} ->
                             _ = file:delete(Tmp),
                             {error, Reason}
@@ -911,9 +917,12 @@ expand_media_sources(Paths, Recurse) ->
                             {lists:reverse(Files) ++ FilesAcc, [Path | DirsAcc]};
                         false ->
                             case filelib:is_file(Path) andalso is_media_file(Path) of
-                                true -> {[Path | FilesAcc], DirsAcc};
+                                true ->
+                                    {[Path | FilesAcc], DirsAcc};
                                 false ->
-                                    ?LOG_WARNING("Ignoring missing or unsupported media source ~s", [Path]),
+                                    ?LOG_WARNING(
+                                        "Ignoring missing or unsupported media source ~s", [Path]
+                                    ),
                                     {FilesAcc, DirsAcc}
                             end
                     end
@@ -970,7 +979,8 @@ is_media_ref(Path0) ->
 is_media_file(Path0) ->
     Path = normalize_path(Path0),
     case filelib:is_file(Path) of
-        false -> false;
+        false ->
+            false;
         true ->
             try media_scan:is_media(Path) of
                 Result when is_boolean(Result) -> Result

@@ -175,14 +175,16 @@ verification_retry_diagnostic_is_corrective_test() ->
         #{
             status => failed,
             base_commit => <<"0123456789012345678901234567890123456789">>,
-            steps => [#{
-                step => patch_apply_check,
-                result => #{
-                    ok => false,
-                    exit_status => 128,
-                    output => <<"error: corrupt patch at line 39">>
+            steps => [
+                #{
+                    step => patch_apply_check,
+                    result => #{
+                        ok => false,
+                        exit_status => 128,
+                        output => <<"error: corrupt patch at line 39">>
+                    }
                 }
-            }]
+            ]
         },
         1
     ),
@@ -214,7 +216,6 @@ stale_proposal_shape_is_cleared_for_new_failure_test() ->
     ),
     ?assertNot(maps:is_key(proposal_shape, Clean)).
 
-
 compact_patch_context_drops_bulk_source_bodies_test() ->
     Context = #{
         application => damage,
@@ -234,12 +235,14 @@ compact_patch_context_drops_bulk_source_bodies_test() ->
         module_knowledge => #{<<"notes">> => <<"large-card">>},
         global_knowledge => #{<<"notes">> => <<"large-global-card">>},
         analogous_repairs => [#{patch => <<"old-patch">>}],
-        related_modules => [#{
-            application => damage,
-            module => helper,
-            source => <<"related-source-must-not-leak">>,
-            knowledge => #{<<"notes">> => <<"large">>}
-        }]
+        related_modules => [
+            #{
+                application => damage,
+                module => helper,
+                source => <<"related-source-must-not-leak">>,
+                knowledge => #{<<"notes">> => <<"large">>}
+            }
+        ]
     },
     Compact = ecai_patch_worker:compact_patch_context(Context),
     ?assertNot(maps:is_key(source, Compact)),
@@ -256,10 +259,14 @@ compact_patch_context_drops_bulk_source_bodies_test() ->
 retry_source_prefers_verifier_base_source_test() ->
     Path = <<"apps/damage/src/damage_l402.erl">>,
     Context = #{source_path => Path, source => <<"context-source">>},
-    Opts = #{repair_retry_sources => [#{
-        path => Path,
-        source => <<"verifier-base-source">>
-    }]},
+    Opts = #{
+        repair_retry_sources => [
+            #{
+                path => Path,
+                source => <<"verifier-base-source">>
+            }
+        ]
+    },
     ?assertEqual(
         {<<"verifier-base-source">>, verifier_failure_source},
         ecai_patch_worker:prompt_target_source(Context, Opts)
@@ -277,11 +284,13 @@ patch_prompt_places_authoritative_source_after_aux_context_test() ->
         base_commit => <<"0123456789012345678901234567890123456789">>,
         source => Source,
         analysis => #{source_sha256 => <<"hash">>},
-        related_modules => [#{
-            application => damage,
-            module => helper,
-            source => RelatedSource
-        }]
+        related_modules => [
+            #{
+                application => damage,
+                module => helper,
+                source => RelatedSource
+            }
+        ]
     },
     Prompt = ecai_patch_worker:patch_prompt(Context, <<"retry-info">>, 2, #{}),
     ?assertEqual(nomatch, binary:match(Prompt, RelatedSource)),

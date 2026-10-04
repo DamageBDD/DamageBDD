@@ -195,7 +195,11 @@ handle_call(
     %% -------------------------
     %% Uses your new disk index + docstore
     DiskContext =
-        case ecai_otp_compat:catch_value(fun() -> ecai_ollama_rag:retrieve_sources("ecai_index", Query, TopK) end) of
+        case
+            ecai_otp_compat:catch_value(fun() ->
+                ecai_ollama_rag:retrieve_sources("ecai_index", Query, TopK)
+            end)
+        of
             Sources when is_list(Sources) -> Sources;
             _ -> []
         end,

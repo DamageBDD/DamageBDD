@@ -28,9 +28,11 @@ changed_files(Repo, Base0) ->
             case run(Repo, ["ls-files", "--others", "--exclude-standard"], 30000) of
                 {ok, Untracked} ->
                     {ok, lists:usort(lines(Diff) ++ lines(Untracked))};
-                Error -> Error
+                Error ->
+                    Error
             end;
-        Error -> Error
+        Error ->
+            Error
     end.
 
 -spec run(path(), [binary() | list() | atom() | integer()], pos_integer()) ->
@@ -66,10 +68,11 @@ run(Repo0, Args0, Timeout) when is_integer(Timeout), Timeout > 0 ->
 safe_join(Root0, Candidate0) ->
     Root = filename:absname(to_list(Root0)),
     Candidate = to_list(Candidate0),
-    Full = case filename:pathtype(Candidate) of
-        absolute -> filename:absname(Candidate);
-        _ -> filename:absname(filename:join(Root, Candidate))
-    end,
+    Full =
+        case filename:pathtype(Candidate) of
+            absolute -> filename:absname(Candidate);
+            _ -> filename:absname(filename:join(Root, Candidate))
+        end,
     case within(Root, Full) of
         true -> {ok, Full};
         false -> {error, {path_outside_repository, Candidate0}}
@@ -80,11 +83,12 @@ relative(Root0, Path0) ->
     Root = filename:absname(to_list(Root0)),
     Path = filename:absname(to_list(Path0)),
     Prefix = ensure_sep(Root),
-    Rel = case lists:prefix(Prefix, ensure_sep_or_path(Path)) of
-        true -> lists:nthtail(length(Prefix), Path);
-        false when Path =:= Root -> ".";
-        false -> Path
-    end,
+    Rel =
+        case lists:prefix(Prefix, ensure_sep_or_path(Path)) of
+            true -> lists:nthtail(length(Prefix), Path);
+            false when Path =:= Root -> ".";
+            false -> Path
+        end,
     unicode:characters_to_binary(Rel).
 
 one_line(Repo, Args) ->
@@ -94,7 +98,8 @@ one_line(Repo, Args) ->
                 [Line | _] -> {ok, Line};
                 [] -> {error, empty_git_output}
             end;
-        Error -> Error
+        Error ->
+            Error
     end.
 
 collect(Port, Deadline, Acc, Status, Eof) ->

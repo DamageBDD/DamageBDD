@@ -96,7 +96,8 @@ handle_info(reconcile, State0) ->
     State1 = State0#state{timer_ref = undefined},
     {_Summary, State2} = reconcile(State1),
     {noreply, schedule(State2, State2#state.interval_ms)};
-handle_info(_Info, State) -> {noreply, State}.
+handle_info(_Info, State) ->
+    {noreply, State}.
 
 terminate(_Reason, State) ->
     _ = cancel_timer(State),
@@ -132,7 +133,11 @@ reconcile(State0) ->
                 recovered = State0#state.recovered + Recovered,
                 active_workers = map_size(Active),
                 last_run_at = now_iso8601(),
-                last_error = case Errors of [] -> undefined; _ -> lists:reverse(Errors) end
+                last_error =
+                    case Errors of
+                        [] -> undefined;
+                        _ -> lists:reverse(Errors)
+                    end
             },
             _ = checkpoint(State1, Summary),
             {Summary, State1};
@@ -143,8 +148,12 @@ reconcile(State0) ->
     end.
 
 fail_cycle(Reason, State0) ->
-    Summary = #{scanned => 0, active_workers => 0, recovered_running => 0,
-                errors => [Reason]},
+    Summary = #{
+        scanned => 0,
+        active_workers => 0,
+        recovered_running => 0,
+        errors => [Reason]
+    },
     State1 = State0#state{
         cycles = State0#state.cycles + 1,
         last_run_at = now_iso8601(),
@@ -166,7 +175,8 @@ maybe_recover(Repair, Active, NowMs, GraceMs) when is_map(Repair) ->
                 true -> recover_repair(Key, Repair)
             end
     end;
-maybe_recover(_Repair, _Active, _NowMs, _GraceMs) -> unchanged.
+maybe_recover(_Repair, _Active, _NowMs, _GraceMs) ->
+    unchanged.
 
 should_recover(Repair, Key, Active, {NowMs, GraceMs}) ->
     normalize_status(maps:get(status, Repair, undefined)) =:= running andalso
@@ -210,13 +220,15 @@ repair_key(Repair) ->
 active_worker_keys(Children) when is_list(Children) ->
     lists:foldl(
         fun
-            ({{ecai_patch_worker, Fp0, Version0}, Pid, _Type, _Mods}, Acc)
-              when is_pid(Pid) ->
+            ({{ecai_patch_worker, Fp0, Version0}, Pid, _Type, _Mods}, Acc) when
+                is_pid(Pid)
+            ->
                 case {nonempty_binary(Fp0), nonempty_binary(Version0)} of
                     {{ok, Fp}, {ok, Version}} -> Acc#{{Fp, Version} => true};
                     _ -> Acc
                 end;
-            (_, Acc) -> Acc
+            (_, Acc) ->
+                Acc
         end,
         #{},
         Children
@@ -237,8 +249,10 @@ repair_timestamp_ms(Repair) ->
         maps:get(created_at, Repair, undefined)
     ]).
 
-first_timestamp([]) -> undefined;
-first_timestamp([undefined | Rest]) -> first_timestamp(Rest);
+first_timestamp([]) ->
+    undefined;
+first_timestamp([undefined | Rest]) ->
+    first_timestamp(Rest);
 first_timestamp([Value | Rest]) ->
     case timestamp_ms(Value) of
         undefined -> first_timestamp(Rest);
@@ -254,7 +268,8 @@ timestamp_ms(List) when is_list(List), List =/= [] ->
     catch
         _:_ -> undefined
     end;
-timestamp_ms(_) -> undefined.
+timestamp_ms(_) ->
+    undefined.
 
 normalize_status(running) -> running;
 normalize_status(<<"running">>) -> running;
@@ -298,7 +313,8 @@ schedule(State0, Delay0) ->
     TRef = erlang:send_after(Delay, self(), reconcile),
     State0#state{timer_ref = TRef}.
 
-cancel_timer(State = #state{timer_ref = undefined}) -> State;
+cancel_timer(State = #state{timer_ref = undefined}) ->
+    State;
 cancel_timer(State = #state{timer_ref = TRef}) ->
     _ = erlang:cancel_timer(TRef),
     State#state{timer_ref = undefined}.
@@ -323,6 +339,8 @@ nonempty_binary(A) when is_atom(A) -> {ok, atom_to_binary(A, utf8)};
 nonempty_binary(_) -> error.
 
 now_iso8601() ->
-    unicode:characters_to_binary(calendar:system_time_to_rfc3339(
-        erlang:system_time(second), [{unit, second}, {offset, "Z"}]
-    )).
+    unicode:characters_to_binary(
+        calendar:system_time_to_rfc3339(
+            erlang:system_time(second), [{unit, second}, {offset, "Z"}]
+        )
+    ).

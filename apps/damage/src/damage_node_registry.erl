@@ -321,9 +321,11 @@ handle_call({register_account, Account0, Registry0, Tier0}, _From, State) ->
     Registry = to_bin(Registry0),
     Tier = to_bin(Tier0),
 
-    case contract_call_with_node_keypair(
-        State, "register_account", [Account, Registry, Tier]
-    ) of
+    case
+        contract_call_with_node_keypair(
+            State, "register_account", [Account, Registry, Tier]
+        )
+    of
         {error, _} = Error ->
             {reply, Error, State};
         Resp ->
@@ -373,9 +375,11 @@ handle_call({register_node, Owner0, NodeId0, MetaMap0, CfgMap0}, _From, State) -
     NodeId = to_bin(NodeId0),
     MetaRec = meta_map_to_record(MetaMap0),
     CfgRec = cfg_map_to_record(CfgMap0),
-    case contract_call_with_node_keypair(
-        State, "register_node", [Owner, NodeId, MetaRec, CfgRec]
-    ) of
+    case
+        contract_call_with_node_keypair(
+            State, "register_node", [Owner, NodeId, MetaRec, CfgRec]
+        )
+    of
         {error, _} = Error ->
             {reply, Error, State};
         Resp ->
@@ -657,7 +661,9 @@ deploy_node_registry() ->
                 #{"contract_id" := ContractId} ->
                     %% Optional: remember + hot-set for this runtime
                     erlang:put(node_registry_contract_id, ContractId),
-                    damage_otp_compat:catch_value(fun() -> gen_server:call(?MODULE, {set_contract, ContractId}) end),
+                    damage_otp_compat:catch_value(fun() ->
+                        gen_server:call(?MODULE, {set_contract, ContractId})
+                    end),
                     ContractId;
                 #{"return_type" := "revert"} = Info ->
                     {error, {node_registry_deploy_revert, Info}};

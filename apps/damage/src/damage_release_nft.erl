@@ -7,19 +7,42 @@
 -license("Apache-2.0").
 -include_lib("kernel/include/file.hrl").
 -include_lib("kernel/include/logger.hrl").
--export([latest/0, latest/1, release/2, token_release/3,
-         transfer/3, prepare_transfer/3,
-         operator_transfer/2, operator_transfer/3,
-         parse_release/1, parse_manifest/1, install_manifest/1, parse_install_manifest/1,
-         valid_platform/1, valid_release/1, package_sha256/2,
-         prepare_metadata/4, installation/1,
-         prepared_installation/1, installation_identity/1,
-         contract_source/0, call_return/1, option_value/1, release_answer/6,
-         discovery_config/0, verify_publication/3]).
+-export([
+    latest/0, latest/1,
+    release/2,
+    token_release/3,
+    transfer/3,
+    prepare_transfer/3,
+    operator_transfer/2, operator_transfer/3,
+    parse_release/1,
+    parse_manifest/1,
+    install_manifest/1,
+    parse_install_manifest/1,
+    valid_platform/1,
+    valid_release/1,
+    package_sha256/2,
+    prepare_metadata/4,
+    installation/1,
+    prepared_installation/1,
+    installation_identity/1,
+    contract_source/0,
+    call_return/1,
+    option_value/1,
+    release_answer/6,
+    discovery_config/0,
+    verify_publication/3
+]).
 -ifdef(TEST).
--export([select_release/3, token_metadata/2, bounded/2,
-         valid_asset_path/1, installation_fields/2, checked_json/1, discover/5,
-         transfer_call_result/1]).
+-export([
+    select_release/3,
+    token_metadata/2,
+    bounded/2,
+    valid_asset_path/1,
+    installation_fields/2,
+    checked_json/1,
+    discover/5,
+    transfer_call_result/1
+]).
 -endif.
 -define(NFT_SOURCE, "contracts/build_release_nft.aes").
 -define(MAX_MANIFEST_BYTES, 4096).
@@ -38,11 +61,16 @@ read_release(Selector0, Platform0) ->
         require(Selector =:= latest orelse Platform =/= <<>>, invalid_platform),
         case discovery_config() of
             {ok, Config} ->
-                Result = bounded(fun() ->
-                    Caller = #{public_key => maps:get(reader, Config), private_key => undefined},
-                    Query = fun(F, A) -> chain_query(Caller, maps:get(nft, Config), F, A) end,
-                    discover(Selector, Platform, Config, Query, fun installation/1)
-                end, maps:get(timeout, Config)),
+                Result = bounded(
+                    fun() ->
+                        Caller = #{
+                            public_key => maps:get(reader, Config), private_key => undefined
+                        },
+                        Query = fun(F, A) -> chain_query(Caller, maps:get(nft, Config), F, A) end,
+                        discover(Selector, Platform, Config, Query, fun installation/1)
+                    end,
+                    maps:get(timeout, Config)
+                ),
                 log_discovery_error(Platform, Result),
                 Result;
             {error, _} = Error ->
@@ -70,7 +98,11 @@ discover(Selector, Platform, Config, Query, ReadInstallation) ->
                 Asset = maps:get(asset_cid, Install),
                 Path = maps:get(asset_path, Install),
                 Meta = maps:get(metadata_cid, Install),
-                Suffix = case Path of <<>> -> <<>>; _ -> <<"/", Path/binary>> end,
+                Suffix =
+                    case Path of
+                        <<>> -> <<>>;
+                        _ -> <<"/", Path/binary>>
+                    end,
                 {ok, Install#{
                     schema_version => 2,
                     network_id => maps:get(network, Config),
@@ -79,7 +111,8 @@ discover(Selector, Platform, Config, Query, ReadInstallation) ->
                     asset_url => <<Base/binary, "/", Asset/binary, Suffix/binary>>,
                     metadata_url => <<Base/binary, "/", Meta/binary>>
                 }};
-            Error -> Error
+            Error ->
+                Error
         end
     end).
 
@@ -89,52 +122,89 @@ discover(Selector, Platform, Config, Query, ReadInstallation) ->
 verify_publication(Mint, ExpectedInstallation, Discovered) ->
     guarded(fun() ->
         MintKeys = [contract_id, token_id, release, platform, git_sha, metadata_cid, asset_cid],
-        InstallKeys = [platform, asset_cid, git_sha, asset_path, sha256,
-            package_format, architecture],
-        require(is_map(Mint) andalso is_map(ExpectedInstallation) andalso
-            is_map(Discovered), invalid_publication_identity),
-        require(lists:all(fun(K) -> maps:is_key(K, Mint) end, MintKeys) andalso
-            lists:all(fun(K) -> maps:is_key(K, ExpectedInstallation) end, InstallKeys),
-            incomplete_publication_identity),
-        require(lists:all(fun(K) -> maps:get(K, Mint) =:= maps:get(K, ExpectedInstallation) end,
-            [platform, asset_cid, git_sha]), inconsistent_publication_identity),
+        InstallKeys = [
+            platform,
+            asset_cid,
+            git_sha,
+            asset_path,
+            sha256,
+            package_format,
+            architecture
+        ],
+        require(
+            is_map(Mint) andalso is_map(ExpectedInstallation) andalso
+                is_map(Discovered),
+            invalid_publication_identity
+        ),
+        require(
+            lists:all(fun(K) -> maps:is_key(K, Mint) end, MintKeys) andalso
+                lists:all(fun(K) -> maps:is_key(K, ExpectedInstallation) end, InstallKeys),
+            incomplete_publication_identity
+        ),
+        require(
+            lists:all(
+                fun(K) -> maps:get(K, Mint) =:= maps:get(K, ExpectedInstallation) end,
+                [platform, asset_cid, git_sha]
+            ),
+            inconsistent_publication_identity
+        ),
         %% The NFT and final metadata can agree with each other while both
         %% have been relabeled since preparation. Keep the artifact's verified
         %% version authoritative; never derive this expectation from the NFT.
         case maps:find(packaged_release, ExpectedInstallation) of
             {ok, PackagedRelease} ->
-                require(valid_release(PackagedRelease) andalso PackagedRelease =/= <<"latest">>,
-                    invalid_publication_identity),
-                require(maps:get(release, Mint) =:= PackagedRelease,
-                    prepared_release_version_mismatch);
-            error -> ok
+                require(
+                    valid_release(PackagedRelease) andalso PackagedRelease =/= <<"latest">>,
+                    invalid_publication_identity
+                ),
+                require(
+                    maps:get(release, Mint) =:= PackagedRelease,
+                    prepared_release_version_mismatch
+                );
+            error ->
+                ok
         end,
-        NetworkKeys = case maps:is_key(network_id, Mint) of true -> [network_id]; false -> [] end,
+        NetworkKeys =
+            case maps:is_key(network_id, Mint) of
+                true -> [network_id];
+                false -> []
+            end,
         %% Compare presence as well as value: a prepared version cannot later
         %% disappear from the selected metadata and pass as a legacy release.
         BoundInstallKeys = InstallKeys ++ [packaged_release],
         Keys = lists:usort(MintKeys ++ BoundInstallKeys ++ NetworkKeys),
-        Expected = maps:merge(maps:with(MintKeys ++ NetworkKeys, Mint),
-            maps:with(BoundInstallKeys, ExpectedInstallation)),
-        Mismatches = [K || K <- Keys,
-            maps:find(K, Discovered) =/= maps:find(K, Expected)],
+        Expected = maps:merge(
+            maps:with(MintKeys ++ NetworkKeys, Mint),
+            maps:with(BoundInstallKeys, ExpectedInstallation)
+        ),
+        Mismatches = [
+            K
+         || K <- Keys,
+            maps:find(K, Discovered) =/= maps:find(K, Expected)
+        ],
         require(Mismatches =:= [], {release_discovery_mismatch, Mismatches}),
         ok
     end).
 
 %% Public HTTP errors stay stable. Server logs identify the local failure
 %% without exposing raw node replies, keys, complete metadata or request data.
-log_discovery_error(_Platform, {ok, _}) -> ok;
-log_discovery_error(_Platform, {error, not_found}) -> ok;
+log_discovery_error(_Platform, {ok, _}) ->
+    ok;
+log_discovery_error(_Platform, {error, not_found}) ->
+    ok;
 log_discovery_error(Platform, {error, Reason}) ->
-    ?LOG_WARNING("Release discovery failed platform=~p reason=~p",
-        [Platform, discovery_error_tag(Reason)]).
+    ?LOG_WARNING(
+        "Release discovery failed platform=~p reason=~p",
+        [Platform, discovery_error_tag(Reason)]
+    ).
 
-discovery_error_tag({missing_release_config, Key}) -> {missing_release_config, Key};
+discovery_error_tag({missing_release_config, Key}) ->
+    {missing_release_config, Key};
 discovery_error_tag({release_ipfs_http_status, Status}) when is_integer(Status) ->
     {release_ipfs_http_status, Status};
 discovery_error_tag(Reason) when is_atom(Reason) -> Reason;
-discovery_error_tag(_) -> release_backend_failed.
+discovery_error_tag(_) ->
+    release_backend_failed.
 
 %% Use the value getters already present in the attached NFT. This deliberately
 %% avoids inventing a FATE record field order. Historical records are obtained
@@ -142,35 +212,49 @@ discovery_error_tag(_) -> release_backend_failed.
 %% involved, and latest is resolved only once per request.
 select_release(Selector, Platform, Query) ->
     guarded(fun() ->
-        Result = case Selector of
-            latest ->
-                {Function, Args} = case Platform of
-                    <<>> -> {"latest_release_value", []};
-                    _ -> {"latest_release_value_for", [binary_to_list(Platform)]}
-                end,
-                case query_option(Query(Function, Args)) of
-                    {ok, Answer} -> parse_release(Answer);
-                    Error0 -> Error0
-                end;
-            {release, Version0} ->
-                case query_option(Query("release_token", [binary_to_list(Version0), binary_to_list(Platform)])) of
-                    {ok, Token} when is_integer(Token), Token > 0 ->
-                        token_from_query(Token, Query);
-                    {ok, _} -> {error, invalid_release_token};
-                    Error0 -> Error0
-                end
-        end,
+        Result =
+            case Selector of
+                latest ->
+                    {Function, Args} =
+                        case Platform of
+                            <<>> -> {"latest_release_value", []};
+                            _ -> {"latest_release_value_for", [binary_to_list(Platform)]}
+                        end,
+                    case query_option(Query(Function, Args)) of
+                        {ok, Answer} -> parse_release(Answer);
+                        Error0 -> Error0
+                    end;
+                {release, Version0} ->
+                    case
+                        query_option(
+                            Query("release_token", [
+                                binary_to_list(Version0), binary_to_list(Platform)
+                            ])
+                        )
+                    of
+                        {ok, Token} when is_integer(Token), Token > 0 ->
+                            token_from_query(Token, Query);
+                        {ok, _} ->
+                            {error, invalid_release_token};
+                        Error0 ->
+                            Error0
+                    end
+            end,
         case Result of
             {ok, Record} ->
-                require(Platform =:= <<>> orelse maps:get(platform, Record) =:= Platform,
-                        release_platform_mismatch),
+                require(
+                    Platform =:= <<>> orelse maps:get(platform, Record) =:= Platform,
+                    release_platform_mismatch
+                ),
                 case Selector of
-                    latest -> ok;
+                    latest ->
+                        ok;
                     {release, Version} ->
                         require(maps:get(release, Record) =:= Version, release_version_mismatch)
                 end,
                 {ok, Record};
-            Error -> Error
+            Error ->
+                Error
         end
     end).
 
@@ -218,12 +302,23 @@ prepare_transfer(From0, Token, To0) ->
         From = encoded_id(account_pubkey, From0),
         To = encoded_id(account_pubkey, To0),
         Contract = configured_nft_contract(),
-        case damage_ae:contract_call_prepare_checked(
-                #{public_key => From}, Contract, contract_source(),
-                "transfer", transfer_args(To, Token)) of
+        case
+            damage_ae:contract_call_prepare_checked(
+                #{public_key => From},
+                Contract,
+                contract_source(),
+                "transfer",
+                transfer_args(To, Token)
+            )
+        of
             {ok, Tx} ->
-                {ok, #{token_id => Token, from => From, to => To,
-                       contract_id => Contract, tx => Tx}};
+                {ok, #{
+                    token_id => Token,
+                    from => From,
+                    to => To,
+                    contract_id => Contract,
+                    tx => Tx
+                }};
             {error, #{status := rejected} = Rejection} ->
                 {error, {release_transfer_rejected, Rejection}};
             {error, Reason} ->
@@ -255,7 +350,8 @@ transfer_args(To, Token) ->
     [binary_to_list(To), Token, "None"].
 
 transfer_call_result({ok, #{status := Status, tx_hash := _} = Outcome}) when
-        Status =:= confirmed; Status =:= submitted; Status =:= submission_unknown ->
+    Status =:= confirmed; Status =:= submitted; Status =:= submission_unknown
+->
     {ok, Outcome};
 transfer_call_result({error, #{status := rejected} = Rejection}) ->
     {error, {release_transfer_rejected, Rejection}};
@@ -271,8 +367,9 @@ transfer_call_result({error, Reason}) ->
 transfer_call_result(_) ->
     {error, release_transfer_failed}.
 
-signing_keypair(#{public_key := Public0, private_key := Private})
-        when is_binary(Private), byte_size(Private) =:= 64 ->
+signing_keypair(#{public_key := Public0, private_key := Private}) when
+    is_binary(Private), byte_size(Private) =:= 64
+->
     #{public_key => encoded_id(account_pubkey, Public0), private_key => Private};
 signing_keypair(_) ->
     throw({release_error, invalid_release_signing_keypair}).
@@ -291,24 +388,36 @@ token_metadata(Token, {variant, [1, 1], 1, {Metadata}}) when is_map(Metadata) ->
 token_metadata(Token, {'MetadataMap', Metadata}) when is_map(Metadata) ->
     guarded(fun() ->
         require(is_integer(Token) andalso Token > 0, invalid_release_token),
-        Fields = [text(maps:get(K, Metadata)) ||
-            K <- [<<"release">>, <<"platform">>, <<"git_sha">>, <<"url">>, <<"asset">>]],
+        Fields = [
+            text(maps:get(K, Metadata))
+         || K <- [<<"release">>, <<"platform">>, <<"git_sha">>, <<"url">>, <<"asset">>]
+        ],
         release_fields([integer_to_binary(Token) | Fields])
     end);
-token_metadata(_, _) -> {error, invalid_release_metadata_map}.
+token_metadata(_, _) ->
+    {error, invalid_release_metadata_map}.
 
 chain_query(Caller, Contract, Function, Args) ->
-    call_return(damage_ae:contract_call_dry(Caller, Contract,
-        contract_source(), Function, Args)).
+    call_return(
+        damage_ae:contract_call_dry(
+            Caller,
+            Contract,
+            contract_source(),
+            Function,
+            Args
+        )
+    ).
 
 query_option({ok, Value}) ->
     case option_value(Value) of
         none -> {error, not_found};
         Result -> Result
     end;
-query_option({error, _}) -> {error, release_query_failed}.
+query_option({error, _}) ->
+    {error, release_query_failed}.
 
-normalize_selector(latest) -> latest;
+normalize_selector(latest) ->
+    latest;
 normalize_selector({release, Value}) ->
     Version = text(Value),
     require(valid_release(Version) andalso Version =/= <<"latest">>, invalid_release),
@@ -317,11 +426,15 @@ normalize_selector({release, Value}) ->
 read_config() ->
     Network = text(required_env(ae_network_id)),
     require(matches(Network, <<"\\A[a-z0-9_-]{1,64}\\z">>), invalid_release_network),
-    #{nft => configured_nft_contract(),
-      reader => encoded_id(account_pubkey, required_env(build_release_reader_account)),
-      network => Network,
-      gateway => gateway(application:get_env(damage, build_release_ipfs_gateway, "https://ipfs.io/ipfs")),
-      timeout => configured_timeout(build_release_query_timeout, 10000, 60000)}.
+    #{
+        nft => configured_nft_contract(),
+        reader => encoded_id(account_pubkey, required_env(build_release_reader_account)),
+        network => Network,
+        gateway => gateway(
+            application:get_env(damage, build_release_ipfs_gateway, "https://ipfs.io/ipfs")
+        ),
+        timeout => configured_timeout(build_release_query_timeout, 10000, 60000)
+    }.
 
 required_env(Key) ->
     case application:get_env(damage, Key) of
@@ -352,40 +465,56 @@ installation(Record) ->
 
 installation_fields(Record, Meta) when is_map(Meta) ->
     guarded(fun() ->
-        Install = case maps:find(<<"installation">>, Meta) of
-            {ok, I} when is_map(I) -> I;
-            _ -> throw({release_error, installation_manifest_missing})
-        end,
-        require(maps:get(<<"file_ipfs">>, Meta, undefined) =:= maps:get(asset_cid, Record),
-                release_asset_mismatch),
+        Install =
+            case maps:find(<<"installation">>, Meta) of
+                {ok, I} when is_map(I) -> I;
+                _ -> throw({release_error, installation_manifest_missing})
+            end,
+        require(
+            maps:get(<<"file_ipfs">>, Meta, undefined) =:= maps:get(asset_cid, Record),
+            release_asset_mismatch
+        ),
         Platform = maps:get(platform, Record),
         {ok, Checked} = must(check_installation(Install, Platform)),
         Version = maps:get(release, Record, undefined),
-        require(maps:get(<<"release">>, Meta, Version) =:= Version andalso
-            maps:get(<<"release">>, Install, Version) =:= Version, release_version_mismatch),
+        require(
+            maps:get(<<"release">>, Meta, Version) =:= Version andalso
+                maps:get(<<"release">>, Install, Version) =:= Version,
+            release_version_mismatch
+        ),
         require(maps:get(<<"platform">>, Meta, Platform) =:= Platform, release_platform_mismatch),
-        require(maps:get(<<"git_sha">>, Meta, maps:get(git_sha, Record)) =:= maps:get(git_sha, Record),
-                release_git_sha_mismatch),
+        require(
+            maps:get(<<"git_sha">>, Meta, maps:get(git_sha, Record)) =:= maps:get(git_sha, Record),
+            release_git_sha_mismatch
+        ),
         %% Only the installation document may supply packaged_release. The
         %% NFT's release name is not evidence that its package declared it.
         {ok, maps:merge(maps:remove(packaged_release, Record), Checked)}
     end);
-installation_fields(_, _) -> {error, invalid_installation_metadata}.
+installation_fields(_, _) ->
+    {error, invalid_installation_metadata}.
 
 %% A prepared document and a re-read NFT document must be compared using
 %% the same validated fields. Neither steps nor HTTP reconstruct this schema.
 prepared_installation(Meta) ->
     guarded(fun() ->
         Install = maps:get(<<"installation">>, Meta),
-        Record0 = #{platform => maps:get(<<"platform">>, Install),
+        Record0 = #{
+            platform => maps:get(<<"platform">>, Install),
             asset_cid => maps:get(<<"file_ipfs">>, Meta),
-            git_sha => maps:get(<<"git_sha">>, Meta)},
-        Record = case maps:find(<<"release">>, Meta) of
-            {ok, Version} ->
-                require(valid_release(Version) andalso Version =/= <<"latest">>, invalid_installation_release),
-                Record0#{release => Version};
-            error -> Record0
-        end,
+            git_sha => maps:get(<<"git_sha">>, Meta)
+        },
+        Record =
+            case maps:find(<<"release">>, Meta) of
+                {ok, Version} ->
+                    require(
+                        valid_release(Version) andalso Version =/= <<"latest">>,
+                        invalid_installation_release
+                    ),
+                    Record0#{release => Version};
+                error ->
+                    Record0
+            end,
         {ok, Actual} = must(installation_fields(Record, Meta)),
         {ok, installation_identity(Actual)}
     end).
@@ -394,8 +523,19 @@ installation_identity(Record) ->
     %% The optional packaged_release comes from the validated installation
     %% manifest, not Record.release. Legacy unversioned manifests keep their
     %% seven-field identity; versioned preparations retain the extra binding.
-    maps:with([platform, asset_cid, git_sha, asset_path, sha256,
-        package_format, architecture, packaged_release], Record).
+    maps:with(
+        [
+            platform,
+            asset_cid,
+            git_sha,
+            asset_path,
+            sha256,
+            package_format,
+            architecture,
+            packaged_release
+        ],
+        Record
+    ).
 
 %% An invalid version in IPFS metadata is a publication/backend failure, not
 %% an invalid client selector. Keep it distinct from normalize_selector/1.
@@ -408,19 +548,35 @@ check_installation(I, Platform) ->
         Format = maps:get(<<"package_format">>, I, undefined),
         Arch = maps:get(<<"architecture">>, I, undefined),
         require(valid_asset_path(Path), invalid_asset_path),
-        require(is_binary(Digest) andalso matches(Digest, <<"\\A[0-9a-f]{64}\\z">>), invalid_package_sha256),
-        require(lists:member(Format, [<<"deb">>, <<"pkg.tar.zst">>, <<"rpm">>, <<"apk">>]),
-                invalid_package_format),
-        require(is_binary(Arch) andalso matches(Arch, <<"\\A[a-z0-9_]{1,32}\\z">>), invalid_package_architecture),
-        require(lists:suffix(binary_to_list(<<"-", Arch/binary>>), binary_to_list(Platform)),
-                release_architecture_mismatch),
+        require(
+            is_binary(Digest) andalso matches(Digest, <<"\\A[0-9a-f]{64}\\z">>),
+            invalid_package_sha256
+        ),
+        require(
+            lists:member(Format, [<<"deb">>, <<"pkg.tar.zst">>, <<"rpm">>, <<"apk">>]),
+            invalid_package_format
+        ),
+        require(
+            is_binary(Arch) andalso matches(Arch, <<"\\A[a-z0-9_]{1,32}\\z">>),
+            invalid_package_architecture
+        ),
+        require(
+            lists:suffix(binary_to_list(<<"-", Arch/binary>>), binary_to_list(Platform)),
+            release_architecture_mismatch
+        ),
         require(platform_package_format(Platform, Format), release_package_format_mismatch),
-        Fields = #{asset_path => Path, sha256 => Digest, package_format => Format, architecture => Arch},
+        Fields = #{
+            asset_path => Path, sha256 => Digest, package_format => Format, architecture => Arch
+        },
         case maps:find(<<"release">>, I) of
             {ok, Version} ->
-                require(valid_release(Version) andalso Version =/= <<"latest">>, invalid_installation_release),
+                require(
+                    valid_release(Version) andalso Version =/= <<"latest">>,
+                    invalid_installation_release
+                ),
                 {ok, Fields#{packaged_release => Version}};
-            error -> {ok, Fields}
+            error ->
+                {ok, Fields}
         end
     end).
 
@@ -436,44 +592,90 @@ platform_package_format(_, _) -> true.
 %% different file/path in the IPFS artifact. Only bounded JSON is buffered.
 prepare_metadata(Meta0, Platform0, Asset0, ManifestPath0) ->
     guarded(fun() ->
-        Platform = text(Platform0), Asset = text(Asset0), ManifestPath = text(ManifestPath0),
+        Platform = text(Platform0),
+        Asset = text(Asset0),
+        ManifestPath = text(ManifestPath0),
         require(valid_platform(Platform), invalid_platform),
         require(safe_cid(Asset), invalid_release_cid),
         require(ManifestPath =/= <<>> andalso valid_asset_path(ManifestPath), invalid_asset_path),
         Timeout = configured_timeout(build_release_publish_timeout, 300000, 3600000),
-        bounded(fun() ->
-            ManifestTarget = <<Asset/binary, "/", ManifestPath/binary>>,
-            {ok, Manifest} = must(preparation_ipfs_result(read_installation_manifest,
-                ManifestTarget, ipfs_json(ManifestTarget, Timeout))),
-            {ok, Fields} = must(check_installation(Manifest, Platform)),
-            Path = maps:get(asset_path, Fields),
-            Target = case Path of <<>> -> Asset; _ -> <<Asset/binary, "/", Path/binary>> end,
-            {ok, Digest} = must(preparation_ipfs_result(hash_installation_package,
-                Target, ipfs_result(damage_ipfs:sha256(Target,
-                    [{max_bytes, ?MAX_PACKAGE_BYTES}, {timeout, Timeout}])))),
-            ExpectedDigest = maps:get(sha256, Fields),
-            %% The identity checks stay strict. These are validated public
-            %% artifact paths/digests; never include the full metadata/context.
-            require(Digest =:= ExpectedDigest,
-                {release_package_hash_mismatch, #{
-                    manifest_path => ManifestTarget,
-                    package_path => Target,
-                    expected_sha256 => ExpectedDigest,
-                    actual_sha256 => Digest
-                }}),
-            GitSha = maps:get(<<"git_sha">>, Manifest, <<>>),
-            require(is_binary(GitSha) andalso (GitSha =:= <<>> orelse
-                matches(GitSha, <<"\\A([0-9a-f]{40}|[0-9a-f]{64})\\z">>)), invalid_git_sha),
-            Meta = manifest_release(json_keys(Meta0), Manifest),
-            require(maps:get(<<"file_ipfs">>, Meta, Asset) =:= Asset, release_asset_mismatch),
-            require(maps:get(<<"git_sha">>, Meta, GitSha) =:= GitSha, release_git_sha_mismatch),
-            require(maps:get(<<"platform">>, Meta, Platform) =:= Platform, release_platform_mismatch),
-            Install = maps:with([<<"schema_version">>, <<"platform">>, <<"package_format">>,
-                <<"architecture">>, <<"asset_path">>, <<"sha256">>, <<"release">>], Manifest),
-            Prepared = Meta#{<<"file_ipfs">> => Asset, <<"git_sha">> => GitSha, <<"installation">> => Install},
-            require(byte_size(jsx:encode(Prepared)) =< ?MAX_METADATA_BYTES, release_metadata_too_large),
-            {ok, Prepared}
-        end, Timeout)
+        bounded(
+            fun() ->
+                ManifestTarget = <<Asset/binary, "/", ManifestPath/binary>>,
+                {ok, Manifest} = must(
+                    preparation_ipfs_result(
+                        read_installation_manifest,
+                        ManifestTarget,
+                        ipfs_json(ManifestTarget, Timeout)
+                    )
+                ),
+                {ok, Fields} = must(check_installation(Manifest, Platform)),
+                Path = maps:get(asset_path, Fields),
+                Target =
+                    case Path of
+                        <<>> -> Asset;
+                        _ -> <<Asset/binary, "/", Path/binary>>
+                    end,
+                {ok, Digest} = must(
+                    preparation_ipfs_result(
+                        hash_installation_package,
+                        Target,
+                        ipfs_result(
+                            damage_ipfs:sha256(
+                                Target,
+                                [{max_bytes, ?MAX_PACKAGE_BYTES}, {timeout, Timeout}]
+                            )
+                        )
+                    )
+                ),
+                ExpectedDigest = maps:get(sha256, Fields),
+                %% The identity checks stay strict. These are validated public
+                %% artifact paths/digests; never include the full metadata/context.
+                require(
+                    Digest =:= ExpectedDigest,
+                    {release_package_hash_mismatch, #{
+                        manifest_path => ManifestTarget,
+                        package_path => Target,
+                        expected_sha256 => ExpectedDigest,
+                        actual_sha256 => Digest
+                    }}
+                ),
+                GitSha = maps:get(<<"git_sha">>, Manifest, <<>>),
+                require(
+                    is_binary(GitSha) andalso
+                        (GitSha =:= <<>> orelse
+                            matches(GitSha, <<"\\A([0-9a-f]{40}|[0-9a-f]{64})\\z">>)),
+                    invalid_git_sha
+                ),
+                Meta = manifest_release(json_keys(Meta0), Manifest),
+                require(maps:get(<<"file_ipfs">>, Meta, Asset) =:= Asset, release_asset_mismatch),
+                require(maps:get(<<"git_sha">>, Meta, GitSha) =:= GitSha, release_git_sha_mismatch),
+                require(
+                    maps:get(<<"platform">>, Meta, Platform) =:= Platform, release_platform_mismatch
+                ),
+                Install = maps:with(
+                    [
+                        <<"schema_version">>,
+                        <<"platform">>,
+                        <<"package_format">>,
+                        <<"architecture">>,
+                        <<"asset_path">>,
+                        <<"sha256">>,
+                        <<"release">>
+                    ],
+                    Manifest
+                ),
+                Prepared = Meta#{
+                    <<"file_ipfs">> => Asset, <<"git_sha">> => GitSha, <<"installation">> => Install
+                },
+                require(
+                    byte_size(jsx:encode(Prepared)) =< ?MAX_METADATA_BYTES,
+                    release_metadata_too_large
+                ),
+                {ok, Prepared}
+            end,
+            Timeout
+        )
     end).
 
 %% New build manifests carry the actual packaged OTP release version. Older
@@ -482,27 +684,46 @@ prepare_metadata(Meta0, Platform0, Asset0, ManifestPath0) ->
 manifest_release(Meta, Manifest) ->
     case maps:find(<<"release">>, Manifest) of
         {ok, Version} ->
-            require(valid_release(Version) andalso Version =/= <<"latest">>, invalid_installation_release),
+            require(
+                valid_release(Version) andalso Version =/= <<"latest">>,
+                invalid_installation_release
+            ),
             require(maps:get(<<"release">>, Meta, Version) =:= Version, release_version_mismatch),
             Meta#{<<"release">> => Version};
-        error -> Meta
+        error ->
+            Meta
     end.
 
 json_keys(Map) when is_map(Map) ->
-    Pairs = [{case K of A when is_atom(A) -> atom_to_binary(A, utf8); _ -> text(K) end, V}
-             || {K, V} <- maps:to_list(Map)],
+    Pairs = [
+        {
+            case K of
+                A when is_atom(A) -> atom_to_binary(A, utf8);
+                _ -> text(K)
+            end,
+            V
+        }
+     || {K, V} <- maps:to_list(Map)
+    ],
     Result = maps:from_list(Pairs),
     require(map_size(Result) =:= map_size(Map), duplicate_metadata_key),
     Result;
-json_keys(_) -> throw({release_error, invalid_installation_metadata}).
+json_keys(_) ->
+    throw({release_error, invalid_installation_metadata}).
 
 %% All Kubo transport, bounds, JSON decoding and hashing live in damage_ipfs.
 %% Keep release-domain errors stable without leaking raw backend responses.
 ipfs_json(Path) ->
     ipfs_json(Path, configured_timeout(build_release_query_timeout, 10000, 60000)).
 ipfs_json(Path, Timeout) ->
-    case ipfs_result(damage_ipfs:cat_json(Path,
-            [{max_bytes, ?MAX_METADATA_BYTES}, {timeout, Timeout}])) of
+    case
+        ipfs_result(
+            damage_ipfs:cat_json(
+                Path,
+                [{max_bytes, ?MAX_METADATA_BYTES}, {timeout, Timeout}]
+            )
+        )
+    of
         {ok, Map} when is_map(Map) -> {ok, Map};
         {ok, _} -> {error, invalid_installation_metadata};
         Error -> Error
@@ -515,33 +736,47 @@ checked_json(Data) when is_binary(Data), byte_size(Data) =< ?MAX_METADATA_BYTES 
         {ok, _} -> {error, invalid_installation_metadata};
         Error -> Error
     end;
-checked_json(_) -> {error, release_metadata_too_large}.
+checked_json(_) ->
+    {error, release_metadata_too_large}.
 -endif.
 
-ipfs_result({ok, _} = Result) -> Result;
-ipfs_result({error, ipfs_object_too_large}) -> {error, release_ipfs_object_too_large};
-ipfs_result({error, invalid_ipfs_json}) -> {error, invalid_installation_metadata};
-ipfs_result({error, ipfs_api_must_be_loopback}) -> {error, release_ipfs_api_must_be_loopback};
-ipfs_result({error, invalid_ipfs_api_port}) -> {error, invalid_ipfs_api_port};
-ipfs_result({error, ipfs_unavailable}) -> {error, release_ipfs_unavailable};
-ipfs_result({error, ipfs_timeout}) -> {error, release_ipfs_timeout};
-ipfs_result({error, ipfs_stream_error}) -> {error, release_ipfs_stream_error};
-ipfs_result({error, invalid_ipfs_api}) -> {error, invalid_ipfs_api};
+ipfs_result({ok, _} = Result) ->
+    Result;
+ipfs_result({error, ipfs_object_too_large}) ->
+    {error, release_ipfs_object_too_large};
+ipfs_result({error, invalid_ipfs_json}) ->
+    {error, invalid_installation_metadata};
+ipfs_result({error, ipfs_api_must_be_loopback}) ->
+    {error, release_ipfs_api_must_be_loopback};
+ipfs_result({error, invalid_ipfs_api_port}) ->
+    {error, invalid_ipfs_api_port};
+ipfs_result({error, ipfs_unavailable}) ->
+    {error, release_ipfs_unavailable};
+ipfs_result({error, ipfs_timeout}) ->
+    {error, release_ipfs_timeout};
+ipfs_result({error, ipfs_stream_error}) ->
+    {error, release_ipfs_stream_error};
+ipfs_result({error, invalid_ipfs_api}) ->
+    {error, invalid_ipfs_api};
 ipfs_result({error, {ipfs_http_status, Status}}) when
     is_integer(Status), Status >= 100, Status =< 599
--> {error, {release_ipfs_http_status, Status}};
+->
+    {error, {release_ipfs_http_status, Status}};
 ipfs_result({error, {ipfs_exception, Class, Tag}}) when
     (Class =:= error orelse Class =:= exit orelse Class =:= throw),
     (Tag =:= undef orelse Tag =:= badarg orelse Tag =:= badmatch orelse
-     Tag =:= function_clause orelse Tag =:= case_clause orelse Tag =:= badmap orelse
-     Tag =:= system_limit orelse Tag =:= nif_not_loaded orelse Tag =:= noproc orelse
-     Tag =:= unexpected)
--> {error, {release_ipfs_exception, Class, Tag}};
-ipfs_result({error, _}) -> {error, release_ipfs_read_failed}.
+        Tag =:= function_clause orelse Tag =:= case_clause orelse Tag =:= badmap orelse
+        Tag =:= system_limit orelse Tag =:= nif_not_loaded orelse Tag =:= noproc orelse
+        Tag =:= unexpected)
+->
+    {error, {release_ipfs_exception, Class, Tag}};
+ipfs_result({error, _}) ->
+    {error, release_ipfs_read_failed}.
 
 %% Build reports get the failing stage and the already-validated public CID
 %% path. Discovery HTTP responses keep their existing generic error schema.
-preparation_ipfs_result(_Stage, _Path, {ok, _} = Result) -> Result;
+preparation_ipfs_result(_Stage, _Path, {ok, _} = Result) ->
+    Result;
 preparation_ipfs_result(Stage, Path, {error, Reason}) ->
     {error, {installation_ipfs_failed, Stage, Path, Reason}}.
 
@@ -555,17 +790,32 @@ parse_release(Answer0) ->
         release_fields(binary:split(Answer, <<"|">>, [global]))
     end).
 
-release_fields([Token, Version, Platform, Sha,
-        <<"ipfs://", Meta/binary>>, <<"ipfs://", Asset/binary>>]) ->
+release_fields([
+    Token,
+    Version,
+    Platform,
+    Sha,
+    <<"ipfs://", Meta/binary>>,
+    <<"ipfs://", Asset/binary>>
+]) ->
     require(matches(Token, <<"\\A[1-9][0-9]{0,38}\\z">>), invalid_release_token),
     require(valid_release(Version) andalso Version =/= <<"latest">>, invalid_release),
     require(valid_platform(Platform), invalid_platform),
-    require(Sha =:= <<>> orelse matches(Sha, <<"\\A([0-9a-f]{40}|[0-9a-f]{64})\\z">>),
-        invalid_git_sha),
+    require(
+        Sha =:= <<>> orelse matches(Sha, <<"\\A([0-9a-f]{40}|[0-9a-f]{64})\\z">>),
+        invalid_git_sha
+    ),
     require(safe_cid(Meta) andalso safe_cid(Asset), invalid_release_cid),
-    {ok, #{token_id => binary_to_integer(Token), release => Version,
-        platform => Platform, git_sha => Sha, metadata_cid => Meta, asset_cid => Asset}};
-release_fields(_) -> {error, invalid_release_answer}.
+    {ok, #{
+        token_id => binary_to_integer(Token),
+        release => Version,
+        platform => Platform,
+        git_sha => Sha,
+        metadata_cid => Meta,
+        asset_cid => Asset
+    }};
+release_fields(_) ->
+    {error, invalid_release_answer}.
 
 -spec parse_manifest(binary() | string()) -> {ok, map()} | {error, term()}.
 parse_manifest(Manifest0) ->
@@ -590,11 +840,19 @@ parse_manifest(Manifest0) ->
 %% DATA only. Version 2 removes the companion identity; all eleven fields
 %% refer to one NFT snapshot. Blank git_sha and asset_path remain significant.
 install_manifest(Release) ->
-    Values = [<<"damagebdd-install-v2">>, maps:get(network_id, Release),
-        maps:get(contract_id, Release), integer_to_binary(maps:get(token_id, Release)),
-        maps:get(release, Release), maps:get(platform, Release), maps:get(git_sha, Release),
-        maps:get(metadata_cid, Release), maps:get(asset_cid, Release),
-        maps:get(asset_path, Release), maps:get(sha256, Release)],
+    Values = [
+        <<"damagebdd-install-v2">>,
+        maps:get(network_id, Release),
+        maps:get(contract_id, Release),
+        integer_to_binary(maps:get(token_id, Release)),
+        maps:get(release, Release),
+        maps:get(platform, Release),
+        maps:get(git_sha, Release),
+        maps:get(metadata_cid, Release),
+        maps:get(asset_cid, Release),
+        maps:get(asset_path, Release),
+        maps:get(sha256, Release)
+    ],
     iolist_to_binary([[Value, <<"\n">>] || Value <- Values]).
 
 %% Parse the exact install sidecar emitted by install_manifest/1. This gives the
@@ -608,28 +866,51 @@ parse_install_manifest(Manifest0) ->
         Lines0 = binary:split(Manifest, <<"\n">>, [global]),
         Lines = drop_one_trailing_empty(Lines0),
         case Lines of
-            [<<"damagebdd-install-v2">>, Network, Contract, Token, Version, Platform, Sha,
-             Meta, Asset, Path, Digest] ->
+            [
+                <<"damagebdd-install-v2">>,
+                Network,
+                Contract,
+                Token,
+                Version,
+                Platform,
+                Sha,
+                Meta,
+                Asset,
+                Path,
+                Digest
+            ] ->
                 require(matches(Network, <<"\\A[a-z0-9_-]{1,64}\\z">>), invalid_release_network),
                 _ = encoded_id(contract_pubkey, Contract),
                 require(matches(Token, <<"\\A[1-9][0-9]{0,38}\\z">>), invalid_release_token),
                 require(valid_release(Version) andalso Version =/= <<"latest">>, invalid_release),
                 require(valid_platform(Platform), invalid_platform),
-                require(Sha =:= <<>> orelse matches(Sha, <<"\\A([0-9a-f]{40}|[0-9a-f]{64})\\z">>),
-                    invalid_git_sha),
+                require(
+                    Sha =:= <<>> orelse matches(Sha, <<"\\A([0-9a-f]{40}|[0-9a-f]{64})\\z">>),
+                    invalid_git_sha
+                ),
                 require(safe_cid(Meta) andalso safe_cid(Asset), invalid_release_cid),
                 require(Path =:= <<>> orelse valid_asset_path(Path), invalid_asset_path),
                 require(matches(Digest, <<"\\A[0-9a-f]{64}\\z">>), invalid_package_sha256),
-                {ok, #{schema_version => 2, network_id => Network, contract_id => Contract,
-                    token_id => binary_to_integer(Token), release => Version, platform => Platform,
-                    git_sha => Sha, metadata_cid => Meta, asset_cid => Asset,
-                    asset_path => Path, sha256 => Digest}};
+                {ok, #{
+                    schema_version => 2,
+                    network_id => Network,
+                    contract_id => Contract,
+                    token_id => binary_to_integer(Token),
+                    release => Version,
+                    platform => Platform,
+                    git_sha => Sha,
+                    metadata_cid => Meta,
+                    asset_cid => Asset,
+                    asset_path => Path,
+                    sha256 => Digest
+                }};
             _ ->
                 {error, invalid_release_manifest}
         end
     end).
 
-drop_one_trailing_empty([]) -> [];
+drop_one_trailing_empty([]) ->
+    [];
 drop_one_trailing_empty(Lines) ->
     case lists:reverse(Lines) of
         [<<>> | Rest] -> lists:reverse(Rest);
@@ -758,7 +1039,8 @@ call_return(Call) when is_map(Call) ->
         undefined -> {error, missing_return_type};
         _ -> {error, {unexpected_return_type, Type, Value}}
     end;
-call_return(_) -> {error, contract_call_failed}.
+call_return(_) ->
+    {error, contract_call_failed}.
 
 %% The contract wrapper retains raw node fields under binary keys and adds
 %% decoded FATE fields under string keys. Prefer those decoded fields before
@@ -776,8 +1058,16 @@ contract_source() -> damage_ae:contract_path(damage, ?NFT_SOURCE).
 %% Canonical serialization is also the expected oracle answer. Keep it here,
 %% not copied into the Gherkin adapter. Validation remains in parse_release/1.
 release_answer(Token, Version, Platform, Sha, Meta, Asset) ->
-    iolist_to_binary(lists:join(<<"|">>, [integer_to_binary(Token), Version,
-        Platform, Sha, <<"ipfs://", Meta/binary>>, <<"ipfs://", Asset/binary>>])).
+    iolist_to_binary(
+        lists:join(<<"|">>, [
+            integer_to_binary(Token),
+            Version,
+            Platform,
+            Sha,
+            <<"ipfs://", Meta/binary>>,
+            <<"ipfs://", Asset/binary>>
+        ])
+    ).
 
 map_value(Key, Map, Default) when is_map(Map) ->
     maps:get(

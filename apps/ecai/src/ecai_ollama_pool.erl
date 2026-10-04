@@ -246,19 +246,48 @@ request_attempt(Kind, Role, Prompt, Opts, Provider, Model, Attempts, Deadline, E
             case maps:get(billing_sensitive, Lease, false) of
                 true ->
                     request_billing_sensitive(
-                        Kind, Role, Prompt, Opts, Provider, Model, Attempts,
-                        Deadline, Exclude, Errors, Lease
+                        Kind,
+                        Role,
+                        Prompt,
+                        Opts,
+                        Provider,
+                        Model,
+                        Attempts,
+                        Deadline,
+                        Exclude,
+                        Errors,
+                        Lease
                     );
                 false ->
                     request_standard(
-                        Kind, Role, Prompt, Opts, Provider, Model, Attempts,
-                        Deadline, Exclude, Errors, Lease
+                        Kind,
+                        Role,
+                        Prompt,
+                        Opts,
+                        Provider,
+                        Model,
+                        Attempts,
+                        Deadline,
+                        Exclude,
+                        Errors,
+                        Lease
                     )
             end
     end.
 
-request_standard(Kind, Role, Prompt, Opts, Provider, Model, Attempts,
-                 Deadline, Exclude, Errors, Lease) ->
+request_standard(
+    Kind,
+    Role,
+    Prompt,
+    Opts,
+    Provider,
+    Model,
+    Attempts,
+    Deadline,
+    Exclude,
+    Errors,
+    Lease
+) ->
     Started = erlang:monotonic_time(millisecond),
     Result = invoke_client(Kind, Prompt, client_opts(Lease, Opts)),
     Duration = max(0, erlang:monotonic_time(millisecond) - Started),
@@ -294,8 +323,19 @@ request_standard(Kind, Role, Prompt, Opts, Provider, Model, Attempts,
             )
     end.
 
-request_billing_sensitive(Kind, Role, Prompt, Opts, Provider, Model, Attempts,
-                          Deadline, Exclude, Errors, Lease) ->
+request_billing_sensitive(
+    Kind,
+    Role,
+    Prompt,
+    Opts,
+    Provider,
+    Model,
+    Attempts,
+    Deadline,
+    Exclude,
+    Errors,
+    Lease
+) ->
     LeaseRef = maps:get(ref, Lease),
     NodeId = maps:get(node_id, Lease),
     RequestId = inference_request_id(Kind, Role, Prompt, Lease, Opts),
@@ -321,19 +361,32 @@ request_billing_sensitive(Kind, Role, Prompt, Opts, Provider, Model, Attempts,
             gen_server:cast(?SERVER, {release, LeaseRef}),
             {error, {inference_receipt_failed, RequestId, ReceiptReason}};
         {ok, claimed} ->
-            case gen_server:call(
-                ?SERVER,
-                {receipt_sent, RequestId, ReceiptMeta},
-                infinity
-            ) of
+            case
+                gen_server:call(
+                    ?SERVER,
+                    {receipt_sent, RequestId, ReceiptMeta},
+                    infinity
+                )
+            of
                 ok ->
                     Started = erlang:monotonic_time(millisecond),
                     Result = invoke_client(Kind, Prompt, client_opts(Lease, Opts)),
                     Duration = max(0, erlang:monotonic_time(millisecond) - Started),
                     handle_billing_result(
-                        Result, Kind, Role, Prompt, Opts, Provider, Model,
-                        Attempts, Deadline, Exclude, Errors, Lease,
-                        RequestId, Duration
+                        Result,
+                        Kind,
+                        Role,
+                        Prompt,
+                        Opts,
+                        Provider,
+                        Model,
+                        Attempts,
+                        Deadline,
+                        Exclude,
+                        Errors,
+                        Lease,
+                        RequestId,
+                        Duration
                     );
                 {error, SentPersistReason} ->
                     _ = gen_server:call(
@@ -350,9 +403,22 @@ request_billing_sensitive(Kind, Role, Prompt, Opts, Provider, Model, Attempts,
             end
     end.
 
-handle_billing_result({ok, Value, ClientMeta}, _Kind, Role, _Prompt, _Opts,
-                      _Provider, _Model, _Attempts, _Deadline, _Exclude, _Errors,
-                      Lease, RequestId, Duration) ->
+handle_billing_result(
+    {ok, Value, ClientMeta},
+    _Kind,
+    Role,
+    _Prompt,
+    _Opts,
+    _Provider,
+    _Model,
+    _Attempts,
+    _Deadline,
+    _Exclude,
+    _Errors,
+    Lease,
+    RequestId,
+    Duration
+) ->
     PersistResult = gen_server:call(
         ?SERVER,
         {receipt_complete, RequestId, Value, ClientMeta},
@@ -373,9 +439,22 @@ handle_billing_result({ok, Value, ClientMeta}, _Kind, Role, _Prompt, _Opts,
             {error, Reason} -> Meta0#{receipt_persist_error => receipt_error_tag(Reason)}
         end,
     {ok, Value, Meta};
-handle_billing_result({error, Reason}, Kind, Role, Prompt, Opts,
-                      Provider, Model, Attempts, Deadline, Exclude, Errors,
-                      Lease, RequestId, Duration) ->
+handle_billing_result(
+    {error, Reason},
+    Kind,
+    Role,
+    Prompt,
+    Opts,
+    Provider,
+    Model,
+    Attempts,
+    Deadline,
+    Exclude,
+    Errors,
+    Lease,
+    RequestId,
+    Duration
+) ->
     LeaseRef = maps:get(ref, Lease),
     NodeId = maps:get(node_id, Lease),
     gen_server:cast(
@@ -434,7 +513,8 @@ checkout_wait(Role, Provider, Model, Exclude, Deadline) ->
         {error, no_capacity} ->
             Now = erlang:monotonic_time(millisecond),
             case Now >= Deadline of
-                true -> {error, {inference_queue_timeout, Role, Provider, Model}};
+                true ->
+                    {error, {inference_queue_timeout, Role, Provider, Model}};
                 false ->
                     timer:sleep(min(100, max(1, Deadline - Now))),
                     checkout_wait(Role, Provider, Model, Exclude, Deadline)
@@ -514,7 +594,8 @@ normalize_nodes(Nodes0) ->
         error:Reason -> {error, {invalid_inference_nodes, Reason}}
     end.
 
-normalize_node({invalid_nodes, Other}) -> throw({invalid_inference_nodes, Other});
+normalize_node({invalid_nodes, Other}) ->
+    throw({invalid_inference_nodes, Other});
 normalize_node(Node0) when is_map(Node0) ->
     Provider = normalize_provider(maps:get(provider, Node0, ollama)),
     Defaults = provider_node_defaults(Provider),
@@ -577,7 +658,8 @@ provider_node_defaults(openai) ->
         auth => #{type => bearer_env, env => "OPENAI_API_KEY"},
         store => false
     };
-provider_node_defaults(Other) -> throw({unsupported_inference_provider, Other}).
+provider_node_defaults(Other) ->
+    throw({unsupported_inference_provider, Other}).
 
 node_default_model(Node, Provider, Models) ->
     Explicit = maps:get(default_model, Node, maps:get(model, Node, undefined)),
@@ -588,7 +670,8 @@ node_default_model(Node, Provider, Models) ->
                 all -> provider_default_model(Provider);
                 [] -> provider_default_model(Provider)
             end;
-        M -> to_binary(M)
+        M ->
+            to_binary(M)
     end.
 
 provider_default_model(ollama) ->
@@ -597,9 +680,21 @@ provider_default_model(openai) ->
     to_binary(application:get_env(ecai, code_openai_model, "gpt-5.6-sol")).
 
 node_client_opts(Node, Defaults, Provider) ->
-    Keys = [auth, base_path, organization, organization_env, project, project_env,
-            store, timeout, connect_timeout, tls_opts, reasoning_effort,
-            max_output_tokens, temperature],
+    Keys = [
+        auth,
+        base_path,
+        organization,
+        organization_env,
+        project,
+        project_env,
+        store,
+        timeout,
+        connect_timeout,
+        tls_opts,
+        reasoning_effort,
+        max_output_tokens,
+        temperature
+    ],
     Base = maps:with(Keys, Defaults),
     Explicit = maps:with(Keys, Node),
     Auth = node_auth(Node, Provider, maps:get(auth, Base, undefined)),
@@ -623,27 +718,36 @@ node_auth(_Node, openai, undefined) ->
 node_auth(_Node, _Provider, Default) ->
     Default.
 
-validate_pool_auth(none) -> ok;
-validate_pool_auth(undefined) -> ok;
-validate_pool_auth(#{type := bearer_env, env := _}) -> ok;
-validate_pool_auth(#{type := bearer_file, path := _}) -> ok;
-validate_pool_auth({bearer_env, _}) -> ok;
-validate_pool_auth({bearer_file, _}) -> ok;
-validate_pool_auth(#{type := bearer_secret, scope := node, name := Name})
-        when is_binary(Name); is_list(Name); is_atom(Name) ->
+validate_pool_auth(none) ->
+    ok;
+validate_pool_auth(undefined) ->
+    ok;
+validate_pool_auth(#{type := bearer_env, env := _}) ->
+    ok;
+validate_pool_auth(#{type := bearer_file, path := _}) ->
+    ok;
+validate_pool_auth({bearer_env, _}) ->
+    ok;
+validate_pool_auth({bearer_file, _}) ->
+    ok;
+validate_pool_auth(#{type := bearer_secret, scope := node, name := Name}) when
+    is_binary(Name); is_list(Name); is_atom(Name)
+->
     ok;
 validate_pool_auth(#{type := bearer}) ->
     throw(direct_bearer_secret_not_allowed_in_pool_config);
 validate_pool_auth({bearer, _}) ->
     throw(direct_bearer_secret_not_allowed_in_pool_config);
-validate_pool_auth(Other) -> throw({unsupported_pool_auth, Other}).
+validate_pool_auth(Other) ->
+    throw({unsupported_pool_auth, Other}).
 
 normalize_roles(Roles) when is_list(Roles) ->
     case [R || R <- Roles, not lists:member(R, ?ROLES)] of
         [] -> lists:usort(Roles);
         Bad -> throw({invalid_inference_roles, Bad})
     end;
-normalize_roles(Other) -> throw({invalid_inference_roles, Other}).
+normalize_roles(Other) ->
+    throw({invalid_inference_roles, Other}).
 
 normalize_models(all) -> all;
 normalize_models(Models) when is_list(Models) -> lists:usort([to_binary(M) || M <- Models]);
@@ -651,11 +755,17 @@ normalize_models(Other) -> throw({invalid_inference_models, Other}).
 
 normalize_digest_map(Map) when is_map(Map) ->
     maps:from_list([{to_binary(K), to_binary(V)} || {K, V} <- maps:to_list(Map)]);
-normalize_digest_map(Other) -> throw({invalid_model_digests, Other}).
+normalize_digest_map(Other) ->
+    throw({invalid_model_digests, Other}).
 
 default_node_id(Provider, Host, Port) ->
-    <<(to_binary(Provider))/binary, ":", (to_binary(Host))/binary, ":",
-      (integer_to_binary(Port))/binary>>.
+    <<
+        (to_binary(Provider))/binary,
+        ":",
+        (to_binary(Host))/binary,
+        ":",
+        (integer_to_binary(Port))/binary
+    >>.
 
 normalize_id(B) when is_binary(B) -> B;
 normalize_id(A) when is_atom(A) -> atom_to_binary(A, utf8);
@@ -722,7 +832,8 @@ inference_matches(Node, Role, Provider, Model, Digest) ->
         supports_model(Node, Model) andalso
         inference_digest_matches(Node, Model, Digest).
 
-inference_digest_matches(_Node, _Model, undefined) -> true;
+inference_digest_matches(_Node, _Model, undefined) ->
+    true;
 inference_digest_matches(Node, undefined, Digest) ->
     inference_digest_matches(Node, maps:get(default_model, Node), Digest);
 inference_digest_matches(Node, Model, Digest) ->
@@ -752,15 +863,23 @@ node_score(Node) ->
     Selections = maps:get(selections, Node, 0),
     Weight = max(1, maps:get(weight, Node, 1)),
     Latency = maps:get(latency_ema_ms, Node, undefined),
-    LatencyScore = case Latency of undefined -> 0.0; L -> L / 1000000.0 end,
-    {((Selections + Inflight) / Weight) + LatencyScore,
-     maps:get(failures, Node, 0), maps:get(last_selected, Node, 0)}.
+    LatencyScore =
+        case Latency of
+            undefined -> 0.0;
+            L -> L / 1000000.0
+        end,
+    {
+        ((Selections + Inflight) / Weight) + LatencyScore,
+        maps:get(failures, Node, 0),
+        maps:get(last_selected, Node, 0)
+    }.
 
 lease_map(LeaseRef, Role, RequestedModel, Node) ->
-    Model = case RequestedModel of
-        undefined -> maps:get(default_model, Node);
-        _ -> RequestedModel
-    end,
+    Model =
+        case RequestedModel of
+            undefined -> maps:get(default_model, Node);
+            _ -> RequestedModel
+        end,
     ModelInfo = maps:get(Model, maps:get(discovered_models, Node, #{}), #{}),
     #{
         ref => LeaseRef,
@@ -805,23 +924,27 @@ release_lease(LeaseRef, State0) ->
 
 checkin_lease(LeaseRef, Outcome, State0) ->
     case maps:take(LeaseRef, State0#state.leases) of
-        error -> State0;
+        error ->
+            State0;
         {Id, Leases} ->
             case maps:find(Id, State0#state.nodes) of
-                error -> State0#state{leases = Leases};
+                error ->
+                    State0#state{leases = Leases};
                 {ok, Node0} ->
                     Inflight = max(0, maps:get(inflight, Node0, 0) - 1),
                     Duration = maps:get(duration_ms, Outcome, undefined),
                     Node1 = update_latency(Node0#{inflight => Inflight}, Duration),
                     Node =
                         case maps:get(ok, Outcome, false) of
-                            true -> Node1#{health => healthy, failures => 0, last_error => undefined};
+                            true ->
+                                Node1#{health => healthy, failures => 0, last_error => undefined};
                             false ->
                                 Failures = maps:get(failures, Node1, 0) + 1,
-                                Health = case Failures >= State0#state.failure_threshold of
-                                    true -> down;
-                                    false -> degraded
-                                end,
+                                Health =
+                                    case Failures >= State0#state.failure_threshold of
+                                        true -> down;
+                                        false -> degraded
+                                    end,
                                 Node1#{
                                     health => Health,
                                     failures => Failures,
@@ -835,15 +958,18 @@ checkin_lease(LeaseRef, Outcome, State0) ->
             end
     end.
 
-update_latency(Node, undefined) -> Node;
+update_latency(Node, undefined) ->
+    Node;
 update_latency(Node, Duration) when is_integer(Duration), Duration >= 0 ->
     Prev = maps:get(latency_ema_ms, Node, undefined),
-    Ema = case Prev of
-        undefined -> Duration * 1.0;
-        P -> (P * 0.8) + (Duration * 0.2)
-    end,
+    Ema =
+        case Prev of
+            undefined -> Duration * 1.0;
+            P -> (P * 0.8) + (Duration * 0.2)
+        end,
     Node#{latency_ema_ms => Ema};
-update_latency(Node, _) -> Node.
+update_latency(Node, _) ->
+    Node.
 
 launch_probe(Node, Timeout) ->
     Parent = self(),
@@ -862,7 +988,8 @@ launch_probe(Node, Timeout) ->
 
 apply_probe(Id, Result, DurationMs, State0) ->
     case maps:find(Id, State0#state.nodes) of
-        error -> State0;
+        error ->
+            State0;
         {ok, Node0} ->
             Node1 = update_latency(Node0, DurationMs),
             Node =
@@ -875,16 +1002,18 @@ apply_probe(Id, Result, DurationMs, State0) ->
                             failures => 0
                         },
                         case validate_probe_models(Node2) of
-                            ok -> Node2#{health => healthy, last_error => undefined};
+                            ok ->
+                                Node2#{health => healthy, last_error => undefined};
                             {error, ProbeReason} ->
                                 Node2#{health => down, last_error => ProbeReason}
                         end;
                     {error, Reason} ->
                         Failures = maps:get(failures, Node1, 0) + 1,
-                        Health = case Failures >= State0#state.failure_threshold of
-                            true -> down;
-                            false -> degraded
-                        end,
+                        Health =
+                            case Failures >= State0#state.failure_threshold of
+                                true -> down;
+                                false -> degraded
+                            end,
                         Node1#{
                             health => Health,
                             failures => Failures,
@@ -905,7 +1034,8 @@ validate_probe_models(Node) ->
     DefaultModel = maps:get(default_model, Node),
     Models = maps:get(discovered_models, Node, #{}),
     case maps:is_key(DefaultModel, Models) of
-        false -> {error, {default_model_unavailable, DefaultModel}};
+        false ->
+            {error, {default_model_unavailable, DefaultModel}};
         true ->
             case configured_digest_mismatch(Node) of
                 none -> ok;
@@ -928,47 +1058,56 @@ configured_digest_mismatch(Node) ->
     end.
 
 status_map(State) ->
-    Nodes = lists:sort(fun(A, B) -> maps:get(id, A) =< maps:get(id, B) end,
-                       [public_node(N) || N <- maps:values(State#state.nodes)]),
+    Nodes = lists:sort(
+        fun(A, B) -> maps:get(id, A) =< maps:get(id, B) end,
+        [public_node(N) || N <- maps:values(State#state.nodes)]
+    ),
     #{
         nodes => Nodes,
         node_count => length(Nodes),
         healthy => length([N || N <- Nodes, maps:get(health, N) =:= healthy]),
         degraded => length([N || N <- Nodes, maps:get(health, N) =:= degraded]),
         down => length([N || N <- Nodes, maps:get(health, N) =:= down]),
-        capacity => maps:from_list([{Role, role_capacity(Role, State#state.nodes)} || Role <- ?ROLES]),
+        capacity => maps:from_list([
+            {Role, role_capacity(Role, State#state.nodes)}
+         || Role <- ?ROLES
+        ]),
         active_leases => maps:size(State#state.leases),
         inference_receipts => receipt_status(State),
         last_probe_at => State#state.last_probe_at
     }.
 
 public_node(Node) ->
-    Public = maps:with([
-        id,
-        provider,
-        host,
-        port,
-        billing_sensitive,
-        roles,
-        max_inflight,
-        weight,
-        default_model,
-        configured_models,
-        configured_digests,
-        discovered_models,
-        health,
-        inflight,
-        failures,
-        last_error,
-        selections,
-        latency_ema_ms,
-        last_checked_at
-    ], Node),
+    Public = maps:with(
+        [
+            id,
+            provider,
+            host,
+            port,
+            billing_sensitive,
+            roles,
+            max_inflight,
+            weight,
+            default_model,
+            configured_models,
+            configured_digests,
+            discovered_models,
+            health,
+            inflight,
+            failures,
+            last_error,
+            selections,
+            latency_ema_ms,
+            last_checked_at
+        ],
+        Node
+    ),
     ClientOpts0 = maps:get(client_opts, Node, #{}),
-    ClientOpts = case maps:find(auth, ClientOpts0) of
-        {ok, Auth} -> ClientOpts0#{auth => ecai_ollama_client:public_auth(Auth)};
-        error -> ClientOpts0
-    end,
+    ClientOpts =
+        case maps:find(auth, ClientOpts0) of
+            {ok, Auth} -> ClientOpts0#{auth => ecai_ollama_client:public_auth(Auth)};
+            error -> ClientOpts0
+        end,
     Public#{
         host => to_binary(maps:get(host, Node)),
         client_options => maps:without([tls_opts], ClientOpts)
@@ -988,11 +1127,13 @@ open_receipt_store(Opts) ->
             Error;
         {ok, Root} ->
             File = ecai_code_paths:dets_file(Root, ?RECEIPT_FILE),
-            case dets:open_file(?RECEIPT_TABLE, [
-                {file, File},
-                {type, set},
-                {auto_save, 5000}
-            ]) of
+            case
+                dets:open_file(?RECEIPT_TABLE, [
+                    {file, File},
+                    {type, set},
+                    {auto_save, 5000}
+                ])
+            of
                 {ok, ?RECEIPT_TABLE} ->
                     {ok, ?RECEIPT_TABLE, File};
                 {error, Reason} ->
@@ -1006,8 +1147,9 @@ receipt_claim(RequestId, Meta, State) ->
     case dets:lookup(Tab, Key) of
         [{Key, #{status := completed, value := Value} = Receipt}] ->
             {completed, Value, maps:get(client_meta, Receipt, #{})};
-        [{Key, #{status := Status} = Receipt}]
-          when Status =:= sent; Status =:= uncertain ->
+        [{Key, #{status := Status} = Receipt}] when
+            Status =:= sent; Status =:= uncertain
+        ->
             {blocked, public_receipt(Receipt)};
         _ ->
             Receipt = Meta#{
@@ -1228,9 +1370,11 @@ positive_int(V, _Default) when is_integer(V), V > 0 -> V;
 positive_int(_, Default) -> Default.
 
 now_iso8601() ->
-    unicode:characters_to_binary(calendar:system_time_to_rfc3339(
-        erlang:system_time(second), [{unit, second}, {offset, "Z"}]
-    )).
+    unicode:characters_to_binary(
+        calendar:system_time_to_rfc3339(
+            erlang:system_time(second), [{unit, second}, {offset, "Z"}]
+        )
+    ).
 
 to_binary(B) when is_binary(B) -> B;
 to_binary(L) when is_list(L) -> unicode:characters_to_binary(L);

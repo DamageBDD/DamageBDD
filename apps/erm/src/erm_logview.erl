@@ -105,10 +105,12 @@ do_init(Config) ->
     ]),
 
     %% Fonts (reuse your erm_fonts if present, else fallback)
-    erm_otp_compat:catch_value(fun() -> begin
-        Font = erm_fonts:get_font(Frame, 10, 400),
-        wxTextCtrl:setFont(Text, Font)
-    end end),
+    erm_otp_compat:catch_value(fun() ->
+        begin
+            Font = erm_fonts:get_font(Frame, 10, 400),
+            wxTextCtrl:setFont(Text, Font)
+        end
+    end),
 
     %% Layout
     TopSizer = wxBoxSizer:new(?wxVERTICAL),
