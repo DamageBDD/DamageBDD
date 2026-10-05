@@ -148,6 +148,35 @@ all() ->
                 }
             ]
         },
+        native_voice_base_en => #{
+            revision => "native-voice-base-en-v1",
+            files => [
+                #{
+                    role => whisper_model,
+                    name => "ggml-base.en.bin",
+                    url =>
+                        "https://huggingface.co/ggerganov/whisper.cpp/resolve/f281eb45af861ab5e5297d23694b7d46e090c02c/ggml-base.en.bin",
+                    bytes => 147964211,
+                    sha256 => "a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002"
+                },
+                #{
+                    role => vad_model,
+                    name => "silero_vad.onnx",
+                    url =>
+                        "https://huggingface.co/deepghs/silero-vad-onnx/resolve/8547eb3c577a6f712c1ed1a554c21c5d9137867d/silero_vad.onnx",
+                    bytes => 2327524,
+                    sha256 => "2623a2953f6ff3d2c1e61740c6cdb7168133479b267dfef114a4a3cc5bdd788f"
+                },
+                #{
+                    role => speaker_model,
+                    name => "nemo_en_speakerverification_speakernet.onnx",
+                    url =>
+                        "https://huggingface.co/csukuangfj/speaker-embedding-models/resolve/main/nemo_en_speakerverification_speakernet.onnx",
+                    max_bytes => 33554432,
+                    sha256 => "d204dc8aac0014b8543f05fc8e310510c7022bc65b6452c203ec205ef7a66b23"
+                }
+            ]
+        },
         lessac_medium => #{
             revision => "c10ece1aade47bb51c153c893d14e5bf8e5b7117",
             files => [

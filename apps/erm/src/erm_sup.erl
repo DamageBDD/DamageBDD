@@ -555,7 +555,7 @@ whisper_child_specs(true, #{backend := native} = Opts) ->
             L when is_list(L) -> proplists:to_map(L)
         end,
     NativeOpts = Native#{trigger_phrases => maps:get(trigger_phrases, Opts, ["bob"])},
-    voice_child_specs(Opts) ++
+    native_model_pull_specs() ++ voice_child_specs(Opts) ++
         [
             #{
                 id => erm_native_voice,
@@ -590,6 +590,13 @@ whisper_child_specs(Invalid, _Opts) ->
     [].
 %% Voice and Whisper have no wx dependency. Start the router first so the
 %% first stream record can never race its registered process.
+native_model_pull_specs() ->
+    Tts = options_map(application:get_env(erm, tts, [])),
+    case maps:get(enabled, Tts, true) of
+        true -> [];
+        false -> [erm_model_pull:child_spec()]
+    end.
+
 voice_child_specs(WhisperOpts) ->
     case erm_voice:options(maps:get(voice, WhisperOpts, [])) of
         {ok, VoiceOpts} ->

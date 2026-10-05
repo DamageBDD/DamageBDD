@@ -12,13 +12,15 @@
     muted = true,
     timer = undefined,
     poll,
-    model_hash,
+    model_hash = undefined,
     profile = undefined,
     enrol = undefined,
     last_id = 0,
     last = undefined,
     error = undefined,
-    processing = false
+    processing = false,
+    %% Keep existing record tuple positions stable for protocol/test helpers.
+    model_retry = undefined
 }).
 start_link(O) -> gen_server:start_link({local, ?MODULE}, ?MODULE, O, []).
 status() -> gen_server:call(?MODULE, status, 1000).
@@ -30,9 +32,15 @@ init(O0) ->
     process_flag(trap_exit, true),
     logger:update_process_metadata(#{domain => [erm, voice, native]}),
     try
-        O = maps:merge(
+        User = map(O0),
+        O1 = maps:merge(
             #{
                 binary => default_binary(),
+                arecord => default_arecord(),
+                auto_pull => true,
+                model_id => native_voice_base_en,
+                model_poll_ms => 1000,
+                model_retry_ms => 30000,
                 device => "default",
                 language => "en",
                 threads => 4,
@@ -40,17 +48,25 @@ init(O0) ->
                 max_segment_ms => 8000,
                 min_speaker_ms => 1200,
                 require_speaker => true,
+                speaker_threshold => 0.7,
                 startup_timeout_ms => 120000,
                 inference_timeout_ms => 30000,
                 trigger_phrases => ["bob"],
                 debug_utterances => false,
                 observe_only => false
             },
-            map(O0)
+            User
         ),
+        O =
+            case maps:is_key(profile_file, User) of
+                true -> O1;
+                false -> O1#{profile_file => default_profile_file()}
+            end,
+        true = is_boolean(maps:get(auto_pull, O)),
         true = is_boolean(maps:get(require_speaker, O)),
         true = is_boolean(maps:get(debug_utterances, O)),
         true = is_boolean(maps:get(observe_only, O)),
+        true = is_atom(maps:get(model_id, O)),
         lists:foreach(
             fun({K, Lo, Hi}) ->
                 V = maps:get(K, O),
@@ -62,7 +78,9 @@ init(O0) ->
                 {max_segment_ms, 2000, 15000},
                 {min_speaker_ms, 500, 15000},
                 {startup_timeout_ms, 1000, 600000},
-                {inference_timeout_ms, 1000, 120000}
+                {inference_timeout_ms, 1000, 120000},
+                {model_poll_ms, 100, 10000},
+                {model_retry_ms, 1000, 3600000}
             ]
         ),
         true = maps:get(min_speaker_ms, O) < maps:get(max_segment_ms, O),
@@ -70,15 +88,13 @@ init(O0) ->
         true = is_number(T) andalso T > 0 andalso T < 1,
         lists:foreach(
             fun(K) -> absolute = filename:pathtype(maps:get(K, O)) end,
-            [binary, whisper_model, vad_model, speaker_model, arecord, profile_file]
+            [binary, arecord, profile_file]
         ),
-        Hash = hash_file(maps:get(speaker_model, O)),
-        Profile = load_profile(maps:get(profile_file, O), Hash),
-        self() ! connect,
+        validate_explicit_model_paths(O),
+        self() ! ensure_models,
         {ok, #st{
             opts = O,
-            model_hash = Hash,
-            profile = Profile,
+            error = model_startup_state(O),
             poll = erlang:send_after(100, self(), poll)
         }}
     catch
@@ -98,6 +114,8 @@ handle_call(status, _, S) ->
             processing => S#st.processing,
             muted => S#st.muted,
             enrolled => S#st.profile =/= undefined,
+            model_id => maps:get(model_id, S#st.opts, native_voice_base_en),
+            model_paths => maps:with([whisper_model, vad_model, speaker_model], S#st.opts),
             enrolment => Enrol,
             last => S#st.last,
             error => S#st.error
@@ -124,6 +142,22 @@ handle_call(cancel_enrol, _, S) ->
 handle_call(_, _, S) ->
     {reply, {error, unsupported_call}, S}.
 handle_cast(_, S) -> {noreply, S}.
+handle_info(ensure_models, S = #st{opts = O}) ->
+    case resolve_models(O) of
+        {ok, Resolved} ->
+            case activate_models(Resolved, S) of
+                {ok, Next} ->
+                    self() ! connect,
+                    {noreply, Next};
+                {error, Reason, Next} ->
+                    {noreply, schedule_model_retry(Reason, Next)}
+            end;
+        {pending, Progress} ->
+            {noreply, schedule_model_poll({model_pull, Progress}, S)};
+        {error, Reason} ->
+            _ = maybe_retry_model_pull(O),
+            {noreply, schedule_model_retry({model_pull, Reason}, S)}
+    end;
 handle_info(connect, S = #st{port = undefined, opts = O}) ->
     try
         Args =
@@ -417,9 +451,112 @@ close_port(P) ->
     end.
 terminate(_, S) ->
     erlang:cancel_timer(S#st.poll),
+    cancel_model_retry(S#st.model_retry),
     close_port(S#st.port),
     ok.
 code_change(_, S, _) -> {ok, S}.
+
+model_startup_state(O) ->
+    case missing_model_paths(O) of
+        [] -> undefined;
+        Missing -> {model_pull, {waiting_for, Missing}}
+    end.
+
+validate_explicit_model_paths(O) ->
+    lists:foreach(
+        fun(K) ->
+            case maps:find(K, O) of
+                {ok, P} -> absolute = filename:pathtype(P);
+                error -> ok
+            end
+        end,
+        model_path_keys()
+    ).
+
+resolve_models(O) ->
+    case missing_model_paths(O) of
+        [] ->
+            {ok, O};
+        Missing ->
+            case maps:get(auto_pull, O, true) of
+                false ->
+                    {error, {missing_model_paths, Missing}};
+                true ->
+                    Id = maps:get(model_id, O, native_voice_base_en),
+                    case erm_model_pull:ensure(Id) of
+                        {ok, Paths} when is_map(Paths) ->
+                            case [K || K <- Missing, not maps:is_key(K, Paths)] of
+                                [] -> {ok, maps:merge(Paths, O)};
+                                MissingRoles -> {error, {manifest_missing_roles, Id, MissingRoles}}
+                            end;
+                        Other ->
+                            Other
+                    end
+            end
+    end.
+
+activate_models(O, S) ->
+    try
+        lists:foreach(
+            fun(K) ->
+                P = maps:get(K, O),
+                absolute = filename:pathtype(P),
+                true = filelib:is_regular(P)
+            end,
+            model_path_keys()
+        ),
+        Hash = hash_file(maps:get(speaker_model, O)),
+        Profile = load_profile(maps:get(profile_file, O), Hash),
+        {ok, cancel_model_retry_state(S#st{
+            opts = O,
+            model_hash = Hash,
+            profile = Profile,
+            error = undefined
+        })}
+    catch
+        C:R -> {error, {invalid_model_files, C, R}, S}
+    end.
+
+missing_model_paths(O) ->
+    [K || K <- model_path_keys(), not maps:is_key(K, O)].
+
+model_path_keys() -> [whisper_model, vad_model, speaker_model].
+
+maybe_retry_model_pull(O) ->
+    case maps:get(auto_pull, O, true) of
+        true -> erm_model_pull:retry(maps:get(model_id, O, native_voice_base_en));
+        false -> ok
+    end.
+
+schedule_model_poll(Reason, S = #st{opts = O}) ->
+    schedule_model_timer(maps:get(model_poll_ms, O, 1000), Reason, S).
+
+schedule_model_retry(Reason, S = #st{opts = O}) ->
+    logger:warning("native voice model preparation failed: ~tp; retrying", [Reason]),
+    schedule_model_timer(maps:get(model_retry_ms, O, 30000), Reason, S).
+
+schedule_model_timer(Ms, Reason, S0) ->
+    S = cancel_model_retry_state(S0),
+    Ref = erlang:send_after(Ms, self(), ensure_models),
+    S#st{model_retry = Ref, error = Reason}.
+
+cancel_model_retry_state(S = #st{model_retry = Ref}) ->
+    cancel_model_retry(Ref),
+    S#st{model_retry = undefined}.
+
+cancel_model_retry(undefined) -> ok;
+cancel_model_retry(Ref) ->
+    erlang:cancel_timer(Ref),
+    ok.
+
+default_profile_file() ->
+    filename:join([damage_config:state_dir(), "voice", "owner.profile"]).
+
+default_arecord() ->
+    case os:find_executable("arecord") of
+        false -> "/usr/bin/arecord";
+        P -> filename:absname(P)
+    end.
 
 default_binary() ->
     case code:priv_dir(erm) of

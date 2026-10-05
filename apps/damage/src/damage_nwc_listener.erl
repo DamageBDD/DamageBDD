@@ -1285,7 +1285,8 @@ has_retryable_missing_relays(State = #state{relays = Relays, conns = Conns}) ->
                 case maps:get(Url, Conns, undefined) of
                     #{subscribed := true, conn_pid := Pid} when is_pid(Pid) ->
                         is_process_alive(Pid);
-                    _ -> false
+                    _ ->
+                        false
                 end,
             (not Connected) andalso relay_retry_action(Url, State) =/= disabled
         end,

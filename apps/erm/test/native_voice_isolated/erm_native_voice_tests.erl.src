@@ -14,6 +14,21 @@ supervisor_native_test()->
     Specs=erm_sup:whisper_child_specs(true,#{backend=>native,native=>[{speaker_threshold,0.8},{speaker_threshold,0.2}],trigger_phrases=>["bob"]}),
     ?assertEqual([erm_voice,erm_native_voice],[maps:get(id,X)||X<-Specs]),
     ?assertMatch({erm_native_voice,start_link,[#{speaker_threshold:=0.8,trigger_phrases:=["bob"]}]},maps:get(start,lists:last(Specs))).
+auto_pull_test()->
+    D=os:getenv("NATIVE_TEST_TMP"),Id=integer_to_list(erlang:unique_integer([positive])),
+    Model=filename:join(D,"pulled-model-"++Id),ok=file:write_file(Model,<<"model">>),
+    persistent_term:put(native_model_pull_result,{ok,#{whisper_model=>Model,vad_model=>Model,speaker_model=>Model}}),
+    O=#{binary=>filename:join(D,"fake_port"),arecord=>"/bin/false",
+        profile_file=>filename:join(D,"auto-profile-"++Id),speaker_threshold=>0.8,auto_pull=>true},
+    try
+        {ok,_}=erm_native_voice:start_link(maps:to_list(O)),wait_ready(100),
+        S=erm_native_voice:status(),
+        ?assertEqual(native_voice_base_en,maps:get(model_id,S)),
+        ?assertEqual(Model,maps:get(whisper_model,maps:get(model_paths,S)))
+    after
+        try gen_server:stop(erm_native_voice) catch exit:_->ok end,
+        persistent_term:erase(native_model_pull_result)
+    end.
 native_test_()->{foreach,fun setup/0,fun cleanup/1,[
     fun(O)->fun()->
         inject(1,[1.0,0.0],2000,<<"Hey Bob stop music">>),

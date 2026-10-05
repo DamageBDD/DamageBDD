@@ -1,0 +1,4 @@
+-module(erm_model_pull).
+-export([ensure/1,retry/1]).
+ensure(_Id)->persistent_term:get(native_model_pull_result,{error,disabled}).
+retry(Id)->ensure(Id).

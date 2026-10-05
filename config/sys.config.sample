@@ -492,8 +492,9 @@
         {ae_mdw_nodes, [{"mainnet.aeternity.io", 443, "/mdw/"}]},
         {ae_mdw_ws_nodes, [{"mainnet.aeternity.io", 443, "/mdw/v3/websocket"}]},
         {ae_fee_multiplier, 2},
-        {ae_gas_multiplier, 2},
         {ae_gas_price_multiplier, 3},
+        %% ae_gas_multiplier is deprecated/ignored by the current contract path.
+        %% Contract execution gas is estimated through dry-run; do not configure it.
         {ae_nonce_strategy, chain},
         %% Deployment contract overrides. These were present in the old full
         %% profiles but should only be set to real deployed contracts.
@@ -565,7 +566,9 @@
             {kubo_retry_ms, 5000},
             {kubo_gc, true},
             {kubo_binary, "ipfs"},
-            {ipfs_api, "http://127.0.0.1:5001"},
+            %% Leave ipfs_api unset unless connecting to an externally managed Kubo.
+            %% unmanaged_kubo=false defaults to http://127.0.0.1:5001; when
+            %% managed_kubo=true the runtime derives it from kubo_api_port.
             {ipfs_peers, []},
             %% Structured peers may group several transports under one peer id:
             %% {ipfs_peers, [
@@ -780,13 +783,17 @@
             {phase4b_production_key_script,
                 "scripts/nsecbunker/phase4b_create_production_damagebdd_node_key.sh"},
             {backend_owner, damage_nsecbunker_secret_owner},
-            {backend_module, damage_nsecbunker_port},
-            {aws_secret, [
-                {region, "ap-southeast-2"},
-                {secret_id, "/damage/prod/nsecbunker/vault-passphrase"},
-                {expected_account_id, "REPLACE_WITH_AWS_ACCOUNT_ID"},
-                {expected_role_name, "damage-node-prod"}
-            ]}
+            {backend_module, damage_nsecbunker_port}
+            %% AWS Secrets Manager is production-only and must be explicitly selected.
+            %% Never enable this on a generic workstation: the provider intentionally
+            %% requires EC2 IMDSv2 identity and fails closed when IMDS is unavailable.
+            %% {secret_provider, aws_secrets_manager},
+            %% {aws_secret, [
+            %%     {region, "ap-southeast-2"},
+            %%     {secret_id, "/damage/prod/nsecbunker/vault-passphrase"},
+            %%     {expected_account_id, "REPLACE_WITH_AWS_ACCOUNT_ID"},
+            %%     {expected_role_name, "damage-node-prod"}
+            %% ]}
         ]}
 
         %% ------------------------------------------------------------------
@@ -815,7 +822,7 @@
         %% {ae_dynamic_gas_price, true}, %% default: true
         %% ae_fee_multiplier: configured above. Code default: required/no explicit call-site default
         %% {ae_gas_max, undefined}, %% default: ?PROTOCOL_GAS_MAX
-        %% ae_gas_multiplier: configured above. Code default: required/no explicit call-site default
+        %% ae_gas_multiplier: deprecated/ignored; omit from runtime configuration
         %% {ae_gas_price_cache_ttl_ms, 30000}, %% default: required/no explicit call-site default
         %% ae_gas_price_multiplier: configured above. Code default: required/no explicit call-site default
         %% {ae_get_spend_timeout_ms, 2000}, %% default: 2000
@@ -1384,6 +1391,11 @@
         ]},
 
         {whisper_trigger, [
+            %% Native capture is deliberately disabled in the portable sample.
+            %% Before setting enabled=true, install the native backend and ensure
+            %% binary, whisper_model, vad_model, speaker_model, arecord and
+            %% profile_file are absolute paths. speaker_model must already exist:
+            %% erm_native_voice hashes it synchronously during init.
             {enabled, false}, {backend, native}, {bin, auto}, {model, auto},
             {auto_start, true}, {echo_output, true}, {cleanup_existing, true},
             {output_dedupe_ms, 3000}, {capture, -1}, {hostname, "damage"},

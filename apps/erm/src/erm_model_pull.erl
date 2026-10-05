@@ -34,12 +34,19 @@ init(O0) ->
             Map when is_map(Map) -> Map;
             L when is_list(L) -> proplists:to_map(L)
         end,
-    Root = maps:get(cache_dir, O, filename:basedir(user_cache, "erm/models")),
+    Root0 =
+        case maps:find(cache_dir, O) of
+            {ok, ConfiguredRoot} -> ConfiguredRoot;
+            error -> filename:join([damage_config:state_dir(), "models", "erm"])
+        end,
+    Root = normalize_path(Root0),
     absolute = filename:pathtype(Root),
     Timeout = maps:get(timeout_ms, O, 600000),
     true = is_integer(Timeout) andalso Timeout >= 1000 andalso Timeout =< 3600000,
     %% Custom manifests are trusted configuration, never supplied by voice/LLM output.
-    Catalog = maps:merge(erm_model_catalog:all(), maps:get(manifests, O, #{})),
+    Catalog = maps:merge(
+        erm_model_catalog:all(), normalize_manifests(maps:get(manifests, O, #{}))
+    ),
     maps:foreach(fun(_, M) -> validate(M) end, Catalog),
     {ok, #{
         root => Root, catalog => Catalog, timeout => Timeout, active => undefined, models => #{}
@@ -81,7 +88,7 @@ handle_call({ensure, Id, Force}, _, S = #{catalog := Cat, models := States, acti
                     Entry = #{
                         state => checking,
                         bytes => 0,
-                        total_bytes => lists:sum([maps:get(bytes, F) || F <- maps:get(files, M)])
+                        total_bytes => lists:sum([file_budget(F) || F <- maps:get(files, M)])
                     },
                     Next = S#{
                         active => #{pid => Pid, id => Id, stage => Stage, timer => Timer},
@@ -147,7 +154,7 @@ install(M, Dir, Stage, Owner, Timeout) ->
                         ok = erm_model_http:fetch(
                             F, filename:join(Stage, maps:get(name, F)), Progress, Timeout
                         ),
-                        Base + maps:get(bytes, F)
+                        Base + file_budget(F)
                     end,
                     0,
                     Files
@@ -186,7 +193,7 @@ valid_directory(Dir, Files) ->
     lists:all(
         fun(F) ->
             P = filename:join(Dir, maps:get(name, F)),
-            filelib:is_regular(P) andalso filelib:file_size(P) =:= maps:get(bytes, F) andalso
+            filelib:is_regular(P) andalso size_valid(F, filelib:file_size(P)) andalso
                 hash_file(P) =:= maps:get(sha256, F)
         end,
         Files
@@ -212,11 +219,11 @@ paths(Dir, Files) ->
     maps:from_list([{maps:get(role, F), filename:join(Dir, maps:get(name, F))} || F <- Files]).
 validate(#{files := Files}) when is_list(Files), Files =/= [], length(Files) =< 10 ->
     lists:foreach(
-        fun(#{name := Name, role := Role, url := Url, sha256 := Hash, bytes := N}) ->
+        fun(#{name := Name, role := Role, url := Url, sha256 := Hash} = F) ->
             true = is_list(Name) andalso length(Name) > 0 andalso length(Name) < 200,
             match = re:run(Name, "^[A-Za-z0-9][A-Za-z0-9_.-]*$", [{capture, none}]),
             true = is_atom(Role),
-            true = is_integer(N) andalso N > 0 andalso N =< 10737418240,
+            validate_file_size(F),
             match = re:run(Hash, "^[a-f0-9]{64}$", [{capture, none}]),
             #{scheme := "https", host := Host} = Parsed = uri_string:parse(Url),
             true = Host =/= [],
@@ -227,6 +234,71 @@ validate(#{files := Files}) when is_list(Files), Files =/= [], length(Files) =< 
     true = length(lists:usort([maps:get(name, F) || F <- Files])) =:= length(Files),
     true = length(lists:usort([maps:get(role, F) || F <- Files])) =:= length(Files),
     ok.
+normalize_path(Path0) ->
+    Path =
+        case Path0 of
+            B when is_binary(B) -> binary_to_list(B);
+            L when is_list(L) -> L
+        end,
+    Expanded =
+        case Path of
+            "~" -> home_dir();
+            "~/" ++ Rest -> filename:join(home_dir(), Rest);
+            _ -> Path
+        end,
+    filename:absname(Expanded).
+
+home_dir() ->
+    case os:getenv("HOME") of
+        H when is_list(H), H =/= "" -> H;
+        _ -> error(home_directory_unavailable)
+    end.
+
+normalize_manifests(M) when is_map(M) ->
+    maps:map(fun(_Id, Spec) -> normalize_manifest(Spec) end, M);
+normalize_manifests(L) when is_list(L) ->
+    maps:from_list([{Id, normalize_manifest(Spec)} || {Id, Spec} <- L]);
+normalize_manifests(Other) ->
+    error({invalid_model_manifests, Other}).
+
+normalize_manifest(M0) ->
+    M = config_map(M0),
+    Files = [config_map(F) || F <- maps:get(files, M)],
+    M#{files => Files}.
+
+config_map(M) when is_map(M) -> M;
+config_map(L) when is_list(L) -> maps:from_list(L);
+config_map(Other) -> error({invalid_model_config, Other}).
+
+file_budget(F) ->
+    case maps:find(bytes, F) of
+        {ok, N} -> N;
+        error -> maps:get(max_bytes, F)
+    end.
+
+size_valid(F, Actual) ->
+    case maps:find(bytes, F) of
+        {ok, Expected} -> Actual =:= Expected;
+        error -> Actual > 0 andalso Actual =< maps:get(max_bytes, F)
+    end.
+
+validate_file_size(F) ->
+    Exact = maps:get(bytes, F, undefined),
+    Max = maps:get(max_bytes, F, undefined),
+    true = Exact =/= undefined orelse Max =/= undefined,
+    case Exact of
+        undefined -> ok;
+        N -> true = is_integer(N) andalso N > 0 andalso N =< 10737418240
+    end,
+    case Max of
+        undefined -> ok;
+        N2 -> true = is_integer(N2) andalso N2 > 0 andalso N2 =< 10737418240
+    end,
+    case {Exact, Max} of
+        {N3, N4} when is_integer(N3), is_integer(N4) -> true = N3 =< N4;
+        _ -> ok
+    end.
+
 cleanup(Path) ->
     case file:del_dir_r(Path) of
         ok -> ok;
@@ -260,7 +332,8 @@ cached_entry(#{state := ready, paths := Ps} = Entry, #{files := Files}) ->
         lists:all(
             fun(F) ->
                 P = maps:get(maps:get(role, F), Ps),
-                filelib:is_regular(P) andalso filelib:file_size(P) =:= maps:get(bytes, F)
+                filelib:is_regular(P) andalso size_valid(F, filelib:file_size(P)) andalso
+                    hash_file(P) =:= maps:get(sha256, F)
             end,
             Files
         )

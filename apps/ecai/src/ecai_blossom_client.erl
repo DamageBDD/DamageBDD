@@ -52,9 +52,14 @@ auth_header(Sha, Ep, Opts) ->
     },
     case ecai_nostr_signer:sign_event(Event, maps:get(signer, Opts, #{})) of
         {ok, Signed} ->
-            {ok,
-                <<"Nostr ",
-                    (base64:encode(jsx:encode(ecai_content_util:json_safe(Signed))))/binary>>};
+            %% BUD-11 specifies URL-safe Base64 without padding for the HTTP
+            %% Authorization transport wrapper. Keep the token itself short-lived
+            %% (300 seconds by default) even though the server accepts up to 1 hour.
+            Encoded = base64:encode(
+                jsx:encode(ecai_content_util:json_safe(Signed)),
+                #{mode => urlsafe, padding => false}
+            ),
+            {ok, <<"Nostr ", Encoded/binary>>};
         {error, _} = Error ->
             Error
     end.

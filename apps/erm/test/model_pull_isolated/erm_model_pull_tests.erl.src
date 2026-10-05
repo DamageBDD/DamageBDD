@@ -37,6 +37,14 @@ pipeline_test_()->{foreach,fun setup/0,fun cleanup/1,[
     erm_model_pull:ensure(fixture),?assertEqual({size_mismatch,2},failed())
  end end,
  fun(C)->fun()->
+    gen_server:stop(erm_model_pull),
+    O=maps:get(opts,C),#{fixture:=#{files:=[F,G]}}=maps:get(manifests,O),
+    Bounded=(maps:remove(bytes,F))#{max_bytes=>16},
+    ProplistManifest=[{fixture,[{files,[maps:to_list(Bounded),maps:to_list(G)]}]}],
+    {ok,_}=erm_model_pull:start_link(O#{manifests=>ProplistManifest}),
+    P=ready_after_pull(),?assertEqual({ok,<<"hello">>},file:read_file(maps:get(model,P)))
+ end end,
+ fun(C)->fun()->
     T=maps:get(table,C),ets:insert(T,[{"/a",{redirect,maps:get(base,C)++"/real"}},{"/real",{body,<<"hello">>}}]),
     _=ready_after_pull(),?assertEqual(3,ets:lookup_element(T,count,2))
  end end,

@@ -69,7 +69,7 @@ stream(Id, H, F, Spec, Progress, Timeout, N, Hash, Reported) ->
     receive
         {http, {Id, stream, B}} ->
             Next = N + byte_size(B),
-            case Next =< maps:get(bytes, Spec) of
+            case Next =< file_budget(Spec) of
                 true -> ok;
                 false -> error(size_limit_exceeded)
             end,
@@ -85,7 +85,7 @@ stream(Id, H, F, Spec, Progress, Timeout, N, Hash, Reported) ->
             httpc:stream_next(H),
             stream(Id, H, F, Spec, Progress, Timeout, Next, crypto:hash_update(Hash, B), R);
         {http, {Id, stream_end, _}} ->
-            case N =:= maps:get(bytes, Spec) of
+            case size_valid(Spec, N) of
                 true -> ok;
                 false -> error({size_mismatch, N})
             end,
@@ -95,6 +95,18 @@ stream(Id, H, F, Spec, Progress, Timeout, N, Hash, Reported) ->
             error({http_request_failed, network_reason(R)})
     after Timeout -> error(download_timeout)
     end.
+file_budget(Spec) ->
+    case maps:find(bytes, Spec) of
+        {ok, N} -> N;
+        error -> maps:get(max_bytes, Spec)
+    end.
+
+size_valid(Spec, Actual) ->
+    case maps:find(bytes, Spec) of
+        {ok, Expected} -> Actual =:= Expected;
+        error -> Actual > 0 andalso Actual =< maps:get(max_bytes, Spec)
+    end.
+
 hex(B) -> lists:flatten([io_lib:format("~2.16.0b", [X]) || <<X>> <= B]).
 
 network_reason(R) when is_atom(R) -> R;

@@ -13,7 +13,12 @@
 -define(MAX_TAGS, 32).
 -define(MAX_TAG_ELEMENTS, 8).
 -define(MAX_TAG_VALUE_BYTES, 1024).
--define(DEFAULT_AUTH_MAX_AGE_SECONDS, 300).
+%% Keep the default freshness window aligned with the maximum accepted token
+%% lifetime. BUD-11 requires an expiration tag but does not define a shorter
+%% created_at freshness window; using a smaller max age would reject otherwise
+%% valid, unexpired third-party tokens.
+-define(DEFAULT_AUTH_CLOCK_SKEW_SECONDS, 60).
+-define(DEFAULT_AUTH_MAX_AGE_SECONDS, 3600).
 -define(DEFAULT_AUTH_MAX_TTL_SECONDS, 3600).
 
 -export([verify/3, verify/4, verify_deferred_hash/2]).
@@ -231,7 +236,7 @@ check_created_at(#{created_at := CreatedAt}) ->
     end.
 
 clock_skew_seconds() ->
-    configured_int(blossom_auth_clock_skew_seconds, 5, 0, 300).
+    configured_int(blossom_auth_clock_skew_seconds, ?DEFAULT_AUTH_CLOCK_SKEW_SECONDS, 0, 300).
 
 auth_max_age_seconds() ->
     configured_int(
