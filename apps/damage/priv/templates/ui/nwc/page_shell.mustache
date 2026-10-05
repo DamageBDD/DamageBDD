@@ -1,0 +1,337 @@
+<!-- -*- mode: html -*- -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>NWC Wallet</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial;
+      background: #0b0f14;
+      color: #e6edf3;
+    }
+    .wrap { max-width: 720px; margin: 48px auto; padding: 0 16px; }
+    .card {
+      background: #0f1620;
+      border: 1px solid #1f2a37;
+      border-radius: 14px;
+      padding: 18px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.35);
+    }
+    h1 { margin: 0 0 10px; font-size: 18px; font-weight: 650; }
+    p  { margin: 8px 0 14px; color: #9fb0c0; }
+    label { display:block; margin: 14px 0 8px; color: #b7c6d6; font-size: 13px; }
+    input, textarea {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 12px 12px;
+      border-radius: 10px;
+      border: 1px solid #253246;
+      background: #0b121b;
+      color: #e6edf3;
+      outline: none;
+    }
+    textarea { min-height: 92px; resize: vertical; }
+    .row { display:flex; gap: 10px; flex-wrap: wrap; }
+    button {
+      cursor: pointer;
+      padding: 11px 12px;
+      border-radius: 10px;
+      border: 1px solid #2a3a52;
+      background: #132033;
+      color: #e6edf3;
+      font-weight: 600;
+    }
+    button.primary {
+      background: #1b3a5f;
+      border-color: #2e5584;
+    }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    .status {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid #243246;
+      background: #0b121b;
+      color: #b9c8d8;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 13px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid #243246;
+      background: #0b121b;
+      color: #b9c8d8;
+      font-size: 12px;
+      margin-bottom: 10px;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #666; }
+    .dot.ok { background: #31c48d; }
+    .dot.bad { background: #f98080; }
+    .muted { color: #9fb0c0; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="pill"><span id="dot" class="dot"></span><span id="connText">Disconnected</span></div>
+      <h1>Nostr Wallet Connect (NWC)</h1>
+      <p>Paste an <span class="muted">nostr+walletconnect://</span> URI, connect, then pay a BOLT11 invoice via NIP-47.</p>
+
+      <label for="nwcUri">NWC URI</label>
+      <textarea id="nwcUri" spellcheck="false" placeholder="nostr+walletconnect://pubkey?relay=wss%3A%2F%2Frelay.example&secret=..."></textarea>
+
+      <div class="row" style="margin-top:10px;">
+        <button id="btnConnect" class="primary">Connect</button>
+        <button id="btnDisconnect">Disconnect</button>
+        <button id="btnClear">Clear Saved</button>
+      </div>
+
+      <hr style="border:0;border-top:1px solid #1f2a37; margin:18px 0;" />
+
+      <label for="invoice">BOLT11 Invoice</label>
+      <textarea id="invoice" spellcheck="false" placeholder="lnbc1..."></textarea>
+
+      <div class="row" style="margin-top:10px;">
+        <button id="btnPay" class="primary" disabled>Pay invoice</button>
+      </div>
+
+      <div id="out" class="status" aria-live="polite">Ready.</div>
+
+      <p class="muted" style="margin-top:14px;">
+        Security note: storing an NWC URI in a browser means the secret lives in localStorage. Use a dedicated
+        browser/profile and serve this page over HTTPS.
+      </p>
+    </div>
+  </div>
+
+  <!-- nostr-tools (browser bundle) -->
+  <script type="module">
+    import {
+      relayInit,
+      getPublicKey,
+      nip04,
+      generatePrivateKey
+    } from "https://esm.sh/nostr-tools@2.7.2";
+
+    // --- NIP-47 constants ---
+    const REQ_KIND  = 23194;
+    const RESP_KIND = 23195;
+
+    // --- UI ---
+    const $ = (id) => document.getElementById(id);
+    const out = $("out");
+    const dot = $("dot");
+    const connText = $("connText");
+    const btnPay = $("btnPay");
+
+    const log = (msg, obj) => {
+      if (obj !== undefined) {
+        out.textContent = `${msg}\n${safeJson(obj)}`;
+      } else {
+        out.textContent = msg;
+      }
+    };
+    const safeJson = (x) => {
+      try { return JSON.stringify(x, null, 2); } catch { return String(x); }
+    };
+
+    const setConnected = (yes, relayUrl = "") => {
+      dot.classList.toggle("ok", !!yes);
+      dot.classList.toggle("bad", !yes && relayUrl);
+      connText.textContent = yes ? `Connected ${relayUrl ? "· " + relayUrl : ""}` : "Disconnected";
+      btnPay.disabled = !yes;
+    };
+
+    // --- NWC parsing ---
+    // Expected: nostr+walletconnect://<wallet_pubkey>?relay=<wss..>&secret=<hex>
+    function parseNwcUri(uri) {
+      if (!uri) throw new Error("Missing NWC URI");
+      if (!uri.startsWith("nostr+walletconnect://")) throw new Error("Not an NWC URI");
+
+      const u = new URL(uri);
+      const walletPubkey = u.hostname; // after scheme://
+      const relay = u.searchParams.get("relay");
+      const secret = u.searchParams.get("secret");
+
+      if (!walletPubkey) throw new Error("Missing wallet pubkey in URI");
+      if (!relay) throw new Error("Missing relay= in URI");
+      if (!secret) throw new Error("Missing secret= in URI");
+
+      return { walletPubkey, relay, secret };
+    }
+
+    // --- NWC session state ---
+    let relay = null;
+    let relayUrl = "";
+    let walletPubkey = "";
+    let clientSk = "";  // client ephemeral secret (hex)
+    let clientPk = "";  // client pubkey (hex)
+    let nwcSecret = ""; // shared secret (hex in URI)
+
+    // pending response resolvers keyed by "e" tag (request id)
+    const pending = new Map();
+
+    function makeReqId() {
+      // tiny unique id: timestamp + random
+      return `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+    }
+
+    async function connectFromUri(uri) {
+      const parsed = parseNwcUri(uri);
+      walletPubkey = parsed.walletPubkey;
+      relayUrl = parsed.relay;
+      nwcSecret = parsed.secret;
+
+      // client keypair (deterministic enough for a session; you can persist if you want)
+      clientSk = generatePrivateKey();
+      clientPk = getPublicKey(clientSk);
+
+      relay = relayInit(relayUrl);
+      relay.on("connect", () => {});
+      relay.on("error", () => {});
+
+      await relay.connect();
+
+      // Subscribe to responses that are addressed to this client pubkey
+      const sub = relay.sub([{ kinds: [RESP_KIND], "#p": [clientPk], limit: 50 }]);
+      sub.on("event", async (ev) => {
+        try {
+          // decrypt content using NIP-04 between (clientSk, walletPubkey)
+          const plaintext = await nip04.decrypt(clientSk, walletPubkey, ev.content);
+          const payload = JSON.parse(plaintext);
+
+          const eTag = (ev.tags || []).find(t => t[0] === "e")?.[1];
+          if (eTag && pending.has(eTag)) {
+            pending.get(eTag).resolve({ event: ev, payload });
+            pending.delete(eTag);
+          }
+        } catch (e) {
+          // ignore unrelated/invalid
+        }
+      });
+
+      setConnected(true, relayUrl);
+      log("Connected.\nClient pubkey:\n" + clientPk + "\nWallet pubkey:\n" + walletPubkey);
+    }
+
+    async function disconnect() {
+      try { relay?.close(); } catch {}
+      relay = null;
+      relayUrl = "";
+      walletPubkey = "";
+      clientSk = "";
+      clientPk = "";
+      nwcSecret = "";
+      pending.clear();
+      setConnected(false);
+      log("Disconnected.");
+    }
+
+    // --- NWC request helper ---
+    async function nwcRequest(method, params) {
+      if (!relay) throw new Error("Not connected");
+      const id = makeReqId();
+
+      const req = {
+        method,
+        params: params || {}
+      };
+
+      // NIP-47: request is NIP-04 encrypted JSON
+      const plaintext = JSON.stringify(req);
+      const content = await nip04.encrypt(clientSk, walletPubkey, plaintext);
+
+      const ev = {
+        kind: REQ_KIND,
+        created_at: Math.floor(Date.now() / 1000),
+        pubkey: clientPk,
+        tags: [
+          ["p", walletPubkey],
+          ["e", id] // request id correlation (common pattern)
+        ],
+        content
+      };
+
+      // Sign with clientSk — nostr-tools relayInit expects signed events
+      // We’ll do minimal signing inline (nostr-tools v2 still supports this pattern via relay.publish on signed event)
+      // Use the built-in "signEvent" via window.nostr if available; else do local schnorr with nostr-tools:
+      const { finalizeEvent } = await import("https://esm.sh/nostr-tools@2.7.2");
+      const signed = finalizeEvent(ev, clientSk);
+
+      const respPromise = new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          pending.delete(id);
+          reject(new Error("Timed out waiting for wallet response"));
+        }, 15000);
+        pending.set(id, {
+          resolve: (x) => { clearTimeout(timer); resolve(x); },
+          reject
+        });
+      });
+
+      relay.publish(signed);
+
+      const { payload } = await respPromise;
+
+      // Most wallets respond with { result } or { error }
+      if (payload?.error) throw new Error(payload.error?.message || safeJson(payload.error));
+      return payload?.result ?? payload;
+    }
+
+    // --- Actions ---
+    $("btnConnect").addEventListener("click", async () => {
+      try {
+        const uri = $("nwcUri").value.trim();
+        if (!uri) throw new Error("Paste an NWC URI first.");
+        localStorage.setItem("nwc_uri", uri);
+        await connectFromUri(uri);
+      } catch (e) {
+        setConnected(false, relayUrl);
+        log("Connect failed: " + (e?.message || e));
+      }
+    });
+
+    $("btnDisconnect").addEventListener("click", async () => {
+      await disconnect();
+    });
+
+    $("btnClear").addEventListener("click", () => {
+      localStorage.removeItem("nwc_uri");
+      $("nwcUri").value = "";
+      log("Cleared saved NWC URI.");
+    });
+
+    $("btnPay").addEventListener("click", async () => {
+      try {
+        const invoice = $("invoice").value.trim();
+        if (!invoice) throw new Error("Paste a BOLT11 invoice first.");
+        log("Sending pay_invoice request…");
+
+        // NIP-47 method: pay_invoice
+        // Many wallets support: { invoice: "lnbc1...", amount?: msats } (amount optional if invoice has amount)
+        const res = await nwcRequest("pay_invoice", { invoice });
+
+        log("Payment result:", res);
+      } catch (e) {
+        log("Payment failed: " + (e?.message || e));
+      }
+    });
+
+    // --- Boot: load saved URI ---
+    const saved = localStorage.getItem("nwc_uri");
+    if (saved) $("nwcUri").value = saved;
+
+    setConnected(false);
+  </script>
+</body>
+</html>

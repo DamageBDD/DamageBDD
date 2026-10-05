@@ -1,0 +1,103 @@
+:root {
+        --accent: #00c4ff;
+        --bg-dark: #0f0f0f;
+        --bg-light: #1a1a1a;
+        --text-light: #eaeaea;
+        --button-bg: #00c4ff;
+        --button-text: #111;
+        --card-bg: #1e1e1e;
+        --border: #333;
+      }
+
+      body {
+        margin: 0;
+        font-family: 'Inter', sans-serif;
+        background: var(--bg-dark);
+        color: var(--text-light);
+        line-height: 1.7;
+      }
+
+      header {
+        background: var(--bg-light);
+        padding: 1rem 2rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+      }
+
+      header h1 {
+        font-family: 'Rubik', sans-serif;
+        font-weight: 600;
+        color: var(--accent);
+        font-size: 1.8rem;
+        margin: 0;
+      }
+
+      nav a {
+        color: var(--text-light);
+        margin-left: 1rem;
+        text-decoration: none;
+        font-weight: 600;
+      }
+
+      .container {
+        padding: 2rem;
+        max-width: 1200px;
+        margin: auto;
+      }
+
+      .card {
+        background: var(--card-bg);
+        padding: 1.5rem;
+        border-radius: 12px;
+        box-shadow: 0 0 15px rgba(0,0,0,0.3);
+        margin-bottom: 2rem;
+      }
+
+      h2 {
+        font-family: 'Rubik', sans-serif;
+        font-weight: 600;
+        margin-top: 0;
+      }
+
+      .btn {
+        background-color: var(--button-bg);
+        color: var(--button-text);
+        padding: 10px 20px;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: 600;
+        transition: background 0.3s;
+      }
+
+      .btn:hover {
+        background-color: #00e6ff;
+      }
+
+      input, select, textarea {
+        background-color: #2a2a2a;
+        color: #eee;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 0.8rem;
+        margin-top: 0.5rem;
+        margin-bottom: 1rem;
+        width: 100%;
+        font-family: 'Inter', sans-serif;
+      }
+
+      textarea {
+        resize: vertical;
+        min-height: 100px;
+      }
+
+      footer {
+        text-align: center;
+        padding: 1rem;
+        font-size: 0.9rem;
+        color: #aaa;
+        margin-top: 3rem;
+        border-top: 1px solid var(--border);
+      }
