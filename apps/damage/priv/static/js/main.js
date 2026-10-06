@@ -4,12 +4,117 @@ import { showLightningQR } from '/static/js/damage-lightning-ui.js';
 import { ensureChannel } from '/static/js/ensureChannel.js';
 import { updateSchedulesTable } from '/static/js/schedules.js';
 import { initDamageBDDPicker, rememberRecentFeature } from "./featurePicker.js";
+import { createIpfsFilePicker } from "/static/js/ipfs-filepicker.js";
 import "/static/js/balances.js";
 
 
 
 const MDW_BASE = "https://mainnet.aeternity.io/mdw";
 const NODE_BASE = "https://mainnet.aeternity.io";
+
+let selectedIpfsFeaturePath = null;
+let ipfsFeaturePicker = null;
+
+function normalizeIpfsExecutionPath(path) {
+	let value = String(path || "").trim();
+	if (value.startsWith("ipfs://")) value = value.slice("ipfs://".length);
+	if (value.startsWith("/ipfs/")) value = value.slice("/ipfs/".length);
+	value = value.replace(/^\/+|\/+$/g, "");
+	if (!value) throw new Error("Select an IPFS CID or CID-relative feature path.");
+	if (value.startsWith("ipns/")) {
+		throw new Error("IPNS paths are not supported for deterministic feature execution; select an /ipfs/<cid> path.");
+	}
+	return value;
+}
+
+function renderIpfsFeatureSelection() {
+	const wrap = document.getElementById("selected-ipfs-feature");
+	const pathEl = document.getElementById("selected-ipfs-feature-path");
+	if (!wrap || !pathEl) return;
+
+	if (!selectedIpfsFeaturePath) {
+		wrap.hidden = true;
+		pathEl.textContent = "";
+		return;
+	}
+
+	pathEl.textContent = selectedIpfsFeaturePath;
+	wrap.hidden = false;
+}
+
+function clearIpfsFeatureSelection() {
+	selectedIpfsFeaturePath = null;
+	renderIpfsFeatureSelection();
+}
+
+async function loadIpfsFeaturePreview(path) {
+	// The existing /features/:hash route serves root feature CIDs. Nested CID
+	// paths are still executable server-side, but do not have a matching preview
+	// route, so leave the current editor content intact for those.
+	if (path.includes("/")) return;
+
+	try {
+		const response = await fetch(`/features/${encodeURIComponent(path)}/`, {
+			method: "GET",
+			credentials: "include",
+			headers: { Accept: "text/plain" },
+			cache: "no-store"
+		});
+		if (!response.ok) return;
+		const text = await response.text();
+		const editor = document.getElementById("damageTextArea");
+		if (editor && text.trim()) editor.value = text;
+	} catch (err) {
+		console.debug("IPFS feature preview unavailable:", err);
+	}
+}
+
+function bindIpfsFeaturePicker() {
+	const button = document.getElementById("open-ipfs-feature-picker");
+	if (!button || button.dataset.bound === "true") return;
+	button.dataset.bound = "true";
+
+	ipfsFeaturePicker = createIpfsFilePicker({
+		apiBase: "/api/ipfs",
+		modalId: "ipfs-filepicker-modal",
+		allowFolders: false,
+		allowUpload: false
+	});
+
+	button.addEventListener("click", (event) => {
+		event.preventDefault();
+		const startPath = selectedIpfsFeaturePath
+			? `/ipfs/${selectedIpfsFeaturePath}`
+			: "/ipfs/";
+
+		ipfsFeaturePicker.open({
+			startPath,
+			onSelect: async (entry) => {
+				try {
+					selectedIpfsFeaturePath = normalizeIpfsExecutionPath(entry.path);
+					renderIpfsFeatureSelection();
+					await loadIpfsFeaturePreview(selectedIpfsFeaturePath);
+				} catch (err) {
+					showNotification({
+						title: "Invalid IPFS feature",
+						content: err.message || String(err)
+					});
+				}
+			}
+		});
+	});
+
+	document.getElementById("clear-ipfs-feature")?.addEventListener("click", (event) => {
+		event.preventDefault();
+		clearIpfsFeatureSelection();
+	});
+
+	document.getElementById("damageTextArea")?.addEventListener("input", () => {
+		// Editing the textarea explicitly switches the execution source back to
+		// inline Gherkin so the UI never silently ignores user edits.
+		if (selectedIpfsFeaturePath) clearIpfsFeatureSelection();
+	});
+}
 
 
 function showConnectStatus(message, type = 'info') {
@@ -669,6 +774,7 @@ function restoreFeatureDraftFromShareLink() {
 						if (!btn) return;
 
 						e.preventDefault();
+						clearIpfsFeatureSelection();
 						console.log("feature picker clicked");
 						MicroModal.show("feature-picker-modal");
 					});
@@ -707,6 +813,8 @@ function restoreFeatureDraftFromShareLink() {
 			showLoginButton();
 			return;
 		}
+
+		bindIpfsFeaturePicker();
 		
 		var tabs =Tabby('[data-tabs]');
 		document.addEventListener('tabby', function (event) {
@@ -1767,6 +1875,7 @@ function restoreFeatureDraftFromShareLink() {
 
 	async function submitDamageForm() {
 		const inputText = document.getElementById("damageTextArea").value.trim();
+		const featureCid = selectedIpfsFeaturePath;
 		const concurrency = 1;
 		const reportElement = addReport();
 		const mode = window.TokenManager.getMode();
@@ -1777,8 +1886,8 @@ function restoreFeatureDraftFromShareLink() {
 			reportElement.innerText = "Invalid runtime context: " + err.message;
 			return;
 		}
-		if (!inputText) {
-			reportElement.innerText = "Please enter a feature before executing.";
+		if (!inputText && !featureCid) {
+			reportElement.innerText = "Please enter a feature or select one from IPFS before executing.";
 			return;
 		}
 
@@ -1794,9 +1903,9 @@ function restoreFeatureDraftFromShareLink() {
 			}
 
 			if (mode === "custodial") {
-				await handleCustodialExecution({ inputText, concurrency, headers, reportElement });
+				await handleCustodialExecution({ inputText, featureCid, concurrency, headers, reportElement });
 			} else if (mode === "noncustodial" || mode === "onchain" || mode === "channel" || mode === "extension" ||!mode) {
-				await handleNonCustodialExecution({ inputText, concurrency, headers, reportElement });
+				await handleNonCustodialExecution({ inputText, featureCid, concurrency, headers, reportElement });
 			} else {
 				reportElement.innerText = `Unknown execution mode: ${mode}`;
 			}
@@ -1880,24 +1989,28 @@ function restoreFeatureDraftFromShareLink() {
 		payBtn.onclick = () => fetch(`/ecai/market/jobs/${jobId}/pay`, {method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({admin_ak: window.myAdminAk})}).then(()=>loadJobIntoModal(jobId));
 	}
 
-	async function handleCustodialExecution({ inputText, concurrency, headers, reportElement }) {
+	async function handleCustodialExecution({ inputText, featureCid, concurrency, headers, reportElement }) {
+		const payload = {
+			concurrency,
+			stream: true,
+			context: currentRuntimeContext()
+		};
+		if (featureCid) payload.feature_cid = featureCid;
+		else payload.feature = inputText;
+
+		const endpoint = featureCid ? "/execute_feature_ipfs/" : "/execute_feature/";
 		const request = {
 			method: "POST",
 			credentials: "include",
 			headers,
-			body: JSON.stringify({
-				feature: inputText,
-				concurrency,
-				stream: true,
-				context: currentRuntimeContext()
-			})
+			body: JSON.stringify(payload)
 		};
 
 		let response;
 		try {
-			response = await fetch("/execute_feature/", request);
+			response = await fetch(endpoint, request);
 		} catch (err) {
-			console.error("Network error calling /execute_feature/:", err);
+			console.error(`Network error calling ${endpoint}:`, err);
 			reportElement.innerText =
 				"Network error while executing feature: " + (err.message || String(err));
 			return;
@@ -1917,6 +2030,9 @@ function restoreFeatureDraftFromShareLink() {
 
 		try {
 			await streamResponseToDOM(response, reportElement);
+			if (featureCid) {
+				rememberRecentFeature({ cid: featureCid, source: "ipfs-picker" });
+			}
 			await refreshDashboardBalances();
 		} catch (err) {
 			console.error("Error streaming response to DOM:", err);
@@ -1925,7 +2041,7 @@ function restoreFeatureDraftFromShareLink() {
 		}
 	}
 
-	async function handleNonCustodialExecution({ inputText, concurrency, headers, reportElement }) {
+	async function handleNonCustodialExecution({ inputText, featureCid, concurrency, headers, reportElement }) {
 		const address = window.TokenManager.getAddress();
 		if (!address) {
 			reportElement.innerText = "No wallet address found. Please connect your wallet.";
@@ -1947,17 +2063,20 @@ function restoreFeatureDraftFromShareLink() {
 			return;
 		}
 
+		const preparePayload = {
+			address,
+			concurrency,
+			channel_id: channel.channel.id,
+			context: currentRuntimeContext()
+		};
+		if (featureCid) preparePayload.feature_cid = featureCid;
+		else preparePayload.feature = inputText;
+
 		const prepareReq = {
 			method: "POST",
 			credentials: "include",
 			headers,
-			body: JSON.stringify({
-				feature: inputText,
-				address,
-				concurrency,
-				channel_id: channel.channel.id,
-				context: currentRuntimeContext()
-			})
+			body: JSON.stringify(preparePayload)
 		};
 
 		let txPrepareResp;
@@ -2040,17 +2159,20 @@ function restoreFeatureDraftFromShareLink() {
 			return;
 		}
 
+		const signedPayload = {
+			address,
+			concurrency,
+			signed_tx: signedTx,
+			context: currentRuntimeContext()
+		};
+		if (featureCid) signedPayload.feature_cid = featureCid;
+		else signedPayload.feature = inputText;
+
 		const signedRequest = {
 			method: "POST",
 			credentials: "include",
 			headers,
-			body: JSON.stringify({
-				feature: inputText,
-				address,
-				concurrency,
-				signed_tx: signedTx,
-				context: currentRuntimeContext()
-			})
+			body: JSON.stringify(signedPayload)
 		};
 
 		let signedResponse;

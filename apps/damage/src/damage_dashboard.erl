@@ -79,6 +79,7 @@ render_full_page(Ctx) ->
     SchM = render_tpl(?TPL("schedule_modal.mustache"), Ctx),
     InstM = render_tpl(?TPL("install_modal.mustache"), Ctx),
     PickM = render_tpl(?TPL("feature_picker_modal.mustache"), Ctx),
+    IpfsPickM = render_tpl(?TPL("file_picker_modal.mustache"), Ctx),
     NotifyM = render_tpl(?TPL("notification_modal.mustache"), Ctx),
     Foot = render_tpl(?TPL("footer.mustache"), Ctx),
     NpkM = render_tpl(?TPL("node_details_modal.mustache"), Ctx),
@@ -109,6 +110,7 @@ render_full_page(Ctx) ->
         schedule_modal => SchM,
         install_modal => InstM,
         feature_picker_modal => PickM,
+        file_picker_modal => IpfsPickM,
         notification_modal => NotifyM,
         footer => Foot,
         node_unlock_modal => NodeUnlockM,
@@ -158,6 +160,8 @@ render_component(install_modal, Ctx) ->
     render_tpl(?TPL("install_modal.mustache"), Ctx);
 render_component(feature_picker_modal, Ctx) ->
     render_tpl(?TPL("feature_picker_modal.mustache"), Ctx);
+render_component(file_picker_modal, Ctx) ->
+    render_tpl(?TPL("file_picker_modal.mustache"), Ctx);
 render_component(footer, Ctx) ->
     render_tpl(?TPL("footer.mustache"), Ctx);
 render_component(_, _) ->

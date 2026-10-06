@@ -78,6 +78,30 @@ trails() ->
             }
         ),
         trails:trail(
+            "/api/ipfs/ls",
+            damage_http,
+            #{action => ipfs_ls},
+            #{
+                post =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description =>
+                            "List a validated IPFS CID/path through the node's configured Kubo service.",
+                        produces => ["application/json"],
+                        parameters =>
+                            [
+                                #{
+                                    name => <<"path">>,
+                                    description => <<"IPFS path such as /ipfs/<cid>/features.">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"string">>
+                                }
+                            ]
+                    }
+            }
+        ),
+        trails:trail(
             "/tx/",
             damage_http,
             #{action => tx},
@@ -185,6 +209,43 @@ trails() ->
                             ]
                     }
             }
+        ),
+        trails:trail(
+            "/execute_feature_ipfs/",
+            damage_http,
+            #{action => execute_feature_from_ipfs},
+            #{
+                get =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description =>
+                            "Form to execute an IPFS-hosted feature on this DamageBDD server.",
+                        produces => ["text/html"]
+                    },
+                post =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "Execute a feature fetched from IPFS (feature CID/path).",
+                        produces => ["application/json"],
+                        parameters =>
+                            [
+                                #{
+                                    name => <<"feature_cid">>,
+                                    description => <<"IPFS CID or CID-relative path of the feature file.">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"string">>
+                                },
+                                #{
+                                    name => <<"vars">>,
+                                    description => <<"Variables to merge into execution context.">>,
+                                    in => <<"body">>,
+                                    required => false,
+                                    type => <<"object">>
+                                }
+                            ]
+                    }
+            }
         )
     ].
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
@@ -218,6 +279,10 @@ generate_l402_invoice(Req0, State) ->
             {{false, ?AUTH_HEADER}, Req0, State};
         node_anchor ->
             {{false, ?AUTH_HEADER}, Req0, State};
+        %% Browsing the node's configured IPFS daemon is an authenticated UI
+        %% helper, not a paid execution operation.
+        ipfs_ls ->
+            {{false, ?AUTH_HEADER}, Req0, State};
         _ ->
             case node_secrets_ready() of
                 true ->
@@ -230,7 +295,7 @@ generate_l402_invoice(Req0, State) ->
 generate_l402_invoice_ready(execute_feature, Req, State, Scope) ->
     maybe_dynamic_price(Req, State, Scope);
 generate_l402_invoice_ready(execute_feature_from_ipfs, Req, State, Scope) ->
-    maybe_dynamic_price(Req, State, Scope);
+    maybe_dynamic_ipfs_price(Req, State, Scope);
 generate_l402_invoice_ready(_Action, Req, State, Scope) ->
     static_l402(Req, State, Scope).
 
@@ -256,6 +321,49 @@ maybe_dynamic_price(Req0, State, Scope) ->
                         end
                     );
                 {error, _Why} ->
+                    static_l402(Req1, State, Scope)
+            end;
+        false ->
+            static_l402(Req0, State, Scope)
+    end.
+
+maybe_dynamic_ipfs_price(Req0, State, Scope) ->
+    case cowboy_req:has_body(Req0) of
+        true ->
+            {ok, Body, Req1} = cowboy_req:read_body(Req0),
+            case decode_json(Body) of
+                {ok, Json0} when is_map(Json0) ->
+                    case hydrate_feature_json(Json0) of
+                        {ok, Json1} ->
+                            case normalize_execution_json_context(Json1) of
+                                {ok, ExecutionJson} ->
+                                    case dry_run_ipfs_cost_msat(ExecutionJson, State, Req1) of
+                                        {ok, AmountMsat, DryRec} ->
+                                            BodyOut = jsx:encode(#{
+                                                status => <<"payment_required">>,
+                                                scope => Scope,
+                                                amount_msat => AmountMsat,
+                                                dry_run => DryRec
+                                            }),
+                                            handle_l402_challenge(
+                                                Req1,
+                                                State,
+                                                fun() ->
+                                                    damage_l402:challenge_with_body(
+                                                        Req1, Scope, AmountMsat, BodyOut
+                                                    )
+                                                end
+                                            );
+                                        {error, _Why} ->
+                                            static_l402(Req1, State, Scope)
+                                    end;
+                                {error, _Why} ->
+                                    static_l402(Req1, State, Scope)
+                            end;
+                        {error, _Why} ->
+                            static_l402(Req1, State, Scope)
+                    end;
+                _ ->
                     static_l402(Req1, State, Scope)
             end;
         false ->
@@ -396,6 +504,23 @@ dry_run_cost_msat(FeatureBin, State, Req) ->
                 color_formatter => false,
                 public_key => L402Account
             },
+            dry_run_cost_msat_for_context(Context0, State, Req);
+        {error, _Why} = Error ->
+            Error
+    end.
+
+dry_run_ipfs_cost_msat(ExecutionJson, State, Req) ->
+    case l402_execution_account() of
+        {ok, L402Account} ->
+            Context0 = maps:merge(
+                ExecutionJson,
+                #{
+                    stream => nostream,
+                    concurrency => 1,
+                    color_formatter => false,
+                    public_key => L402Account
+                }
+            ),
             dry_run_cost_msat_for_context(Context0, State, Req);
         {error, _Why} = Error ->
             Error
@@ -1333,6 +1458,64 @@ decode_json(Data) ->
         Class:Reason:Stack ->
             {error, {Class, Reason, Stack}}
     end.
+
+hydrate_feature_json(Json0) when is_map(Json0) ->
+    case maps:is_key(feature_cid, Json0) of
+        true ->
+            case damage_ipfs:hydrate_feature_from_ipfs(Json0) of
+                {ok, Hydrated} -> {ok, maps:remove(feature_cid, Hydrated)};
+                {error, _} = Error -> Error
+            end;
+        false ->
+            {ok, Json0}
+    end.
+
+ipfs_hydration_error_reply(Req0, State, Why) ->
+    Body = jsx:encode(#{status => <<"notok">>, error => to_bin(Why)}),
+    Req = cowboy_req:reply(
+        400,
+        #{<<"content-type">> => <<"application/json">>},
+        Body,
+        Req0
+    ),
+    {stop, Req, State}.
+
+ipfs_ls_response(Path) ->
+    case damage_ipfs:ls(Path) of
+        {ok, [#{<<"Objects">> := [#{<<"Links">> := Links} | _]} | _]} when is_list(Links) ->
+            {200, #{status => <<"ok">>, path => to_bin(Path), links => normalize_ipfs_links(Links)}};
+        {ok, #{<<"Objects">> := [#{<<"Links">> := Links} | _]}} when is_list(Links) ->
+            {200, #{status => <<"ok">>, path => to_bin(Path), links => normalize_ipfs_links(Links)}};
+        {error, Reason} ->
+            {400, #{status => <<"notok">>, error => to_bin(io_lib:format("~p", [Reason]))}};
+        Other ->
+            {502, #{
+                status => <<"notok">>,
+                error => <<"IPFS_LS_BAD_RESPONSE">>,
+                reason => to_bin(io_lib:format("~p", [Other]))
+            }}
+    end.
+
+normalize_ipfs_links(Links) ->
+    [normalize_ipfs_link(Link) || Link <- Links, is_map(Link)].
+
+normalize_ipfs_link(Link) ->
+    Type0 = maps:get(<<"Type">>, Link, maps:get(type, Link, 0)),
+    Type =
+        case Type0 of
+            1 -> <<"dir">>;
+            5 -> <<"dir">>;
+            <<"Directory">> -> <<"dir">>;
+            <<"HAMTShard">> -> <<"dir">>;
+            "Directory" -> <<"dir">>;
+            _ -> <<"file">>
+        end,
+    #{
+        name => maps:get(<<"Name">>, Link, maps:get(name, Link, <<>>)),
+        hash => maps:get(<<"Hash">>, Link, maps:get(hash, Link, <<>>)),
+        size => maps:get(<<"Size">>, Link, maps:get(size, Link, 0)),
+        type => Type
+    }.
 %% Runtime context accepted by execution endpoints.
 %%
 %% JSON:
@@ -1740,6 +1923,10 @@ execution_request_internal_keys() ->
     [
         feature,
         <<"feature">>,
+        feature_cid,
+        <<"feature_cid">>,
+        vars,
+        <<"vars">>,
         concurrency,
         <<"concurrency">>,
         stream,
@@ -2089,25 +2276,64 @@ do_action_tx(#{signature := Sig, message := Message, pubkey := PubKey} = _Json, 
                 }
             }
     end.
+from_json(Req0, #{action := ipfs_ls} = State) ->
+    {ok, Data, Req1} = cowboy_req:read_body(Req0),
+    case decode_json(Data) of
+        {ok, Json} when is_map(Json) ->
+            case maps:get(path, Json, undefined) of
+                undefined ->
+                    Req = cowboy_req:reply(
+                        400,
+                        #{<<"content-type">> => <<"application/json">>},
+                        jsx:encode(#{status => <<"notok">>, error => <<"missing_path">>}),
+                        Req1
+                    ),
+                    {stop, Req, State};
+                Path ->
+                    {Status, Response} = ipfs_ls_response(Path),
+                    Req = cowboy_req:reply(
+                        Status,
+                        #{<<"content-type">> => <<"application/json">>},
+                        jsx:encode(Response),
+                        Req1
+                    ),
+                    {stop, Req, State}
+            end;
+        {error, DecodeError} ->
+            json_decode_failed(Req1, State, "JSON decoding failed", DecodeError);
+        {ok, _Other} ->
+            Req = cowboy_req:reply(
+                400,
+                #{<<"content-type">> => <<"application/json">>},
+                jsx:encode(#{status => <<"notok">>, error => <<"invalid_json_payload">>}),
+                Req1
+            ),
+            {stop, Req, State}
+    end;
 from_json(Req0, #{action := tx} = State) ->
     {ok, Data, Req1} = cowboy_req:read_body(Req0),
     case decode_json(Data) of
         {error, DecodeError} ->
             json_decode_failed(Req1, State, "Json decoding failed", DecodeError);
         {ok, Json0} when is_map(Json0) ->
-            case normalize_execution_json_context(Json0) of
-                {ok, Json} ->
-                    {Status0, Response0} = do_action_tx_throttled(Json, State, Req1),
-                    {
-                        stop,
-                        cowboy_req:reply(
-                            Status0,
-                            cowboy_req:set_resp_body(jsx:encode(Response0), Req1)
-                        ),
-                        State
-                    };
-                {error, Reason} ->
-                    runtime_context_error_reply(Req1, State, Reason)
+            case hydrate_feature_json(Json0) of
+                {ok, HydratedJson} ->
+                    case normalize_execution_json_context(HydratedJson) of
+                        {ok, Json} ->
+                            {Status0, Response0} = do_action_tx_throttled(Json, State, Req1),
+                            {
+                                stop,
+                                cowboy_req:reply(
+                                    Status0,
+                                    cowboy_req:set_resp_body(jsx:encode(Response0), Req1)
+                                ),
+                                State
+                            };
+                        {error, Reason} ->
+                            runtime_context_error_reply(Req1, State, Reason)
+                    end;
+                {error, Why} ->
+                    ipfs_hydration_error_reply(Req1, State, Why)
             end;
         {ok, _Other} ->
             Req2 = cowboy_req:reply(
@@ -2124,38 +2350,22 @@ from_json(Req0, State) ->
         {error, DecodeError} ->
             json_decode_failed(Req1, State, "JSON decoding failed", DecodeError);
         {ok, Json0} when is_map(Json0) ->
-            %% Support IPFS-hosted feature execution
-            Json =
-                case maps:is_key(feature_cid, Json0) of
-                    true ->
-                        case damage_ipfs:hydrate_feature_from_ipfs(Json0) of
-                            {ok, J} ->
-                                J;
-                            {error, Why} ->
-                                ErrBin = jsx:encode(#{status => <<"notok">>, error => to_bin(Why)}),
-                                ReqE = cowboy_req:reply(
-                                    400,
-                                    #{<<"content-type">> => <<"application/json">>},
-                                    ErrBin,
-                                    Req1
-                                ),
-                                throw({stop, ReqE, State})
-                        end;
-                    false ->
-                        Json0
-                end,
-
-            case normalize_execution_json_context(Json) of
-                {ok, ExecutionJson0} ->
-                    case json_stream_mode(ExecutionJson0) of
+            case hydrate_feature_json(Json0) of
+                {ok, Json} ->
+                    case normalize_execution_json_context(Json) of
+                        {ok, ExecutionJson0} ->
+                            case json_stream_mode(ExecutionJson0) of
+                                {error, Reason} ->
+                                    stream_mode_error_reply(Req1, State, Reason);
+                                StreamMode ->
+                                    ExecutionJson = maps:put(stream, StreamMode, ExecutionJson0),
+                                    execute_feature_http(ExecutionJson, State, Req1, StreamMode)
+                            end;
                         {error, Reason} ->
-                            stream_mode_error_reply(Req1, State, Reason);
-                        StreamMode ->
-                            ExecutionJson = maps:put(stream, StreamMode, ExecutionJson0),
-                            execute_feature_http(ExecutionJson, State, Req1, StreamMode)
+                            runtime_context_error_reply(Req1, State, Reason)
                     end;
-                {error, Reason} ->
-                    runtime_context_error_reply(Req1, State, Reason)
+                {error, Why} ->
+                    ipfs_hydration_error_reply(Req1, State, Why)
             end
     end.
 

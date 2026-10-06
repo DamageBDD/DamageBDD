@@ -2,12 +2,15 @@
  *
  * - Injects its own MicroModal-compatible HTML
  * - Uses window.MicroModal if present, else minimal open/close fallback
- * - Browses: /ipfs/<cid>/... or /ipns/<name>/...
+ * - Browses immutable /ipfs/<cid>/... paths
  * - Recents + pinned stored in localStorage
  *
- * Requires an IPFS HTTP API endpoint (Kubo):
- *   POST <apiBase>/api/v0/ls?arg=<path>&resolve-type=true&size=true
- *   POST <apiBase>/api/v0/add?pin=true
+ * Uses DamageBDD's same-origin IPFS browser API by default:
+ *   POST /api/ipfs/ls  {"path":"/ipfs/<cid>/..."}
+ *
+ * Direct Kubo upload support is optional and disabled in the dashboard
+ * integration. This keeps the browser away from the node's loopback-only
+ * Kubo control API.
  */
 const LS_RECENTS = "ipfsfp_recents_v1";
 const LS_PINNED  = "ipfsfp_pinned_v1";
@@ -24,15 +27,15 @@ function escapeHtml(s){
 function normalizePath(p){
   if (!p) return "/ipfs/";
   p = String(p).trim();
+  if (p.startsWith("ipfs://")) p = "/ipfs/" + p.slice("ipfs://".length);
   if (!p.startsWith("/")) p = "/" + p;
   p = p.replace(/\/{2,}/g, "/");
-  // Ensure /ipfs and /ipns roots end with /
   if (p === "/ipfs") p = "/ipfs/";
-  if (p === "/ipns") p = "/ipns/";
   return p;
 }
 
-function isRoot(p){ p = normalizePath(p); return p === "/ipfs/" || p === "/ipns/"; }
+function isRoot(p){ p = normalizePath(p); return p === "/ipfs/"; }
+function isIpfsPath(p){ p = normalizePath(p); return p.startsWith("/ipfs/") && !isRoot(p); }
 
 function parentPath(p){
   p = normalizePath(p);
@@ -79,19 +82,35 @@ function fmtBytes(n){
   return (v >= 10 || i === 0) ? `${Math.round(v)} ${u[i]}` : `${v.toFixed(1)} ${u[i]}`;
 }
 
+function damageAuthHeaders(extra = {}){
+  const headers = new Headers(extra);
+  const token = window.TokenManager?.getToken?.();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  return headers;
+}
+
 async function ipfsLs(apiBase, ipfsPath){
-  const url = apiBase.replace(/\/$/, "") + "/api/v0/ls?resolve-type=true&size=true&arg=" + encodeURIComponent(ipfsPath);
-  const res = await fetch(url, { method: "POST" });
+  const path = normalizePath(ipfsPath);
+  if (!isIpfsPath(path)) throw new Error("Enter an immutable /ipfs/<cid> path.");
+  const url = apiBase.replace(/\/$/, "") + "/ls";
+  const res = await fetch(url, {
+    method: "POST",
+    credentials: "include",
+    headers: damageAuthHeaders({
+      "Content-Type": "application/json",
+      "Accept": "application/json"
+    }),
+    body: JSON.stringify({ path })
+  });
   if (!res.ok) throw new Error(`ls failed: ${res.status}`);
   const data = await res.json();
 
-  const obj = (data.Objects && data.Objects[0]) || {};
-  const links = obj.Links || [];
+  const links = Array.isArray(data.links) ? data.links : [];
   return links.map(l => ({
-    name: l.Name || "",
-    hash: l.Hash || "",
-    size: typeof l.Size === "number" ? l.Size : null,
-    type: (l.Type === 2 || l.Type === "Directory") ? "dir" : "file"
+    name: l.name || l.Name || "",
+    hash: l.hash || l.Hash || "",
+    size: typeof (l.size ?? l.Size) === "number" ? (l.size ?? l.Size) : null,
+    type: (l.type || l.kind) === "dir" ? "dir" : "file"
   }));
 }
 
@@ -129,11 +148,12 @@ function buildModalHtml(modalId){
 
         <div class="ipfsfp-kv">
           <div class="ipfsfp-mini">Start path</div>
-          <input type="text" data-ipfsfp-startpath value="/ipfs/" placeholder="/ipfs/<cid> or /ipns/<name>" />
+          <input type="text" data-ipfsfp-startpath value="/ipfs/" placeholder="/ipfs/<cid>/path/to.feature" />
           <div class="ipfsfp-rowbtn">
             <button type="button" data-ipfsfp-go>Go</button>
             <button type="button" data-ipfsfp-up>Up</button>
           </div>
+          <button type="button" data-ipfsfp-usepath>Use feature path</button>
         </div>
 
         <div class="ipfsfp-sep"></div>
@@ -182,14 +202,18 @@ function buildModalHtml(modalId){
  * Create an IPFS file picker instance.
  *
  * @param {object} opts
- * @param {string} [opts.apiBase="/ipfs-api"]  Base URL to Kubo API proxy (same-origin recommended)
+ * @param {string} [opts.apiBase="/api/ipfs"] DamageBDD same-origin IPFS browser API
  * @param {string} [opts.modalId="ipfs-filepicker-modal"]
  * @param {boolean} [opts.allowFolders=false] Allow selecting folders
+ * @param {boolean} [opts.allowUpload=false] Show direct Kubo upload tab
+ * @param {string|null} [opts.uploadApiBase=null] Direct Kubo API base for upload when enabled
  */
 export function createIpfsFilePicker(opts = {}){
-  const apiBaseDefault = opts.apiBase || "/ipfs-api";
+  const apiBaseDefault = opts.apiBase || "/api/ipfs";
   const modalId = opts.modalId || "ipfs-filepicker-modal";
   const allowFolders = !!opts.allowFolders;
+  const allowUpload = !!opts.allowUpload;
+  const uploadApiBase = opts.uploadApiBase || null;
 
   // Inject modal once
   let modal = document.getElementById(modalId);
@@ -209,6 +233,7 @@ export function createIpfsFilePicker(opts = {}){
     startPath: modal.querySelector("[data-ipfsfp-startpath]"),
     go: modal.querySelector("[data-ipfsfp-go]"),
     up: modal.querySelector("[data-ipfsfp-up]"),
+    usePath: modal.querySelector("[data-ipfsfp-usepath]"),
     back: modal.querySelector("[data-ipfsfp-back]"),
     forward: modal.querySelector("[data-ipfsfp-forward]"),
     refresh: modal.querySelector("[data-ipfsfp-refresh]"),
@@ -223,7 +248,9 @@ export function createIpfsFilePicker(opts = {}){
 
   const state = {
     apiBase: apiBaseDefault,
+    uploadApiBase,
     allowFolders,
+    allowUpload,
     tab: "browse",
     path: "/ipfs/",
     entries: [],
@@ -233,6 +260,9 @@ export function createIpfsFilePicker(opts = {}){
     histPos: -1,
     onSelect: null
   };
+
+  const uploadTab = modal.querySelector('[data-ipfsfp-tab="upload"]');
+  if (uploadTab && !state.allowUpload) uploadTab.hidden = true;
 
   function setStatus(s){ els.status.textContent = s; }
 
@@ -288,12 +318,12 @@ export function createIpfsFilePicker(opts = {}){
     setStatus("Loading…");
 
     try{
-      if (p === "/ipfs/" || p === "/ipns/"){
+      if (p === "/ipfs/"){
         state.entries = [];
         els.list.innerHTML = `
           <div style="padding:18px;color:rgba(231,233,238,.75)">
-            Paste a CID or IPNS name into <b>Start path</b> (left), then hit <b>Go</b>.<br/>
-            Example: <code>/ipfs/&lt;cid&gt;/</code> or <code>/ipns/&lt;name&gt;/</code>
+            Paste an immutable CID or feature path into <b>Start path</b>, then hit <b>Go</b>.<br/>
+            Example: <code>/ipfs/&lt;cid&gt;/features/login.feature</code>
           </div>`;
         setStatus("Enter a CID");
         return;
@@ -406,6 +436,15 @@ export function createIpfsFilePicker(opts = {}){
     }
 
     if (state.tab === "upload"){
+      if (!state.allowUpload || !state.uploadApiBase){
+        setStatus("Upload disabled");
+        els.list.innerHTML = `
+          <div style="padding:18px;color:rgba(231,233,238,.75)">
+            Browser uploads are disabled on this node. Add the feature to IPFS through
+            your normal publication workflow, then paste its CID above.
+          </div>`;
+        return;
+      }
       setStatus("Upload");
       els.list.innerHTML = `
         <div style="padding:18px;border:1px dashed rgba(255,255,255,.18);border-radius:12px;margin:10px;">
@@ -423,7 +462,7 @@ export function createIpfsFilePicker(opts = {}){
         if (!inp.files || !inp.files[0]) return;
         out.textContent = "Uploading…";
         try{
-          const r = await ipfsAdd(state.apiBase, inp.files[0]);
+          const r = await ipfsAdd(state.uploadApiBase, inp.files[0]);
           const p = "/ipfs/" + r.Hash;
           out.innerHTML = `Added: <code>${escapeHtml(p)}</code> (${fmtBytes(parseInt(r.Size,10) || 0)})`;
           addRecent(p);
@@ -457,6 +496,21 @@ export function createIpfsFilePicker(opts = {}){
 
   els.go.addEventListener("click", async () => { setPath(els.startPath.value, true); await refreshBrowse(); });
   els.up.addEventListener("click", async () => { setPath(parentPath(state.path), true); await refreshBrowse(); });
+  els.usePath?.addEventListener("click", () => {
+    const path = normalizePath(els.startPath.value || state.path);
+    if (!isIpfsPath(path)) {
+      setStatus("Enter an immutable /ipfs/<cid> feature path");
+      return;
+    }
+    state.selected = {
+      path,
+      name: path.split("/").filter(Boolean).slice(-1)[0] || path,
+      hash: path.split("/").filter(Boolean)[1] || "",
+      size: null,
+      type: "file"
+    };
+    confirmSelection();
+  });
 
   els.refresh.addEventListener("click", refreshBrowse);
 

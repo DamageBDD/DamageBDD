@@ -10,12 +10,12 @@ execute({get, Cid0, Path}, C) ->
         with_connection(fun(P, T) -> ipfs:get(P, Cid, Path, T) end, C)
     end);
 execute({cat, Cid0}, C) ->
-    with_cid(Cid0, fun(Cid) ->
-        limit_result(with_connection(fun(P, T) -> ipfs:cat(P, Cid, T) end, C), C)
+    with_cid_path(Cid0, fun(Path) ->
+        limit_result(with_connection(fun(P, T) -> ipfs:cat(P, Path, T) end, C), C)
     end);
 execute({ls, Cid0}, C) ->
-    with_cid(Cid0, fun(Cid) ->
-        with_connection(fun(P, T) -> ipfs:ls(P, Cid, T) end, C)
+    with_cid_path(Cid0, fun(Path) ->
+        with_connection(fun(P, T) -> ipfs:ls(P, Path, T) end, C)
     end);
 %% Preserve the existing dependency's pin result shape for legacy callers.
 execute({pin, Hashes}, C) ->
@@ -104,6 +104,51 @@ with_cid(Cid0, Fun) when is_function(Fun, 1) ->
     case damage_ipfs_config:cid(Cid0) of
         {ok, Cid} -> Fun(Cid);
         {error, _} = Error -> Error
+    end.
+
+with_cid_path(Path0, Fun) when is_function(Fun, 1) ->
+    case normalize_cid_path(Path0) of
+        {ok, Path} -> Fun(Path);
+        {error, _} = Error -> Error
+    end.
+
+normalize_cid_path(Path0) when is_list(Path0) ->
+    try normalize_cid_path(unicode:characters_to_binary(Path0))
+    catch
+        _:_ -> {error, invalid_ipfs_path}
+    end;
+normalize_cid_path(Path0) when is_binary(Path0) ->
+    Path1 =
+        case Path0 of
+            <<"ipfs://", Rest/binary>> -> Rest;
+            <<"/ipfs/", Rest/binary>> -> Rest;
+            _ -> Path0
+        end,
+    Path = trim_trailing_slashes(Path1),
+    case binary:split(Path, <<"/">>) of
+        [Cid] ->
+            case damage_ipfs:valid_cid(Cid) of
+                true -> {ok, Cid};
+                false -> {error, invalid_ipfs_path}
+            end;
+        [Cid, Relative] ->
+            case
+                damage_ipfs:valid_cid(Cid) andalso Relative =/= <<>> andalso
+                    damage_ipfs:valid_relative_path(Relative)
+            of
+                true -> {ok, <<Cid/binary, "/", Relative/binary>>};
+                false -> {error, invalid_ipfs_path}
+            end
+    end;
+normalize_cid_path(_) ->
+    {error, invalid_ipfs_path}.
+
+trim_trailing_slashes(<<>>) ->
+    <<>>;
+trim_trailing_slashes(Path) when is_binary(Path) ->
+    case binary:last(Path) of
+        $/ -> trim_trailing_slashes(binary:part(Path, 0, byte_size(Path) - 1));
+        _ -> Path
     end.
 
 with_connection(Fun, C) ->

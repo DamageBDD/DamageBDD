@@ -98,6 +98,16 @@
   color: var(--ipfs-fg);
   cursor:pointer;
 }
+.ipfsfp .ipfsfp-kv > button{
+  width:100%;
+  padding:10px;
+  border-radius:10px;
+  border:1px solid var(--ipfs-border);
+  background:rgba(255,255,255,.08);
+  color:var(--ipfs-fg);
+  cursor:pointer;
+  font-weight:700;
+}
 
 /* Main */
 .ipfsfp .ipfsfp-main{ display:grid; grid-template-rows:auto auto 1fr auto; min-width:0; }

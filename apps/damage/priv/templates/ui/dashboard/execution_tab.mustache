@@ -5,10 +5,15 @@
       <div>
         <h3>Create/Edit Feature</h3>
         <button type="button" class="styled-btn" id="open-feature-picker">Pick feature…</button>
+        <button type="button" class="styled-btn" id="open-ipfs-feature-picker">Pick from IPFS…</button>
         <button type="button" class="styled-btn" id="edit-execution-context-btn"
                 aria-expanded="false" aria-controls="execution-context-editor">
           Execution context…
         </button>
+        <span id="selected-ipfs-feature" hidden>
+          IPFS: <code id="selected-ipfs-feature-path"></code>
+          <button type="button" class="styled-btn" id="clear-ipfs-feature">Use editor text</button>
+        </span>
       </div>
 
       <div id="execution-context-editor" hidden>
