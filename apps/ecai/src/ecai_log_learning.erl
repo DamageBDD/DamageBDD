@@ -288,12 +288,20 @@ terminate(_Reason, State) ->
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
+safe_repair_feedback(Incident) ->
+    try ecai_repair_feedback:incident(Incident) of
+        _ -> ok
+    catch
+        _:_ -> ok
+    end.
+
 %%====================================================================
 %% Queue completion and retry
 %%====================================================================
 
 finish_item(_Item, {ok, Incident}, State0) ->
     _ = emit_learning_log(info, Incident, undefined),
+    _ = safe_repair_feedback(Incident),
     State1 = inc_counter(learned, State0#state{
         last_completed_at = now_iso8601(),
         last_error = undefined

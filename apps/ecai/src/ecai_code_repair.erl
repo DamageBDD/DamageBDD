@@ -12,7 +12,9 @@
     integration_jobs/0,
     integration_job/1,
     repairs/0,
-    repairs/1
+    repairs/1,
+    feedback_repairs/0,
+    replay_feedback/0
 ]).
 
 scan_now() ->
@@ -54,6 +56,16 @@ integration_job(JobId) -> ecai_patch_integration:job(JobId).
 
 repairs() -> ecai_learning_store:repairs().
 repairs(Fingerprint) -> ecai_learning_store:repairs(Fingerprint).
+
+feedback_repairs() ->
+    [R || R <- ecai_learning_store:repairs(), is_feedback_repair(R)].
+
+replay_feedback() ->
+    ecai_repair_feedback:replay().
+
+is_feedback_repair(Repair) when is_map(Repair) ->
+    maps:is_key(repair_source, Repair) orelse maps:is_key(feedback, Repair);
+is_feedback_repair(_) -> false.
 
 find_finding(_Fingerprint, []) ->
     not_found;

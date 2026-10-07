@@ -47,7 +47,11 @@
             {code_log_learning_connect_timeout_ms, 5000},
             {code_log_learning_cluster_attempts, 2},
             {code_log_learning_max_prompt_bytes, 65536},
-            {code_log_learning_provider, ollama}
+            {code_log_learning_provider, ollama},
+            {code_repair_feedback_enabled, true},
+            {code_repair_feedback_min_confidence, medium},
+            {code_repair_feedback_replay_limit, 100},
+            {code_health_repair_feedback_enabled, true}
         ]},
         {modules, []},
         {licenses, ["Apache 2.0"]},

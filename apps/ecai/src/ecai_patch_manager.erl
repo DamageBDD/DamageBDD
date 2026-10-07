@@ -1,7 +1,7 @@
 -module(ecai_patch_manager).
 -behaviour(gen_server).
 
--export([start_link/0, start_link/1, scan_now/0, status/0]).
+-export([start_link/0, start_link/1, scan_now/0, status/0, enqueue_feedback/4]).
 -export([
     init/1,
     handle_call/3,
@@ -49,6 +49,9 @@ start_link() -> start_link(#{}).
 start_link(Opts) -> gen_server:start_link({local, ?SERVER}, ?MODULE, Opts, []).
 scan_now() -> gen_server:cast(?SERVER, scan_now).
 status() -> gen_server:call(?SERVER, status).
+enqueue_feedback(App, Module, Finding, Meta)
+  when is_atom(App), is_atom(Module), is_map(Finding), is_map(Meta) ->
+    gen_server:cast(?SERVER, {enqueue_feedback, App, Module, Finding, Meta}).
 
 init(Opts) ->
     Interval = maps:get(
@@ -121,6 +124,17 @@ handle_cast(scan_now, State) ->
     %% synchronous dispatch/preflight pass before or after the scan.
     self() ! scan,
     {noreply, State};
+handle_cast({enqueue_feedback, App, Module, Finding, Meta}, State0) ->
+    {Queued, Errors} = admit_feedback(App, Module, Finding, Meta, State0#state.opts),
+    case Queued > 0 of
+        true -> self() ! retry_tick;
+        false -> ok
+    end,
+    State1 = State0#state{
+        queued = State0#state.queued + Queued,
+        last_error = merge_errors(State0#state.last_error, Errors)
+    },
+    {noreply, State1};
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
@@ -147,6 +161,10 @@ handle_info(scan, State0) ->
             erlang:send_after(State1#state.interval_ms, self(), scan),
             {noreply, State1};
         true ->
+            %% Replay durable runtime/health feedback before the normal scan.
+            %% Replayed candidates are cast back to this manager and are
+            %% admitted after the current scan returns, preserving ordering.
+            _ = safe_replay_feedback(),
             %% Persist the complete candidate set before filling worker slots.
             %% Otherwise report enumeration order can consume all available
             %% workers before repair priority is considered.
@@ -232,6 +250,13 @@ safe_learning_ready() ->
                 exit:{timeout, _} -> false;
                 _:_ -> false
             end
+    end.
+
+safe_replay_feedback() ->
+    try ecai_repair_feedback:replay() of
+        _ -> ok
+    catch
+        _:_ -> ok
     end.
 
 safe_app_findings(App) ->
@@ -369,6 +394,94 @@ process_findings(
         Q1,
         E1
     ).
+
+
+admit_feedback(App, Module, Finding, Meta, Opts) ->
+    case patchable(Finding, Opts) of
+        false ->
+            {0, []};
+        true ->
+            case ecai_finding_adjudicator:adjudicate(Finding) of
+                {reject, Reason} ->
+                    {0, [{feedback_rejected, App, Module, Reason}]};
+                accept ->
+                    case ecai_learning_store:get_analysis(App, Module) of
+                        not_found ->
+                            ecai_codebase_learner:module_changed(App, Module),
+                            {0, [{feedback_analysis_unavailable, App, Module}]};
+                        {ok, Analysis} when is_map(Analysis) ->
+                            ExpectedSha = maps:get(source_sha256, Meta, undefined),
+                            case analysis_matches_report_source(ExpectedSha, Analysis) of
+                                true ->
+                                    queue_feedback_if_needed(
+                                        App, Module, Finding, Analysis, Meta, Opts);
+                                false ->
+                                    ecai_codebase_learner:module_changed(App, Module),
+                                    {0, [{feedback_source_changed, App, Module, ExpectedSha,
+                                          maps:get(source_sha256, Analysis, undefined)}]}
+                            end;
+                        Other ->
+                            {0, [{feedback_analysis_invalid, App, Module, Other}]}
+                    end
+            end
+    end.
+
+queue_feedback_if_needed(App, Module, Finding, Analysis, Meta, _Opts) ->
+    Fp = finding_fingerprint(Module, Finding),
+    Version = ecai_code_context:finding_version(App, Module, Finding),
+    Provenance0 = analysis_repair_provenance(Analysis),
+    Provenance = Provenance0#{
+        repair_source => maps:get(source, Meta, runtime_feedback),
+        feedback => maps:without([source_sha256], Meta)
+    },
+    case ecai_learning_store:get_repair(Fp, Version) of
+        {ok, Existing0} ->
+            Existing = ensure_repair_provenance(Existing0, Provenance),
+            maybe_persist_enriched_repair(Fp, Version, Existing0, Existing),
+            {0, []};
+        not_found ->
+            case has_active_feedback_repair(Fp) of
+                true ->
+                    {0, []};
+                false ->
+                    Now = now_iso8601(),
+                    Queued0 = #{
+                        status => queued,
+                        stage => queued,
+                        fingerprint => Fp,
+                        finding_version => Version,
+                        application => App,
+                        module => Module,
+                        finding => Finding,
+                        created_at => Now,
+                        updated_at => Now
+                    },
+                    ok = ecai_learning_store:put_repair(
+                        Fp, Version, maps:merge(Queued0, Provenance)),
+                    {1, []}
+            end
+    end.
+
+has_active_feedback_repair(Fp) ->
+    try ecai_learning_store:repairs(Fp) of
+        Repairs when is_list(Repairs) ->
+            lists:any(fun feedback_repair_active/1, Repairs);
+        _ -> false
+    catch
+        _:_ -> false
+    end.
+
+feedback_repair_active(Repair) when is_map(Repair) ->
+    case maps:get(status, Repair, undefined) of
+        failed -> false;
+        <<"failed">> -> false;
+        blocked -> false;
+        <<"blocked">> -> false;
+        superseded -> false;
+        <<"superseded">> -> false;
+        _ -> true
+    end;
+feedback_repair_active(_) -> false.
 
 report_source_sha256(Report) ->
     case mget(<<"source_sha256">>, Report, undefined) of

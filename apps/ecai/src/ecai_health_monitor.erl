@@ -45,6 +45,7 @@
 -define(DEFAULT_INTERVAL_MS, 300000).
 -define(DEFAULT_INITIAL_DELAY_MS, 15000).
 -define(DEFAULT_RECENT_LOG_LIMIT, 12).
+-define(MAX_RECENT_LOG_LIMIT, 64).
 -define(DEFAULT_QUEUE_TIMEOUT_MS, 15000).
 -define(DEFAULT_REQUEST_TIMEOUT_MS, 30000).
 -define(DEFAULT_CONNECT_TIMEOUT_MS, 5000).
@@ -231,6 +232,7 @@ complete_check({ok, Report}, State0) ->
     },
     PersistError = persist_report(Report, State1),
     _ = emit_report(Report),
+    _ = safe_repair_feedback(Report),
     reply_waiters(Report, State1#state.waiters),
     State1#state{
         waiters = [],
@@ -992,7 +994,7 @@ prompt_logs(Logs) when is_list(Logs) ->
         ))#{
             message => bounded_text(maps:get(message, Log, <<>>), 1024)
         }
-     || Log <- take(Logs, ?DEFAULT_RECENT_LOG_LIMIT),
+     || Log <- take(Logs, ?MAX_RECENT_LOG_LIMIT),
         is_map(Log)
     ];
 prompt_logs(_) ->
@@ -1044,6 +1046,13 @@ restore_checkpoint(State) ->
             State
     catch
         _:_ -> State
+    end.
+
+safe_repair_feedback(Report) ->
+    try ecai_repair_feedback:health_report(Report) of
+        _ -> ok
+    catch
+        _:_ -> ok
     end.
 
 emit_report(Report) ->
@@ -1130,11 +1139,14 @@ state_from_opts(Opts) ->
             code_health_initial_delay_ms,
             ?DEFAULT_INITIAL_DELAY_MS
         ),
-        recent_log_limit = positive_opt(
-            recent_log_limit,
-            Opts,
-            code_health_recent_log_limit,
-            ?DEFAULT_RECENT_LOG_LIMIT
+        recent_log_limit = min(
+            positive_opt(
+                recent_log_limit,
+                Opts,
+                code_health_recent_log_limit,
+                ?DEFAULT_RECENT_LOG_LIMIT
+            ),
+            ?MAX_RECENT_LOG_LIMIT
         ),
         queue_timeout_ms = positive_opt(
             queue_timeout_ms,
