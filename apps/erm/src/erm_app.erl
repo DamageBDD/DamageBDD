@@ -35,6 +35,19 @@ start_phase(Phase, StartType, Args) ->
     end.
 
 start_phase_enabled(start_trails_http, _StartType, []) ->
+    case display_manager_mode() of
+        greeter ->
+            %% erm_dm_greeter_host starts Xorg first and reconciles gtknode4
+            %% afterwards. Keep pre-login runtime dependencies out of this VM.
+            ok;
+        session_host ->
+            %% Session host owns only Xorg + WM; normal ERM has its own VM.
+            ok;
+        disabled ->
+            start_normal_runtime_phase()
+    end.
+
+start_normal_runtime_phase() ->
     %% Normally gtknode4_sup is present from erm_sup:init/1. Reconciliation is
     %% intentionally idempotent and also covers configuration loaded or changed
     %% after the supervisor child list was originally constructed.
@@ -52,8 +65,7 @@ start_phase_enabled(start_trails_http, _StartType, []) ->
             ok;
         {error, HttpReason} ->
             case application:get_env(erm, http_required, false) of
-                true ->
-                    {error, {http_listener_failed, HttpReason}};
+                true -> {error, {http_listener_failed, HttpReason}};
                 false ->
                     ?LOG_WARNING(
                         "ERM HTTP listener is unavailable; continuing without HTTP: ~p",
@@ -61,6 +73,13 @@ start_phase_enabled(start_trails_http, _StartType, []) ->
                     ),
                     ok
             end
+    end.
+
+display_manager_mode() ->
+    case application:get_env(erm, display_manager, []) of
+        Map when is_map(Map) -> maps:get(mode, Map, disabled);
+        List when is_list(List) -> proplists:get_value(mode, List, disabled);
+        _ -> disabled
     end.
 
 enabled() ->

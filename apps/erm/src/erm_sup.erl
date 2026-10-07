@@ -55,12 +55,24 @@ init([]) ->
             ?LOG_NOTICE("erm is disabled by configuration; starting empty supervisor", []),
             {ok, {SupFlags, []}};
         true ->
-            MediaSpecs = media_specs(),
-            LegacySpecs = legacy_specs(),
-            OptionalSpecs = [optional_services_child_spec()],
+            DmSpecs = display_manager_specs(),
             Children =
-                MediaSpecs ++ erm_tts:child_specs() ++ whisper_child_specs() ++ LegacySpecs ++
-                    OptionalSpecs,
+                case display_manager_mode() of
+                    greeter ->
+                        %% Pre-login TCB: no media, voice, wx, Lens, HTTP helpers or
+                        %% user-facing optional workers are supervised here.
+                        DmSpecs;
+                    session_host ->
+                        %% The authenticated session host owns only Xorg + WM
+                        %% lifetime. Normal ERM runs in a different user service.
+                        DmSpecs;
+                    disabled ->
+                        MediaSpecs = media_specs(),
+                        LegacySpecs = legacy_specs(),
+                        OptionalSpecs = [optional_services_child_spec()],
+                        MediaSpecs ++ erm_tts:child_specs() ++ whisper_child_specs() ++ LegacySpecs ++
+                            OptionalSpecs
+                end,
 
             ?LOG_DEBUG("erm core child specifications: ~p", [Children]),
             {ok, {SupFlags, Children}}
@@ -76,6 +88,34 @@ enabled() ->
             ?LOG_WARNING("Ignoring invalid erm.enabled value: ~p; defaulting to true", [Invalid]),
             true
     end.
+%%%===================================================================
+%%% Display manager / persistent session host
+%%%===================================================================
+
+display_manager_mode() ->
+    Config = options_map(application:get_env(erm, display_manager, #{})),
+    maps:get(mode, Config, disabled).
+
+display_manager_specs() ->
+    Config = options_map(application:get_env(erm, display_manager, #{})),
+    case maps:get(mode, Config, disabled) of
+        disabled -> [];
+        greeter ->
+            [#{id => erm_dm_sup,
+               start => {erm_dm_sup, start_link, []},
+               restart => permanent, shutdown => 10000, type => supervisor,
+               modules => [erm_dm_sup]}];
+        session_host ->
+            SessionId = maps:get(default_session, Config, <<"herbstluftwm">>),
+            [#{id => erm_dm_session_host,
+               start => {erm_dm_session_host, start_link, [SessionId]},
+               restart => transient, shutdown => 15000, type => worker,
+               modules => [erm_dm_session_host]}];
+        Invalid ->
+            ?LOG_WARNING("Ignoring invalid erm.display_manager mode: ~p", [Invalid]),
+            []
+    end.
+
 %%%===================================================================
 %%% GTK4 session
 %%%===================================================================

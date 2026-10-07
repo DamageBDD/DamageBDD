@@ -19,6 +19,22 @@
                 %% the complete protocol in doc/gtknode4_protocol.md. Enable it
                 %% in sys.config with the local/fake/visual examples supplied
                 %% by this integration bundle.
+                {display_manager, [
+                    {mode, disabled},
+                    {default_session, "herbstluftwm"},
+                    {display_number, 0},
+                    {exit_on_accept, true},
+                    {auth_helper, "apps/erm/priv/erm_greetd_auth"},
+                    {sessions, [
+                        [
+                            {id, "herbstluftwm"},
+                            {label, "herbstluftwm"},
+                            {command, "/usr/bin/herbstluftwm"},
+                            {args, []},
+                            {desktop, "herbstluftwm"}
+                        ]
+                    ]}
+                ]},
                 {gtknode4, [
                     {enabled, false},
                     {mode, local_cnode},

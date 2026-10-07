@@ -1,0 +1,15 @@
+[Unit]
+Description=erm desktop runtime
+PartOf=graphical-session.target
+After=graphical-session-pre.target
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/erm/bin/erm foreground
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=15
+KillMode=control-group
+
+[Install]
+WantedBy=graphical-session.target

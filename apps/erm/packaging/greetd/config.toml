@@ -1,0 +1,11 @@
+[general]
+source_profile = false
+
+[terminal]
+vt = 1
+switch = true
+
+[default_session]
+# Fixed command only. No interpolated user/session input is passed through sh.
+command = "/usr/lib/erm-greeter/bin/erm_greeter foreground"
+user = "erm-greeter"
