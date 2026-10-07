@@ -1,0 +1,84 @@
+<!-- -*- mode: html -*- -->
+{{! priv/templates/nostr_note.mustache }}
+<header>
+  <div>
+    <strong>Nostr Note Viewer</strong>
+    <div class="muted">note + reactions + comments</div>
+  </div>
+
+  <div class="row">
+    <input id="eid" class="mono" placeholder="event id (hex)" value="{{event_id}}" />
+    <button id="load">Load</button>
+  </div>
+</header>
+
+<div id="status" class="muted" style="margin-top:10px"></div>
+<div id="note" class="card" hidden></div>
+<div id="reactions" class="card" hidden></div>
+<div id="comments" class="card" hidden></div>
+
+<script>
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s ?? '')
+    .replaceAll('&','&amp;')
+    .replaceAll('<','&lt;')
+    .replaceAll('>','&gt;');
+
+  const ts = sec => {
+    try { return new Date((sec||0)*1000).toISOString().replace('T',' ').replace('Z',' UTC'); }
+    catch(_) { return ''; }
+  };
+
+  async function load(){
+    const id = $('#eid').value.trim();
+    if(!id){ $('#status').textContent = 'Missing id'; return; }
+
+    history.replaceState(null,'',`?id=${encodeURIComponent(id)}`);
+    $('#status').textContent = 'Fetching…';
+    $('#note').hidden = true; $('#reactions').hidden = true; $('#comments').hidden = true;
+
+    try {
+      const r = await fetch(`/api/nostr/note/?id=${encodeURIComponent(id)}&limit={{limit}}`);
+      const j = await r.json();
+      if(!r.ok || j.status !== 'ok') throw new Error(j.message || ('HTTP ' + r.status));
+
+      $('#status').textContent = 'OK';
+
+      const n = j.note || {};
+      $('#note').innerHTML =
+        `<div class='muted mono'>id: ${esc(n.id||'')}</div>` +
+        `<div class='muted mono'>pubkey: ${esc(n.pubkey||'')}</div>` +
+        `<div class='muted'>${esc(ts(n.created_at))}</div>` +
+        `<pre>${esc(n.content||'')}</pre>`;
+      $('#note').hidden = false;
+
+      const rs = j.reactions || [];
+      const counts = {};
+      for(const e of rs){ const k = (e.content || '+'); counts[k] = (counts[k]||0) + 1; }
+      const pills = Object.entries(counts).sort((a,b)=>b[1]-a[1])
+        .map(([k,v]) => `<span class='pill mono'>${esc(k)} ${v}</span>`).join(' ');
+      $('#reactions').innerHTML =
+        `<div><strong>Reactions</strong> <span class='muted'>(${rs.length})</span></div>` +
+        `<div class='row' style='margin-top:10px'>${pills || "<span class='muted'>none</span>"}</div>`;
+      $('#reactions').hidden = false;
+
+      const cs = (j.comments || []).sort((a,b)=>(a.created_at||0)-(b.created_at||0));
+      const items = cs.map(e =>
+        `<div class='card' style='margin:10px 0;padding:12px'>` +
+          `<div class='muted mono'>${esc(e.pubkey||'')} · ${esc(ts(e.created_at))}</div>` +
+          `<pre>${esc(e.content||'')}</pre>` +
+        `</div>`
+      ).join('');
+      $('#comments').innerHTML =
+        `<div><strong>Comments</strong> <span class='muted'>(${cs.length})</span></div>` +
+        (items || `<div class='muted' style='margin-top:10px'>none</div>`);
+      $('#comments').hidden = false;
+
+    } catch(e) {
+      $('#status').textContent = 'Error: ' + e.message;
+    }
+  }
+
+  $('#load').addEventListener('click', load);
+  if(($('#eid').value || '').trim()) load();
+</script>

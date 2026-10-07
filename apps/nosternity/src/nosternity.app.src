@@ -5,12 +5,12 @@
     nosternity,
     [
         {description, "Nosternity - Nostr client for eternal notes and stuff."},
-        {vsn, "0.1.0"},
+        {vsn, "0.2.0"},
         {registered, []},
         {mod, {nosternity_app, []}},
         {
             applications,
-            [kernel, stdlib, jsx, cowboy, trails, cowboy_swagger, gproc, gun, damage]
+            [kernel, stdlib, crypto, jsx, cowboy, trails, cowboy_swagger, gproc, gun, damage, ecai]
         },
         {env, []},
         {modules, [nosternity_app, nosternity_sup]},

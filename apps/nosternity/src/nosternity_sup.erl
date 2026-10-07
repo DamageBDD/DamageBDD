@@ -34,13 +34,25 @@ start_link() -> supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 %%                  modules => modules()}   % optional
 
 init([]) ->
+    case nosternity_config:validate() of
+        ok -> init_validated();
+        {error, Reason} -> error(Reason)
+    end.
+
+init_validated() ->
     SupFlags = #{
         strategy => one_for_one,
         intensity => 1000,
         period => 60
     },
+    case nosternity_config:get(enabled) of
+        true -> {ok, {SupFlags, worker_specs()}};
+        false -> {ok, {SupFlags, []}}
+    end.
+
+worker_specs() ->
     Pools = application:get_env(nosternity, pools, []),
-    ?LOG_DEBUG("Starting erm workers ~p~n", [Pools]),
+    ?LOG_DEBUG("Starting Nosternity pools ~p~n", [Pools]),
     PoolSpecs =
         lists:map(
             fun({Name, SizeArgs, WorkerArgs}) ->
@@ -67,8 +79,23 @@ init([]) ->
                 shutdown => 5000,
                 type => worker,
                 modules => [nosternity_relay]
-            },
-            #{
+            }
+        ] ++ nostr_client_specs() ++ PoolSpecs,
+
+    ?LOG_DEBUG("Nosternity worker definitions ~p~n", [PoolSpecs0]),
+    PoolSpecs0.
+
+nostr_client_specs() ->
+    case nosternity_config:get(nostr_clients_enabled) of
+        false -> [];
+        true ->
+            case whereis(nostr_pool) of
+                undefined ->
+                    ?LOG_WARNING("damage-supervised nostr_pool is not running");
+                Pid ->
+                    ?LOG_DEBUG("Using damage-supervised nostr_pool pid=~p", [Pid])
+            end,
+            [#{
                 id => nosternity_nostr,
                 start => {damage_nostr, start_link, [nosternity_nostr_nsec]},
                 restart => transient,
@@ -84,14 +111,5 @@ init([]) ->
                 type => worker,
                 modules => [damage_nostr]
             }
-        ] ++
-            PoolSpecs,
-
-    ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
-    case whereis(nostr_pool) of
-        undefined ->
-            ?LOG_WARNING("damage-supervised nostr_pool is not running");
-        Pid ->
-            ?LOG_DEBUG("Using damage-supervised nostr_pool pid=~p", [Pid])
-    end,
-    {ok, {SupFlags, PoolSpecs0}}.
+            ]
+    end.

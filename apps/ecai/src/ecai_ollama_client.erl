@@ -185,7 +185,7 @@ ollama_request(Prompt, JsonMode, Opts) ->
                 <<"model">> => to_binary(maps:get(model, Opts)),
                 <<"prompt">> => Prompt,
                 <<"stream">> => false,
-                <<"options">> => #{<<"temperature">> => maps:get(temperature, Opts, 0)}
+                <<"options">> => ollama_generation_options(Opts)
             },
             WithSystem = maybe_put_system(Base, <<"system">>, Opts),
             BodyMap =
@@ -221,6 +221,13 @@ ollama_request(Prompt, JsonMode, Opts) ->
                 {error, Reason} ->
                     {error, {ollama_request_failed, Reason}}
             end
+    end.
+
+ollama_generation_options(Opts) ->
+    Base = #{<<"temperature">> => maps:get(temperature, Opts, 0)},
+    case maps:get(max_output_tokens, Opts, undefined) of
+        N when is_integer(N), N > 0 -> Base#{<<"num_predict">> => N};
+        _ -> Base
     end.
 
 openai_request(Prompt, JsonMode, Opts) ->

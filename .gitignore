@@ -256,3 +256,14 @@ packaging/ubuntu/*/deb/
 
 # Blender automatic backup; retain the .blend source asset
 /apps/ecai/priv/blendomatic/*.blend1
+
+# Runtime/generated local state
+/damage
+/meta.json
+/nmapout.xml
+*.ledger
+
+# Common Test generated top-level assets
+/index.html
+/jquery-latest.js
+/jquery.tablesorter.min.js
