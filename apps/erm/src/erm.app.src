@@ -6,7 +6,7 @@
     [
         {description, "An OTP application that provides a graphical shell."},
         {vsn, "0.1.0"},
-        {registered, [erm_sup, gtknode4_sup, gtknode4, gtknode4_port, gtkgs]},
+        {registered, [erm_sup, gtknode4_sup, gtknode4, gtknode4_port, gtkgs, erm_maps]},
         {mod, {erm_app, []}},
         {
             applications,
@@ -50,6 +50,16 @@
                         {dialog_timeout, infinity},
                         {event_log_limit, 1000}
                     ]}
+                ]},
+                {maps, [
+                    {source_id, "osm-mapnik"},
+                    {latitude, 0.0},
+                    {longitude, 0.0},
+                    {zoom_level, 2.0},
+                    {show_zoom_buttons, true},
+                    {width, 1024},
+                    {height, 720},
+                    {ready_timeout, 15000}
                 ]}
             ]
         },

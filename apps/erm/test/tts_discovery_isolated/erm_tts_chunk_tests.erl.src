@@ -30,7 +30,7 @@ with_port(F)->
     D=os:getenv("ERM_TTS_TEST_DIR"),Capture=os:getenv("ERM_TTS_CAPTURE_WAV"),file:delete(Capture),
     P=open_port({spawn_executable,D++"/port"},[binary,{packet,4},use_stdio,exit_status,
         {args,[D++"/model",D++"/config",D,D++"/player"]}]),
-    try receive {P,{data,<<"R">>}}->F(P,Capture) after 2000->error(start_timeout) end
+    try receive {P,{data,<<"R",1>>}}->F(P,Capture) after 2000->error(start_timeout) end
     after try port_close(P) catch _:_ ->ok end end.
 speak(P,Text)->true=port_command(P,<<"S",(list_to_binary(Text))/binary>>),
     receive {P,{data,B}}->B;{P,{exit_status,N}}->error({native_exit,N}) after 2000->error(speech_timeout) end.
@@ -39,4 +39,23 @@ volume_protocol_test_()->
     [{binary_to_list(B),fun()->with_port(fun(P,_)->
         true=port_command(P,B),
         receive {P,{exit_status,N}}->?assertEqual(2,N) after 2000->error(invalid_packet_accepted) end
-    end) end}||B<-[<<"V201\nhello">>,<<"V-1\nhello">>,<<"V1x\nhello">>,<<"V100">>,<<"V100\n">>]].
+    end) end}||B<-[<<"V201\nhello">>,<<"V-1\nhello">>,<<"V1x\nhello">>,<<"V100">>,<<"V100\n">>,<<"B120\nother">>,<<"B201\nready">>,<<"B0\n">>]].
+
+cue_audio_test() -> with_port(fun(P,Capture) ->
+    Before=file:read_file(os:getenv("ERM_TTS_CAPTURE_TEXT")),
+    Waves=[begin
+        true=port_command(P,<<"B85\n",Kind/binary>>),
+        receive {P,{data,<<"D">>}}->ok after 2000->error(no_cue_completion) end,
+        {ok,W}=file:read_file(Capture),
+        <<"RIFF",_:32/little,"WAVEfmt ",_:8/binary,24000:32/little,_:8/binary,
+            "data",11520:32/little,PCM:7680/binary,Tail/binary>>=W,
+        ?assertEqual(binary:copy(<<0>>,3840),Tail),
+        Samples=[N || <<N:16/little-signed>><=PCM],
+        ?assert(lists:max(Samples)>5000),?assert(lists:max(Samples)<6000),
+        ?assertEqual(0,hd(Samples)),?assertEqual(0,lists:last(Samples)),W
+    end || Kind <- [<<"ready">>,<<"end">>]],
+    [Ready,End]=Waves,?assertNotEqual(Ready,End),
+    ?assertEqual(Before,file:read_file(os:getenv("ERM_TTS_CAPTURE_TEXT"))),
+    %% A cue must not poison the Piper iterator used by subsequent speech.
+    ?assertEqual(<<"D">>,speak(P,"single_done"))
+end).

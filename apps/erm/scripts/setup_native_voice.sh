@@ -1,6 +1,8 @@
 #!/bin/sh
-# Build private CPU SDKs without Python. Run as your normal build user.
+# Build private CPU SDKs and the native voice port without Python.
+# Run as your normal build user.
 set -eu
+voice_script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 WHISPER_PREFIX=${WHISPER_PREFIX:-"$HOME/.local/erm-voice/whisper"}
 SHERPA_PREFIX=${SHERPA_PREFIX:-"$HOME/.local/erm-voice/sherpa-onnx"}
 WHISPER_REV=${WHISPER_REV:-6e4ab854f67f743900934a703d5603419384c961}
@@ -24,7 +26,12 @@ cmake -S "$voice_build/whisper" -B "$voice_build/whisper-build" \
     -DBUILD_SHARED_LIBS=ON -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=OFF \
     -DGGML_CUDA=OFF -DGGML_NATIVE=OFF
 cmake --build "$voice_build/whisper-build" --parallel "$JOBS"
+mkdir -p "$WHISPER_PREFIX"
+: > "$WHISPER_PREFIX/.erm-native-voice-installing"
 cmake --install "$voice_build/whisper-build"
+test -f "$WHISPER_PREFIX/include/whisper.h"
+test -f "$WHISPER_PREFIX/lib/libwhisper.so"
+rm -f "$WHISPER_PREFIX/.erm-native-voice-installing"
 fetch "$voice_build/sherpa" https://github.com/k2-fsa/sherpa-onnx.git "$SHERPA_REV"
 cmake -S "$voice_build/sherpa" -B "$voice_build/sherpa-build" \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$SHERPA_PREFIX" \
@@ -36,11 +43,19 @@ cmake -S "$voice_build/sherpa" -B "$voice_build/sherpa-build" \
     -DSHERPA_ONNX_ENABLE_GPU=OFF \
     -DSHERPA_ONNX_USE_PRE_INSTALLED_ONNXRUNTIME_IF_AVAILABLE=OFF
 cmake --build "$voice_build/sherpa-build" --parallel "$JOBS"
+mkdir -p "$SHERPA_PREFIX"
+: > "$SHERPA_PREFIX/.erm-native-voice-installing"
 cmake --install "$voice_build/sherpa-build"
-test -f "$WHISPER_PREFIX/include/whisper.h"
 test -f "$SHERPA_PREFIX/include/sherpa-onnx/c-api/c-api.h"
-test -f "$WHISPER_PREFIX/lib/libwhisper.so"
 test -f "$SHERPA_PREFIX/lib/libsherpa-onnx-c-api.so"
-echo 'SDKs installed. Use these same prefixes for rebar3 and on the runtime host:'
+rm -f "$SHERPA_PREFIX/.erm-native-voice-installing"
+# Always relink against the SDKs just installed, even when the C++ source
+# timestamp has not changed. Resolve the target relative to this script.
+make -B -C "$voice_script_dir/../c_src" -f Makefile.native_voice \
+    WHISPER_PREFIX="$WHISPER_PREFIX" SHERPA_PREFIX="$SHERPA_PREFIX" \
+    TARGET=../priv/erm_native_voice
+test -x "$voice_script_dir/../priv/erm_native_voice"
+echo "Native voice executable built: $voice_script_dir/../priv/erm_native_voice"
+echo 'Keep these SDK prefixes available on the runtime host:'
 printf 'WHISPER_PREFIX=%s\nSHERPA_PREFIX=%s\n' "$WHISPER_PREFIX" "$SHERPA_PREFIX"
-echo 'rebar3 as native_voice compile  (or: rebar3 as prod,tts,native_voice release)'
+echo 'Compile/repackage the application so its priv directory includes erm_native_voice.'

@@ -145,7 +145,7 @@ speech_check(native, false, _) ->
 speech_check(native, true, {error, Reason}) ->
     (result(error, Reason))#{backend => native};
 speech_check(native, true, {ok, S}) ->
-    Summary = maps:with([ready, processing, muted, enrolled], S),
+    Summary = maps:with([ready, processing, muted, enrolled, binary, arecord, error, retry_in_ms], S),
     Summary#{
         backend => native,
         status =>

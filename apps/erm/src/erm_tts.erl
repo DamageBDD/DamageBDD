@@ -5,6 +5,7 @@
     start_link/1,
     child_specs/0,
     say/1,
+    tuning_cue/1, cancel_cue/1,
     notify/2,
     cancel/0,
     status/0,
@@ -82,6 +83,11 @@ call(Request) ->
         exit:{noproc, _} -> {error, disabled};
         exit:{timeout, _} -> {error, timeout}
     end.
+%% Internal tuning API: only the coordinator may play ungated cues. The
+%% native protocol-3 one-shot window owns capture isolation during these cues.
+%% Completion is delivered to the caller after the player exits, not on enqueue.
+tuning_cue(Kind) -> call({tuning_cue, Kind}).
+cancel_cue(Ref) -> call({cancel_cue, Ref}).
 notify(Result, Command) ->
     case whereis(?MODULE) of
         undefined ->
@@ -158,6 +164,7 @@ options(Options) ->
                 voice => lessac_low,
                 speech_timeout_ms => 30000,
                 echo_guard_ms => 6000,
+                guided_echo_guard_ms => 150,
                 personality => plain,
                 volume => 120,
                 volume_step => 10,
@@ -174,6 +181,8 @@ options(Options) ->
             end,
             [startup_timeout_ms, speech_timeout_ms, echo_guard_ms]
         ),
+        GuideGuard = maps:get(guided_echo_guard_ms, O),
+        true = is_integer(GuideGuard) andalso GuideGuard >= 0 andalso GuideGuard =< 2000,
         Max = maps:get(volume_max, O),
         Step = maps:get(volume_step, O),
         Vol = maps:get(volume, O),
@@ -203,6 +212,8 @@ handle_call(status, _, S) ->
             ready => S#st.ready,
             speaking => S#st.busy,
             listening_suppressed => suppressed(),
+            echo_guard_ms => tail(S),
+            cue_ready => S#st.ready andalso maps:get(cue_protocol, S#st.opts, false),
             last_error => S#st.error,
             voice => maps:get(voice, S#st.opts),
             model_source => maps:get(model_source, S#st.opts),
@@ -242,6 +253,16 @@ handle_call(cancel, _, S = #st{busy = true}) ->
     {reply, ok, disconnect(cancelled, S)};
 handle_call(cancel, _, S) ->
     {reply, ok, S};
+handle_call({tuning_cue, Kind}, {Pid, _}, S) when Kind =:= ready; Kind =:= 'end' ->
+    case Pid =:= whereis(erm_voice_tune) of
+        true ->
+            {Reply, Next} = start_cue(Kind, Pid, S),
+            {reply, Reply, Next};
+        false -> {reply, {error, not_tuning_owner}, S}
+    end;
+handle_call({cancel_cue, Ref}, {Pid, _}, S = #st{current = {cue, Ref, Pid, _}}) ->
+    {reply, ok, disconnect(cancelled, S)};
+handle_call({cancel_cue, _}, _, S) -> {reply, ok, S};
 handle_call({say, Text}, _, S) ->
     {Reply, Next} = enqueue(Text, S),
     {reply, Reply, Next};
@@ -268,11 +289,21 @@ handle_info(connect, S = #st{port = undefined, opts = O}) ->
         {pending, Progress} -> {noreply, retry(S0#st{error = {model_pull, Progress}})};
         {error, Reason} -> {noreply, startup_failed({model_pull, Reason}, S0)}
     end;
+handle_info({P, {data, <<"R", 1>>}}, S = #st{port = P, ready = false}) ->
+    {noreply, Next} = handle_info({P, {data, <<"R">>}}, S),
+    {noreply, Next#st{opts = (Next#st.opts)#{cue_protocol => true}}};
 handle_info({P, {data, <<"R">>}}, S = #st{port = P, ready = false}) ->
     logger:notice("tts ready voice=~p volume=~p personality=~p", [
         maps:get(voice, S#st.opts), maps:get(volume, S#st.opts), maps:get(personality, S#st.opts)
     ]),
-    {noreply, clear_timer(S#st{ready = true, error = undefined})};
+    {noreply, clear_timer(S#st{ready = true, error = undefined, opts = (S#st.opts)#{cue_protocol => false}})};
+handle_info({P, {data, <<"D">>}}, S = #st{port = P, current = {cue, _, _, _}}) ->
+    cue_result(ok, S),
+    %% Keep speech replay and the existing speech echo guard unchanged.
+    {noreply, clear_timer(S#st{busy = false, current = undefined})};
+handle_info({'DOWN', Monitor, process, Pid, _},
+    S = #st{current = {cue, _, Pid, Monitor}}) ->
+    {noreply, disconnect(cue_owner_down, S)};
 handle_info({P, {data, <<"D">>}}, S = #st{port = P, busy = true, parts = []}) ->
     gate(tail(S), S),
     {noreply, clear_timer(S#st{busy = false, last_response = S#st.current, current = undefined})};
@@ -288,6 +319,26 @@ handle_info({timeout, Ref, tts}, S = #st{timer = Ref}) ->
     {noreply, disconnect(timeout, S)};
 handle_info(_, S) ->
     {noreply, S}.
+start_cue(_, _, S = #st{ready = false}) -> {{error, not_ready}, S};
+start_cue(_, _, S = #st{busy = true}) -> {{error, busy}, S};
+start_cue(Kind, Pid, S) ->
+    case {maps:get(cue_protocol, S#st.opts, false), maps:get(volume, S#st.opts)} of
+        {false, _} -> {{error, tts_rebuild_required}, S};
+        {_, 0} -> {{error, cue_volume_zero}, S};
+        {true, Volume} ->
+            Ref = make_ref(), Monitor = monitor(process, Pid),
+            Next = S#st{current = {cue, Ref, Pid, Monitor}, busy = true, parts = []},
+            try
+                true = port_command(S#st.port,
+                    <<"B", (integer_to_binary(Volume))/binary, "\n", (atom_to_binary(Kind, utf8))/binary>>),
+                {{ok, Ref}, arm(5000, Next)}
+            catch _:_ -> {{error, port_closed}, disconnect(port_closed, Next)} end
+    end.
+cue_result(Result, #st{current = {cue, Ref, Pid, Monitor}}) ->
+    demonitor(Monitor, [flush]),
+    Pid ! {tts_cue, Ref, Result}, ok;
+cue_result(_, _) -> ok.
+
 enqueue(_, S = #st{ready = false}) ->
     {{error, not_ready}, S};
 enqueue(_, S = #st{busy = true}) ->
@@ -367,6 +418,7 @@ cancel_retry(T) ->
 retry(S = #st{retry = undefined}) -> S#st{retry = erlang:send_after(5000, self(), connect)};
 retry(S) -> S.
 disconnect(Reason, S) ->
+    cue_result({error, Reason}, S),
     logger:debug("tts backend disconnected: ~tp", [Reason]),
     case S#st.busy of
         true -> gate(tail(S), S);
@@ -392,6 +444,21 @@ close(P) ->
         _:_ -> ok
     end.
 tail(#st{opts = O}) ->
+    case guided_native_capture() of
+        true -> maps:get(guided_echo_guard_ms, O, 150);
+        false -> rolling_tail(O)
+    end.
+%% Only exclusive, live native guidance can use a short guard. The native
+%% worker resets capture at every response boundary; there is no rolling audio
+%% backlog to wait out here. Dead/stale owners always use the normal guard.
+guided_native_capture() ->
+    case persistent_term:get({erm_native_voice, guidance}, undefined) of
+        #{native := Native, owner := Owner} when is_pid(Native), is_pid(Owner) ->
+            Native =:= whereis(erm_native_voice) andalso Owner =:= whereis(erm_voice_tune)
+                andalso is_process_alive(Native) andalso is_process_alive(Owner);
+        _ -> false
+    end.
+rolling_tail(O) ->
     W = config(application:get_env(erm, whisper_trigger, [])),
     Roll = lists:sum([
         positive(maps:get(K, W, D), D)
@@ -407,6 +474,7 @@ gate(Ms, _) ->
     ok.
 now_ms() -> erlang:monotonic_time(millisecond).
 terminate(_, S) ->
+    cue_result({error, stopped}, S),
     cancel_retry(S#st.retry),
     case S#st.busy of
         true -> gate(tail(S), S);
@@ -498,6 +566,7 @@ repeat_response(Direction, S) ->
         {Error, Failed} -> {Error, Failed#st{opts = S#st.opts}}
     end.
 reconnect(S) ->
+    cue_result({error, reloaded}, S),
     %% Closing the worker also stops its active player; retain only the last
     %% fully completed response. Stale port messages are ignored by identity.
     cancel_retry(S#st.retry),

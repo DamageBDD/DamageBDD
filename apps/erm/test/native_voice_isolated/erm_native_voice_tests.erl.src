@@ -1,5 +1,6 @@
 -module(erm_native_voice_tests).
 -include_lib("eunit/include/eunit.hrl").
+-export([adding_handler/1, removing_handler/1, log/2]).
 math_test()->
     {ok,V}=erm_native_voice:normalise([3.0,4.0]),
     ?assert(abs(erm_native_voice:score(V,V)-1.0)<0.00001),
@@ -57,12 +58,115 @@ native_test_()->{foreach,fun setup/0,fun cleanup/1,[
         inject(5,[1.0,0.0],2000,<<"Hey Bob stop">>),no_command(),
         ?assertEqual({dropped,tts},maps:get(last,erm_native_voice:status()))
     end end,
-    fun(_)->fun()->ok=erm_native_voice:enrol("owner",3),
+    fun(_)->fun()->ok=manual_enrol("owner",3),
         inject(1,[1.0,0.0],2000,<<"first sample">>),
         inject(2,[0.0,1.0],2000,<<"different speaker">>),
         ?assertEqual({rejected,enrolment_inconsistent},maps:get(last,erm_native_voice:status())),
-        ?assertMatch(#{collected:=1},maps:get(enrolment,erm_native_voice:status())),
+        ?assertMatch(#{collected:=1,rejected:=1,last_check:=#{accepted:=false,
+            audio_ms:=2000,min_score:=0.0,threshold:=0.8,compared_samples:=1}},
+            maps:get(enrolment,erm_native_voice:status())),
         ok=erm_native_voice:cancel_enrol(),?assertNot(maps:get(enrolled,erm_native_voice:status()))
+    end end,
+    fun(_)->fun()->
+        ok=manual_enrol("owner",3),
+        ?assertMatch(#{speaker_settings:=#{speaker_threshold:=0.8,min_speaker_ms:=1200,
+            require_speaker:=true,device:="default"}},erm_native_voice:status()),
+        inject(1,[1.0,0.0],2000,<<"first private phrase">>),
+        inject(2,[0.6,0.8],2400,<<"second private phrase">>),
+        E=maps:get(enrolment,erm_native_voice:status()),
+        ?assertMatch(#{collected:=1,rejected:=1,last_check:=#{reason:=enrolment_inconsistent,
+            method:=centroid,failed_check:=candidate_score}},E),
+        C=maps:get(last_check,E),
+        ?assert(abs(maps:get(min_score,C)-0.6)<0.000001),
+        ?assertEqual([maps:get(min_score,C)],maps:get(scores,C)),
+        ?assert(maps:get(remaining_ms,E)>0 andalso maps:get(remaining_ms,E)=<120000),
+        ?assertEqual(nomatch,binary:match(term_to_binary(E),<<"private phrase">>)),
+        no_command(),
+        inject(3,[1.0,0.0],3000,<<"accepted sample">>),
+        ?assertMatch(#{collected:=2,rejected:=1,last_check:=#{accepted:=true,
+            min_score:=1.0,audio_ms:=3000}},maps:get(enrolment,erm_native_voice:status())),
+        inject(4,[1.0,0.0],3000,<<"final sample">>),
+        ?assert(maps:get(enrolled,erm_native_voice:status())),no_command()
+    end end,
+    fun(_)->fun()->
+        ok=manual_enrol("owner",3),
+        inject(1,[1.0,0.0],500,<<"short">>),
+        ?assertMatch(#{collected:=0,rejected:=1,last_check:=#{reason:=insufficient_audio,
+            audio_ms:=500,min_audio_ms:=1200,embedding_dim:=2,expected_dim:=2}},
+            maps:get(enrolment,erm_native_voice:status())),
+        inject(2,[],2500,<<"no embedding">>),
+        ?assertMatch(#{collected:=0,rejected:=2,last_check:=#{audio_ms:=2500,
+            embedding_dim:=0,expected_dim:=2}},maps:get(enrolment,erm_native_voice:status())),
+        ok=erm_native_voice:cancel_enrol(),
+        ok=manual_enrol("owner",3),
+        ?assertMatch(#{collected:=0,rejected:=0,last_check:=undefined},
+            maps:get(enrolment,erm_native_voice:status())),no_command()
+    end end,
+    fun(O)->fun()->
+        enroll(),
+        {ok,Original}=file:read_file(maps:get(profile_file,O)),
+        ok=manual_enrol("replacement",3),
+        inject(4,[0.0,1.0],2000,<<"replacement first sample">>),
+        inject(5,[1.0,0.0],2000,<<"inconsistent replacement">>),
+        ?assertMatch(#{collected:=1,rejected:=1},maps:get(enrolment,erm_native_voice:status())),
+        ?assertEqual({ok,Original},file:read_file(maps:get(profile_file,O))),
+        ok=erm_native_voice:cancel_enrol(),
+        ?assert(maps:get(enrolled,erm_native_voice:status())),no_command()
+    end end,
+    fun(O)->fun()->
+        %% Synthetic unit vectors reproduce the user's logged cosine scores.
+        %% Only dimension changes in the existing protocol fixture.
+        gen_server:stop(erm_native_voice),
+        true=os:putenv("NATIVE_TEST_DIM","3"),
+        try
+            persistent_term:put(native_test_owner,self()),
+            {ok,_}=erm_native_voice:start_link(O#{speaker_threshold=>0.7}),wait_ready(100),
+            ok=manual_enrol("owner",3),
+            R=0.7214106629037914,
+            A=[1.0,0.0,0.0],B=[R,math:sqrt(1-R*R),0.0],
+            C=correlated_vector(R,0.693090692961964,0.7188439504419145),
+            Low=correlated_vector(R,0.594432136083736,0.6927880240250017),
+            inject(1,A,3526,<<"first sample">>),
+            inject(2,B,5286,<<"second sample">>),
+            ?assertMatch(#{collected:=2},maps:get(enrolment,erm_native_voice:status())),
+            inject(3,C,614,<<"short fragment">>),
+            ?assertEqual({rejected,insufficient_audio},maps:get(last,erm_native_voice:status())),
+            inject(4,Low,7238,<<"low score sample">>),
+            #{last_check:=LowCheck,collected:=2}=maps:get(enrolment,erm_native_voice:status()),
+            ?assertEqual(candidate_score,maps:get(failed_check,LowCheck)),
+            ?assert(abs(maps:get(candidate_score,LowCheck)-0.6937381705767841)<0.000001),
+            %% This sample failed all-pairs matching at 0.693; it matches the
+            %% existing centroid at 0.761 and completes the three-sample profile.
+            inject(5,C,2182,<<"third sample">>),
+            ?assert(maps:get(enrolled,erm_native_voice:status())),
+            ?assertEqual(enrolled,maps:get(last,erm_native_voice:status())),
+            {ok,ProfileBytes}=file:read_file(maps:get(profile_file,O)),
+            #{embedding:=Profile}=binary_to_term(ProfileBytes,[safe]),
+            [?assert(erm_native_voice:score(V,Profile)>=0.7)||V<-[A,B,C]],
+            no_command(),
+            inject(6,[-1.0,0.0,0.0],2000,<<"Hey Bob stop">>),
+            ?assertMatch({rejected,{speaker_mismatch,_}},maps:get(last,erm_native_voice:status())),
+            no_command(),
+            inject(7,C,2182,<<"Hey Bob stop">>),
+            receive {command,<<"stop">>}->ok after 1000->error(no_dispatch) end
+        after os:unsetenv("NATIVE_TEST_DIM") end
+    end end,
+    fun(O)->fun()->
+        gen_server:stop(erm_native_voice),
+        {ok,_}=erm_native_voice:start_link(O#{speaker_threshold=>0.7}),wait_ready(100),
+        ok=manual_enrol("owner",6),
+        lists:foreach(fun({I,Degrees})->
+            inject(I,angle_vector(Degrees),3000,<<"accepted sample">>),
+            ?assertMatch(#{collected:=I,last_check:=#{accepted:=true}},
+                maps:get(enrolment,erm_native_voice:status()))
+        end,lists:zip(lists:seq(1,4),[0,40,60,75])),
+        inject(5,angle_vector(85),3000,<<"would move profile too far">>),
+        #{collected:=4,last_check:=Check}=maps:get(enrolment,erm_native_voice:status()),
+        ?assert(maps:get(candidate_score,Check)>0.7),
+        ?assert(maps:get(profile_min_score,Check)<0.7),
+        ?assertEqual(profile_consistency,maps:get(failed_check,Check)),
+        ?assertNot(maps:get(enrolled,erm_native_voice:status())),
+        ?assertNot(filelib:is_regular(maps:get(profile_file,O))),no_command()
     end end,
     fun(O)->fun()->enroll(),gen_server:stop(erm_native_voice),
         {ok,_}=erm_native_voice:start_link(O#{observe_only=>true}),wait_ready(100),
@@ -81,18 +185,20 @@ native_test_()->{foreach,fun setup/0,fun cleanup/1,[
         timer:sleep(20),?assertNot(maps:get(ready,erm_native_voice:status()))
     end end]}.
 setup()->
+    O=test_options(),
+    {ok,_}=erm_native_voice:start_link(maps:to_list(O)),wait_ready(100),O.
+test_options()->
     persistent_term:erase({erm_tts,suppress_until}),persistent_term:put(native_test_owner,self()),
     D=os:getenv("NATIVE_TEST_TMP"),Id=integer_to_list(erlang:unique_integer([positive])),
     Model=filename:join(D,"model-"++Id),ok=file:write_file(Model,<<"model">>),
-    O=#{binary=>filename:join(D,"fake_port"),whisper_model=>Model,vad_model=>Model,speaker_model=>Model,
-        arecord=>"/bin/false",profile_file=>filename:join(D,"profile-"++Id),speaker_threshold=>0.8},
-    {ok,_}=erm_native_voice:start_link(maps:to_list(O)),wait_ready(100),O.
+    #{binary=>filename:join(D,"fake_port"),whisper_model=>Model,vad_model=>Model,speaker_model=>Model,
+        arecord=>"/bin/false",profile_file=>filename:join(D,"profile-"++Id),speaker_threshold=>0.8}.
 cleanup(_)->
     try gen_server:stop(erm_native_voice) catch exit:_->ok end,
     persistent_term:erase({erm_tts,suppress_until}),persistent_term:erase(native_test_owner).
 wait_ready(0)->error(not_ready);
 wait_ready(N)->case maps:get(ready,erm_native_voice:status()) of true->ok;false->timer:sleep(10),wait_ready(N-1) end.
-enroll()->persistent_term:put(native_test_owner,self()),ok=erm_native_voice:enrol("owner",3),
+enroll()->persistent_term:put(native_test_owner,self()),ok=manual_enrol("owner",3),
     Start=element(13,sys:get_state(erm_native_voice)),
     [inject(I,[1.0,0.0],2000,<<"enrolment sample">>)||I<-lists:seq(Start+1,Start+3)],
     ?assert(maps:get(enrolled,erm_native_voice:status())),no_command().
@@ -101,3 +207,602 @@ inject(I,V,Ms,Text)->S=sys:get_state(erm_native_voice),
 packet(E,I,V,Ms,Text)->B= << <<F:32/float-big>>||F<-V >>,
     <<"U",E:64,I:64,Ms:32,(length(V)):16,B/binary,Text/binary>>.
 no_command()->receive {command,C}->error({unexpected_command,C}) after 20->ok end.
+
+correlated_vector(AB,AC,BC)->
+    Y=(BC-AB*AC)/math:sqrt(1-AB*AB),
+    [AC,Y,math:sqrt(1-AC*AC-Y*Y)].
+angle_vector(Degrees)->
+    Radians=Degrees*math:pi()/180,
+    [math:cos(Radians),math:sin(Radians)].
+
+executable_preflight_test_() ->
+    [?_test(executable_preflight(Key, Kind)) || Key <- [binary, arecord],
+                                               Kind <- [missing, not_executable, directory]].
+
+executable_preflight(Key, Kind) ->
+    O = test_options(),
+    Path = maps:get(profile_file, O) ++ "-executable",
+    Reason = case Kind of
+        missing -> enoent;
+        not_executable ->
+            ok = file:write_file(Path, <<"not executable">>),
+            ok = file:change_mode(Path, 8#600),
+            not_executable;
+        directory -> ok = file:make_dir(Path), not_regular
+    end,
+    try
+        {ok, _} = erm_native_voice:start_link(O#{Key => Path}),
+        S = wait_backend_error(100),
+        ?assertEqual({executable_unavailable, Key, Path, Reason}, maps:get(error, S)),
+        ?assertEqual(Path, maps:get(Key, S)),
+        ?assertNot(maps:get(ready, S)),
+        ?assert(maps:get(retry_in_ms, S) > 0)
+    after cleanup(O) end.
+
+backend_recovery_and_logging_test() ->
+    O = test_options(),
+    Path = maps:get(profile_file, O) ++ "-backend",
+    Handler = native_startup_test,
+    ok = logger:add_handler(Handler, ?MODULE, #{level => error, config => #{owner => self()}}),
+    try
+        {ok, _} = erm_native_voice:start_link(O#{binary => Path, backend_retry_ms => 1000}),
+        _ = wait_backend_error(100),
+        expect_backend_log(),
+        %% Repeated attempts retain one timer and do not repeat the same error.
+        lists:foreach(fun(_) ->
+            erm_native_voice ! connect,
+            _ = erm_native_voice:status()
+        end, lists:seq(1, 3)),
+        receive {native_backend_log, E} -> error({duplicate_log, E}) after 30 -> ok end,
+        %% A changed failure is still reported.
+        ok = file:write_file(Path, <<"not executable">>),
+        ok = file:change_mode(Path, 8#600),
+        erm_native_voice ! connect,
+        ?assertMatch(#{error := {executable_unavailable, binary, _, not_executable}},
+                     erm_native_voice:status()),
+        expect_backend_log(),
+        %% Installing the executable is enough: the scheduled retry must recover.
+        {ok, _} = file:copy(maps:get(binary, O), Path),
+        ok = file:change_mode(Path, 8#755),
+        wait_ready(200),
+        ?assertMatch(#{ready := true, error := undefined, retry_in_ms := undefined},
+                     erm_native_voice:status()),
+        Before = sys:get_state(erm_native_voice),
+        %% Stale work cannot reopen or reset an active backend.
+        erm_native_voice ! {timeout, make_ref(), reconnect},
+        erm_native_voice ! ensure_models,
+        erm_native_voice ! connect,
+        After = sys:get_state(erm_native_voice),
+        ?assertEqual(element(3, Before), element(3, After)),
+        ?assertEqual(element(6, Before), element(6, After))
+    after
+        cleanup(O),
+        logger:remove_handler(Handler)
+    end.
+
+wait_backend_error(0) -> error(no_backend_error);
+wait_backend_error(N) ->
+    S = erm_native_voice:status(),
+    case maps:get(error, S) of
+        {executable_unavailable, _, _, _} -> S;
+        _ -> timer:sleep(10), wait_backend_error(N - 1)
+    end.
+expect_backend_log() ->
+    receive {native_backend_log, _} -> ok after 1000 -> error(missing_backend_log) end.
+adding_handler(Config) -> {ok, Config}.
+removing_handler(_) -> ok.
+log(#{level := error, meta := #{domain := [erm, voice, native]}} = Event,
+    #{config := #{owner := Owner}}) ->
+    Owner ! {native_backend_log, Event}, ok;
+log(_, _) -> ok.
+
+live_tuning_test_() -> {foreach, fun setup_v3/0, fun cleanup_tuning/1, [
+    fun(_O) -> fun() ->
+        S0=sys:get_state(erm_native_voice),Port=element(3,S0),Epoch=element(6,S0),
+        ok=erm_native_voice:configure([{input_gain_db,6.0},{vad_threshold,0.65},{silence_ms,900}]),
+        wait_config(100),
+        ?assertEqual(Port,element(3,sys:get_state(erm_native_voice))),
+        Before=erm_native_voice:status(),
+        ?assertMatch(#{native_protocol:=3,configuration:=#{input_gain_db:=6.0,vad_threshold:=0.65}},Before),
+        ?assertEqual({error,{invalid_option,input_gain_db}},erm_native_voice:configure(#{input_gain_db=>99})),
+        ?assertEqual({error,{unsupported_live_options,[device]}},erm_native_voice:configure(#{device=>"other"})),
+        ?assertEqual(maps:get(configuration,Before),maps:get(configuration,erm_native_voice:status())),
+        erm_native_voice!{Port,{data,packet(Epoch,900,[1.0,0.0],2000,<<"bob stop">>)}},
+        ?assertEqual(undefined,maps:get(last,erm_native_voice:status())),no_command()
+    end end,
+    fun(O) -> fun() ->
+        enroll(),File=maps:get(profile_file,O)++".config",Other=application:get_env(erm,unrelated),
+        Config=[{erm,[{whisper_trigger,[{enabled,true},{backend,native},{trigger_phrases,["alice"]},
+            {native,[{speaker_threshold,0.61},{input_gain_db,-3.0}]}]},{unrelated,should_not_change}]}],
+        ok=file:write_file(File,io_lib:format("~tp.~n",[Config])),
+        ok=erm_native_voice:reload(File),wait_config(100),
+        ?assertEqual(Other,application:get_env(erm,unrelated)),
+        ?assertMatch(#{configuration:=#{speaker_threshold:=0.61,enrolment_threshold:=0.8,
+            input_gain_db:= -3.0,trigger_phrases:=["alice"]}},erm_native_voice:status()),
+        ok=manual_enrol("another",3),
+        ?assertEqual({error,enrollment_active},erm_native_voice:configure(#{speaker_threshold=>0.5})),
+        ok=erm_native_voice:cancel_enrol()
+    end end,
+    fun(_O) -> fun() ->
+        S=sys:get_state(erm_native_voice),
+        Old=list_to_tuple(lists:droplast(tuple_to_list(S))),
+        OldOpts=maps:without([input_gain_db,vad_threshold,min_speech_ms,enrolment_threshold],element(2,Old)),
+        {ok,New}=erm_native_voice:code_change(old,setelement(2,Old,OldOpts),[]),
+        ?assertEqual(tuple_size(S),tuple_size(New)),
+        ?assertEqual(0.8,maps:get(enrolment_threshold,element(2,New))),
+        ?assertEqual(element(3,S),element(3,New))
+    end end,
+    fun(O) -> fun() ->
+        enroll(),{ok,Profile}=file:read_file(maps:get(profile_file,O)),
+        ok=erm_native_voice:tune(#{label=>"quiet",samples=>2,tts=>false,cues=>false}),
+        wait_tune(listening,100),
+        ?assertEqual({error,tuning_active},erm_native_voice:configure(#{input_gain_db=>3})),
+        ?assertEqual({error,tuning_active},manual_enrol("owner",3)),
+        inject_quality(4,[1.0,0.0],2400,-20.0,-4.0,0.0,0.0,<<"bob please stop the music">>),
+        no_command(),wait_tune(listening,100),
+        inject_quality(5,[0.6,0.8],2400,-18.0,0.0,0.03,0.0,<<"bob please stop the music">>),
+        wait_tune(done,100),no_command(),
+        #{last_report:=R}=erm_voice_tune:status(),
+        ?assertMatch(#{label:=<<"quiet">>,outcome:=completed,measured:=2,matched:=1},R),
+        ?assertEqual({ok,Profile},file:read_file(maps:get(profile_file,O))),
+        ?assert(lists:all(fun(C)->not maps:is_key(embedding,C) andalso not maps:is_key(text,C) end,maps:get(checks,R))),
+        ?assertEqual(nomatch,binary:match(term_to_binary(R),<<"please stop the music">>)),
+        ?assertNot(maps:get(tuning,erm_native_voice:status())),
+        inject(6,[1.0,0.0],2000,<<"bob stop">>),
+        receive {command,<<"stop">>}->ok after 1000->error(no_dispatch_after_tune) end
+    end end,
+    fun(_O) -> fun() ->
+        enroll(),persistent_term:put(native_tts_mode,held),
+        ok=erm_native_voice:tune(#{label=>"tts",samples=>1,cues=>false}),
+        receive {tts_prompt,_}->ok after 1000->error(no_tts_prompt) end,
+        ?assertMatch(#{active:=#{phase:=prompting}},erm_voice_tune:status()),
+        inject(4,[1.0,0.0],2000,<<"bob stop">>),no_command(),
+        persistent_term:put(native_tts_speaking,false),
+        %% Playback has ended, but echo suppression is deliberately still on.
+        timer:sleep(150),
+        ?assertMatch(#{active:=#{phase:=prompting}},erm_voice_tune:status()),
+        persistent_term:erase({erm_tts,suppress_until}),wait_tune(listening,100),
+        persistent_term:put(native_tts_mode,immediate),
+        inject(5,[1.0,0.0],2000,<<"bob please stop the music">>),wait_tune(done,100),
+        ?assertMatch(#{last_report:=#{measured:=1,matched:=1}},erm_voice_tune:status()),no_command()
+    end end,
+    fun(_O) -> fun() ->
+        enroll(),persistent_term:put(native_tts_mode,unavailable),
+        ok=erm_native_voice:tune(#{samples=>1,cues=>false}),wait_tune(listening,100),
+        inject(4,[1.0,0.0],500,<<"bob stop">>),wait_tune(listening,100),
+        inject(5,[1.0,0.0],2000,<<"background vocals">>),wait_tune(listening,100),
+        ?assertMatch(#{active:=#{collected:=0,attempts:=2}},erm_voice_tune:status()),
+        inject(6,[1.0,0.0],500,<<"bob stop">>),wait_tune(done,100),
+        ?assertMatch(#{last_report:=#{outcome:=insufficient_samples,measured:=0}},erm_voice_tune:status()),
+        no_command()
+    end end,
+    fun(_O) -> fun() ->
+        enroll(),ok=erm_native_voice:tune(#{tts=>false,cues=>false}),wait_tune(listening,100),
+        ok=erm_voice_tune:cancel(),?assertNot(maps:get(tuning,erm_native_voice:status())),
+        ok=erm_native_voice:tune(#{tts=>false,cues=>false}),wait_tune(listening,100),
+        exit(whereis(erm_voice_tune),kill),
+        wait_not_tuning(100),
+        inject(4,[1.0,0.0],2000,<<"bob stop">>),
+        receive {command,<<"stop">>}->ok after 1000->error(tuning_gate_stuck) end
+    end end,
+    fun(_O) -> fun() ->
+        enroll(),ok=erm_native_voice:tune(#{tts=>false,cues=>false}),wait_tune(listening,100),
+        S=sys:get_state(erm_native_voice),port_close(element(3,S)),
+        wait_tune(done,100),
+        ?assertMatch(#{last_report:=#{outcome:={backend_failed,_}}},erm_voice_tune:status()),
+        ?assertNot(maps:get(tuning,erm_native_voice:status()))
+    end end,
+    fun(_O) -> fun() ->
+        enroll(),ok=erm_native_voice:tune(#{tts=>false,cues=>false,timeout_ms=>1000}),
+        wait_tune(done,200),
+        ?assertMatch(#{last_report:=#{outcome:=timed_out}},erm_voice_tune:status()),
+        ?assertNot(maps:get(tuning,erm_native_voice:status()))
+    end end
+]}.
+
+legacy_acoustics_test() ->
+    O=setup(),
+    try
+        ?assertEqual({error,native_rebuild_required},erm_native_voice:configure(#{input_gain_db=>3})),
+        ok=erm_native_voice:configure(#{speaker_threshold=>0.6,observe_only=>true}),
+        ?assertMatch(#{configuration:=#{input_gain_db:=0.0,enrolment_threshold:=0.8}},erm_native_voice:status())
+    after cleanup(O) end.
+
+setup_v3() ->
+    true=os:putenv("NATIVE_TEST_PROTOCOL","3"),
+    try O=setup(),wait_config(100),O
+    after os:unsetenv("NATIVE_TEST_PROTOCOL") end.
+cleanup_tuning(O) ->
+    try gen_server:stop(erm_voice_tune) catch exit:_->ok end,
+    [persistent_term:erase(K)||K<-[native_tts_mode,native_tts_speaking,native_cue_mode]],cleanup(O).
+wait_config(0)->error(config_not_applied);
+wait_config(N)->case maps:get(acoustic_config,erm_native_voice:status()) of
+    #{state:=applied}->ok;_->timer:sleep(10),wait_config(N-1) end.
+wait_tune(_,0)->error(tuning_phase_timeout);
+wait_tune(Phase,N)->
+    Status=erm_voice_tune:status(),
+    case {Phase,Status} of
+        {done,#{active:=undefined}}->ok;
+        {Phase,#{active:=#{phase:=Phase}}}->ok;
+        _->timer:sleep(10),wait_tune(Phase,N-1)
+    end.
+wait_not_tuning(0)->error(tuning_stuck);
+wait_not_tuning(N)->case maps:get(tuning,erm_native_voice:status()) of
+    false->ok;true->timer:sleep(10),wait_not_tuning(N-1) end.
+inject_quality(I,V,Ms,Rms,Peak,Clip,Gain,Text)->
+    S=sys:get_state(erm_native_voice),B= << <<F:32/float-big>>||F<-V >>,
+    Data= <<"A",(element(6,S)):64,I:64,Ms:32,(length(V)):16,
+        Rms:32/float-big,Peak:32/float-big,Clip:32/float-big,Gain:32/float-big,B/binary,Text/binary>>,
+    erm_native_voice!{element(3,S),{data,Data}},_=erm_native_voice:status(),ok.
+
+
+native_worker_control_test() ->
+    P=native_worker([]),
+    try
+        receive {P,{data,<<"R",2:16,4>>}}->ok after 2000->error(no_v4_ready) end,
+        true=port_command(P,<<"C",2:64,6.0206:32/float-big,0.6:32/float-big,900:32,250:32,8000:32>>),
+        native_ack(P,1),
+        #{quality:=Q1}=native_audio(P,1),
+        ?assert(abs(maps:get(rms_dbfs,Q1)+6.0206)<0.01),
+        ?assertEqual(0.0,maps:get(clipped_fraction,Q1)),
+        true=port_command(P,<<"C",4:64,0.0:32/float-big,0.5:32/float-big,700:32,250:32,8000:32>>),
+        native_ack(P,2),
+        #{quality:=Q2}=native_audio(P,2),
+        ?assert(abs(maps:get(rms_dbfs,Q2)+12.0412)<0.01),
+        %% Epoch gating still works after an in-place acoustic change.
+        true=port_command(P,<<"M",7:64>>),
+        receive {P,{data,<<"A",3:64,_/binary>>}}->error(muted_audio) after 180->ok end,
+        %% One-shot tuning capture seals before inference feedback can play.
+        true=port_command(P,<<"T",8:64>>),
+        ?assertMatch(#{text:=<<"bob stop">>},native_audio(P,4)),
+        receive
+            {P,{data,<<"B",4:64,_/binary>>}}->error(cue_entered_another_job);
+            {P,{data,<<"A",4:64,_/binary>>}}->error(second_tuning_sample)
+        after 350->ok end,
+        true=port_command(P,<<"M",10:64>>),
+        ?assertMatch(#{text:=<<"bob stop">>},native_audio(P,5)),
+        %% Invalid native configuration is rejected independently of Erlang validation.
+        true=port_command(P,<<"C",12:64,99.0:32/float-big,0.5:32/float-big,700:32,250:32,8000:32>>),
+        receive {P,{exit_status,2}}->ok after 2000->error(invalid_native_config_accepted) end
+    after try port_close(P) catch error:badarg->ok end end.
+native_worker(Env) ->
+    D=os:getenv("NATIVE_TEST_TMP"),
+    open_port({spawn_executable,filename:join(D,"native_worker")},
+        [binary,{packet,4},use_stdio,exit_status,{env,Env},{args,["whisper","vad","speaker",
+            filename:join(D,"fake_capture"),"default","en","1","700","8000"]}]).
+native_embedding_only_test() ->
+    %% Force Whisper to fail if called. Enrolment must still return a measured
+    %% embedding, seal capture, then restore transcription in ordinary mode.
+    P=native_worker([{"NATIVE_TEST_WHISPER_FAIL","1"}]),
+    try
+        receive {P,{data,<<"R",2:16,4>>}}->ok after 2000->error(no_v4_ready) end,
+        true=port_command(P,<<"E",2:64>>),
+        ?assertMatch(#{embedding:=[1.0,0.0],text:=<<>>,quality:=#{rms_dbfs:=_}},native_audio(P,1)),
+        receive
+            {P,{data,<<"B",1:64,_/binary>>}}->error(second_enrol_job);
+            {P,{data,<<"A",1:64,_/binary>>}}->error(second_enrol_sample)
+        after 180->ok end,
+        true=port_command(P,<<"M",4:64>>),
+        receive {P,{data,<<"Etranscription_failed">>}}->ok
+        after 2000->error(whisper_not_restored) end
+    after try port_close(P) catch error:badarg->ok end end.
+
+enrolment_retry_diagnostics_test() ->
+    O=setup_v3(),
+    try
+        enroll(),{ok,Original}=file:read_file(maps:get(profile_file,O)),
+        guide_owner(),ok=erm_native_voice:enrol("replacement",3),wait_tune(listening,100),
+        inject_quality(4,[1.0,0.0],3366,-18.0,-3.0,0.0,0.0,<<"First sentence">>),wait_tune(listening,100),
+        ?assertMatch(#{last_check:=#{id:=4,quality:=#{rms_dbfs:= -18.0}}},
+            maps:get(enrolment,erm_native_voice:status())),
+        inject_quality(5,[0.0,1.0],2886,-18.0,-3.0,0.0,0.0,<<"Retry one">>),wait_tune(listening,100),
+        ?assertMatch(#{last_check:=#{id:=5,retry_similarity:=#{compared_samples:=0,min_score:=undefined}}},
+            maps:get(enrolment,erm_native_voice:status())),
+        inject_quality(6,[0.0,1.0],2406,-18.0,0.0,0.1,3.0,<<"Retry two">>),wait_tune(listening,100),
+        assert_prompt(<<"Recording clipped. Check microphone gain. Repeat that sentence.">>),
+        %% Matching rejected samples remain rejected against the accepted set.
+        ?assertMatch(#{collected:=1,rejected:=2,last_check:=#{id:=6,accepted:=false,
+            candidate_score:=0.0,quality:=#{input_gain_db:=3.0},
+            retry_similarity:=#{compared_samples:=1,min_score:=1.0,scores:=[1.0]}}},
+            maps:get(enrolment,erm_native_voice:status())),
+        inject(7,[-1.0,0.0],2886,<<"Different retry">>),wait_tune(listening,100),
+        ?assertMatch(#{last_check:=#{quality:=unavailable,
+            retry_similarity:=#{compared_samples:=2,min_score:=0.0,scores:=[0.0,0.0]}}},
+            maps:get(enrolment,erm_native_voice:status())),
+        inject(8,[1.0,0.0],3000,<<"Accepted">>),wait_tune(listening,100),
+        inject(9,[-1.0,0.0],3000,<<"Retry new sentence">>),wait_tune(listening,100),
+        ?assertMatch(#{collected:=2,last_check:=#{retry_similarity:=#{compared_samples:=0}}},
+            maps:get(enrolment,erm_native_voice:status())),
+        ?assertEqual({ok,Original},file:read_file(maps:get(profile_file,O))),
+        ok=erm_native_voice:cancel_enrol(),
+        #{last_report:=#{checks:=Checks}}=erm_voice_tune:status(),
+        ?assertEqual(6,length(Checks)),
+        ?assert(lists:all(fun(C)->not maps:is_key(retry_vectors,C) andalso
+            not maps:is_key(embedding,C) andalso not maps:is_key(text,C) end,Checks)),
+        ?assertEqual({ok,Original},file:read_file(maps:get(profile_file,O)))
+    after cleanup_tuning(O) end.
+
+enrolment_protocol4_test() ->
+    Log=filename:join(os:getenv("NATIVE_TEST_TMP"),"control-"++integer_to_list(erlang:unique_integer([positive]))),
+    true=os:putenv("NATIVE_TEST_PROTOCOL","4"),true=os:putenv("NATIVE_TEST_COMMAND_LOG",Log),
+    O=try setup() after os:unsetenv("NATIVE_TEST_PROTOCOL"),os:unsetenv("NATIVE_TEST_COMMAND_LOG") end,
+    try
+        wait_config(100),guide_owner(),
+        ?assertEqual(4,maps:get(native_protocol,erm_native_voice:status())),
+        ok=erm_native_voice:enrol("steven",3),wait_tune(listening,100),
+        wait_control(Log,$E,100),
+        lists:foreach(fun(I)->wait_tune(listening,100),inject(I,[1.0,0.0],2500,<<>>) end,[1,2,3]),
+        wait_tune(done,100),wait_control(Log,$M,100),
+        ok=erm_native_voice:tune(),wait_tune(listening,100),wait_control(Log,$T,100),
+        ok=erm_voice_tune:cancel(),wait_control(Log,$M,100)
+    after cleanup_tuning(O) end.
+wait_control(_,_,0)->error(wrong_capture_mode);
+wait_control(Log,C,N)->
+    case file:read_file(Log) of
+        {ok,B} when byte_size(B)>0 ->
+            case binary:last(B) of C->ok;_->timer:sleep(10),wait_control(Log,C,N-1) end;
+        _->timer:sleep(10),wait_control(Log,C,N-1)
+    end.
+native_ack(P,E)->
+    receive
+        {P,{data,<<"C",E:64>>}}->ok;
+        {P,{data,_}}->native_ack(P,E);
+        {P,{exit_status,N}}->error({native_exit,N})
+    after 2000->error(no_config_ack) end.
+native_audio(P,E)->
+    receive
+        {P,{data,<<"A",E:64,_/binary>>=B}}->{ok,U}=erm_native_voice:decode(B),U;
+        {P,{data,_}}->native_audio(P,E);
+        {P,{exit_status,N}}->error({native_exit,N})
+    after 2000->error(no_native_audio) end.
+
+
+cue_tuning_test_() -> {foreach, fun setup_v3/0, fun cleanup_tuning/1, [
+    fun(_) -> fun() ->
+        enroll(),persistent_term:put(native_tts_mode,held),
+        persistent_term:put(native_cue_mode,held),
+        ok=erm_native_voice:tune(#{samples=>1}),
+        receive {tts_prompt,Prompt}->
+            ?assertNotEqual(nomatch,binary:match(Prompt,<<"After the beep">>)),
+            ?assertEqual(nomatch,binary:match(Prompt,<<"wait ">>))
+        after 1000->error(no_prompt) end,
+        persistent_term:put(native_tts_speaking,false),
+        receive {cue_requested,_,_,_}->error(cue_before_echo_tail) after 150->ok end,
+        persistent_term:erase({erm_tts,suppress_until}),
+        {Tuner,ReadyRef}=requested_cue(ready),
+        ?assertMatch(#{active:=#{phase:=ready_cue}},erm_voice_tune:status()),
+        inject(4,[1.0,0.0],2000,<<"bob stop">>),no_command(),
+        ?assertMatch(#{active:=#{attempts:=0}},erm_voice_tune:status()),
+        Tuner!{tts_cue,ReadyRef,ok},wait_tune(listening,100),
+        Epoch=element(6,sys:get_state(erm_native_voice)),
+        inject_detection(Epoch-1,5),
+        receive {cue_requested,'end',_,_}->error(stale_detection_cue) after 50->ok end,
+        inject_detection(Epoch,5),{Tuner,EndRef}=requested_cue('end'),
+        %% Cue starts before a transcript exists, without invalidating its epoch.
+        ?assertEqual(Epoch,element(6,sys:get_state(erm_native_voice))),
+        ?assertMatch(#{active:=#{phase:=processing,attempts:=0}},erm_voice_tune:status()),
+        inject_detection(Epoch,5),
+        receive {cue_requested,'end',_,_}->error(duplicate_end_cue) after 50->ok end,
+        persistent_term:put(native_tts_mode,immediate),
+        inject(5,[1.0,0.0],2000,<<"bob please stop the music">>),
+        ?assertMatch(#{active:=#{phase:=processing,attempts:=0}},erm_voice_tune:status()),
+        Tuner!{tts_cue,EndRef,ok},wait_tune(done,100),no_command(),
+        ?assertMatch(#{last_report:=#{measured:=1,matched:=1,outcome:=completed}},erm_voice_tune:status())
+    end end,
+    fun(_) -> fun() ->
+        enroll(),persistent_term:put(native_cue_mode,held),
+        ok=erm_native_voice:tune(#{samples=>1,tts=>false}),
+        {Tuner,ReadyRef}=requested_cue(ready),Tuner!{tts_cue,ReadyRef,ok},wait_tune(listening,100),
+        Epoch=element(6,sys:get_state(erm_native_voice)),
+        inject_detection(Epoch,4),{Tuner,EndRef}=requested_cue('end'),
+        %% Slow inference: finishing the cue must not arm another sample.
+        Tuner!{tts_cue,EndRef,ok},timer:sleep(100),
+        ?assertMatch(#{active:=#{phase:=processing,attempts:=0}},erm_voice_tune:status()),
+        inject(4,[1.0,0.0],2000,<<"bob stop">>),wait_tune(done,100),
+        ?assertMatch(#{last_report:=#{measured:=1}},erm_voice_tune:status()),no_command()
+    end end,
+    fun(_) -> fun() ->
+        enroll(),persistent_term:put(native_cue_mode,held),
+        ok=erm_native_voice:tune(#{tts=>false}),
+        {Tuner,Ref}=requested_cue(ready),ok=erm_voice_tune:cancel(),
+        receive {cue_cancelled,Ref}->ok after 1000->error(cue_not_cancelled) end,
+        Tuner!{tts_cue,Ref,ok},
+        ?assertMatch(#{active:=undefined,last_report:=#{outcome:=cancelled}},erm_voice_tune:status()),
+        ?assertNot(maps:get(tuning,erm_native_voice:status()))
+    end end,
+    fun(_) -> fun() ->
+        enroll(),persistent_term:put(native_cue_mode,unavailable),
+        ok=erm_native_voice:tune(#{tts=>false}),wait_tune(done,100),
+        ?assertMatch(#{last_report:=#{outcome:={cue_failed,{error,not_ready}},measured:=0}},erm_voice_tune:status()),
+        ?assertNot(maps:get(tuning,erm_native_voice:status()))
+    end end
+]}.
+requested_cue(Kind) ->
+    receive {cue_requested,Kind,Tuner,Ref}->{Tuner,Ref}
+    after 1000->error({no_cue,Kind}) end.
+inject_detection(Epoch,Id) ->
+    S=sys:get_state(erm_native_voice),
+    erm_native_voice!{element(3,S),{data,<<"B",Epoch:64,Id:64>>}},
+    _=erm_native_voice:status(),ok.
+cue_requires_native_v3_test() ->
+    O=setup(),
+    try enroll(),
+        ?assertEqual({error,native_rebuild_required},erm_native_voice:tune(#{})),
+        ?assertNot(maps:get(tuning,erm_native_voice:status()))
+    after cleanup_tuning(O) end.
+
+
+%% Existing validator tests explicitly exercise the unguided native entry point.
+%% Public enrol/2 now drives the same validator through the shared guide below.
+manual_enrol(Label, Count) -> gen_server:call(erm_native_voice,{enrol,Label,Count},1000).
+guided_enrolment_test_() -> {foreach, fun setup_v3/0, fun cleanup_tuning/1, [
+    fun(O) -> fun() ->
+        guide_owner(),persistent_term:put(native_cue_mode,held),
+        ok=erm_native_voice:enrol("steven",3),
+        {Tuner,Ready}=requested_cue(ready),
+        ?assertNot(maps:get(enrolled,erm_native_voice:status())),
+        ?assertMatch(#{guidance:=enrolment,tuning:=false},erm_native_voice:status()),
+        ?assertEqual({error,enrollment_active},erm_native_voice:tune()),
+        assert_prompt(<<"Sample 1 of 3">>),
+        inject(1,[1.0,0.0],2500,<<"bob stop">>),
+        ?assertMatch(#{collected:=0},maps:get(enrolment,erm_native_voice:status())),no_command(),
+        Tuner!{tts_cue,Ready,ok},wait_tune(listening,100),
+        Epoch=element(6,sys:get_state(erm_native_voice)),
+        inject_detection(Epoch,2),{Tuner,End}=requested_cue('end'),
+        inject(2,[1.0,0.0],2500,<<"A natural sentence without a wake word">>),
+        ?assertMatch(#{collected:=1},maps:get(enrolment,erm_native_voice:status())),
+        ?assertMatch(#{active:=#{phase:=processing,collected:=0}},erm_voice_tune:status()),
+        Tuner!{tts_cue,End,ok},{Tuner,Next}=requested_cue(ready),
+        assert_prompt(<<"Accepted.">>),
+        Tuner!{tts_cue,Next,ok},wait_tune(listening,100),
+        persistent_term:put(native_cue_mode,immediate),
+        inject(3,[1.0,0.0],2500,<<"Second natural sentence">>),wait_tune(listening,100),
+        ?assertEqual({error,enoent},file:read_file(maps:get(profile_file,O))),
+        %% Final feedback must keep the command gate closed even after saving.
+        persistent_term:put(native_tts_mode,held),
+        inject(4,[1.0,0.0],2500,<<"bob stop">>),
+        assert_prompt(<<"Voice profile saved. You're ready.">>),
+        ?assertMatch(#{active:=#{phase:=finishing}},erm_voice_tune:status()),
+        ?assert(maps:get(enrolled,erm_native_voice:status())),
+        {ok,ProfileBytes}=file:read_file(maps:get(profile_file,O)),
+        ?assertMatch(#{label:=<<"steven">>},binary_to_term(ProfileBytes,[safe])),
+        inject(5,[1.0,0.0],2500,<<"bob stop">>),no_command(),
+        persistent_term:put(native_tts_speaking,false),
+        persistent_term:erase({erm_tts,suppress_until}),wait_tune(done,100),
+        #{last_report:=Report}=erm_voice_tune:status(),
+        ?assertMatch(#{kind:=enrolment,outcome:=completed,collected:=3,rejected:=0,profile_saved:=true},Report),
+        ?assert(lists:all(fun(C)->not maps:is_key(embedding,C) andalso not maps:is_key(text,C) end,maps:get(checks,Report))),
+        ?assertEqual(undefined,maps:get(guidance,erm_native_voice:status()))
+    end end,
+    fun(_) -> fun() ->
+        guide_owner(),ok=erm_native_voice:enrol("steven",3),wait_tune(listening,100),
+        inject(1,[1.0,0.0],2400,<<"First phrase">>),wait_tune(listening,100),
+        inject(2,[1.0,0.0],500,<<"Too short">>),wait_tune(listening,100),
+        assert_prompt(<<"Too short.">>),
+        ?assertMatch(#{active:=#{collected:=1,attempts:=2,prompt:=_}},erm_voice_tune:status()),
+        #{active:=#{prompt:=Prompt,expected_phrase:=Phrase}}=erm_voice_tune:status(),
+        ?assertEqual(<<"This is how my voice sounds in this room.">>,Phrase),
+        ?assertEqual(nomatch,binary:match(Prompt,Phrase)),
+        ?assert(byte_size(Prompt)<100),
+        inject(3,[0.0,1.0],2400,<<"Different embedding">>),wait_tune(listening,100),
+        assert_prompt(<<"No match. Repeat that sentence.">>),
+        ?assertMatch(#{collected:=1,rejected:=2},maps:get(enrolment,erm_native_voice:status())),
+        inject(4,[1.0,0.0],2400,<<"Second phrase">>),wait_tune(listening,100),
+        inject(5,[1.0,0.0],2400,<<"Third phrase">>),wait_tune(done,100),
+        ?assertMatch(#{last_report:=#{collected:=3,rejected:=2,profile_saved:=true}},erm_voice_tune:status()),no_command()
+    end end,
+    fun(O) -> fun() ->
+        enroll(),{ok,Before}=file:read_file(maps:get(profile_file,O)),
+        guide_owner(),ok=erm_native_voice:enrol("replacement",3),wait_tune(listening,100),
+        inject(4,[1.0,0.0],2400,<<"First new sample">>),wait_tune(listening,100),
+        ok=erm_native_voice:cancel_enrol(),
+        ?assertMatch(#{active:=undefined,last_report:=#{outcome:=cancelled,profile_saved:=false}},erm_voice_tune:status()),
+        ?assertEqual(undefined,maps:get(enrolment,erm_native_voice:status())),
+        ?assertEqual({ok,Before},file:read_file(maps:get(profile_file,O))),
+        ok=erm_native_voice:tune(#{tts=>false,cues=>false}),wait_tune(listening,100),
+        %% Cancelling enrollment must not cancel or invalidate a tuning trial.
+        Epoch=element(6,sys:get_state(erm_native_voice)),ok=erm_native_voice:cancel_enrol(),
+        ?assertEqual(Epoch,element(6,sys:get_state(erm_native_voice))),
+        ?assertMatch(#{active:=#{kind:=tuning,phase:=listening}},erm_voice_tune:status())
+    end end,
+    fun(_) -> fun() ->
+        guide_owner(),ok=erm_native_voice:enrol("steven",3,#{timeout_ms=>1000}),wait_tune(listening,100),
+        wait_tune(done,200),assert_prompt(<<"Enrolment timed out.">>),
+        ?assertMatch(#{last_report:=#{outcome:=timed_out,profile_saved:=false}},erm_voice_tune:status()),
+        ?assertEqual(undefined,maps:get(enrolment,erm_native_voice:status()))
+    end end,
+    fun(O) -> fun() ->
+        guide_owner(),ok=file:make_dir(maps:get(profile_file,O)),
+        ok=erm_native_voice:enrol("steven",3),
+        lists:foreach(fun(I)->wait_tune(listening,100),inject(I,[1.0,0.0],2400,<<"Natural phrase">>) end,lists:seq(1,3)),
+        wait_tune(done,100),assert_prompt(<<"I could not save your voice profile.">>),
+        ?assertMatch(#{last_report:=#{outcome:={save_failed,_},profile_saved:=false}},erm_voice_tune:status()),
+        ?assertNot(maps:get(enrolled,erm_native_voice:status()))
+    end end,
+    fun(_) -> fun() ->
+        guide_owner(),persistent_term:put(native_cue_mode,held),
+        ok=erm_native_voice:enrol("steven",3),{Tuner,Ref}=requested_cue(ready),
+        ok=erm_native_voice:cancel_enrol(),
+        receive {cue_cancelled,Ref}->ok after 1000->error(enrol_cue_not_cancelled) end,
+        Tuner!{tts_cue,Ref,ok},
+        ?assertEqual(undefined,maps:get(enrolment,erm_native_voice:status())),
+        ?assertEqual(undefined,maps:get(guidance,erm_native_voice:status())),
+        persistent_term:put(native_cue_mode,immediate),
+        ok=erm_native_voice:enrol("steven",3),wait_tune(listening,100),
+        exit(Tuner,kill),wait_no_guide(100),
+        ?assertEqual(undefined,maps:get(enrolment,erm_native_voice:status()))
+    end end,
+    fun(_) -> fun() ->
+        guide_owner(),persistent_term:put(native_cue_mode,unavailable),
+        ok=erm_native_voice:enrol("steven",3),wait_tune(done,100),
+        ?assertMatch(#{last_report:=#{outcome:={cue_failed,_},profile_saved:=false}},erm_voice_tune:status()),
+        ?assertEqual(undefined,maps:get(enrolment,erm_native_voice:status()))
+    end end,
+    fun(_) -> fun() ->
+        guide_owner(),ok=erm_native_voice:enrol("steven",3),wait_tune(listening,100),
+        S=sys:get_state(erm_native_voice),port_close(element(3,S)),wait_tune(done,100),
+        ?assertMatch(#{last_report:=#{outcome:={backend_failed,_},profile_saved:=false}},erm_voice_tune:status()),
+        ?assertEqual(undefined,maps:get(enrolment,erm_native_voice:status()))
+    end end,
+    fun(_) -> fun() ->
+        guide_owner(),ok=erm_native_voice:enrol("steven",3,[{tts,false},{cues,false}]),
+        lists:foreach(fun(I)->wait_tune(listening,100),inject(I,[],500,<<"short">>) end,lists:seq(1,9)),
+        wait_tune(done,100),
+        ?assertMatch(#{last_report:=#{outcome:=insufficient_samples,collected:=0,rejected:=9}},erm_voice_tune:status()),
+        ?assertEqual(undefined,maps:get(enrolment,erm_native_voice:status()))
+    end end
+]}.
+guide_owner() ->
+    persistent_term:put(native_test_owner,self()),persistent_term:put(native_tts_mode,immediate).
+assert_prompt(Fragment) -> assert_prompt(Fragment,erlang:monotonic_time(millisecond)+1500).
+assert_prompt(Fragment,Deadline) ->
+    Left=max(0,Deadline-erlang:monotonic_time(millisecond)),
+    receive {tts_prompt,Text}->case binary:match(Text,Fragment) of
+        nomatch->assert_prompt(Fragment,Deadline);_->ok end
+    after Left->error({missing_prompt,Fragment}) end.
+wait_no_guide(0)->error(guide_stuck);
+wait_no_guide(N)->case maps:get(guidance,erm_native_voice:status()) of
+    undefined->ok;_->timer:sleep(10),wait_no_guide(N-1) end.
+
+rapid_enrolment_test_() -> {foreach, fun setup_v3/0, fun cleanup_tuning/1, [
+    fun(_) -> fun() ->
+        guide_owner(),ok=erm_native_voice:enrol("old",3),wait_tune(listening,100),
+        Tuner=whereis(erm_voice_tune),Native=whereis(erm_native_voice),
+        #{guide_ref:=OldRef}=element(2,sys:get_state(Tuner)),
+        ?assertMatch(#{native:=Native,owner:=Tuner},persistent_term:get({erm_native_voice,guidance})),
+        ok=erm_native_voice:cancel_enrol(),
+        ?assertEqual(undefined,persistent_term:get({erm_native_voice,guidance},undefined)),
+        ok=erm_native_voice:enrol("new",3),wait_tune(listening,100),
+        Tuner!{voice_enrolment_stopped,Native,OldRef,timed_out},
+        Tuner!{voice_backend_failed,Native,OldRef,old_failure},
+        Tuner!{voice_measurement,Native,OldRef,#{kind=>enrolment,state=>saved,collected=>3,target=>3,rejected=>0}},
+        ?assertMatch(#{active:=#{label:=<<"new">>,phase:=listening,collected:=0}},erm_voice_tune:status())
+    end end,
+    fun(_) -> fun() ->
+        guide_owner(),ok=erm_native_voice:enrol("steven",3),
+        lists:foreach(fun(I)->wait_tune(listening,100),inject(I,[1.0,0.0],2400,<<"Natural phrase">>) end,[1,2]),
+        wait_tune(listening,100),
+        Tuner=whereis(erm_voice_tune),ok=sys:suspend(Tuner),
+        try
+            %% Deadline is queued before the final validation result. Native has
+            %% saved by the time the guide handles it: the snapshot must win.
+            _=sys:replace_state(Tuner,fun(St)->
+                Session=element(2,St),
+                setelement(2,St,Session#{deadline=>erlang:monotonic_time(millisecond)-1})
+            end),
+            Ref=element(5,sys:get_state(Tuner)),Tuner!{timeout,Ref,poll},
+            inject(3,[1.0,0.0],2400,<<"Last natural phrase">>),
+            ?assert(maps:get(enrolled,erm_native_voice:status()))
+        after ok=sys:resume(Tuner) end,
+        wait_tune(done,100),assert_prompt(<<"Voice profile saved.">>),
+        ?assertMatch(#{last_report:=#{outcome:=completed,collected:=3,profile_saved:=true}},erm_voice_tune:status())
+    end end,
+    fun(_) -> fun() ->
+        guide_owner(),
+        ?assertMatch({error,_},erm_native_voice:enrol("steven",2)),
+        ?assertMatch({error,_},erm_native_voice:enrol("steven",3,#{cues=>wrong})),
+        ?assertMatch({error,_},erm_native_voice:enrol("steven",3,#{unknown=>true})),
+        ?assertEqual(undefined,maps:get(enrolment,erm_native_voice:status())),
+        ?assertEqual(undefined,persistent_term:get({erm_native_voice,guidance},undefined))
+    end end
+]}.

@@ -1385,7 +1385,8 @@ validate_type(Type) when
     Type =:= listbox;
     Type =:= scale;
     Type =:= picture;
-    Type =:= scrolled
+    Type =:= scrolled;
+    Type =:= map
 ->
     ok;
 validate_type(Type) ->
@@ -1413,7 +1414,8 @@ native_type(editor) -> text_view;
 native_type(listbox) -> list_view;
 native_type(scale) -> scale;
 native_type(picture) -> picture;
-native_type(scrolled) -> scrolled_box.
+native_type(scrolled) -> scrolled_box;
+native_type(map) -> map.
 
 %% Refuse unsupported native widgets before allocating logical state. This is
 %% intentionally negotiated from gtknode4's hello capabilities instead of
@@ -1624,6 +1626,9 @@ canonical_event("value-changed") -> change;
 canonical_event(changed) -> change;
 canonical_event(<<"changed">>) -> change;
 canonical_event("changed") -> change;
+canonical_event(map_changed) -> map_changed;
+canonical_event(<<"map_changed">>) -> map_changed;
+canonical_event("map_changed") -> map_changed;
 canonical_event(close_request) -> destroy;
 canonical_event(<<"close-request">>) -> destroy;
 canonical_event("close-request") -> destroy;

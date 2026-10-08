@@ -26,7 +26,7 @@ The preferred capability map is:
     gtk_version => {4, Minor, Micro},
     protocol_version => 1,
     widgets => [window, box, button, label, entry, text_view, list_view,
-                scale, picture, scrolled_box],
+                scale, picture, scrolled_box, map],
     dialogs => alert_dialog,
     snapshot => true,
     inspect => true,
@@ -74,7 +74,7 @@ advertises:
 
 ```text
 window, box, button, label, entry, text_view, list_view, scale,
-picture, scrolled_box
+picture, scrolled_box, map (when built with libshumate)
 ```
 
 A `window` native object owns an implicit root `GtkBox`; children whose parent
@@ -90,6 +90,12 @@ this object; network fetching/decoding remains outside the GTK process.
 `GtkBox`. Logical children are appended to that inner box. This provides a
 scrollable GS-style container without exposing a second native object ID.
 
+When gtknode4 is built with libshumate, `map` maps to `ShumateSimpleMap` and
+the hello capability map includes `libshumate => true`. Its canonical map
+properties are `source_id`, `latitude`, `longitude`, `zoom_level`, and
+`show_zoom_buttons`. The default source is libshumate's `osm-mapnik` source.
+A user pan or zoom emits `map_changed` with the current source and viewport.
+
 Clients MUST check the `widgets` capability list before relying on an optional
 native type. A protocol-compatible but older C-node may omit newer widgets.
 
@@ -104,7 +110,8 @@ Canonical keys include:
 ```text
 title, label, text, items, add, clear, enabled, shown, focus,
 size, width, height, min_size, tooltip, orientation,
-expand, proportion, border, border_sides, align, selection
+expand, proportion, border, border_sides, align, selection,
+source_id, latitude, longitude, zoom_level, show_zoom_buttons
 ```
 
 ### Read

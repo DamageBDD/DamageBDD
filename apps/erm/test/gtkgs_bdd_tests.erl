@@ -10,6 +10,7 @@ bdd_contract_test_() ->
     {setup, fun setup/0, fun cleanup/1, fun(_SupPid) ->
         [
             fun object_state_and_event_contract/0,
+            fun map_widget_contract/0,
             fun deterministic_dialog_contract/0,
             fun fake_backend_rejects_visual_claims/0
         ]
@@ -53,6 +54,50 @@ object_state_and_event_contract() ->
 
     {ok, Inspection} = gtkgs:inspect(ButtonRef),
     ?assertMatch(#{logical := #{type := button}, native := #{type := button}}, Inspection),
+    ok = gtkgs:destroy(Window).
+
+map_widget_contract() ->
+    Server = gtkgs:server(),
+    {ok, [Window]} = gtkgs:create_tree(Server, [
+        {window, map_test_window, [{title, "Map"}], [
+            {map, map_test_view, [
+                {source_id, <<"osm-mapnik">>},
+                {latitude, -33.8688},
+                {longitude, 151.2093},
+                {zoom_level, 12.0},
+                {show_zoom_buttons, true}
+            ]}
+        ]}
+    ]),
+    [MapRef] = gtkgs:read(Window, children),
+
+    ?assertEqual(<<"osm-mapnik">>, gtkgs:read(MapRef, source_id)),
+    ?assertEqual(-33.8688, gtkgs:read(MapRef, latitude)),
+    ?assertEqual(151.2093, gtkgs:read(MapRef, longitude)),
+    ?assertEqual(12.0, gtkgs:read(MapRef, zoom_level)),
+
+    ok = gtkgs:config(MapRef, [
+        {latitude, -37.8136},
+        {longitude, 144.9631},
+        {zoom_level, 10.0}
+    ]),
+    ?assertEqual(-37.8136, gtkgs:read(MapRef, latitude)),
+    ?assertEqual(144.9631, gtkgs:read(MapRef, longitude)),
+    ?assertEqual(10.0, gtkgs:read(MapRef, zoom_level)),
+
+    Cursor = gtkgs:event_cursor(),
+    Payload = #{
+        latitude => -37.8136,
+        longitude => 144.9631,
+        zoom_level => 10.0,
+        source_id => <<"osm-mapnik">>
+    },
+    ok = gtkgs:inject(MapRef, map_changed, Payload),
+    {ok, Event} = gtkgs:await_event(MapRef, map_changed, Cursor, 1000),
+    ?assertEqual(Payload, maps:get(payload, Event)),
+
+    {ok, Inspection} = gtkgs:inspect(MapRef),
+    ?assertMatch(#{logical := #{type := map}, native := #{type := map}}, Inspection),
     ok = gtkgs:destroy(Window).
 
 deterministic_dialog_contract() ->

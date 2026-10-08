@@ -8,6 +8,7 @@
 -define(ERM_LOG_DOMAIN_GTK, [erm, gtk]).
 -define(ERM_LOG_DOMAIN_GTKNODE4, [erm, gtk, gtknode4]).
 -define(ERM_LOG_DOMAIN_GTKGS, [erm, gtk, gtkgs]).
+-define(ERM_LOG_DOMAIN_MAPS, [erm, maps]).
 -define(ERM_LOG_DOMAIN_MPV, [erm, mpv]).
 -define(ERM_LOG_DOMAIN_MPV_UI, [erm, mpv, ui]).
 -define(ERM_LOG_DOMAIN_MPV_PROC, [erm, mpv, proc]).

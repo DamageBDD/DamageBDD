@@ -8,6 +8,7 @@ observability_test_() ->
         ?_test(disabled()),
         ?_test(unavailable()),
         ?_test(bounded_status()),
+        ?_test(native_startup_error()),
         ?_test(tcp_probe()),
         ?_test(?assertMatch(#{status := error}, erm_voice_health:check(#{timeout_ms => -1})))
     ] end}.
@@ -75,3 +76,29 @@ tcp_probe() ->
         ?assertMatch(#{checks := #{ollama := #{status := ok, scope := tcp_only}}},
                      erm_voice_health:check(#{probe_ollama => true}))
     after gen_tcp:close(Socket) end.
+
+native_startup_error() ->
+    Binary = "/missing/erm_native_voice",
+    Reason = {executable_unavailable, binary, Binary, enoent},
+    State = #{ready => false, processing => false, muted => true, enrolled => false,
+              binary => Binary, arecord => "/usr/bin/arecord", error => Reason,
+              retry_in_ms => 4000, last => <<"private transcript">>},
+    Pid = spawn(fun() -> status_server(State) end),
+    true = register(erm_native_voice, Pid),
+    application:set_env(erm, whisper_trigger, [{enabled, true}, {backend, native}]),
+    try
+        #{checks := #{speech := Speech}} = erm_voice_health:check(),
+        ?assertMatch(#{backend := native, status := error, binary := Binary,
+                       error := Reason, retry_in_ms := 4000}, Speech),
+        ?assertNot(maps:is_key(last, Speech))
+    after
+        exit(Pid, kill),
+        application:unset_env(erm, whisper_trigger)
+    end.
+
+status_server(State) ->
+    receive
+        {'$gen_call', From, status} ->
+            gen_server:reply(From, State),
+            status_server(State)
+    end.

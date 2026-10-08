@@ -31,12 +31,14 @@ init(Opts) ->
             list_view,
             scale,
             picture,
-            scrolled_box
+            scrolled_box,
+            map
         ],
         object_commands => [create, config, read, destroy, inspect, sync],
         test_injection => TestMode,
         visual_capture => false,
         list_selection_index => true,
+        libshumate => fake,
         dialogs => deterministic
     },
     {ok, #state{test_mode = TestMode}, Capabilities}.
@@ -184,6 +186,20 @@ default_props(Type, Props0) ->
         entry -> ensure_prop(text, <<>>, Props1);
         text_view -> ensure_prop(text, <<>>, Props1);
         list_view -> ensure_prop(selected_index, -1, ensure_prop(items, [], Props1));
+        map ->
+            ensure_prop(
+                show_zoom_buttons,
+                true,
+                ensure_prop(
+                    zoom_level,
+                    2.0,
+                    ensure_prop(
+                        longitude,
+                        0.0,
+                        ensure_prop(latitude, 0.0, ensure_prop(source_id, <<"osm-mapnik">>, Props1))
+                    )
+                )
+            );
         _ -> Props1
     end.
 
@@ -261,6 +277,10 @@ apply_injected_state(select, Payload, Object0) ->
     Props0 = maps:get(props, Object0),
     Props = maps:put(selected_index, maps:get(index, Payload, -1), Props0),
     Object0#{props := Props};
+apply_injected_state(map_changed, Payload, Object0) ->
+    Props0 = maps:get(props, Object0),
+    MapPatch = maps:with([latitude, longitude, zoom_level, source_id], Payload),
+    Object0#{props := maps:merge(Props0, MapPatch)};
 apply_injected_state(_EventType, _Payload, Object) ->
     Object.
 

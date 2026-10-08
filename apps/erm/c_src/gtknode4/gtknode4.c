@@ -7,6 +7,10 @@
 #include <string.h>
 #include <unistd.h>
 
+#ifdef HAVE_LIBSHUMATE
+#include <shumate/shumate.h>
+#endif
+
 #ifdef GDK_WINDOWING_X11
 #include <gdk/x11/gdkx.h>
 #include <X11/Xatom.h>
@@ -22,6 +26,7 @@ typedef struct {
   char *type;
   GtkWidget *widget;
   GtkWidget *signal_widget;
+  GObject *aux_signal_object;
   Gn4State *state;
   gboolean suppress_events;
   gboolean destroying;
@@ -42,6 +47,7 @@ typedef struct {
   char *valign;
   char *selection;
   char *add;
+  char *source_id;
   char **items;
   int item_count;
   gboolean has_items;
@@ -65,6 +71,14 @@ typedef struct {
   gboolean wrap;
   gboolean has_draw_value;
   gboolean draw_value;
+  gboolean has_show_zoom_buttons;
+  gboolean show_zoom_buttons;
+  gboolean has_latitude;
+  double latitude;
+  gboolean has_longitude;
+  double longitude;
+  gboolean has_zoom_level;
+  double zoom_level;
   gboolean has_value;
   double value;
   gboolean has_min;
@@ -103,6 +117,9 @@ static void gn4_disconnect_widget_signals(Gn4Widget *entry) {
 
   /* Signal callbacks use entry as user_data. Disconnect them before entry is
    * released, otherwise a queued GTK signal can dereference freed memory. */
+  if (entry->aux_signal_object)
+    g_signal_handlers_disconnect_by_data(entry->aux_signal_object, entry);
+  entry->aux_signal_object = NULL;
   if (entry->signal_widget)
     g_signal_handlers_disconnect_by_data(entry->signal_widget, entry);
   if (entry->widget && entry->widget != entry->signal_widget)
@@ -123,6 +140,8 @@ static void gn4_widget_free(gpointer data) {
   g_clear_pointer(&entry->type, g_free);
   g_free(entry);
 }
+
+static void gn4_destroy_widget(Gn4State *st, long id);
 
 static Gn4Widget *gn4_widget_lookup(Gn4State *st, long id) {
   return st && st->widgets
@@ -153,6 +172,7 @@ static void gn4_options_clear(Gn4Options *opts) {
   g_free(opts->valign);
   g_free(opts->selection);
   g_free(opts->add);
+  g_free(opts->source_id);
   for (i = 0; i < opts->item_count; i++)
     g_free(opts->items[i]);
   g_free(opts->items);
@@ -286,6 +306,7 @@ static gboolean gn4_decode_options(const char *buf, int *idx,
     GN4_STRING_OPTION("valign", valign)
     GN4_STRING_OPTION("selection", selection)
     GN4_STRING_OPTION("add", add)
+    GN4_STRING_OPTION("source_id", source_id)
 
 #undef GN4_STRING_OPTION
 
@@ -317,6 +338,7 @@ static gboolean gn4_decode_options(const char *buf, int *idx,
     GN4_BOOL_OPTION("homogeneous", has_homogeneous, homogeneous)
     GN4_BOOL_OPTION("wrap", has_wrap, wrap)
     GN4_BOOL_OPTION("draw_value", has_draw_value, draw_value)
+    GN4_BOOL_OPTION("show_zoom_buttons", has_show_zoom_buttons, show_zoom_buttons)
 
 #undef GN4_BOOL_OPTION
 
@@ -345,6 +367,9 @@ static gboolean gn4_decode_options(const char *buf, int *idx,
     GN4_NUMBER_OPTION("margin", has_margin, margin)
     GN4_NUMBER_OPTION("width_chars", has_width_chars, width_chars)
     GN4_NUMBER_OPTION("selected_index", has_selected_index, selected_index)
+    GN4_NUMBER_OPTION("latitude", has_latitude, latitude)
+    GN4_NUMBER_OPTION("longitude", has_longitude, longitude)
+    GN4_NUMBER_OPTION("zoom_level", has_zoom_level, zoom_level)
 
 #undef GN4_NUMBER_OPTION
 
@@ -529,6 +554,74 @@ static void gn4_on_scale_changed(GtkRange *range, gpointer user_data) {
   ei_x_encode_double(&event, gtk_range_get_value(range));
   gn4_event_send(entry, &event);
 }
+
+#ifdef HAVE_LIBSHUMATE
+static gboolean gn4_map_set_source(GtkWidget *widget, const char *source_id) {
+  ShumateMapSourceRegistry *registry;
+  ShumateMapSource *source;
+  const char *wanted = (source_id && source_id[0] != '\0')
+                           ? source_id
+                           : SHUMATE_MAP_SOURCE_OSM_MAPNIK;
+
+  if (!SHUMATE_IS_SIMPLE_MAP(widget))
+    return FALSE;
+
+  registry = shumate_map_source_registry_new_with_defaults();
+  if (!registry)
+    return FALSE;
+
+  source = shumate_map_source_registry_get_by_id(registry, wanted);
+  if (!source) {
+    fprintf(stderr, "gtknode4: libshumate map source not found: %s\n", wanted);
+    g_object_unref(registry);
+    return FALSE;
+  }
+
+  shumate_simple_map_set_map_source(SHUMATE_SIMPLE_MAP(widget), source);
+  g_object_unref(registry);
+  return TRUE;
+}
+
+static void gn4_emit_map_changed(Gn4Widget *entry) {
+  ShumateViewport *viewport;
+  ShumateMapSource *source;
+  const char *source_id = "";
+  ei_x_buff event;
+
+  if (!entry || entry->suppress_events || !SHUMATE_IS_SIMPLE_MAP(entry->widget))
+    return;
+
+  viewport = shumate_simple_map_get_viewport(SHUMATE_SIMPLE_MAP(entry->widget));
+  if (!viewport)
+    return;
+
+  source = shumate_simple_map_get_map_source(SHUMATE_SIMPLE_MAP(entry->widget));
+  if (source && shumate_map_source_get_id(source))
+    source_id = shumate_map_source_get_id(source);
+
+  gn4_event_begin(entry, &event, "map_changed", 4);
+  ei_x_encode_atom(&event, "latitude");
+  ei_x_encode_double(&event, shumate_location_get_latitude(SHUMATE_LOCATION(viewport)));
+  ei_x_encode_atom(&event, "longitude");
+  ei_x_encode_double(&event, shumate_location_get_longitude(SHUMATE_LOCATION(viewport)));
+  ei_x_encode_atom(&event, "zoom_level");
+  ei_x_encode_double(&event, shumate_viewport_get_zoom_level(viewport));
+  ei_x_encode_atom(&event, "source_id");
+  ei_x_encode_binary(&event, source_id, (long)strlen(source_id));
+  gn4_event_send(entry, &event);
+}
+
+/* Use GObject property notifications instead of ShumateViewport::changed.
+ * The latter was added in libshumate 1.6; latitude/longitude/zoom properties
+ * are part of the older 1.0 API and keep the ERM map widget portable across
+ * distributions shipping earlier libshumate releases. */
+static void gn4_on_map_viewport_notify(GObject *object, GParamSpec *pspec,
+                                       gpointer user_data) {
+  (void)object;
+  (void)pspec;
+  gn4_emit_map_changed((Gn4Widget *)user_data);
+}
+#endif
 
 static void gn4_on_list_selected(GtkListBox *box, GtkListBoxRow *row,
                                  gpointer user_data) {
@@ -845,7 +938,7 @@ static void gn4_apply_css_classes(GtkWidget *widget, const char *classes) {
   g_strfreev(split);
 }
 
-static void gn4_apply_options(Gn4Widget *entry, Gn4Options *opts) {
+static gboolean gn4_apply_options(Gn4Widget *entry, Gn4Options *opts) {
   GtkWidget *widget = entry->widget;
   GtkWidget *target = entry->signal_widget ? entry->signal_widget : widget;
   int width = -1;
@@ -853,6 +946,33 @@ static void gn4_apply_options(Gn4Widget *entry, Gn4Options *opts) {
   int i;
 
   entry->suppress_events = TRUE;
+
+#ifdef HAVE_LIBSHUMATE
+  if (SHUMATE_IS_SIMPLE_MAP(target)) {
+    ShumateViewport *viewport =
+        shumate_simple_map_get_viewport(SHUMATE_SIMPLE_MAP(target));
+
+    if (opts->source_id && !gn4_map_set_source(target, opts->source_id)) {
+      entry->suppress_events = FALSE;
+      return FALSE;
+    }
+
+    if (opts->has_latitude || opts->has_longitude) {
+      double latitude = opts->has_latitude
+                            ? opts->latitude
+                            : shumate_location_get_latitude(SHUMATE_LOCATION(viewport));
+      double longitude = opts->has_longitude
+                             ? opts->longitude
+                             : shumate_location_get_longitude(SHUMATE_LOCATION(viewport));
+      shumate_location_set_location(SHUMATE_LOCATION(viewport), latitude, longitude);
+    }
+    if (opts->has_zoom_level)
+      shumate_viewport_set_zoom_level(viewport, opts->zoom_level);
+    if (opts->has_show_zoom_buttons)
+      shumate_simple_map_set_show_zoom_buttons(SHUMATE_SIMPLE_MAP(target),
+                                               opts->show_zoom_buttons);
+  }
+#endif
 
   if (opts->label) {
     if (GTK_IS_BUTTON(target))
@@ -1003,6 +1123,7 @@ static void gn4_apply_options(Gn4Widget *entry, Gn4Options *opts) {
     gtk_widget_grab_focus(target);
 
   entry->suppress_events = FALSE;
+  return TRUE;
 }
 
 static gboolean gn4_attach_widget(Gn4State *st, Gn4Widget *entry) {
@@ -1086,6 +1207,18 @@ static Gn4Widget *gn4_create_widget(Gn4State *st, long id, const char *type,
                                       opts->has_max ? opts->max : 100.0,
                                       opts->has_step ? opts->step : 1.0);
     signal_widget = widget;
+#ifdef HAVE_LIBSHUMATE
+  } else if (strcmp(type, "map") == 0) {
+    widget = GTK_WIDGET(shumate_simple_map_new());
+    signal_widget = widget;
+    if (!widget || !gn4_map_set_source(widget, SHUMATE_MAP_SOURCE_OSM_MAPNIK)) {
+      if (widget) {
+        g_object_ref_sink(widget);
+        g_object_unref(widget);
+      }
+      return NULL;
+    }
+#endif
   } else {
     return NULL;
   }
@@ -1101,6 +1234,7 @@ static Gn4Widget *gn4_create_widget(Gn4State *st, long id, const char *type,
   entry->type = g_strdup(type);
   entry->widget = widget;
   entry->signal_widget = signal_widget;
+  entry->aux_signal_object = NULL;
   entry->state = st;
   entry->suppress_events = TRUE;
   entry->destroying = FALSE;
@@ -1124,11 +1258,27 @@ static Gn4Widget *gn4_create_widget(Gn4State *st, long id, const char *type,
   else if (GTK_IS_LIST_BOX(signal_widget))
     g_signal_connect(signal_widget, "row-selected",
                      G_CALLBACK(gn4_on_list_selected), entry);
+#ifdef HAVE_LIBSHUMATE
+  else if (SHUMATE_IS_SIMPLE_MAP(signal_widget)) {
+    ShumateViewport *viewport =
+        shumate_simple_map_get_viewport(SHUMATE_SIMPLE_MAP(signal_widget));
+    entry->aux_signal_object = G_OBJECT(viewport);
+    g_signal_connect(viewport, "notify::latitude",
+                     G_CALLBACK(gn4_on_map_viewport_notify), entry);
+    g_signal_connect(viewport, "notify::longitude",
+                     G_CALLBACK(gn4_on_map_viewport_notify), entry);
+    g_signal_connect(viewport, "notify::zoom-level",
+                     G_CALLBACK(gn4_on_map_viewport_notify), entry);
+  }
+#endif
   if (GTK_IS_WINDOW(widget))
     g_signal_connect(widget, "close-request", G_CALLBACK(gn4_on_window_close),
                      entry);
 
-  gn4_apply_options(entry, opts);
+  if (!gn4_apply_options(entry, opts)) {
+    gn4_destroy_widget(st, id);
+    return NULL;
+  }
   return entry;
 }
 
@@ -1292,6 +1442,32 @@ static void gn4_handle_read(Gn4State *st, const erlang_ref *ref,
         st, ref, (long)gn4_list_selected_index(GTK_LIST_BOX(target)));
   } else if (strcmp(key, "items") == 0 && GTK_IS_LIST_BOX(target)) {
     gn4_send_reply_ok_list_items(st, ref, GTK_LIST_BOX(target));
+#ifdef HAVE_LIBSHUMATE
+  } else if (strcmp(key, "latitude") == 0 && SHUMATE_IS_SIMPLE_MAP(target)) {
+    ShumateViewport *viewport =
+        shumate_simple_map_get_viewport(SHUMATE_SIMPLE_MAP(target));
+    gn4_send_reply_ok_double(
+        st, ref, shumate_location_get_latitude(SHUMATE_LOCATION(viewport)));
+  } else if (strcmp(key, "longitude") == 0 && SHUMATE_IS_SIMPLE_MAP(target)) {
+    ShumateViewport *viewport =
+        shumate_simple_map_get_viewport(SHUMATE_SIMPLE_MAP(target));
+    gn4_send_reply_ok_double(
+        st, ref, shumate_location_get_longitude(SHUMATE_LOCATION(viewport)));
+  } else if (strcmp(key, "zoom_level") == 0 && SHUMATE_IS_SIMPLE_MAP(target)) {
+    ShumateViewport *viewport =
+        shumate_simple_map_get_viewport(SHUMATE_SIMPLE_MAP(target));
+    gn4_send_reply_ok_double(st, ref, shumate_viewport_get_zoom_level(viewport));
+  } else if (strcmp(key, "source_id") == 0 && SHUMATE_IS_SIMPLE_MAP(target)) {
+    ShumateMapSource *source =
+        shumate_simple_map_get_map_source(SHUMATE_SIMPLE_MAP(target));
+    const char *source_id = source ? shumate_map_source_get_id(source) : "";
+    gn4_send_reply_ok_binary(st, ref, source_id ? source_id : "");
+  } else if (strcmp(key, "show_zoom_buttons") == 0 &&
+             SHUMATE_IS_SIMPLE_MAP(target)) {
+    gn4_send_reply_ok_bool(
+        st, ref,
+        shumate_simple_map_get_show_zoom_buttons(SHUMATE_SIMPLE_MAP(target)));
+#endif
   } else {
     gn4_send_reply_error(st, ref, "unsupported_property");
   }
@@ -1339,9 +1515,13 @@ static void gn4_handle_tuple_command(Gn4State *st, const char *buf, int *idx,
       if (reply)
         gn4_send_reply_error(st, ref, "widget_not_found");
     } else {
-      gn4_apply_options(entry, &opts);
-      if (reply)
-        gn4_send_reply_ok(st, ref);
+      gboolean applied = gn4_apply_options(entry, &opts);
+      if (reply) {
+        if (applied)
+          gn4_send_reply_ok(st, ref);
+        else
+          gn4_send_reply_error(st, ref, "config_failed");
+      }
     }
     gn4_options_clear(&opts);
     return;
@@ -1693,9 +1873,15 @@ done:
 
 gboolean gn4_send_hello(Gn4State *st) {
   ei_x_buff hello;
+#ifdef HAVE_LIBSHUMATE
+  const char *widgets[] = {"window", "box", "button", "label",
+                           "entry", "text_view", "list_view", "scale",
+                           "picture", "scrolled_box", "map"};
+#else
   const char *widgets[] = {"window", "box", "button", "label",
                            "entry", "text_view", "list_view", "scale",
                            "picture", "scrolled_box"};
+#endif
   const int widget_count = (int)(sizeof(widgets) / sizeof(widgets[0]));
   int i;
   ei_x_new_with_version(&hello);
@@ -1706,7 +1892,7 @@ gboolean gn4_send_hello(Gn4State *st) {
   ei_x_encode_tuple_header(&hello, 2);
   ei_x_encode_atom(&hello, st->register_name);
   ei_x_encode_atom(&hello, st->node_name);
-  ei_x_encode_map_header(&hello, 6);
+  ei_x_encode_map_header(&hello, 7);
   ei_x_encode_atom(&hello, "protocol");
   ei_x_encode_long(&hello, GN4_PROTOCOL_VERSION);
   ei_x_encode_atom(&hello, "widgets");
@@ -1725,6 +1911,12 @@ gboolean gn4_send_hello(Gn4State *st) {
   ei_x_encode_empty_list(&hello);
   ei_x_encode_atom(&hello, "list_selection_index");
   ei_x_encode_atom(&hello, "true");
+  ei_x_encode_atom(&hello, "libshumate");
+#ifdef HAVE_LIBSHUMATE
+  ei_x_encode_atom(&hello, "true");
+#else
+  ei_x_encode_atom(&hello, "false");
+#endif
   if (ei_reg_send(&st->ec, st->dist_fd, st->peer_regname, hello.buff,
                   hello.index) < 0) {
     ei_x_free(&hello);

@@ -138,3 +138,51 @@ assert_gain(N)->{ok,Args}=file:read_file(os:getenv("ERM_TTS_CAPTURE_ARGS")),
 wait(F)->wait(F,300).
 wait(F,0)->?assertEqual(true,F());
 wait(F,N)->case F() of true->ok;false->timer:sleep(10),wait(F,N-1) end.
+
+
+tuning_cue_lifecycle_test_()->{timeout,10,fun()->with_tts(fun(_) ->
+    ?assertEqual({error,not_tuning_owner},erm_tts:tuning_cue(ready)),
+    true=register(erm_voice_tune,self()),
+    try
+        ok=erm_tts:say("Remember this."),idle(),
+        persistent_term:erase({erm_tts,suppress_until}),
+        {ok,Ref}=erm_tts:tuning_cue(ready),
+        ?assertEqual({error,busy},erm_tts:say("Do not interrupt.")),
+        ?assertNot(erm_tts:suppressed()),
+        receive {tts_cue,Ref,ok}->error(ack_before_player_exit) after 100->ok end,
+        receive {tts_cue,Ref,ok}->ok after 2000->error(no_cue_ack) end,
+        ?assertNot(erm_tts:suppressed()),assert_gain(100),
+        ok=erm_tts:repeat(),idle(),
+        ?assertEqual([<<"Remember this.">>,<<"Remember this.">>],spoken()),
+        ok=erm_tts:set_volume(0),
+        ?assertEqual({error,cue_volume_zero},erm_tts:tuning_cue(ready)),
+        ok=erm_tts:set_volume(100),
+        {ok,CancelRef}=erm_tts:tuning_cue('end'),
+        ok=erm_tts:cancel_cue(CancelRef),
+        receive {tts_cue,CancelRef,{error,cancelled}}->ok after 1000->error(no_cancel_ack) end,
+        ?assert(erm_tts:suppressed())
+    after unregister(erm_voice_tune) end
+end) end}.
+
+guided_echo_guard_test_()->{timeout,10,fun()->with_tts([{echo_guard_ms,6000}],fun(_) ->
+    Native=spawn(fun()->receive stop->ok end end),
+    true=register(erm_native_voice,Native),true=register(erm_voice_tune,self()),
+    try
+        ?assertEqual(6000,maps:get(echo_guard_ms,erm_tts:status())),
+        persistent_term:put({erm_native_voice,guidance},#{native=>Native,owner=>self()}),
+        ?assertEqual(150,maps:get(echo_guard_ms,erm_tts:status())),
+        ok=erm_tts:say("Accepted."),idle(),
+        At=erlang:monotonic_time(millisecond),
+        wait(fun()->not erm_tts:suppressed() end),
+        ?assert(erlang:monotonic_time(millisecond)-At < 1000),
+        ?assertEqual({error,invalid_tts_configuration},erm_tts:reload(#{guided_echo_guard_ms=>-1})),
+        ?assertEqual({error,invalid_tts_configuration},erm_tts:reload(#{guided_echo_guard_ms=>2001})),
+        %% Stale ownership cannot shorten normal/rolling Whisper suppression.
+        unregister(erm_voice_tune),
+        ?assertEqual(6000,maps:get(echo_guard_ms,erm_tts:status()))
+    after
+        case whereis(erm_voice_tune) of P when P=:=self()->unregister(erm_voice_tune);_->ok end,
+        persistent_term:erase({erm_native_voice,guidance}),
+        unregister(erm_native_voice),Native!stop
+    end
+end) end}.
