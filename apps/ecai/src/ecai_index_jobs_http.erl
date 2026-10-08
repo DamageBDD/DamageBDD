@@ -181,6 +181,13 @@ to_json(Req0, State) ->
 
 from_json(Req0, #{action := collection} = State) ->
     case read_json_map(Req0) of
+        {ok, #{<<"kind">> := <<"wikimedia_unit">>}, Req1} ->
+            reply_error(Req1, 403, work_unit_requires_node_operator, State);
+        %% Shard mode writes node-local immutable search snapshots. Its plan
+        %% and source paths must be admitted by a trusted node operator, not
+        %% a remote user submitting an arbitrary target/base_dir in JSON.
+        {ok, #{<<"target">> := #{<<"mode">> := <<"shard_search">>}}, Req1} ->
+            reply_error(Req1, 403, shard_mode_requires_node_operator, State);
         {ok, Spec0, Req1} ->
             Spec = bind_authenticated_owner(Spec0, State),
             IdempotencyKey = cowboy_req:header(<<"idempotency-key">>, Req1, <<>>),

@@ -82,6 +82,9 @@ prepare(WorkDir0, Catalog, Opts) when is_map(Catalog), is_map(Opts) ->
             selection_path => filename:join(SelectDir, "selection.jsonl"),
             selection_meta_path => filename:join(SelectDir, "selection-meta.json"),
             partitions => Partitions,
+            max_partition_pages => maps:get(max_partition_pages, Opts, infinity),
+            max_partition_memory_bytes => maps:get(max_partition_memory_bytes, Opts, infinity),
+            pageview_max_line_bytes => maps:get(pageview_max_line_bytes, Opts, 33554432),
             buffer_bytes => bounded_integer(
                 partition_buffer_bytes,
                 Opts,
@@ -182,7 +185,7 @@ spool_month_fresh(Runtime, Source, MonthIndex, ProgressFun, FinalDir) ->
                             DownloadPath,
                             FoldFun,
                             Initial,
-                            #{}
+                            #{max_line_bytes => maps:get(pageview_max_line_bytes, Runtime, 33554432)}
                         )
                     of
                         {ok, State1, StreamStats} ->
@@ -399,7 +402,7 @@ aggregate_month_files(Runtime, Partition, [Month | Rest], Tab, Count0) ->
     Path = spool_path(Runtime, Month, Partition),
     case
         fold_spool_records(Path, fun(PageId, Views, MonthIndex, Title) ->
-            update_aggregate(Tab, PageId, Views, MonthIndex, Title)
+            checked_update_aggregate(Runtime, Tab, PageId, Views, MonthIndex, Title)
         end)
     of
         {ok, Count} ->
@@ -407,6 +410,28 @@ aggregate_month_files(Runtime, Partition, [Month | Rest], Tab, Count0) ->
         {error, _Reason} = Error ->
             Error
     end.
+
+%% Desktop work plans set explicit bounds. Legacy callers preserve their
+%% previous behaviour by omitting these options. Never silently drop pageviews
+%% to fit the cap: fail the unit and replan with more partitions instead.
+checked_update_aggregate(Runtime, Tab, PageId, Views, MonthIndex, Title) ->
+    MaxPages = maps:get(max_partition_pages, Runtime, infinity),
+    MaxBytes = maps:get(max_partition_memory_bytes, Runtime, infinity),
+    Size = ets:info(Tab, size),
+    AtPageLimit = is_integer(MaxPages) andalso Size >= MaxPages andalso not ets:member(Tab, PageId),
+    AtMemoryLimit = table_over_limit(Tab, MaxBytes),
+    case AtPageLimit orelse AtMemoryLimit of
+        true -> {error, {partition_resource_limit, Size, MaxPages, MaxBytes}};
+        false ->
+            ok = update_aggregate(Tab, PageId, Views, MonthIndex, Title),
+            case table_over_limit(Tab, MaxBytes) of
+                true -> {error, {partition_resource_limit, ets:info(Tab, size), MaxPages, MaxBytes}};
+                false -> ok
+            end
+    end.
+table_over_limit(Tab, Max) when is_integer(Max) ->
+    ets:info(Tab, memory) * erlang:system_info(wordsize) > Max;
+table_over_limit(_Tab, infinity) -> false.
 
 update_aggregate(Tab, PageId, Views, MonthIndex, Title) ->
     Bit = 1 bsl (MonthIndex - 1),
@@ -744,8 +769,10 @@ fold_spool_loop(Fd, Fun, Count) ->
         >>} ->
             case file:read(Fd, TitleLen) of
                 {ok, Title} when byte_size(Title) =:= TitleLen ->
-                    ok = Fun(PageId, Views, MonthIndex, Title),
-                    fold_spool_loop(Fd, Fun, Count + 1);
+                    case Fun(PageId, Views, MonthIndex, Title) of
+                        ok -> fold_spool_loop(Fd, Fun, Count + 1);
+                        {error, _} = Error -> Error
+                    end;
                 eof ->
                     {error, {truncated_spool_title, Count}};
                 {ok, Short} ->

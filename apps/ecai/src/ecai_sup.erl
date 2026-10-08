@@ -97,12 +97,24 @@ init([]) ->
                     modules => []
                 }
             ] ++
+            indexing_rewards_specs() ++
             code_security_specs() ++
             marketplace_specs() ++
             vulnerability_monitor_specs() ++
             PoolSpecs,
     ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
     {ok, {SupFlags, PoolSpecs0}}.
+
+%% Funding/settlement is an explicit, operator-configured opt-in. CLN is
+%% contacted only after a deliberate API operation, never during supervisor init.
+indexing_rewards_specs() ->
+    case application:get_env(ecai, index_rewards_enabled, false) of
+        true -> [#{id => ecai_index_rewards, start => {ecai_index_rewards, start_link, []},
+                   restart => permanent, shutdown => 30000, type => worker,
+                   modules => [ecai_index_rewards]}];
+        false -> [];
+        Invalid -> erlang:error({invalid_configuration, index_rewards_enabled, Invalid})
+    end.
 
 %% The experimental chunk-job ledger is disabled by default and is NOT durable.
 marketplace_specs() ->

@@ -130,6 +130,9 @@ id_hex(Bin) when is_binary(Bin) ->
 id_hex(_Other) ->
     erlang:error(badarg).
 
+normalize_kind(wikimedia_unit) -> wikimedia_unit;
+normalize_kind(<<"wikimedia_unit">>) -> wikimedia_unit;
+normalize_kind("wikimedia_unit") -> wikimedia_unit;
 normalize_kind(yelp_ndjson) -> yelp_ndjson;
 normalize_kind(wikipedia_jsonl) -> wikipedia_jsonl;
 normalize_kind(ipfs_cid) -> ipfs_cid;
@@ -148,6 +151,15 @@ normalize_kind("wikimedia_visibility") -> wikimedia_visibility;
 normalize_kind(undefined) -> validation_error({missing_field, kind});
 normalize_kind(Other) -> validation_error({unsupported_job_kind, Other}).
 
+normalize_source(wikimedia_unit, Source) ->
+    Root = required_binary(plan_root, field(plan_root, Source, undefined)),
+    Unit = required_binary(unit_id, field(unit_id, Source, undefined)),
+    lists:foreach(fun(H) ->
+        case re:run(H, <<"^[0-9a-f]{64}$">>, [{capture, none}]) of
+            match -> ok; _ -> validation_error(invalid_work_commitment)
+        end
+    end, [Root, Unit]),
+    #{plan_root => Root, unit_id => Unit};
 normalize_source(yelp_ndjson, Source) ->
     #{paths => normalize_paths(Source)};
 normalize_source(wikipedia_jsonl, Source) ->
@@ -432,6 +444,20 @@ normalize_finalize(Finalize) ->
             validation_error({unsupported_option, auto_mint, step4b_required})
     end.
 
+%% A search shard is an intermediate artifact, not a globally finalized index.
+%% Its own snapshot must not be minted/published as a complete corpus.
+validate_combination(wikimedia_unit, #{mode := ledger_only}, Finalize) ->
+    case lists:any(fun(V) -> V =:= true end, maps:values(Finalize)) of
+        true -> validation_error(work_requires_deferred_finalization);
+        false -> ok
+    end;
+validate_combination(_Kind, #{mode := shard_search}, Finalize) ->
+    case maps:get(build_nft_manifest, Finalize, false) orelse
+         maps:get(publish_ipfs, Finalize, false) orelse
+         maps:get(auto_mint, Finalize, false) of
+        true -> validation_error(shard_requires_deferred_finalization);
+        false -> ok
+    end;
 validate_combination(_Kind, _Target, #{
     build_nft_manifest := false,
     publish_ipfs := true
@@ -445,21 +471,28 @@ validate_combination(Kind, #{mode := ledger_only}, #{build_nft_manifest := true}
 validate_combination(_Kind, _Target, _Finalize) ->
     ok.
 
+normalize_index_mode(wikimedia_unit, ledger_only) -> ledger_only;
 normalize_index_mode(yelp_ndjson, live_search) -> live_search;
 normalize_index_mode(wikipedia_jsonl, live_search) -> live_search;
+%% Private per-worker search contexts; snapshots are combined by a shard manifest.
+normalize_index_mode(yelp_ndjson, shard_search) -> shard_search;
+normalize_index_mode(wikipedia_jsonl, shard_search) -> shard_search;
 normalize_index_mode(wikimedia_visibility, live_search) -> live_search;
 normalize_index_mode(ipfs_cid, searchable_disk) -> searchable_disk;
 normalize_index_mode(ipfs_manifest, searchable_disk) -> searchable_disk;
 normalize_index_mode(ipfs_cid, ledger_only) -> ledger_only;
 normalize_index_mode(ipfs_manifest, ledger_only) -> ledger_only;
+normalize_index_mode(Kind, <<"shard_search">>) -> normalize_index_mode(Kind, shard_search);
 normalize_index_mode(Kind, <<"live_search">>) -> normalize_index_mode(Kind, live_search);
 normalize_index_mode(Kind, <<"searchable_disk">>) -> normalize_index_mode(Kind, searchable_disk);
 normalize_index_mode(Kind, <<"ledger_only">>) -> normalize_index_mode(Kind, ledger_only);
+normalize_index_mode(Kind, "shard_search") -> normalize_index_mode(Kind, shard_search);
 normalize_index_mode(Kind, "live_search") -> normalize_index_mode(Kind, live_search);
 normalize_index_mode(Kind, "searchable_disk") -> normalize_index_mode(Kind, searchable_disk);
 normalize_index_mode(Kind, "ledger_only") -> normalize_index_mode(Kind, ledger_only);
 normalize_index_mode(Kind, Mode) -> validation_error({invalid_index_mode, Kind, Mode}).
 
+default_mode(wikimedia_unit) -> ledger_only;
 default_mode(yelp_ndjson) -> live_search;
 default_mode(wikipedia_jsonl) -> live_search;
 default_mode(wikimedia_visibility) -> live_search;

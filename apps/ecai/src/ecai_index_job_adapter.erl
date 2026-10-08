@@ -22,6 +22,7 @@
     {ok, map()} | {error, term()}.
 
 -spec module_for(atom()) -> {ok, module()} | {error, term()}.
+module_for(wikimedia_unit) -> {ok, ecai_index_job_wikimedia_unit};
 module_for(yelp_ndjson) -> {ok, ecai_index_job_yelp};
 module_for(wikipedia_jsonl) -> {ok, ecai_index_job_wikipedia};
 module_for(ipfs_cid) -> {ok, ecai_index_job_ipfs};

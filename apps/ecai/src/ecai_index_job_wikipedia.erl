@@ -7,7 +7,7 @@ prepare(#{spec := Spec}) ->
     Paths = maps:get(paths, maps:get(source, Spec)),
     case ecai_index_source:describe_paths(Paths) of
         {ok, SourceIdentity} ->
-            try ecai_search_server:get_ctx() of
+            try search_context(Spec) of
                 undefined ->
                     {error, search_index_not_ready};
                 Ctx ->
@@ -35,18 +35,40 @@ prepare(#{spec := Spec}) ->
             Error
     end.
 
-run_batch(Job, Runtime, Checkpoint0, BatchSize) ->
-    Index0 = maps:get(source_index, Checkpoint0, 0),
+run_batch(Job, Runtime0, Checkpoint0, BatchSize) ->
+    %% Shard workers own private ETS indexes. After a worker restart those
+    %% tables no longer exist; replay from part zero instead of trusting a
+    %% checkpoint for records that never reached a durable snapshot.
+    {Runtime, Checkpoint} = shard_replay(Job, Runtime0, Checkpoint0),
+    Index0 = maps:get(source_index, Checkpoint, 0),
     Total = maps:get(total, Runtime),
     case Index0 >= Total of
         true ->
-            {complete, Runtime, Checkpoint0, final_result(Runtime, Checkpoint0)};
+            {complete, Runtime, Checkpoint, final_result(Runtime, Checkpoint)};
         false ->
-            process_paths(Job, Runtime, Checkpoint0, BatchSize, 0)
+            process_paths(Job, Runtime, Checkpoint, BatchSize, 0)
     end.
 
-result(_Job, _Runtime, _Checkpoint, Result) ->
-    {ok, Result}.
+result(#{spec := Spec} = Job, Runtime, _Checkpoint, Result) ->
+    case maps:get(mode, maps:get(target, Spec)) of
+        shard_search ->
+            case ecai_index_shards:snapshot(Job, maps:get(ctx, Runtime)) of
+                {ok, Receipt} -> {ok, maps:merge(Result, Receipt)};
+                {error, _} = Error -> Error
+            end;
+        _ -> {ok, Result}
+    end.
+
+shard_replay(#{spec := #{target := #{mode := shard_search}}}, Runtime, _Checkpoint)
+  when not is_map_key(shard_started, Runtime) ->
+    {Runtime#{shard_started => true}, #{}};
+shard_replay(_Job, Runtime, Checkpoint) ->
+    {Runtime, Checkpoint}.
+
+search_context(#{target := #{mode := shard_search}}) ->
+    ecai_search:set_opts(ecai_search:new(), #{root_mode => deferred});
+search_context(_Spec) ->
+    ecai_search_server:get_ctx().
 
 process_paths(_Job, Runtime, Checkpoint, BatchSize, Processed) when Processed >= BatchSize ->
     {continue, Runtime, Checkpoint, progress(Runtime, Checkpoint)};
@@ -59,7 +81,7 @@ process_paths(Job, Runtime, Checkpoint0, BatchSize, Processed) ->
         false ->
             Paths = maps:get(paths, Runtime),
             Path = lists:nth(Index0 + 1, Paths),
-            Opts = wikipedia_opts(Job),
+            Opts = wikipedia_opts(Job, Runtime),
             Ctx = maps:get(ctx, Runtime),
             Before = search_docs(Ctx),
             try ecai_wikipedia_loader:load(Path, Opts) of
@@ -89,18 +111,22 @@ process_paths(Job, Runtime, Checkpoint0, BatchSize, Processed) ->
             end
     end.
 
-wikipedia_opts(#{id := JobId, spec := Spec}) ->
+wikipedia_opts(#{id := JobId, spec := Spec}, Runtime) ->
     Target = maps:get(target, Spec),
     BaseDir = maps:get(base_dir, Target),
     CheckpointDir = filename:join(
         path_list(BaseDir),
         filename:join("job-checkpoints", binary_to_list(JobId))
     ),
-    #{
+    BaseOpts = #{
         auto_tune => true,
         mem_profile => moderate,
         checkpoint_dir => CheckpointDir
-    }.
+    },
+    case maps:get(mode, Target) of
+        shard_search -> BaseOpts#{ctx => maps:get(ctx, Runtime), checkpoint_enabled => false};
+        _ -> BaseOpts
+    end.
 
 progress(Runtime, Checkpoint) ->
     Completed = maps:get(source_index, Checkpoint, 0),
