@@ -57,7 +57,7 @@
     sats_to_msat/1,
     msat_to_sats/1
 ]).
--export([pay_invoice/1, pay_invoice/2]).
+-export([pay_invoice/1, pay_invoice/2, decode_invoice/1, xpay_invoice/2, list_pays/1, list_peerchannels/0]).
 -export([
     list_funds/0,
     list_pays/0,
@@ -694,6 +694,33 @@ connect_best_peers() ->
 connect_best_peers(Opts) when is_map(Opts) ->
     poolboy:transaction(?MODULE, fun(Worker) ->
         gen_server:call(Worker, {connect_best_peers, Opts}, ?CLN_HTTP_TIMEOUT)
+    end).
+
+%% Narrow additions used by the ECAI indexing settlement ledger. Reuse the
+%% existing authenticated CLN transport; do not expose arbitrary RPC methods.
+list_peerchannels() ->
+    poolboy:transaction(?MODULE, fun(Worker) ->
+        gen_server:call(Worker, list_peerchannels, ?CLN_HTTP_TIMEOUT)
+    end).
+
+decode_invoice(Bolt11) when is_binary(Bolt11), byte_size(Bolt11) =< 8192 ->
+    poolboy:transaction(?MODULE, fun(W) ->
+        gen_server:call(W, {decode_invoice, Bolt11}, ?CLN_HTTP_TIMEOUT)
+    end).
+
+list_pays(#{payment_hash := Hash} = Params) when is_binary(Hash),
+                                               byte_size(Hash) =:= 64,
+                                               map_size(Params) =:= 1 ->
+    poolboy:transaction(?MODULE, fun(W) ->
+        gen_server:call(W, {list_pays, Params}, ?CLN_HTTP_TIMEOUT)
+    end).
+
+%% xpay is supported by CLN >= 24.11. No automatic pay/xpay fallback on error:
+%% the caller must reconcile the same payment hash before retrying.
+xpay_invoice(Bolt11, Opts) when is_binary(Bolt11), is_map(Opts) ->
+    Safe = maps:with([maxfee, retry_for, maxdelay], Opts),
+    poolboy:transaction(?MODULE, fun(W) ->
+        gen_server:call(W, {xpay_invoice, Bolt11, Safe}, ?CLN_HTTP_TIMEOUT)
     end).
 
 pay_invoice(Bolt11) ->
@@ -1721,6 +1748,30 @@ handle_call(
         payment_hash => PaymentHash
     }),
     {reply, Invoice, State};
+handle_call(list_peerchannels, _From,
+    #state{cln_host = Host, cln_port = Port, options = Options, readonly_rune = Rune} = State) ->
+    %% Raw, uncached capacity data; never turn an RPC failure into an empty list.
+    {reply, cln_post_json(Host, Port, Options, Rune, "/v1/listpeerchannels", #{}), State};
+handle_call(
+    {decode_invoice, Bolt11}, _From,
+    #state{cln_host = Host, cln_port = Port, readonly_rune = Rune, options = Options} = State
+) ->
+    Reply = cln_post_json(Host, Port, Options, Rune, "/v1/decode", #{string => Bolt11}),
+    {reply, Reply, State};
+handle_call(
+    {list_pays, Params}, _From,
+    #state{cln_host = Host, cln_port = Port, readonly_rune = Rune, options = Options} = State
+) ->
+    Reply = cln_post_json(Host, Port, Options, Rune, "/v1/listpays",
+                          maps:with([payment_hash], Params)),
+    {reply, Reply, State};
+handle_call(
+    {xpay_invoice, Bolt11, Opts}, _From,
+    #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} = State
+) ->
+    ReqMap = (maps:with([maxfee, retry_for, maxdelay], Opts))#{invstring => Bolt11},
+    Reply = cln_post_json(Host, Port, Options, Rune, "/v1/xpay", ReqMap),
+    {reply, Reply, State};
 handle_call(
     {pay_invoice, Bolt11, Opts},
     _From,
