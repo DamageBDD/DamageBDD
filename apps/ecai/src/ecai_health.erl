@@ -411,7 +411,17 @@ patch_queue_diagnostics(ManagerR, LearnerR, Inference, Repairs, Workers) ->
     PatchFree = get_in(Inference, [roles, patch, available], 0),
     LastError = maps:get(last_error, Manager, undefined),
 
+    ManagerAvailable = case ManagerR of
+        {ok, M} when is_map(M) -> maps:get(status, M, ok) =/= error;
+        _ -> false
+    end,
     Inputs = #{
+        manager_status_available => ManagerAvailable,
+        manager_status_error => case ManagerAvailable of true -> undefined; false -> ManagerR end,
+        manager_cycle_running => maps:get(cycle_running, Manager, false),
+        manager_snapshot_ready => maps:get(snapshot_ready, Manager, true),
+        manager_snapshot_error => maps:get(snapshot_error, Manager, undefined),
+        manager_snapshot_at => maps:get(snapshot_at, Manager, undefined),
         manager_active => Active,
         live_workers => Live,
         persisted_running => Running,
@@ -448,7 +458,16 @@ classify_patch_queue(I) ->
     LearnerReady = maps:get(learner_ready, I, false),
     PatchFree = maps:get(patch_free_capacity, I, 0),
     LastError = maps:get(manager_last_error, I, undefined),
+    ManagerAvailable = maps:get(manager_status_available, I, true),
+    SnapshotReady = maps:get(manager_snapshot_ready, I, true),
+    SnapshotError = maps:get(manager_snapshot_error, I, undefined),
+    CycleRunning = maps:get(manager_cycle_running, I, false),
     case true of
+        _ when ManagerAvailable =:= false -> manager_status_unavailable;
+        _ when SnapshotError =/= undefined, SnapshotError =/= not_sampled ->
+            manager_snapshot_unavailable;
+        _ when SnapshotReady =:= false -> manager_initializing;
+        _ when CycleRunning =:= true, Active =:= 0, Live =:= 0 -> scheduling;
         _ when
             Active > 0,
             Live > 0,
@@ -461,7 +480,9 @@ classify_patch_queue(I) ->
         _ when Active > 0, Live =:= 0 ->
             active_without_worker;
         _ when Active =:= 0, Live > 0 ->
-            worker_without_manager;
+            %% These samples are not atomic. A worker can start between them;
+            %% a responding manager reporting zero is not a missing manager.
+            working_transitional;
         _ when Running > 0, Active =:= 0, Live =:= 0 ->
             stale_running;
         _ when Pending > 0, LearnerReady =:= false ->
@@ -538,6 +559,8 @@ classify_overall(D) ->
         _ when
             PQState =:= active_without_worker;
             PQState =:= worker_without_manager;
+            PQState =:= manager_status_unavailable;
+            PQState =:= manager_snapshot_unavailable;
             PQState =:= stale_running
         ->
             degraded;
@@ -550,7 +573,9 @@ classify_overall(D) ->
             degraded;
         _ when
             PQState =:= working;
-            PQState =:= working_transitional
+            PQState =:= working_transitional;
+            PQState =:= scheduling;
+            PQState =:= manager_initializing
         ->
             busy;
         _ when

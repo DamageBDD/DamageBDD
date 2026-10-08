@@ -11,17 +11,17 @@ start_link() -> supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 propose(App, Module, Finding) -> propose(App, Module, Finding, #{}).
 
 propose(App, Module, Finding, Opts) ->
-    Id =
-        case maps:get(worker_id, Opts, undefined) of
-            {Fingerprint0, Version0} ->
-                {ecai_patch_worker, Fingerprint0, Version0};
-            undefined ->
-                {ecai_patch_worker, erlang:unique_integer([positive, monotonic])};
-            Other ->
-                {ecai_patch_worker, Other}
-        end,
-    {Fingerprint, Version} =
-        repair_identity(App, Module, Finding, Opts),
+    {Fingerprint, Version} = repair_identity(App, Module, Finding, Opts),
+    Id = {ecai_patch_worker, Fingerprint, Version},
+    WorkerOpts = Opts#{worker_id => {Fingerprint, Version}},
+    %% Do not rerun a mutating preflight while this repair already has an owner.
+    case lists:keyfind(Id, 1, supervisor:which_children(?SERVER)) of
+        {Id, Pid, _, _} when is_pid(Pid) ->
+            {error, {already_started, Pid}};
+        _ -> propose_new(Id, App, Module, Finding, Fingerprint, Version, WorkerOpts)
+    end.
+
+propose_new(Id, App, Module, Finding, Fingerprint, Version, Opts) ->
     case
         ecai_repair_preflight:check(
             App, Module, Finding, Fingerprint, Version, Opts
@@ -48,7 +48,9 @@ propose(App, Module, Finding, Opts) ->
         {blocked, Repair} ->
             {ok, blocked, Repair};
         {superseded, Repair} ->
-            {ok, superseded, Repair}
+            {ok, superseded, Repair};
+        {error, Reason} ->
+            {error, {preflight_failed, Reason}}
     end.
 
 repair_identity(App, Module, Finding, Opts) ->

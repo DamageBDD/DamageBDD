@@ -24,6 +24,7 @@
     put_global_knowledge/1,
     get_global_knowledge/0,
     put_repair/3,
+    compare_and_put_repair/4,
     get_repair/2,
     repairs/0,
     repairs/1,
@@ -108,6 +109,15 @@ put_repair(Fingerprint, FindingVersion, Repair) ->
     gen_server:call(
         ?SERVER, {put_transition, {repair, Fp, Version}, repair, {Fp, Version}, Repair}, infinity
     ).
+%% Expected is a previously read repair map (or not_found for admission).
+%% The persisted sequence, not a wall-clock timestamp, is the revision fence.
+compare_and_put_repair(Fingerprint, FindingVersion, Expected, Repair)
+  when is_map(Repair) ->
+    Fp = to_binary(Fingerprint),
+    Version = to_binary(FindingVersion),
+    gen_server:call(?SERVER,
+        {compare_and_put_repair, Fp, Version, Expected, Repair}, infinity).
+
 get_repair(Fingerprint, FindingVersion) ->
     gen_server:call(
         ?SERVER,
@@ -194,6 +204,26 @@ handle_call({put, Key, Value}, _From, State) ->
 handle_call({put_transition, Key, Type, Id, Value0}, _From, State0) ->
     {Reply, State1} = persist_transition(Key, Type, Id, Value0, State0),
     {reply, Reply, State1};
+handle_call({compare_and_put_repair, Fp, Version, Expected, Repair}, _From, State0) ->
+    Key = {repair, Fp, Version},
+    Current = case dets:lookup(State0#state.tab, Key) of
+        [{Key, Value}] -> Value;
+        [] -> not_found
+    end,
+    case same_repair_revision(Expected, Current) of
+        false ->
+            {reply, {error, conflict}, State0};
+        true ->
+            {Reply, State1} = persist_transition(Key, repair, {Fp, Version},
+                Repair#{fingerprint => Fp, finding_version => Version}, State0),
+            Result = case Reply of
+                ok ->
+                    [{Key, Stored}] = dets:lookup(State1#state.tab, Key),
+                    {ok, Stored};
+                _ -> Reply
+            end,
+            {reply, Result, State1}
+    end;
 handle_call({put_checkpoint, Name, Checkpoint0}, _From, State) ->
     Checkpoint = Checkpoint0#{persisted_at => now_iso8601()},
     Reply = persist_value(State#state.tab, {checkpoint, Name}, Checkpoint),
@@ -252,6 +282,14 @@ terminate(_Reason, State) ->
 
 code_change(_Old, State, _Extra) -> {ok, State}.
 
+same_repair_revision(not_found, not_found) -> true;
+same_repair_revision(#{persist_seq := Seq}, #{persist_seq := Seq}) -> true;
+same_repair_revision(Expected, Current) when is_map(Expected), is_map(Current) ->
+    %% Old records may predate event sequences. Fold results add identity keys.
+    maps:without([fingerprint, finding_version], Expected) =:=
+        maps:without([fingerprint, finding_version], Current);
+same_repair_revision(_, _) -> false.
+
 persist_value(Tab, Key, Value) ->
     case dets:insert(Tab, {Key, Value}) of
         ok -> dets:sync(Tab);
@@ -276,9 +314,12 @@ persist_transition(Key, Type, Id, Value0, State0) ->
     ],
     case dets:insert(State0#state.tab, Objects) of
         ok ->
+            %% Insert already changed the in-memory table. Never reuse its
+            %% revision if sync fails: stale snapshots must still conflict.
+            State1 = State0#state{event_seq = Seq},
             case dets:sync(State0#state.tab) of
-                ok -> {ok, State0#state{event_seq = Seq}};
-                Error -> {Error, State0}
+                ok -> {ok, State1};
+                Error -> {Error, State1}
             end;
         Error ->
             {Error, State0}

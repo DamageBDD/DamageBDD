@@ -41,17 +41,17 @@ exhausted_retry_wait_becomes_terminal_test() ->
         ?assert(
             meck:called(
                 ecai_learning_store,
-                put_repair,
-                [<<"fp">>, <<"version">>, Terminal]
+                compare_and_put_repair,
+                [<<"fp">>, <<"version">>, Repair, Terminal]
             )
         ),
-        ?assertEqual(1, meck:num_calls(ecai_learning_store, put_repair, 3)),
+        ?assertEqual(1, meck:num_calls(ecai_learning_store, compare_and_put_repair, 4)),
         %% A second pass through a terminal record must not persist it again.
         ?assertEqual(
             Terminal,
             ecai_patch_manager:terminalize_exhausted_retry_wait(Terminal, 6)
         ),
-        ?assertEqual(1, meck:num_calls(ecai_learning_store, put_repair, 3))
+        ?assertEqual(1, meck:num_calls(ecai_learning_store, compare_and_put_repair, 4))
     end).
 
 retry_wait_below_limit_is_unchanged_test() ->
@@ -68,7 +68,7 @@ retry_wait_below_limit_is_unchanged_test() ->
                 Repair, 6
             )
         ),
-        ?assertEqual(0, meck:num_calls(ecai_learning_store, put_repair, 3))
+        ?assertEqual(0, meck:num_calls(ecai_learning_store, compare_and_put_repair, 4))
     end).
 
 queued_record_is_not_terminalized_test() ->
@@ -84,7 +84,7 @@ queued_record_is_not_terminalized_test() ->
                 Repair, 6
             )
         ),
-        ?assertEqual(0, meck:num_calls(ecai_learning_store, put_repair, 3))
+        ?assertEqual(0, meck:num_calls(ecai_learning_store, compare_and_put_repair, 4))
     end).
 
 binary_retry_wait_status_is_supported_test() ->
@@ -105,19 +105,19 @@ binary_retry_wait_status_is_supported_test() ->
         ?assert(
             meck:called(
                 ecai_learning_store,
-                put_repair,
-                [<<"binary-fp">>, <<"version">>, Terminal]
+                compare_and_put_repair,
+                [<<"binary-fp">>, <<"version">>, Repair, Terminal]
             )
         ),
-        ?assertEqual(1, meck:num_calls(ecai_learning_store, put_repair, 3))
+        ?assertEqual(1, meck:num_calls(ecai_learning_store, compare_and_put_repair, 4))
     end).
 
 terminalization_does_not_hide_store_failure_test() ->
     with_store_mock(fun() ->
         ok = meck:expect(
             ecai_learning_store,
-            put_repair,
-            fun(_, _, _) -> {error, injected_store_failure} end
+            compare_and_put_repair,
+            fun(_, _, _, _) -> {error, injected_store_failure} end
         ),
         Repair = #{
             status => retry_wait,
@@ -126,10 +126,10 @@ terminalization_does_not_hide_store_failure_test() ->
             finding_version => <<"v1">>
         },
         ?assertError(
-            {badmatch, {error, injected_store_failure}},
+            {repair_transition_failed, <<"failed-write">>, <<"v1">>, {error, injected_store_failure}},
             ecai_patch_manager:terminalize_exhausted_retry_wait(Repair, 6)
         ),
-        ?assertEqual(1, meck:num_calls(ecai_learning_store, put_repair, 3))
+        ?assertEqual(1, meck:num_calls(ecai_learning_store, compare_and_put_repair, 4))
     end).
 
 with_store_mock(Fun) ->
@@ -137,7 +137,8 @@ with_store_mock(Fun) ->
     %% node-global learning-store lifecycle. No original functions may run.
     ok = meck:new(ecai_learning_store, []),
     try
-        ok = meck:expect(ecai_learning_store, put_repair, fun(_, _, _) -> ok end),
+        ok = meck:expect(ecai_learning_store, compare_and_put_repair,
+            fun(_, _, _, After) -> {ok, After} end),
         Result = Fun(),
         ?assert(meck:validate(ecai_learning_store)),
         Result

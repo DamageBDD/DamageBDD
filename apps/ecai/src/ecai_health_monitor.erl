@@ -542,6 +542,8 @@ deterministic_resolution(Diagnostics, RecentLogs) ->
             [
                 active_without_worker,
                 worker_without_manager,
+                manager_status_unavailable,
+                manager_snapshot_unavailable,
                 stale_running,
                 stalled,
                 blocked_manager
@@ -953,6 +955,11 @@ prompt_diagnostics(Diagnostics) ->
                 queued_total,
                 retry_wait,
                 stale_running,
+                cycle_running,
+                cycle,
+                snapshot_ready,
+                snapshot_at,
+                snapshot_error,
                 last_error,
                 last_run_at,
                 last_retry_at

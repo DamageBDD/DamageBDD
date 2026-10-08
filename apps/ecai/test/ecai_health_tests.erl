@@ -179,3 +179,34 @@ patch_queue_uses_live_manager_queue_not_cumulative_test() ->
     ?assertEqual(7, maps:get(manager_queued_total, Queue)),
     ?assertEqual(0, maps:get(durable_queued, Queue)),
     ?assertEqual(idle, maps:get(state, Queue)).
+
+manager_timeout_is_not_reported_as_zero_workers_test() ->
+    Queue = ecai_health:patch_queue_diagnostics(
+        {error, {call_timeout, ecai_patch_manager, status, 5000}},
+        {ok, #{ready => true}}, #{roles => #{patch => #{available => 1}}},
+        #{counts => #{running => 1}}, #{live_count => 1, live_worker_ids => []}),
+    ?assertEqual(manager_status_unavailable, maps:get(state, Queue)),
+    ?assertEqual(false, maps:get(manager_status_available, Queue)).
+
+worker_start_between_samples_is_transitional_test() ->
+    ?assertEqual(working_transitional, ecai_health:classify_patch_queue(
+        #{manager_active => 0, live_workers => 1, persisted_running => 1})).
+
+busy_scan_is_not_a_stalled_queue_test() ->
+    ?assertEqual(scheduling, ecai_health:classify_patch_queue(
+        #{manager_active => 0, live_workers => 0, durable_queued => 3,
+            manager_cycle_running => true, learner_ready => true,
+            patch_free_capacity => 1})).
+
+failed_snapshot_is_explicitly_degraded_test() ->
+    State = ecai_health:classify_patch_queue(
+        #{manager_snapshot_error => {exit, noproc}}),
+    ?assertEqual(manager_snapshot_unavailable, State),
+    D = (healthy_overall_fixture())#{patch_queue => #{state => State}},
+    ?assertEqual(degraded, ecai_health:classify_overall(D)).
+
+terminal_incident_history_alone_does_not_degrade_service_test() ->
+    D = (healthy_overall_fixture())#{log_learning => #{enabled => true, queued => 0,
+        max_queue => 256, last_error => undefined,
+        last_terminal_error => {<<"old-incident">>, analysis_unavailable}}},
+    ?assertEqual(go, ecai_health:classify_overall(D)).

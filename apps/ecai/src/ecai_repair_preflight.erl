@@ -72,6 +72,9 @@ safe_check(App, Module, Finding, Fingerprint, Version, Opts) ->
                 {allow, #{preflight => invalid_analysis}}
         end
     catch
+        throw:{preflight_persist_failed, PersistError} ->
+            %% Never start inference when an authoritative block could not be saved.
+            {error, PersistError};
         Class:Reason0 ->
             logger:warning(
                 "ECAI repair preflight deferred app=~p module=~p "
@@ -135,6 +138,7 @@ persist_superseded(
     Repair0 = maps:without(
         [
             worker_pid,
+            dispatch_pid,
             worker_started_at,
             next_retry_at_ms,
             completed_at
@@ -151,15 +155,13 @@ persist_superseded(
         last_error => {preflight_superseded, Reason},
         updated_at => Now
     },
-    ok = ecai_learning_store:put_repair(
-        Fingerprint, Version, Repair
-    ),
+    Stored = persist_preflight(Fingerprint, Version, Existing, Repair),
     logger:notice(
         "ECAI repair preflight superseded fingerprint=~p "
         "version=~p current_version=~p module=~p",
         [Fingerprint, Version, CurrentVersion, Module]
     ),
-    Repair.
+    Stored.
 
 persist_blocked(
     App, Module, Finding, Fingerprint, Version, Reason
@@ -172,6 +174,7 @@ persist_blocked(
     Repair0 = maps:without(
         [
             worker_pid,
+            dispatch_pid,
             worker_started_at,
             next_retry_at_ms,
             completed_at
@@ -193,9 +196,7 @@ persist_blocked(
         last_error => {source_snapshot_blocked, Reason},
         updated_at => Now
     },
-    ok = ecai_learning_store:put_repair(
-        Fingerprint, Version, Repair
-    ),
+    Stored = persist_preflight(Fingerprint, Version, Existing, Repair),
     logger:notice(
         "ECAI repair preflight blocked fingerprint=~p "
         "version=~p module=~p kind=~p",
@@ -206,7 +207,25 @@ persist_blocked(
             map_value(kind, Reason)
         ]
     ),
-    Repair.
+    Stored.
+
+persist_preflight(Fp, Version, Existing, Repair) ->
+    Worker = maps:get(worker_pid, Existing, undefined),
+    Dispatcher = maps:get(dispatch_pid, Existing, undefined),
+    WorkerAlive = local_alive(Worker),
+    ForeignDispatcher = Dispatcher =/= self() andalso local_alive(Dispatcher),
+    case WorkerAlive orelse ForeignDispatcher of
+        true -> throw({preflight_persist_failed, {repair_owned, Fp, Version}});
+        false ->
+            Expected = case map_size(Existing) of 0 -> not_found; _ -> Existing end,
+            case ecai_learning_store:compare_and_put_repair(Fp, Version, Expected, Repair) of
+                {ok, Stored} -> Stored;
+                Error -> throw({preflight_persist_failed, {Fp, Version, Error}})
+            end
+    end.
+
+local_alive(Pid) when is_pid(Pid), node(Pid) =:= node() -> erlang:is_process_alive(Pid);
+local_alive(_) -> false.
 
 repair_base(
     Existing, App, Module, Finding, Fingerprint, Version

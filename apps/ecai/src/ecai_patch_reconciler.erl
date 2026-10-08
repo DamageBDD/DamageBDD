@@ -5,9 +5,9 @@
 %%
 %% Repair records are authoritative across VM restarts, but a persisted
 %% `running` status is only meaningful while the matching patch worker is
-%% actually alive. This process periodically compares the two and moves stale
-%% interrupted jobs back to `queued` without discarding their durable stage,
-%% generated patch, verifier diagnostics, or retry metadata.
+%% actually alive. This process periodically compares the two and applies the
+%% same bounded retry transition as the manager. Revision fencing prevents
+%% competing recovery passes from overwriting results or charging twice.
 
 -export([
     start_link/0,
@@ -112,7 +112,7 @@ reconcile(State0) ->
             Active = active_worker_keys(Children),
             {Recovered, Errors} = lists:foldl(
                 fun(Repair, {Recovered0, Errors0}) ->
-                    case maybe_recover(Repair, Active, NowMs, State0#state.grace_ms) of
+                    case maybe_recover(Repair, Active, NowMs, State0#state.grace_ms, State0#state.opts) of
                         unchanged -> {Recovered0, Errors0};
                         {ok, _Key} -> {Recovered0 + 1, Errors0};
                         {error, Reason} -> {Recovered0, [Reason | Errors0]}
@@ -162,7 +162,7 @@ fail_cycle(Reason, State0) ->
     _ = checkpoint(State1, Summary),
     {Summary, State1}.
 
-maybe_recover(Repair, Active, NowMs, GraceMs) when is_map(Repair) ->
+maybe_recover(Repair, Active, NowMs, GraceMs, Opts) when is_map(Repair) ->
     case repair_key(Repair) of
         {error, _} = Error ->
             case normalize_status(maps:get(status, Repair, undefined)) of
@@ -172,41 +172,26 @@ maybe_recover(Repair, Active, NowMs, GraceMs) when is_map(Repair) ->
         {ok, Key} ->
             case should_recover(Repair, Key, Active, {NowMs, GraceMs}) of
                 false -> unchanged;
-                true -> recover_repair(Key, Repair)
+                true -> recover_repair(Key, Repair, Opts)
             end
     end;
-maybe_recover(_Repair, _Active, _NowMs, _GraceMs) ->
+maybe_recover(_Repair, _Active, _NowMs, _GraceMs, _Opts) ->
     unchanged.
 
 should_recover(Repair, Key, Active, {NowMs, GraceMs}) ->
     normalize_status(maps:get(status, Repair, undefined)) =:= running andalso
         not maps:is_key(Key, Active) andalso
+        not ecai_patch_lifecycle:owner_alive(Repair) andalso
         stale_enough(Repair, NowMs, GraceMs).
 
-recover_repair({Fp, Version}, Repair0) ->
-    Now = now_iso8601(),
-    Recovery = #{
-        reason => stale_running_without_live_worker,
-        recovered_at => Now,
-        previous_status => running,
-        previous_stage => maps:get(stage, Repair0, undefined)
-    },
-    Repair1 = maps:without(
-        [worker, worker_pid, worker_ref, monitor_ref, pid, mref],
-        Repair0
-    ),
-    Repair = Repair1#{
-        status => queued,
-        updated_at => Now,
-        recovered_at => Now,
-        recovery => Recovery
-    },
-    try ecai_learning_store:put_repair(Fp, Version, Repair) of
-        ok -> {ok, {Fp, Version}};
-        Other -> {error, {repair_requeue_failed, Fp, Version, Other}}
+recover_repair({Fp, Version}, Repair, Opts) ->
+    try ecai_patch_lifecycle:recover(Repair,
+            {orphaned_worker, maps:get(worker_started_at, Repair, undefined)}, Opts) of
+        {ok, unchanged} -> unchanged;
+        {ok, _Stored} -> {ok, {Fp, Version}};
+        {error, _} = Error -> Error
     catch
-        Class:Reason ->
-            {error, {repair_requeue_failed, Fp, Version, {Class, Reason}}}
+        Class:Reason -> {error, {repair_requeue_failed, Fp, Version, {Class, Reason}}}
     end.
 
 repair_key(Repair) ->

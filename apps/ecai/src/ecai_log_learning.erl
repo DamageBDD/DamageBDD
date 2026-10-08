@@ -143,6 +143,7 @@ safe_store_call(Fun) ->
 %%====================================================================
 
 init(Opts) ->
+    process_flag(trap_exit, true),
     State0 = restore_checkpoint(state_from_opts(Opts)),
     State1 = persist_state(State0),
     case State1#state.enabled andalso State1#state.queue =/= [] of
@@ -227,7 +228,7 @@ handle_info(dispatch, State0 = #state{queue = [Item | Rest]}) ->
     Parent = self(),
     Ref = make_ref(),
     Opts = learning_opts(State0),
-    {Pid, MRef} = spawn_monitor(fun() ->
+    {Pid, MRef} = spawn_opt(fun() ->
         Result =
             try learn_item(Item, Opts) of
                 Value -> Value
@@ -236,7 +237,7 @@ handle_info(dispatch, State0 = #state{queue = [Item | Rest]}) ->
                     {retry, {incident_learning_exception, Class, Reason, trim_stack(Stack)}}
             end,
         Parent ! {log_learning_result, Ref, Result}
-    end),
+    end, [link, monitor]),
     Current = #{item => Item, pid => Pid, mref => MRef, ref => Ref},
     State1 = persist_state(State0#state{
         queue = Rest,

@@ -29,7 +29,8 @@
     prompt_target_source/2,
     prompt_provenance/3,
     patch_prompt/4,
-    should_retry_invalid_patch/4
+    should_retry_invalid_patch/4,
+    persist_worker_update/5
 ]).
 -endif.
 
@@ -48,6 +49,7 @@ run(#{app := App, module := Module, finding := Finding} = Args) ->
         {ok, Context0} ->
             Fingerprint = finding_fingerprint(Module, Finding),
             Version = maps:get(finding_version, Context0),
+            ok = check_worker_identity(Fingerprint, Version, Opts),
             SnapshotOpts = source_snapshot_opts(Opts),
             case ecai_git_snapshot:pin_context(Context0, SnapshotOpts) of
                 {error, SnapshotError} ->
@@ -77,12 +79,69 @@ run(#{app := App, module := Module, finding := Finding} = Args) ->
             end
     end.
 
-init(Args) -> {ok, Args, {continue, run}}.
+check_worker_identity(Fp, Version, Opts) ->
+    case maps:get(worker_id, Opts, {Fp, Version}) of
+        {Fp, Version} -> ok;
+        Other -> {error, {worker_identity_changed, Other, {Fp, Version}}}
+    end.
+
+init(Args) ->
+    case claim_worker(Args) of
+        {ok, ClaimedArgs} -> {ok, ClaimedArgs, {continue, run}};
+        {error, Reason} -> {stop, Reason}
+    end.
+
+claim_worker(#{app := App, module := Module, finding := Finding} = Args) ->
+    Opts = maps:get(opts, Args, #{}),
+    case maps:get(worker_id, Opts, undefined) of
+        {Fp, Version} ->
+            Existing = ecai_learning_store:get_repair(Fp, Version),
+            Before = case Existing of
+                {ok, R} when is_map(R) -> R;
+                not_found -> not_found;
+                Error -> erlang:error({worker_claim_read_failed, Error})
+            end,
+            Base = case Before of not_found -> #{}; _ -> Before end,
+            Owner = maps:get(worker_pid, Base, undefined),
+            OwnerAlive = is_pid(Owner) andalso node(Owner) =:= node() andalso
+                erlang:is_process_alive(Owner),
+            Reserved = maps:get(reservation_seq, Opts, undefined),
+            RevisionMatches = Reserved =:= undefined orelse
+                Reserved =:= maps:get(persist_seq, Base, undefined),
+            case OwnerAlive orelse not RevisionMatches of
+                true -> {error, stale_worker_reservation};
+                false ->
+                    Now = now_iso8601(),
+                    Running = (maps:without([dispatch_pid, completed_at, next_retry_at_ms], Base))#{
+                        application => App, module => Module, finding => Finding,
+                        fingerprint => Fp, finding_version => Version,
+                        status => running, stage => inference, worker_pid => self(),
+                        worker_started_at => Now, updated_at => Now,
+                        created_at => maps:get(created_at, Base, Now)},
+                    case ecai_learning_store:compare_and_put_repair(Fp, Version, Before, Running) of
+                        {ok, _Stored} ->
+                            case whereis(ecai_patch_manager) of
+                                Pid when is_pid(Pid) -> Pid ! {patch_worker_started, Fp, Version, self()};
+                                _ -> ok
+                            end,
+                            {ok, Args#{opts => Opts#{resume_repair =>
+                                maps:get(resume_repair, Opts, Base)}}};
+                        Error1 -> {error, {worker_claim_failed, Error1}}
+                    end
+            end;
+        _ -> {ok, Args}
+    end.
 
 handle_continue(run, Args) ->
-    Result = run(Args),
+    Result = try run(Args) of
+        Value -> Value
+    catch
+        Class:Reason0:Stack ->
+            {error, {worker_exception, Class, Reason0, lists:sublist(Stack, 8)}}
+    end,
+    _ = persist_unfinished_result(Args, Result),
     case Result of
-        {ok, Repair} ->
+        {ok, Repair} when is_map(Repair) ->
             logger:notice(
                 "ECAI patch worker complete fingerprint=~p status=~p stage=~p",
                 [
@@ -92,9 +151,37 @@ handle_continue(run, Args) ->
                 ]
             );
         {error, Reason} ->
-            logger:error("ECAI patch worker failed reason=~p", [Reason])
+            logger:error("ECAI patch worker failed reason=~p", [Reason]);
+        Other ->
+            logger:error("ECAI patch worker returned unexpected result=~p", [Other])
     end,
     {stop, normal, Args#{result => Result}}.
+
+persist_unfinished_result(Args, Result) ->
+    Opts = maps:get(opts, Args, #{}),
+    case maps:get(worker_id, Opts, undefined) of
+        {Fp, Version} ->
+            try ecai_learning_store:get_repair(Fp, Version) of
+                {ok, Repair} ->
+                    Owner = maps:get(worker_pid, Repair, self()),
+                    case ecai_patch_lifecycle:running(Repair) andalso Owner =:= self() of
+                        true ->
+                            Reason = case Result of
+                                {error, Error} -> {worker_error, Error};
+                                _ -> {worker_error, completed_without_durable_result}
+                            end,
+                            ecai_patch_lifecycle:recover(Repair, Reason, Opts);
+                        false -> ok
+                    end;
+                _ -> ok
+            catch
+                Class:PersistReason ->
+                    logger:error("ECAI worker failure persistence failed class=~p reason=~p",
+                        [Class, PersistReason]),
+                    {error, {Class, PersistReason}}
+            end;
+        _ -> ok
+    end.
 
 handle_call(_Request, _From, State) -> {reply, {error, unsupported_call}, State}.
 handle_cast(_Msg, State) -> {noreply, State}.
@@ -1201,7 +1288,7 @@ schedule_retry(
     Limit = ecai_patch_retry:retry_limit(Opts),
     NowMs = erlang:system_time(millisecond),
     Now = now_iso8601(),
-    case RetryCount > Limit of
+    case RetryCount >= Limit of
         true ->
             Exhausted0 = maps:merge(
                 Existing,
@@ -1327,7 +1414,7 @@ persist_repair(Repair00, Opts) ->
         Existing,
         maps:get(created_at, Repair0, Now)
     ),
-    Merged0 = maps:merge(Existing, Repair0),
+    Merged0 = maps:remove(dispatch_pid, maps:merge(Existing, Repair0)),
     MergedFresh = clear_stale_attempt_payload(Repair0, Merged0),
     Merged1 = MergedFresh#{
         created_at => CreatedAt,
@@ -1357,9 +1444,7 @@ persist_repair(Repair00, Opts) ->
                 end
         end,
     case
-        ecai_learning_store:put_repair(
-            Fingerprint, Version, Merged2
-        )
+        persist_worker_update(Fingerprint, Version, Existing, Merged2, Opts)
     of
         ok ->
             _ = ecai_learning_snapshot:write(Opts),
@@ -1368,6 +1453,24 @@ persist_repair(Repair00, Opts) ->
             Error;
         Other ->
             {error, {repair_store_failed, Other}}
+    end.
+
+persist_worker_update(Fp, Version, Existing, Repair, Opts) ->
+    case maps:get(worker_id, Opts, undefined) of
+        {Fp, Version} ->
+            %% An old worker may not publish into a newer attempt or an operator's
+            %% terminal state. Conflicts are retried through the durable queue.
+            case maps:get(worker_pid, Existing, undefined) =:= self() andalso
+                    ecai_patch_lifecycle:running(Existing) of
+                true ->
+                    case ecai_learning_store:compare_and_put_repair(Fp, Version, Existing, Repair) of
+                        {ok, _} -> ok;
+                        Error -> Error
+                    end;
+                false -> {error, stale_worker_owner}
+            end;
+        undefined -> ecai_learning_store:put_repair(Fp, Version, Repair);
+        _ -> {error, worker_identity_changed}
     end.
 
 clear_stale_failure_state(Status, Repair) when

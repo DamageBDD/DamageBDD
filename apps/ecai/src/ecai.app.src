@@ -36,6 +36,8 @@
             {code_review_required_approvals, 1},
             {code_review_run_eunit, true},
             {code_review_run_ct, false},
+            %% Slow scan/preflight cycles run outside the manager request loop.
+            {code_patch_cycle_timeout_ms, 300000},
             {code_health_monitor_enabled, true},
             {code_health_interval_ms, 300000},
             {code_health_initial_delay_ms, 15000},
