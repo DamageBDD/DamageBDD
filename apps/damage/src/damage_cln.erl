@@ -71,7 +71,6 @@
     sats_to_msat/1,
     msat_to_sats/1,
     list_peerchannels/0,
-    decode_invoice/1,
     xpay_invoice/2,
     list_pays/1,
     pay_invoice/1,
@@ -475,7 +474,6 @@ blacklist_peer(A, B, C) -> call(blacklist_peer, [A, B, C]).
 sats_to_msat(A) -> call(sats_to_msat, [A]).
 msat_to_sats(A) -> call(msat_to_sats, [A]).
 list_peerchannels() -> call(list_peerchannels, []).
-decode_invoice(A) -> call(decode_invoice, [A]).
 xpay_invoice(A, B) -> call(xpay_invoice, [A, B]).
 list_pays(A) -> call(list_pays, [A]).
 pay_invoice(A) -> call(pay_invoice, [A]).
