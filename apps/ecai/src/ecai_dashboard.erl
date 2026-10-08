@@ -23,6 +23,18 @@ trails() ->
             #{get => #{tags => ["UI", "HTML"], produces => ["text/html"]}}
         ),
         trails:trail(
+            "/dashboard",
+            ?MODULE,
+            #{action => dashboard},
+            #{get => #{tags => ["UI", "HTML", "ECAI Console"], produces => ["text/html"]}}
+        ),
+        trails:trail(
+            "/search",
+            ?MODULE,
+            #{action => search},
+            #{get => #{tags => ["UI", "HTML"], produces => ["text/html"]}}
+        ),
+        trails:trail(
             "/chat",
             ?MODULE,
             #{action => chat},
@@ -54,14 +66,17 @@ to_html(Req, #{action := index} = State) ->
             Host = cowboy_req:host(Req),
             Template =
                 case Host of
-                    <<"ecai.damagebdd.com">> -> "ecai_search.mustache";
                     <<"ecai.chat">> -> "ecai_chat.mustache";
-                    _ -> application:get_env(ecai, default_page, "ecai_search.mustache")
+                    _ -> application:get_env(ecai, default_page, "ecai_console.mustache")
                 end,
             {render_tpl(?DASH_TPL(Template), Ctx), Req, State};
         _ ->
             {render_dashboard_component(Component, Ctx), Req, State}
     end;
+to_html(Req, #{action := dashboard} = State) ->
+    {render_tpl(?DASH_TPL("ecai_console.mustache"), base_context(Req)), Req, State};
+to_html(Req, #{action := search} = State) ->
+    {render_tpl(?DASH_TPL("ecai_search.mustache"), base_context(Req)), Req, State};
 to_html(Req, #{action := chat} = State) ->
     Ctx = base_context(Req),
     {render_tpl(?DASH_TPL("ecai_chat.mustache"), Ctx), Req, State};

@@ -45,6 +45,10 @@
     code_change/3
 ]).
 
+-ifdef(TEST).
+-export([enrich_progress/2, job_runtime/2, stop_run_clock/2, visible_progress/3]).
+-endif.
+
 -record(st, {
     store,
     jobs = #{},
@@ -52,7 +56,8 @@
     monitors = #{},
     max_concurrency = 1,
     max_pending = 10000,
-    max_pending_per_owner = 1000
+    max_pending_per_owner = 1000,
+    worker_samples = #{}
 }).
 
 -define(DEFAULT_EVENT_LIMIT, 1000).
@@ -224,7 +229,12 @@ handle_call({list, Filter}, _From, State = #st{jobs = Jobs}) ->
     end;
 handle_call({get, JobId}, _From, State = #st{jobs = Jobs}) ->
     case maps:find(JobId, Jobs) of
-        {ok, Job} -> {reply, {ok, public_job(Job, State)}, State};
+        {ok, Job} ->
+            {Resources, State1} = sample_worker(JobId, State),
+            Public = (public_job(Job, State1))#{
+                <<"resources">> => ecai_index_job_codec:externalize(Resources)
+            },
+            {reply, {ok, Public}, State1};
         error -> {reply, {error, not_found}, State}
     end;
 handle_call(status, _From, State = #st{jobs = Jobs, running = Running}) ->
@@ -243,6 +253,8 @@ handle_call(status, _From, State = #st{jobs = Jobs, running = Running}) ->
     ]),
     Reply = #{
         ready => true,
+        runtime_schema => <<"ecai-index-jobs-telemetry/v2">>,
+        canceled_checkpoint_retry => true,
         total_jobs => map_size(Jobs),
         pending_jobs => PendingCount,
         queued_jobs => maps:get(queued, Counts, 0),
@@ -340,8 +352,8 @@ handle_call({checkpoint, JobId, Checkpoint0, Progress0}, _From, State0) ->
                 StateName =:= pause_requested orelse
                 StateName =:= cancel_requested)
         ->
-            Progress = enrich_progress(Job0, Progress0),
-            JobBase = Job0#{
+            {Progress, RateFields} = enrich_progress(Job0, Progress0),
+            JobBase = (maps:merge(Job0, RateFields))#{
                 checkpoint => Checkpoint0,
                 progress => Progress,
                 updated_at_ms => now_ms()
@@ -398,12 +410,13 @@ handle_call({artifact_ready, JobId, Artifact, Result}, _From, State0) ->
                     true -> ready_to_mint;
                     false -> completed
                 end,
-            JobBase = maps:remove(worker_pid, Job0#{
+            Now = now_ms(),
+            JobBase = maps:remove(worker_pid, (stop_run_clock(Job0, Now))#{
                 state => FinalState,
                 artifact => Artifact,
                 result => Result,
-                finished_at_ms => now_ms(),
-                updated_at_ms => now_ms(),
+                finished_at_ms => Now,
+                updated_at_ms => Now,
                 progress => complete_progress(maps:get(progress, Job0, #{}), FinalState)
             }),
             StateA = remove_running(JobId, State0),
@@ -445,7 +458,8 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}, State0 = #st{monitors = Monito
         {JobId, Monitors1} ->
             State1 = State0#st{
                 monitors = Monitors1,
-                running = maps:remove(JobId, State0#st.running)
+                running = maps:remove(JobId, State0#st.running),
+                worker_samples = maps:remove(JobId, State0#st.worker_samples)
             },
             State2 = handle_worker_down(JobId, Reason, State1),
             self() ! schedule,
@@ -528,6 +542,10 @@ create_new_job(
         created_at_ms => Now,
         updated_at_ms => Now,
         started_at_ms => undefined,
+        first_started_at_ms => undefined,
+        run_started_at_ms => undefined,
+        active_elapsed_ms => 0,
+        last_attempt_elapsed_ms => 0,
         finished_at_ms => undefined,
         checkpoint => #{},
         progress => #{
@@ -609,22 +627,27 @@ request_pause(JobId, State0) ->
 request_resume(JobId, State0 = #st{store = Store}) ->
     case lookup_job(JobId, State0) of
         {ok, #{state := paused} = Job0} ->
-            {ok, QueueSequence} = ecai_index_job_store:next_sequence(Store),
-            JobBase = Job0#{
-                state => queued,
-                queue_sequence => QueueSequence,
-                error => undefined,
-                started_at_ms => undefined,
-                updated_at_ms => now_ms(),
-                progress => (maps:get(progress, Job0, #{}))#{phase => queued}
-            },
-            {Job1, State1} = emit_event(
-                JobBase,
-                state,
-                #{state => queued, reason => operator_resume},
-                State0
-            ),
-            {{ok, public_job(Job1, State1)}, State1};
+            case ensure_queue_capacity(maps:get(owner, maps:get(spec, Job0), <<>>), State0) of
+                ok ->
+                    {ok, QueueSequence} = ecai_index_job_store:next_sequence(Store),
+                    JobBase = (preserve_first_start(Job0))#{
+                        state => queued,
+                        queue_sequence => QueueSequence,
+                        error => undefined,
+                        started_at_ms => undefined,
+                        updated_at_ms => now_ms(),
+                        progress => stop_progress(maps:get(progress, Job0, #{}), queued)
+                    },
+                    {Job1, State1} = emit_event(
+                        JobBase,
+                        state,
+                        #{state => queued, reason => operator_resume},
+                        State0
+                    ),
+                    {{ok, public_job(Job1, State1)}, State1};
+                {error, _} = Error ->
+                    {Error, State0}
+            end;
         {ok, Job} ->
             {{error, {invalid_state, maps:get(state, Job)}}, State0};
         error ->
@@ -638,11 +661,12 @@ request_cancel(JobId, State0) ->
             StateName =:= paused;
             StateName =:= failed
         ->
-            JobBase = maps:remove(worker_pid, Job0#{
+            Now = now_ms(),
+            JobBase = maps:remove(worker_pid, (stop_run_clock(Job0, Now))#{
                 state => canceled,
-                finished_at_ms => now_ms(),
-                updated_at_ms => now_ms(),
-                progress => (maps:get(progress, Job0, #{}))#{phase => canceled}
+                finished_at_ms => Now,
+                updated_at_ms => Now,
+                progress => stop_progress(maps:get(progress, Job0, #{}), canceled)
             }),
             {Job1, State1} = emit_event(
                 JobBase,
@@ -670,30 +694,19 @@ request_cancel(JobId, State0) ->
             {{error, not_found}, State0}
     end.
 
-request_retry(JobId, State0 = #st{store = Store}) ->
+%% An explicit operator retry may resume a canceled job at its durable
+%% checkpoint. Cancellation is not a worker failure and must not consume the
+%% retry budget in the job specification.
+request_retry(JobId, State0) ->
     case lookup_job(JobId, State0) of
+        {ok, #{state := canceled} = Job0} ->
+            requeue_checkpoint(Job0, operator_resume_canceled, State0);
         {ok, #{state := failed} = Job0} ->
             Attempt = maps:get(attempt, Job0, 0),
             MaxRetries = maps:get(max_retries, Job0, 0),
             case Attempt =< MaxRetries of
                 true ->
-                    {ok, QueueSequence} = ecai_index_job_store:next_sequence(Store),
-                    JobBase = Job0#{
-                        state => queued,
-                        queue_sequence => QueueSequence,
-                        error => undefined,
-                        started_at_ms => undefined,
-                        finished_at_ms => undefined,
-                        updated_at_ms => now_ms(),
-                        progress => (maps:get(progress, Job0, #{}))#{phase => queued}
-                    },
-                    {Job1, State1} = emit_event(
-                        JobBase,
-                        state,
-                        #{state => queued, reason => operator_retry},
-                        State0
-                    ),
-                    {{ok, public_job(Job1, State1)}, State1};
+                    requeue_checkpoint(Job0, operator_retry_failed, State0);
                 false ->
                     {{error, {retry_limit_exceeded, Attempt, MaxRetries}}, State0}
             end;
@@ -701,6 +714,55 @@ request_retry(JobId, State0 = #st{store = Store}) ->
             {{error, {invalid_state, maps:get(state, Job)}}, State0};
         error ->
             {{error, not_found}, State0}
+    end.
+
+requeue_checkpoint(Job0, Reason, State0 = #st{store = Store}) ->
+    %% A terminal job is re-admitted as pending work; enforce the normal
+    %% owner and global capacity limits before changing durable state.
+    Spec = maps:get(spec, Job0),
+    Owner = maps:get(owner, Spec, <<>>),
+    case ensure_queue_capacity(Owner, State0) of
+        ok ->
+            {ok, QueueSequence} = ecai_index_job_store:next_sequence(Store),
+            Now = now_ms(),
+            Checkpoint = maps:get(checkpoint, Job0, #{}),
+            Progress0 = maps:get(progress, Job0, #{}),
+            %% Keep completed/total/percent and the adapter checkpoint while
+            %% discarding rates/ETA from the previous worker lifetime.
+            Progress = (stop_progress(Progress0, queued))#{updated_at_ms => Now},
+            JobBase = maps:without(
+                [worker_pid, rate_started_at_ms, rate_base_completed, rate_phase],
+                (preserve_first_start(Job0))#{
+                    state => queued,
+                    queue_sequence => QueueSequence,
+                    error => undefined,
+                    result => undefined,
+                    artifact => undefined,
+                    started_at_ms => undefined,
+                    active_elapsed_ms => legacy_active_ms(Job0),
+                    run_started_at_ms => undefined,
+                    finished_at_ms => undefined,
+                    updated_at_ms => Now,
+                    progress => Progress
+                }
+            ),
+            %% emit_event durably stores the checkpoint and state transition
+            %% together, then wakes the queue scheduler in handle_call/3.
+            {Job1, State1} = emit_event(
+                JobBase,
+                state,
+                #{
+                    state => queued,
+                    reason => Reason,
+                    resumed_from_checkpoint => is_map(Checkpoint) andalso
+                        map_size(Checkpoint) > 0,
+                    attempt => maps:get(attempt, Job0, 0)
+                },
+                State0
+            ),
+            {{ok, public_job(Job1, State1)}, State1};
+        {error, _Reason} = Error ->
+            {Error, State0}
     end.
 
 transition_reply(Job0, NewState, Data, State0) ->
@@ -744,12 +806,13 @@ finish_active_worker_state(JobId, Job0, FinalState, Checkpoint, Error, State0) -
             canceled -> now_ms();
             _ -> undefined
         end,
-    JobBase0 = Job0#{
+    Now = now_ms(),
+    JobBase0 = (stop_run_clock(Job0, Now))#{
         state => FinalState,
-        updated_at_ms => now_ms(),
+        updated_at_ms => Now,
         finished_at_ms => FinishedAt,
         error => Error,
-        progress => (maps:get(progress, Job0, #{}))#{phase => FinalState}
+        progress => stop_progress(maps:get(progress, Job0, #{}), FinalState)
     },
     JobBase1 =
         case Checkpoint of
@@ -786,16 +849,22 @@ start_queued_job(Job0, State0) ->
     Attempt = maps:get(attempt, Job0, 0) + 1,
     Progress0 = maps:get(progress, Job0, #{}),
     Now = now_ms(),
-    JobBase = maps:remove(worker_pid, Job0#{
+    JobBase = maps:remove(worker_pid, (preserve_first_start(Job0))#{
         state => preparing,
         attempt => Attempt,
         error => undefined,
-        started_at_ms => start_time(Job0),
+        started_at_ms => Now,
+        first_started_at_ms => case first_start_time(Job0, Now) of
+            undefined -> Now;
+            ExistingStart -> ExistingStart
+        end,
+        run_started_at_ms => Now,
         finished_at_ms => undefined,
         updated_at_ms => Now,
         rate_started_at_ms => Now,
         rate_base_completed => maps:get(completed, Progress0, 0),
-        progress => Progress0#{phase => preparing}
+        rate_phase => preparing,
+        progress => (stop_progress(Progress0, preparing))#{updated_at_ms => Now}
     }),
     {Job1, State1} = emit_event(
         JobBase,
@@ -812,12 +881,13 @@ start_queued_job(Job0, State0) ->
             };
         {error, Reason} ->
             ?LOG_ERROR("Failed to start index job ~p: ~p", [JobId, Reason]),
-            JobFail = Job1#{
+            FailAt = now_ms(),
+            JobFail = (stop_run_clock(Job1, FailAt))#{
                 state => failed,
                 error => {worker_start_failed, Reason},
-                finished_at_ms => now_ms(),
-                updated_at_ms => now_ms(),
-                progress => (maps:get(progress, Job1, #{}))#{phase => failed}
+                finished_at_ms => FailAt,
+                updated_at_ms => FailAt,
+                progress => stop_progress(maps:get(progress, Job1, #{}), failed)
             },
             {_Persisted, State2} = emit_event(
                 JobFail,
@@ -850,12 +920,13 @@ handle_worker_down(JobId, Reason, State0) ->
                 true ->
                     State0;
                 false ->
-                    JobBase = maps:remove(worker_pid, Job#{
+                    Now = now_ms(),
+                    JobBase = maps:remove(worker_pid, (stop_run_clock(Job, Now))#{
                         state => failed,
                         error => {worker_down, Reason},
-                        finished_at_ms => now_ms(),
-                        updated_at_ms => now_ms(),
-                        progress => (maps:get(progress, Job, #{}))#{phase => failed}
+                        finished_at_ms => Now,
+                        updated_at_ms => Now,
+                        progress => stop_progress(maps:get(progress, Job, #{}), failed)
                     }),
                     {_Job1, State1} = emit_event(
                         JobBase,
@@ -883,7 +954,8 @@ remove_running(JobId, State0 = #st{running = Running0, monitors = Monitors0}) ->
             _ = erlang:demonitor(Ref, [flush]),
             State0#st{
                 running = Running1,
-                monitors = maps:remove(Ref, Monitors0)
+                monitors = maps:remove(Ref, Monitors0),
+                worker_samples = maps:remove(JobId, State0#st.worker_samples)
             };
         error ->
             State0
@@ -1095,9 +1167,15 @@ recover_job(Job0) ->
         finalizing ->
             recover_to_queue(Job1, finalizing);
         pause_requested ->
-            Job1#{state => paused, updated_at_ms => now_ms()};
+            (stop_run_clock(Job1, recovery_end_time(Job1)))#{
+                state => paused, updated_at_ms => now_ms(),
+                progress => stop_progress(maps:get(progress, Job1, #{}), paused)
+            };
         cancel_requested ->
-            Job1#{state => canceled, finished_at_ms => now_ms(), updated_at_ms => now_ms()};
+            (stop_run_clock(Job1, recovery_end_time(Job1)))#{
+                state => canceled, finished_at_ms => now_ms(), updated_at_ms => now_ms(),
+                progress => stop_progress(maps:get(progress, Job1, #{}), canceled)
+            };
         minting ->
             Job1#{state => ready_to_mint, updated_at_ms => now_ms()};
         _ ->
@@ -1105,53 +1183,82 @@ recover_job(Job0) ->
     end.
 
 recover_to_queue(Job0, PreviousState) ->
-    Job = maps:without([rate_started_at_ms, rate_base_completed], Job0),
-    Job#{
+    Job = maps:without(
+        [rate_started_at_ms, rate_base_completed, rate_phase],
+        stop_run_clock(Job0, recovery_end_time(Job0))
+    ),
+    (preserve_first_start(Job))#{
         state => queued,
         error => {recovered_after_restart, PreviousState},
         started_at_ms => undefined,
         updated_at_ms => now_ms(),
-        progress => (maps:get(progress, Job, #{}))#{phase => queued}
+        progress => stop_progress(maps:get(progress, Job, #{}), queued)
     }.
 
+%% Progress units are heterogeneous across Wikimedia phases. Do not publish
+%% a precise-looking ETA from the first processed dump. Reset the observed
+%% rate each time the adapter changes phase; expose when still warming up.
 enrich_progress(Job, Progress0) ->
+    Now = now_ms(),
+    Previous = maps:get(progress, Job, #{}),
     Completed = maps:get(completed, Progress0, 0),
     Total = maps:get(total, Progress0, undefined),
-    Percent =
-        case Total of
-            N when is_integer(N), N > 0, is_number(Completed) ->
-                erlang:min((Completed * 100.0) / N, 100.0);
-            0 ->
-                100.0;
-            _ ->
-                undefined
-        end,
-    RateStartedAt = maps:get(rate_started_at_ms, Job, start_time(Job)),
-    RateBase = maps:get(rate_base_completed, Job, 0),
-    ElapsedMs = erlang:max(now_ms() - RateStartedAt, 1),
-    DeltaCompleted =
-        case Completed of
-            N0 when is_number(N0) -> erlang:max(N0 - RateBase, 0);
-            _ -> 0
-        end,
-    Rate =
-        case DeltaCompleted of
-            N1 when is_number(N1), N1 > 0 -> N1 * 1000.0 / ElapsedMs;
-            _ -> 0.0
-        end,
-    EtaMs =
-        case {Total, Completed, Rate} of
-            {T, C, R} when is_number(T), is_number(C), T >= C, R > 0 ->
-                trunc((T - C) * 1000.0 / R);
-            _ ->
-                undefined
-        end,
-    Progress0#{
+    Phase = maps:get(phase, Progress0, undefined),
+    PrevPhase = maps:get(rate_phase, Job, undefined),
+    Changed = Phase =/= PrevPhase,
+    Base = case Changed of
+        true -> Completed;
+        false -> maps:get(rate_base_completed, Job, Completed)
+    end,
+    Started = case Changed of
+        true -> Now;
+        false -> maps:get(rate_started_at_ms, Job, Now)
+    end,
+    PreviousCompleted = maps:get(completed, Previous, Completed),
+    PreviousSamples = maps:get(rate_samples, Previous, 0),
+    Samples = case Changed of
+        true -> 0;
+        false when is_number(Completed), is_number(PreviousCompleted),
+            Completed > PreviousCompleted -> PreviousSamples + 1;
+        false -> PreviousSamples
+    end,
+    Elapsed = erlang:max(Now - Started, 1),
+    Delta = case is_number(Completed) andalso is_number(Base) of
+        true -> erlang:max(Completed - Base, 0);
+        false -> 0
+    end,
+    Rate = Delta * 1000.0 / Elapsed,
+    Percent = case {Total, Completed} of
+        {Ptotal, Pdone} when is_number(Ptotal), Ptotal > 0,
+            is_number(Pdone) ->
+            erlang:min(100.0, erlang:max(0.0, 100.0 * Pdone / Ptotal));
+        _ -> undefined
+    end,
+    Warm = Samples >= 3 andalso Elapsed >= 15000 andalso Delta >= 3,
+    Eta = case {Total, Completed, Rate, Warm} of
+        {Etotal, Edone, Erate, true} when is_number(Etotal),
+            is_number(Edone), Etotal > Edone, Erate > 0 ->
+            trunc((Etotal - Edone) * 1000.0 / Erate);
+        {Etotal2, Edone2, _OtherRate, _} when is_number(Etotal2),
+            is_number(Edone2), Etotal2 > 0, Edone2 >= Etotal2 -> 0;
+        _ -> undefined
+    end,
+    EtaStatus = case Eta of
+        N when is_integer(N) -> provisional;
+        _ when not Warm -> warming_up;
+        _ -> unavailable
+    end,
+    Progress = Progress0#{
         percent => Percent,
         rate_per_second => Rate,
-        eta_ms => EtaMs,
-        updated_at_ms => now_ms()
-    }.
+        eta_ms => Eta,
+        eta_status => EtaStatus,
+        eta_method => phase_average_work_units,
+        rate_samples => Samples,
+        updated_at_ms => Now
+    },
+    {Progress, #{rate_started_at_ms => Started,
+        rate_base_completed => Base, rate_phase => Phase}}.
 
 complete_progress(Progress0, State) ->
     Completed0 = maps:get(completed, Progress0, 0),
@@ -1166,6 +1273,8 @@ complete_progress(Progress0, State) ->
         completed => Completed,
         percent => Percent,
         eta_ms => Eta,
+        eta_status => complete,
+        rate_per_second => 0.0,
         updated_at_ms => now_ms()
     }.
 
@@ -1187,13 +1296,161 @@ public_job(Job, QueuePositions) when is_map(QueuePositions) ->
     JobId = maps:get(id, Job),
     QueuePosition = maps:get(JobId, QueuePositions, undefined),
     Clean = maps:without(
-        [worker_pid, rate_started_at_ms, rate_base_completed],
+        [worker_pid, rate_started_at_ms, rate_base_completed, rate_phase,
+            run_started_at_ms],
         Job
     ),
+    Now = now_ms(),
+    Progress0 = maps:get(progress, Job, #{}),
+    Progress = visible_progress(Progress0, maps:get(state, Job), Now),
     ecai_index_job_codec:externalize(Clean#{
         spec_hash => safe_hash_hex(maps:get(spec_hash, Job, undefined)),
-        queue_position => QueuePosition
+        queue_position => QueuePosition,
+        progress => Progress,
+        runtime => job_runtime(Job, Now)
     }).
+
+%% These process counters are native BEAM equivalents of the existing
+%% DamageBDD node telemetry, but scoped to one running indexing worker.
+%% A reduction is scheduler work, not a measured CPU percentage.
+sample_worker(JobId, State = #st{running = Running, worker_samples = Samples}) ->
+    case maps:find(JobId, Running) of
+        {ok, #{pid := Pid}} when is_pid(Pid) ->
+            case erlang:process_info(Pid, [memory, heap_size, total_heap_size,
+                stack_size, reductions, message_queue_len, status,
+                garbage_collection]) of
+                undefined ->
+                    {#{active => false}, State#st{
+                        worker_samples = maps:remove(JobId, Samples)}};
+                Info ->
+                    Now = now_ms(),
+                    Reds = proplists:get_value(reductions, Info, 0),
+                    RedsRate = case maps:get(JobId, Samples, undefined) of
+                        #{pid := Pid, reductions := Old, at_ms := At}
+                            when Now > At, Reds >= Old ->
+                            (Reds - Old) * 1000.0 / (Now - At);
+                        _ -> undefined
+                    end,
+                    Gc = proplists:get_value(garbage_collection, Info, []),
+                    Worker = #{
+                        active => true,
+                        memory_bytes => proplists:get_value(memory, Info),
+                        heap_words => proplists:get_value(heap_size, Info),
+                        total_heap_words => proplists:get_value(total_heap_size, Info),
+                        stack_words => proplists:get_value(stack_size, Info),
+                        reductions_total => Reds,
+                        reductions_per_second => RedsRate,
+                        message_queue_len => proplists:get_value(message_queue_len, Info),
+                        status => proplists:get_value(status, Info),
+                        minor_gcs => proplists:get_value(minor_gcs, Gc),
+                        sampled_at_ms => Now
+                    },
+                    NewSamples = Samples#{JobId => #{pid => Pid,
+                        reductions => Reds, at_ms => Now}},
+                    {ecai_index_job_codec:externalize(Worker),
+                        State#st{worker_samples = NewSamples}}
+            end;
+        _ ->
+            {#{active => false}, State#st{
+                worker_samples = maps:remove(JobId, Samples)}}
+    end.
+
+%% Durable active duration only increases while a worker owns the attempt.
+%% First-start and accumulated durations survive pause, retry and restart.
+preserve_first_start(Job) ->
+    case maps:get(first_started_at_ms, Job, undefined) of
+        First when is_integer(First), First > 0 -> Job;
+        _ -> Job#{first_started_at_ms => maps:get(started_at_ms, Job, undefined)}
+    end.
+
+first_start_time(Job, _Now) ->
+    case maps:get(first_started_at_ms, Job, undefined) of
+        First when is_integer(First), First > 0 -> First;
+        _ -> case maps:get(started_at_ms, Job, undefined) of
+            Started when is_integer(Started), Started > 0 -> Started;
+            _ -> undefined
+        end
+    end.
+
+valid_elapsed(N) when is_integer(N), N >= 0 -> N;
+valid_elapsed(_) -> 0.
+
+legacy_active_ms(Job) ->
+    case maps:get(active_elapsed_ms, Job, undefined) of
+        N when is_integer(N), N >= 0 -> N;
+        _ -> case {maps:get(started_at_ms, Job, undefined),
+                   maps:get(finished_at_ms, Job, undefined)} of
+            {Start, Finish} when is_integer(Start), is_integer(Finish),
+                Finish >= Start -> Finish - Start;
+            _ -> 0
+        end
+    end.
+
+running_clock(Job, Now) ->
+    case maps:get(run_started_at_ms, Job, undefined) of
+        Start when is_integer(Start), Start > 0 ->
+            erlang:max(0, Now - Start);
+        _ -> 0
+    end.
+
+stop_run_clock(Job0, Now) ->
+    Job = preserve_first_start(Job0),
+    AttemptMs = running_clock(Job, Now),
+    Base = legacy_active_ms(Job),
+    Job#{active_elapsed_ms => Base + AttemptMs,
+        last_attempt_elapsed_ms => AttemptMs,
+        run_started_at_ms => undefined}.
+
+recovery_end_time(Job) ->
+    case maps:get(updated_at_ms, Job, undefined) of
+        T when is_integer(T), T > 0 -> erlang:min(T, now_ms());
+        _ -> now_ms()
+    end.
+
+job_runtime(Job, Now) ->
+    State = maps:get(state, Job, queued),
+    Active = lists:member(State, [preparing, running, pause_requested,
+        cancel_requested, finalizing]),
+    Current = case Active of true -> running_clock(Job, Now); false -> 0 end,
+    Base = legacy_active_ms(Job),
+    Created = maps:get(created_at_ms, Job, Now),
+    EndAt = case lists:member(State, [completed, ready_to_mint, minted,
+        canceled, failed]) of
+        true -> maps:get(finished_at_ms, Job, Now);
+        false -> Now
+    end,
+    EndSafe = case EndAt of E when is_integer(E) -> E; _ -> Now end,
+    Since = case Created of C when is_integer(C) -> C; _ -> Now end,
+    #{sampled_at_ms => Now,
+      wall_elapsed_ms => erlang:max(0, EndSafe - Since),
+      active_elapsed_ms => Base + Current,
+      attempt_elapsed_ms => Current,
+      last_attempt_elapsed_ms => maps:get(last_attempt_elapsed_ms, Job, 0),
+      first_started_at_ms => first_start_time(Job, Now),
+      active_time_estimated => not maps:is_key(active_elapsed_ms, Job),
+      running => Active,
+      last_progress_age_ms => case maps:get(updated_at_ms, maps:get(progress, Job, #{}), undefined) of
+          T when is_integer(T) -> erlang:max(0, Now - T);
+          _ -> undefined
+      end}.
+
+stop_progress(Progress, Phase) ->
+    Progress#{phase => Phase, eta_ms => undefined,
+        eta_status => unavailable, rate_per_second => 0.0,
+        rate_samples => 0, updated_at_ms => now_ms()}.
+
+visible_progress(Progress, State, Now) ->
+    case lists:member(State, [preparing, running, pause_requested,
+        cancel_requested, finalizing]) of
+        true ->
+            case maps:get(updated_at_ms, Progress, Now) of
+                T when is_integer(T), Now - T > 120000 ->
+                    Progress#{eta_ms => undefined, eta_status => stale};
+                _ -> Progress
+            end;
+        false -> Progress#{eta_ms => undefined,
+            eta_status => unavailable, rate_per_second => 0.0}
+    end.
 
 queue_positions(Jobs) ->
     Queued = lists:sort(
@@ -1275,12 +1532,6 @@ normalize_job_id(_Other) -> <<>>.
 
 event_type_binary(Type) when is_atom(Type) -> atom_to_binary(Type, utf8);
 event_type_binary(Type) when is_binary(Type) -> Type.
-
-start_time(Job) ->
-    case maps:get(started_at_ms, Job, undefined) of
-        Value when is_integer(Value), Value > 0 -> Value;
-        _ -> now_ms()
-    end.
 
 now_ms() ->
     erlang:system_time(millisecond).

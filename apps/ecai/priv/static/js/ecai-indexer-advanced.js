@@ -143,8 +143,6 @@
         credentials: "include",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({
-          grant_type: "password",
-          scope: "basic",
           username: email,
           password
         })
@@ -153,6 +151,7 @@
       let data = {};
       try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { message: text }; }
 
+      if (response.status === 404) throw new Error("ECAI login route missing; deploy the auth route fix and reload the router.");
       if (!response.ok || !data.access_token) {
         throw new Error(data.message || data.error || "Authentication failed.");
       }
@@ -203,15 +202,20 @@
 
   async function probeAuthentication() {
     try {
+      const session = await api("/ecai/auth/session");
+      if (!session?.authenticated) {
+        setAuthenticated(false);
+        showLoginDialog("Sign in with your DamageBDD account.");
+        return false;
+      }
+      setAuthenticated(true, state.email || session.public_key || "DamageBDD session");
       await refreshStatus();
-      setAuthenticated(true, state.email || "DamageBDD session");
       await refreshJobs();
       setConnection("connected", true);
       return true;
     } catch (error) {
-      if (error.status !== 401) log(error.body || error.message);
-      setAuthenticated(false);
-      showLoginDialog(error.status === 401 ? "Sign in with your DamageBDD account." : "Unable to verify the current DamageBDD session.");
+      setConnection(error.status === 402 ? "L402 access/payment challenge (402)" : "queue unavailable", false);
+      log(error.body || error.message);
       return false;
     }
   }

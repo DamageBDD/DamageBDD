@@ -80,12 +80,13 @@ genesis_spec() -> genesis_spec(#{}).
 
 -spec genesis_spec(map()) -> map().
 genesis_spec(Overrides) when is_map(Overrides) ->
+    Project = maps:get(project, Overrides, <<"enwiki">>),
     Months = maps:get(pageview_months, Overrides, ecai_wikimedia_catalog:default_months(12)),
     Limit = maps:get(limit, Overrides, env_int(wikimedia_genesis_limit, 250000)),
     BaseDir = maps:get(
         base_dir,
         Overrides,
-        env_binary(wikimedia_index_dir, <<"/var/lib/damage/ecai/wikimedia/enwiki">>)
+        default_project_dir(Project)
     ),
     Owner = maps:get(owner, Overrides, <<>>),
     PublishIpfs = maps:get(publish_ipfs, Overrides, true),
@@ -94,11 +95,11 @@ genesis_spec(Overrides) when is_map(Overrides) ->
         <<"kind">> => <<"wikimedia_visibility">>,
         <<"owner">> => Owner,
         <<"source">> => #{
-            <<"project">> => maps:get(project, Overrides, <<"enwiki">>),
+            <<"project">> => Project,
             <<"pageview_project">> => maps:get(
                 pageview_project,
                 Overrides,
-                <<"en.wikipedia">>
+                default_pageview_project(Project)
             ),
             <<"content_release">> => maps:get(
                 content_release,
@@ -111,12 +112,12 @@ genesis_spec(Overrides) when is_map(Overrides) ->
             <<"index_id">> => maps:get(
                 index_id,
                 Overrides,
-                <<"ecai-open-knowledge-genesis">>
+                default_project_index_id(Project)
             ),
             <<"namespace">> => maps:get(
                 namespace,
                 Overrides,
-                <<"org.damagebdd.wikimedia.en">>
+                default_project_namespace(Project)
             ),
             <<"base_dir">> => BaseDir,
             <<"mode">> => <<"live_search">>,
@@ -232,6 +233,60 @@ doctor() ->
         search => ecai_wikimedia_search:status(),
         source_catalog => ecai_wikimedia_catalog:list_cirrus_releases(1)
     }.
+
+%% Multi-project custom plans must not silently share enwiki's output path.
+%% Preserve the legacy English genesis defaults unless configured otherwise.
+default_project_dir(<<"enwiki">>) ->
+    env_binary(wikimedia_index_dir, <<"/var/lib/damage/ecai/wikimedia/enwiki">>);
+default_project_dir(Project) when is_binary(Project) ->
+    case valid_project_token(Project) of
+        true ->
+            Root = env_binary(wikimedia_index_root, <<"/var/lib/damage/ecai/wikimedia">>),
+            unicode:characters_to_binary(filename:join(
+                unicode:characters_to_list(Root),
+                unicode:characters_to_list(Project)
+            ));
+        false ->
+            %% The canonical codec rejects the project token. Never join an
+            %% unchecked client identifier into a server filesystem path.
+            default_project_dir(<<"enwiki">>)
+    end;
+default_project_dir(_) ->
+    default_project_dir(<<"enwiki">>).
+
+default_project_index_id(<<"enwiki">>) -> <<"ecai-open-knowledge-genesis">>;
+default_project_index_id(Project) when is_binary(Project) ->
+    case valid_project_token(Project) of
+        true -> <<"ecai-wikimedia-", Project/binary>>;
+        false -> <<"ecai-open-knowledge-genesis">>
+    end;
+default_project_index_id(_) -> <<"ecai-open-knowledge-genesis">>.
+
+default_pageview_project(Project) when is_binary(Project) ->
+    case valid_project_token(Project) andalso byte_size(Project) > 4 of
+        true ->
+            case binary:part(Project, byte_size(Project) - 4, 4) of
+                <<"wiki">> ->
+                    Prefix = binary:part(Project, 0, byte_size(Project) - 4),
+                    <<Prefix/binary, ".wikipedia">>;
+                _ -> <<"en.wikipedia">>
+            end;
+        false -> <<"en.wikipedia">>
+    end;
+default_pageview_project(_) -> <<"en.wikipedia">>.
+
+default_project_namespace(<<"enwiki">>) -> <<"org.damagebdd.wikimedia.en">>;
+default_project_namespace(Project) when is_binary(Project) ->
+    case valid_project_token(Project) of
+        true -> <<"org.damagebdd.wikimedia.", Project/binary>>;
+        false -> <<"org.damagebdd.wikimedia.en">>
+    end;
+default_project_namespace(_) -> <<"org.damagebdd.wikimedia.en">>.
+
+valid_project_token(Project) ->
+    byte_size(Project) > 0 andalso byte_size(Project) =< 128 andalso
+    re:run(Project, <<"^[A-Za-z0-9][A-Za-z0-9._-]*$">>, [{capture, none}]) =:= match andalso
+    binary:match(Project, <<"..">>) =:= nomatch.
 
 default_idempotency_key(Spec) ->
     {ok, Hash} = ecai_index_job_codec:spec_hash(Spec),

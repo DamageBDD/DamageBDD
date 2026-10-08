@@ -96,22 +96,48 @@ get_trails() ->
     Handlers =
         [
             ecai_api,
+            ecai_auth_http,
             ecai_index_jobs_http,
             ecai_private_http,
             ecai_wikimedia_http,
             ecai_yelp_admin,
             ecai_dashboard,
             ecai_chat_http_handler
-        ],
+        ] ++ code_admin_handlers() ++ marketplace_handlers(),
+    %% ECAI has its own Cowboy listener. Mount only the existing DamageBDD
+    %% login/logout handlers here, not the account management endpoints.
+    AccountRoutes = [
+        trails:trail("/accounts/auth/", damage_accounts, #{action => authenticate}, #{
+            post => #{tags => ["ECAI Authentication"], produces => ["application/json"]}
+        }),
+        trails:trail("/accounts/logout", damage_accounts, #{action => logout}, #{
+            post => #{tags => ["ECAI Authentication"], produces => ["application/json"]}
+        })
+    ],
     Trails =
         [
             {"/terms", cowboy_static, {priv_file, ecai, "static/terms.html"}},
             {"/static/[...]", cowboy_static, {priv_dir, ecai, "static/"}},
             {"/ecai/ws/", ecai_ws, #{}}
-            | trails:trails(Handlers)
-        ],
+        ] ++ AccountRoutes ++ trails:trails(Handlers),
     trails:store(Trails),
     trails:single_host_compile(Trails).
+
+%% The privileged control plane is an explicit opt-in and does not reuse
+%% normal authenticated-user permissions.
+code_admin_handlers() ->
+    case application:get_env(ecai, code_admin_enabled, false) of
+        true -> [ecai_code_admin_http];
+        _ -> []
+    end.
+
+%% Marketplace deliberately remains opt-in: this handler currently has an
+%% in-memory ledger and does not enforce on-chain settlement or role-based ACLs.
+marketplace_handlers() ->
+    case application:get_env(ecai, marketplace_enabled, false) of
+        true -> [ecai_jobs_http];
+        _ -> []
+    end.
 
 start_phase(start_trails_http, _StartType, []) ->
     ?LOG_INFO("Starting Ecai."),

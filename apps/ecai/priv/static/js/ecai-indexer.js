@@ -118,8 +118,6 @@
         credentials: "include",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({
-          grant_type: "password",
-          scope: "basic",
           username: email,
           password
         })
@@ -130,6 +128,7 @@
       try { data = text ? JSON.parse(text) : {}; }
       catch (_) { data = { message: text }; }
 
+      if (response.status === 404) throw new Error("ECAI login route missing; deploy the auth route fix and reload the router.");
       if (!response.ok || !data.access_token) {
         throw new Error(data.message || data.error || "Authentication failed.");
       }
@@ -149,7 +148,15 @@
       setAuthenticated(true, state.email);
       closeLoginDialog();
       setNotice("");
-      await Promise.all([loadPresets(), refreshAll()]);
+      // A 402 from the jobs API is an access/payment policy issue, NOT a
+      // failed password login. Keep the valid session visible for diagnosis.
+      try {
+        await Promise.all([loadPresets(), refreshAll()]);
+      } catch (queueError) {
+        setNotice(queueError.status === 402
+          ? "Signed in, but the job API returned an L402 access/payment challenge (402)."
+          : `Signed in, but the index queue is unavailable: ${queueError.message}`, true);
+      }
     } catch (error) {
       status.textContent = error.message || "Authentication failed.";
       setAuthenticated(false);
@@ -185,14 +192,19 @@
 
   async function probeAuthentication() {
     try {
+      const session = await api("/ecai/auth/session");
+      if (!session?.authenticated) {
+        setAuthenticated(false);
+        showLoginDialog("Sign in with your DamageBDD account.");
+        return false;
+      }
+      setAuthenticated(true, state.email || session.public_key || "DamageBDD session");
       await refreshStatus();
-      setAuthenticated(true, state.email || "DamageBDD session");
       await Promise.all([loadPresets(), refreshJobs()]);
       return true;
     } catch (error) {
-      setAuthenticated(false);
-      if (error.status === 401) {
-        showLoginDialog("Sign in with your DamageBDD account.");
+      if (error.status === 402) {
+        setNotice("DamageBDD returned 402 (L402 access/payment challenge); check node authentication policy.", true);
       } else {
         setNotice("Unable to connect to the index queue.", true);
       }

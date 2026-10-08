@@ -98,10 +98,23 @@ init([]) ->
                 }
             ] ++
             code_security_specs() ++
+            marketplace_specs() ++
             vulnerability_monitor_specs() ++
             PoolSpecs,
     ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
     {ok, {SupFlags, PoolSpecs0}}.
+
+%% The experimental chunk-job ledger is disabled by default and is NOT durable.
+marketplace_specs() ->
+    case application:get_env(ecai, marketplace_enabled, false) of
+        true ->
+            [#{id => ecai_jobs_srv,
+               start => {ecai_jobs_srv, start_link, []},
+               restart => permanent, shutdown => 5000,
+               type => worker, modules => [ecai_jobs_srv]}];
+        false -> [];
+        Invalid -> erlang:error({invalid_configuration, marketplace_enabled, Invalid})
+    end.
 
 code_security_specs() ->
     case application:get_env(ecai, code_security_enabled, true) of

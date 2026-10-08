@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="ECAI node control plane: search, conversational access, indexing, private knowledge and operations">
+  <meta name="theme-color" content="#101b32">
+  <title>ECAI · Control plane</title>
+  <link rel="stylesheet" href="/static/css/ecai-console.css">
+</head>
+<body>
+  <div class="console-shell" id="ecaiConsole" data-node-version="{{node_version}}">
+    <aside class="console-sidebar" id="consoleSidebar" aria-label="Primary navigation">
+      <div class="brand-block">
+        <div class="brand-symbol" aria-hidden="true">e<span>·</span></div>
+        <div><div class="brand-name">ECAI</div><div class="brand-caption">INTELLIGENCE FABRIC</div></div>
+        <button class="icon-button sidebar-close" type="button" id="closeNav" aria-label="Close menu">×</button>
+      </div>
+      <div class="sidebar-label">WORKSPACE</div>
+      <nav id="consoleNav" class="main-nav" aria-label="ECAI areas">
+        <button type="button" data-view="overview" class="nav-link is-active" aria-current="page"><span class="nav-icon" aria-hidden="true">◫</span>Overview</button>
+        <button type="button" data-view="search" class="nav-link"><span class="nav-icon" aria-hidden="true">⌕</span>Knowledge search</button>
+        <button type="button" data-view="chat" class="nav-link"><span class="nav-icon" aria-hidden="true">▤</span>Conversation</button>
+        <button type="button" data-view="indexing" class="nav-link"><span class="nav-icon" aria-hidden="true">▦</span>Index jobs</button>
+        <button type="button" data-view="wikimedia" class="nav-link"><span class="nav-icon" aria-hidden="true">◎</span>Wikimedia</button>
+        <button type="button" data-view="knowledge" class="nav-link"><span class="nav-icon" aria-hidden="true">⌘</span>Knowledge &amp; privacy</button>
+        <button type="button" data-view="marketplace" class="nav-link"><span class="nav-icon" aria-hidden="true">◇</span>Marketplace</button>
+        <button type="button" data-view="code" class="nav-link" id="codeAdminNav" hidden><span class="nav-icon" aria-hidden="true">▣</span>Code learning &amp; repair</button>
+        <button type="button" data-view="operations" class="nav-link"><span class="nav-icon" aria-hidden="true">≋</span>Operations</button>
+        <button type="button" data-view="api" class="nav-link"><span class="nav-icon" aria-hidden="true">{ }</span>API explorer</button>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="sidebar-label">EXISTING TOOLS</div>
+        <a href="/indexer" class="subtle-link">Simple indexer <span aria-hidden="true">↗</span></a>
+        <a href="/indexer/advanced" class="subtle-link">Advanced indexer <span aria-hidden="true">↗</span></a>
+        <a href="/chat" class="subtle-link">Legacy chat <span aria-hidden="true">↗</span></a>
+        <div class="node-mark"><span class="node-dot" id="sidebarStatusDot"></span><span id="sidebarNodeState">Node not checked</span><span class="node-version">{{node_version}}</span></div>
+      </div>
+    </aside>
+
+    <div class="console-body">
+      <header class="console-topbar">
+        <div class="topbar-leading">
+          <button type="button" class="icon-button mobile-nav-trigger" id="openNav" aria-label="Open menu">☰</button>
+          <div class="breadcrumb">ECAI <span aria-hidden="true">/</span> <strong id="viewBreadcrumb">Overview</strong></div>
+        </div>
+        <div class="topbar-actions">
+          <span class="topbar-runtime" id="topbarRuntime">Connecting to node…</span>
+          <button type="button" id="refreshView" class="icon-button refresh-icon" title="Refresh current view" aria-label="Refresh current view">↻</button>
+          <span class="topbar-divider" aria-hidden="true"></span>
+          <span class="signed-in" id="authIdentity">Guest access</span>
+          <button type="button" class="button button-outline button-sm" id="loginBtn">Sign in</button>
+          <button type="button" class="button button-outline button-sm" id="logoutBtn" hidden>Sign out</button>
+        </div>
+      </header>
+
+      <main class="console-main" id="consoleMain">
+        <section class="view is-visible" data-panel="overview" aria-labelledby="overviewTitle">
+          <div class="welcome-banner">
+            <div>
+              <div class="eyebrow eyebrow-light">NODE CONTROL PLANE <span class="dot-separator">•</span> LIVE SYSTEM VIEW</div>
+              <h1 id="overviewTitle">Intelligence, in view.</h1>
+              <p>One workspace for the ECAI search fabric, durable indexing queue, private knowledge and marketplace.</p>
+              <div class="banner-actions"><button type="button" class="button button-light" data-go="search">Explore the index <span aria-hidden="true">↗</span></button><button type="button" class="button button-glass" data-go="indexing">Manage jobs</button></div>
+            </div>
+            <div class="orbit-art" aria-hidden="true"><div class="orbit orbit-1"></div><div class="orbit orbit-2"></div><div class="orbit orbit-3"></div><div class="orbit-core"></div><i class="orbit-node n1"></i><i class="orbit-node n2"></i><i class="orbit-node n3"></i></div>
+          </div>
+          <div class="metric-grid" aria-label="Node statistics">
+            <article class="metric-card"><div class="metric-label">Indexed documents <span aria-hidden="true">↗</span></div><div id="metricDocs" class="metric-value">—</div><div class="metric-foot">Yelp / search index</div></article>
+            <article class="metric-card"><div class="metric-label">Running jobs <span aria-hidden="true">◉</span></div><div id="metricRunning" class="metric-value">—</div><div class="metric-foot">Durable indexing queue</div></article>
+            <article class="metric-card"><div class="metric-label">Queued jobs <span aria-hidden="true">▥</span></div><div id="metricQueued" class="metric-value">—</div><div class="metric-foot">Awaiting execution</div></article>
+            <article class="metric-card"><div class="metric-label">Chat service <span aria-hidden="true">◌</span></div><div id="metricChat" class="metric-value metric-word">Checking</div><div class="metric-foot">Local ECAI endpoint</div></article>
+          </div>
+          <div class="two-column">
+            <section class="surface panel-pad">
+              <div class="panel-heading"><div><div class="eyebrow">OPERATIONS</div><h2>Recent index activity</h2></div><button type="button" class="text-button" data-go="indexing">All jobs →</button></div>
+              <div id="overviewJobs" class="overview-jobs"><div class="empty-state">Sign in to see current queue activity.</div></div>
+            </section>
+            <section class="surface panel-pad">
+              <div class="panel-heading"><div><div class="eyebrow">SYSTEM</div><h2>Service availability</h2></div><button type="button" id="refreshHealth" class="text-button">Recheck ↻</button></div>
+              <div class="service-list" id="overviewServices"><div class="empty-state">Checking connected APIs…</div></div>
+              <p class="context-hint">Availability is based on real endpoint responses, not simulated metrics.</p>
+            </section>
+          </div>
+        </section>
+
+        <section class="view" data-panel="search" aria-labelledby="searchTitle" hidden>
+          <div class="page-intro"><div class="eyebrow">RETRIEVAL</div><h1 id="searchTitle">Knowledge search</h1><p>Search indexed records and inspect returned verification material.</p></div>
+          <section class="surface panel-pad">
+            <form id="searchForm" class="search-form"><label for="searchQuery" class="sr-only">Search query</label><span class="search-leading" aria-hidden="true">⌕</span><input id="searchQuery" type="search" placeholder="Search the ECAI fabric…" required minlength="1" maxlength="2048"><label class="compact-field">Results <input type="number" id="searchLimit" min="1" max="100" value="10"></label><button class="button button-primary" type="submit">Search</button></form>
+            <div class="form-meta"><span id="searchStatus" role="status">Search is available without signing in.</span><span>POST /ecai/search</span></div>
+            <div id="searchResults" class="result-stack"><div class="empty-state">Start with a name, term, category or location.</div></div>
+          </section>
+          <details class="surface expandable"><summary>Verification payload <span class="expand-arrow">⌄</span></summary><pre id="searchProofs" class="code-display">Run a search to view the proofs returned by the server.</pre></details>
+        </section>
+
+        <section class="view" data-panel="chat" aria-labelledby="chatTitle" hidden>
+          <div class="page-intro"><div class="eyebrow">CONVERSATION</div><h1 id="chatTitle">Speak to the knowledge layer</h1><p>Use the ECAI chat API with an isolated session. Replies depend on the configured backend and are not cryptographic proofs.</p></div>
+          <div class="surface chat-layout">
+            <div class="chat-toolbar"><span class="status-indicator"><span class="status-pulse"></span>ECAI chat</span><span id="chatSessionLabel" class="mono small">New session</span><button type="button" class="text-button" id="newChatBtn">+ New conversation</button></div>
+            <div class="chat-messages" id="chatMessages" aria-live="polite"><div class="chat-welcome"><div class="welcome-icon">e·</div><h2>Ask a question</h2><p>Your conversation stays in this browser tab. Messages are sent to the configured ECAI chat service.</p></div></div>
+            <form id="chatForm" class="composer"><label class="sr-only" for="chatPrompt">Your message</label><textarea id="chatPrompt" rows="2" required placeholder="Ask the ECAI knowledge layer…"></textarea><button class="button button-primary" type="submit" id="chatSend">Send ↗</button></form>
+            <div class="form-meta"><span id="chatStatus" role="status">Ready</span><span>POST /ecai/chat</span></div>
+          </div>
+        </section>
+
+        <section class="view" data-panel="indexing" aria-labelledby="indexTitle" hidden>
+          <div class="page-intro page-intro-actions"><div><div class="eyebrow">DURABLE PIPELINE</div><h1 id="indexTitle">Index jobs</h1><p>Enqueue curated sources, inspect persisted jobs and follow execution events.</p></div><a class="button button-outline" href="/indexer/advanced">Advanced builder ↗</a></div>
+          <div class="three-stats"><div class="surface mini-stat"><span>Running</span><strong id="queueRunning">—</strong></div><div class="surface mini-stat"><span>Queued</span><strong id="queueQueued">—</strong></div><div class="surface mini-stat"><span>Concurrency</span><strong id="queueWorkers">—</strong></div></div>
+          <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">QUICK START</div><h2>Wikimedia presets</h2></div><button type="button" id="reloadPresets" class="text-button">Reload presets ↻</button></div><div id="indexPresets" class="preset-grid"><div class="empty-state">Sign in to load available presets.</div></div></section>
+          <section class="surface panel-pad">
+            <div class="panel-heading">
+              <div><div class="eyebrow">DURABLE JOB QUEUE</div><h2>Execution history</h2></div>
+              <div class="inline-actions">
+                <select id="indexState" aria-label="Filter jobs by state"><option value="">All states</option><option>queued</option><option>preparing</option><option>running</option><option>paused</option><option>failed</option><option>completed</option><option>canceled</option><option>ready_to_mint</option><option>minted</option></select>
+                <button type="button" class="button button-outline button-sm" id="refreshJobs">Refresh</button>
+              </div>
+            </div>
+            <p class="context-hint">Open any job for progress, checkpoints, artifacts and live events. Tracking starts automatically and stops when you close it or switch jobs.</p>
+            <div id="indexJobList" class="index-job-list" aria-label="Indexing jobs"><div class="empty-state">Sign in to inspect jobs.</div></div>
+          </section>
+          <details class="surface expandable"><summary>Enqueue custom job specification <span class="expand-arrow">⌄</span></summary><div class="details-content"><p class="context-hint">Use the existing <a href="/indexer/advanced">advanced builder</a> to generate a spec, or submit a validated <code>ecai-index-job/v1</code> JSON specification here.</p><form id="customJobForm"><label for="indexCustomSpec">Job specification</label><textarea class="code-input" id="indexCustomSpec" rows="10" spellcheck="false" required>{
+  "schema": "ecai-index-job/v1",
+  "kind": "wikimedia_visibility",
+  "source": {},
+  "target": {},
+  "options": {},
+  "finalize": {}
+}</textarea><label for="indexIdempotency">Idempotency key</label><div class="inline-actions"><input id="indexIdempotency" required placeholder="Unique request key"><button type="button" class="button button-outline" id="newIdempotency">Generate</button><button type="submit" class="button button-primary">Queue job</button></div></form></div></details>
+        </section>
+
+        <section class="view" data-panel="wikimedia" aria-labelledby="wikiTitle" hidden>
+          <div class="page-intro"><div class="eyebrow">WIKIMEDIA · DURABLE INDEXING</div><h1 id="wikiTitle">Choose what to index</h1><p>Pick one or more server-approved datasets, or configure an exact release and month window. Review the selection before it joins the index queue.</p></div>
+
+          <section class="surface panel-pad wiki-picker-surface" aria-labelledby="wikiPresetTitle">
+            <div class="panel-heading"><div><div class="eyebrow">01 · QUICK QUEUE</div><h2 id="wikiPresetTitle">Pick Wikimedia projects</h2></div><button type="button" id="wikiReloadProjects" class="button button-outline button-sm">Refresh projects</button></div>
+            <p class="context-hint">These presets are configured and validated by this ECAI node. Each selection becomes a separate durable indexing job.</p>
+            <div class="wiki-picker-tools"><label class="wiki-search-label" for="wikiPresetSearch"><span class="sr-only">Search Wikimedia projects</span><input type="search" id="wikiPresetSearch" placeholder="Search projects or language…" autocomplete="off"></label><button type="button" class="text-button" id="wikiSelectAll">Select all</button><button type="button" class="text-button" id="wikiClearSelected">Clear</button></div>
+            <div id="wikiPresetChoices" class="wiki-preset-grid" aria-label="Available Wikimedia indexing presets"><div class="empty-state">Sign in to load the available projects.</div></div>
+            <div class="wiki-picker-footer"><div class="wiki-picker-count"><strong id="wikiSelectedCount">0 selected</strong><span>Each project is enqueued independently.</span></div><button type="button" id="wikiQueueSelected" class="button button-primary" disabled>Add selected to index queue ↗</button></div>
+            <div id="wikiPickerStatus" class="wiki-picker-notice" role="status" aria-live="polite">Select a project to queue.</div>
+            <div id="wikiEnqueueResults" class="wiki-enqueue-results" aria-label="Queue request results"></div>
+          </section>
+
+          <section class="surface panel-pad wiki-custom-surface" aria-labelledby="wikiCustomTitle">
+            <div class="panel-heading"><div><div class="eyebrow">02 · CUSTOM SOURCE</div><h2 id="wikiCustomTitle">Choose release and pageview months</h2></div><span class="status-tag">Server-validated plan</span></div>
+            <p class="context-hint">Explore actual Cirrus release listings and suggested month windows. Month suggestions do not guarantee availability; Preview validates the underlying files before you queue.</p>
+            <div class="wiki-custom-layout">
+              <div class="wiki-custom-config">
+                <div class="field-grid wiki-custom-fields">
+                  <label for="wikiProject">Wikimedia project<select id="wikiProject"><option value="enwiki">enwiki</option></select></label>
+                  <label for="wikiPageviewProject">Pageview project<input id="wikiPageviewProject" value="en.wikipedia" maxlength="128" autocomplete="off" spellcheck="false"></label>
+                  <label for="wikiPlanLimit">Maximum records<input id="wikiPlanLimit" type="number" min="1" max="10000000" step="1" value="10000"></label>
+                </div>
+                <div class="wiki-source-choice-head"><label for="wikiRelease">Cirrus content release</label><button type="button" id="wikiSourcesBtn" class="button button-outline button-sm">Discover sources ↻</button></div>
+                <select id="wikiRelease" disabled><option value="">Discover releases first</option></select>
+                <div class="wiki-source-choice-head"><span class="wiki-field-label">Pageview months <small id="wikiMonthCount">0 selected</small></span><div class="inline-actions"><button type="button" id="wikiRecentSix" class="text-button" disabled>Recent 6</button><button type="button" id="wikiRecentAll" class="text-button" disabled>All suggested</button></div></div>
+                <div id="wikiMonthChoices" class="wiki-month-grid" aria-label="Pageview months"><div class="empty-state">Discover sources to pick months.</div></div>
+                <input id="wikiMonths" type="hidden" value="">
+              </div>
+              <aside class="wiki-plan-card" aria-label="Index job preview">
+                <div class="eyebrow">PREVIEW BEFORE QUEUE</div><h3>Job summary</h3>
+                <div id="wikiPlanSummary" class="wiki-plan-summary"><div class="empty-state">Choose a project, discover source releases, then preview the job.</div></div>
+                <div class="wiki-plan-actions"><button type="button" id="wikiPlanBtn" class="button button-outline" disabled>Preview validated plan</button><button type="button" id="wikiQueuePlanBtn" class="button button-primary" disabled>Queue this job ↗</button></div>
+                <div id="wikiPlanStatus" class="context-hint" role="status" aria-live="polite">No job has been validated.</div>
+              </aside>
+            </div>
+            <details class="expandable wiki-json-details"><summary>Technical catalog and normalized plan <span class="expand-arrow">⌄</span></summary><div class="wiki-json-grid"><section><h3>Source discovery</h3><pre id="wikiSourcesOutput" class="code-display">No catalog fetched.</pre></section><section><h3>Validated job plan</h3><pre id="wikiPlanOutput" class="code-display">No plan requested.</pre></section></div></details>
+          </section>
+
+          <div class="two-column">
+            <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">DIAGNOSTICS</div><h2>Index doctor</h2></div><button type="button" id="wikiDoctorBtn" class="button button-outline button-sm">Run checks</button></div><pre id="wikiDoctorOutput" class="code-display">No checks run yet.</pre></section>
+            <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">SEARCH</div><h2>Wikimedia index</h2></div></div><form id="wikiSearchForm" class="inline-actions"><label for="wikiSearchQuery" class="sr-only">Search the Wikimedia index</label><input id="wikiSearchQuery" placeholder="Search indexed articles…" required><label class="compact-field">Limit<input id="wikiSearchLimit" type="number" min="1" max="100" value="25"></label><button type="submit" class="button button-primary">Find</button></form><pre id="wikiSearchOutput" class="code-display">No search yet.</pre></section>
+          </div>
+        </section>
+
+        <section class="view" data-panel="knowledge" aria-labelledby="knowledgeTitle" hidden>
+          <div class="page-intro"><div class="eyebrow">STRUCTURED KNOWLEDGE</div><h1 id="knowledgeTitle">Knowledge &amp; privacy</h1><p>Encode structured facts and access account-scoped corpora through authenticated REST operations.</p></div>
+          <div class="two-column"><section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">LEGACY EKEF</div><h2>Knowledge minting</h2></div><span class="status-tag">May incur chain fees</span></div><p class="context-hint">The existing /ecai/ekef route requires a configured server-side signing keypair. Confirm any minting attempt before submitting.</p><form id="ekefForm" class="stack-form"><label>Subject<input name="subject" required placeholder="ECAI"></label><label>Predicate<input name="predicate" required placeholder="indexes"></label><label>Object<input name="object" required placeholder="knowledge"></label><label>Context<input name="context" required placeholder="demonstration"></label><button type="submit" class="button button-primary">Submit knowledge ↗</button></form><pre id="ekefOutput" class="code-display">No knowledge submitted.</pre></section>
+            <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">ACCOUNT-SCOPED</div><h2>Private corpus</h2></div><span class="privacy-label">PRIVATE</span></div><p class="context-hint">The server derives the principal from DamageBDD authentication; do not submit owner IDs, credentials or keys in request JSON.</p><form id="privateForm" class="stack-form"><label>Corpus identifier<input id="privateCorpus" required placeholder="my-corpus" pattern="[A-Za-z0-9_-]+" maxlength="80"></label><label>Operation<select id="privateAction"><option value="search">Search</option><option value="fetch">Fetch by ID</option><option value="index">Index batch</option><option value="ask">Ask with configured destination</option></select></label><label>Request JSON<textarea id="privatePayload" class="code-input" rows="7" spellcheck="false" required>{"query":"example","limit":8}</textarea></label><div class="inline-actions"><button type="button" class="button button-outline button-sm" id="privateExample">Insert example</button><button type="submit" class="button button-primary">Run private operation</button></div></form><pre id="privateOutput" class="code-display">Responses are only held in this browser session.</pre></section></div>
+        </section>
+
+        <section class="view" data-panel="marketplace" aria-labelledby="marketTitle" hidden>
+          <div class="page-intro"><div class="eyebrow">DECENTRALIZED WORK</div><h1 id="marketTitle">Marketplace jobs</h1><p>Experimental local chunk-job workflow. <strong>Disabled by default</strong>; set <code>marketplace_enabled = true</code> to enable. State is not durable, and marking a job paid does not transfer funds on-chain.</p></div>
+          <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">ACTIVE MARKET</div><h2>Published work</h2></div><div class="inline-actions"><select id="marketStatus" aria-label="Filter marketplace status"><option value="any">All statuses</option><option>open</option><option>claimed</option><option>submitted</option><option>paid</option><option>cancelled</option></select><button type="button" id="marketRefresh" class="button button-outline button-sm">Refresh</button></div></div><div class="table-scroll"><table class="data-table"><thead><tr><th>ID</th><th>Status</th><th>Owner</th><th>Reward</th><th></th></tr></thead><tbody id="marketRows"><tr><td colspan="5" class="empty-cell">Sign in to view marketplace jobs.</td></tr></tbody></table></div></section>
+          <div class="two-column"><section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">PUBLISH</div><h2>Create chunk work</h2></div></div><form id="publishForm" class="stack-form"><label>Owner account<input name="owner_ak" required placeholder="ak_…"></label><label>Market contract<input name="market_ct" required placeholder="ct_…"></label><label>Input paths (one per line)<textarea name="paths" rows="3" placeholder="/data/chunk-001.ndjson"></textarea></label><div class="field-grid"><label>Reward (DAMAGE units)<input name="reward_damage" type="number" min="1" step="1" required></label><label>TTL in blocks<input name="ttl_blocks" type="number" min="1" step="1" required></label></div><button type="submit" class="button button-primary">Publish jobs</button></form></section><section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">JOB INSPECTOR</div><h2>Claims &amp; local status</h2></div></div><p id="marketSelection" class="context-hint">Select a marketplace job to inspect or update it.</p><pre id="marketDetail" class="code-display">No job selected.</pre><form id="marketActionForm" class="stack-form"><label>Action<select id="marketAction"><option value="claim">Claim</option><option value="submit">Submit proof</option><option value="pay">Mark paid (local only)</option></select></label><label>Action JSON<textarea class="code-input" id="marketActionBody" rows="5" required>{"miner_ak":"ak_..."}</textarea></label><button type="submit" id="marketActionSubmit" class="button button-primary" disabled>Run on selected job</button></form></section></div>
+        </section>
+
+        <section class="view" data-panel="operations" aria-labelledby="opsTitle" hidden>
+          <div class="page-intro"><div class="eyebrow">NODE OPERATIONS</div><h1 id="opsTitle">Ingestion &amp; runtime</h1><p>Inspect Yelp loader state and run server-side ingestion and publication steps deliberately.</p></div>
+          <div class="two-column"><section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">YELP INGESTION</div><h2>Pipeline status</h2></div><button type="button" class="button button-outline button-sm" id="yelpStatusBtn">Refresh status</button></div><pre id="yelpStatusOutput" class="code-display">Status not loaded.</pre><div class="inline-actions wrap-actions"><button type="button" class="button button-outline button-sm" id="yelpJobBtn">Chunk job</button><button type="button" class="button button-outline button-sm danger-outline" id="yelpCancelBtn">Cancel chunk job</button></div><pre id="yelpJobOutput" class="code-display">No chunk job selected.</pre></section><section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">NEW INGESTION</div><h2>Start chunking</h2></div></div><form id="yelpChunkForm" class="stack-form"><label>Input filename (on server)<input name="in" required placeholder="yelp_academic_dataset_business.json"></label><label>Output subdirectory<input name="out_dir" required value="chunks"></label><label>Lines per chunk<input name="chunk_size" type="number" min="1" step="1" value="5000" required></label><button type="submit" class="button button-primary">Start async chunk job</button></form><hr class="section-rule"><form id="yelpAssignForm" class="inline-actions"><label class="compact-field">Cluster ID<input name="cluster_id" type="number" min="0" value="0" required></label><label class="compact-field">Cluster size<input name="cluster_size" type="number" min="1" value="4" required></label><button type="submit" class="button button-outline">Assign shards</button></form><div class="inline-actions wrap-actions"><button type="button" id="yelpPinBtn" class="button button-outline button-sm">Pin chunks to IPFS</button><button type="button" id="yelpHeadersBtn" class="button button-outline button-sm">Export term headers</button><button type="button" id="yelpManifestBtn" class="button button-outline button-sm">Build manifest</button></div><pre id="yelpActionOutput" class="code-display">No operation run.</pre></section></div>
+          <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">SOCKET</div><h2>WebSocket inspector</h2></div><span class="small muted">/ecai/ws/</span></div><div class="inline-actions wrap-actions"><button type="button" id="wsConnect" class="button button-outline button-sm">Connect</button><button type="button" id="wsPing" class="button button-outline button-sm" disabled>Ping</button><button type="button" id="wsPrice" class="button button-outline button-sm" disabled>Get price</button><button type="button" id="wsDisconnect" class="button button-outline button-sm" disabled>Disconnect</button></div><pre id="wsOutput" class="code-display">Not connected.</pre></section>
+        </section>
+
+        <section class="view" data-panel="code" aria-labelledby="codeTitle" hidden>
+          <div class="page-intro"><div class="eyebrow">NODE ADMINISTRATION · REVIEW GATE</div><h1 id="codeTitle">Code learning &amp; repair</h1><p>Inspect durable learning and repair activity, review verifier-validated Git diffs, and publish human-approved changes to a dedicated <code>origin</code> review branch. Nothing publishes automatically.</p></div>
+          <div class="surface panel-pad">
+            <div class="panel-heading"><div><div class="eyebrow">LEARNING CYCLE</div><h2>Code intelligence &amp; repair workers</h2></div><button type="button" class="button button-outline button-sm" id="codeRefresh">Refresh</button></div>
+            <div id="codeAdminNotice" class="context-hint" role="status">This workspace requires a server-authorized node administrator account.</div>
+            <div class="inline-actions wrap-actions">
+              <button type="button" class="button button-primary button-sm" id="codeLearn" disabled>Learn codebase</button>
+              <button type="button" class="button button-outline button-sm" id="codeScan" disabled>Scan &amp; propose repairs</button>
+              <button type="button" class="button button-outline button-sm" id="codeIntegrate" disabled>Verify integration patchset</button>
+            </div>
+            <form id="codeProposeForm" class="inline-actions wrap-actions code-propose-form">
+              <label class="compact-field">Application<select id="codeProposeApp"><option value="ecai">ecai</option><option value="damage">damage</option><option value="erm">erm</option></select></label>
+              <label class="compact-field">Module<input id="codeProposeModule" required placeholder="ecai_patch_worker" maxlength="128" pattern="[a-z][a-zA-Z0-9_@]*"></label>
+              <label class="compact-field">Finding fingerprint<input id="codeProposeFingerprint" required placeholder="SHA-256 finding fingerprint" maxlength="256"></label>
+              <button type="submit" id="codeProposeSubmit" class="button button-outline button-sm" disabled>Propose targeted repair</button>
+            </form>
+            <div class="code-status-heading"><div><div class="eyebrow">LIVE PIPELINE · NODE HEALTH</div><h3>Code intelligence at a glance</h3></div><span id="codeStatusUpdated" class="small muted" role="status">Waiting for telemetry</span></div>
+            <div id="codeMetrics" class="code-metrics-grid" aria-label="Learning and repair metrics"><div class="empty-state">Loading code intelligence metrics…</div></div>
+            <div id="codeServiceCards" class="code-services-grid" aria-label="Worker and integration status"></div>
+            <details class="code-raw-telemetry"><summary>Detailed node status · raw JSON</summary>
+              <div class="two-column code-status-columns">
+                <div><div class="eyebrow">LEARNER · DURABILITY · HEALTH</div><pre id="codeLearningStatus" class="code-display code-status">No administrator status loaded.</pre></div>
+                <div><div class="eyebrow">PATCH MANAGER · INTEGRATION</div><pre id="codeRepairStatus" class="code-display code-status">No repair status loaded.</pre></div>
+              </div>
+            </details>
+          </div>
+          <section class="surface panel-pad">
+            <div class="panel-heading"><div><div class="eyebrow">REPAIR OUTPUT</div><h2>Recent repair attempts</h2></div><span id="codeRepairCount" class="small muted">Not loaded</span></div>
+            <div class="code-filter-toolbar" role="group" aria-label="Filter repair jobs">
+              <label class="code-filter-search">Search repair jobs<input id="codeRepairSearch" type="search" placeholder="Module, fingerprint, finding…" autocomplete="off"></label>
+              <label>Validation<select id="codeRepairValidation"><option value="validated" selected>Validated only</option><option value="">All repairs</option><option value="failed">Failed</option><option value="other">In progress / other</option></select></label>
+              <label>Application<select id="codeRepairApp"><option value="">All applications</option><option value="ecai">ECAI</option><option value="damage">DamageBDD</option><option value="erm">ERM</option></select></label>
+              <label class="code-filter-checkbox"><input id="codeRepairWithDiff" type="checkbox"> With reviewable diff</label>
+            </div>
+            <div id="codeRepairVisibleCount" class="code-filter-count" role="status" aria-live="polite">Awaiting repair data.</div>
+            <div id="codeRepairRows" class="code-repair-list"><div class="empty-state">Node administrator access required.</div></div>
+          </section>
+          <section class="surface panel-pad">
+            <div class="panel-heading"><div><div class="eyebrow">DURABLE APPROVAL QUEUE</div><h2>Patch reviews</h2></div><span id="codeReviewCounts" class="small muted">Awaiting load</span></div>
+            <p class="context-hint">Only successful verifier results can enter the queue. A review pins a SHA-256 hash and base commit. Independent approval is required before publication. Publication re-runs verification, creates a new commit in an isolated worktree, and pushes without force to <code>origin/ecai/reviews/&lt;id&gt;</code>.</p>
+            <div class="code-filter-toolbar" role="group" aria-label="Filter patch reviews">
+              <label class="code-filter-search">Search patches<input id="codeReviewSearch" type="search" placeholder="Module, summary, SHA or fingerprint…" autocomplete="off"></label>
+              <label>Review state<select id="codeReviewStatus"><option value="">All review states</option><option value="pending">Awaiting approval</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="publishing">Publishing</option><option value="published">Published</option><option value="publish_failed">Push failed</option><option value="reconcile_required">Reconciliation required</option></select></label>
+              <label>Application<select id="codeReviewApp"><option value="">All applications</option><option value="ecai">ECAI</option><option value="damage">DamageBDD</option><option value="erm">ERM</option></select></label>
+              <label>Verification<select id="codeReviewValidation"><option value="validated" selected>Verified only</option><option value="">All records</option><option value="other">Other results</option></select></label>
+              <button type="button" class="button button-outline button-sm code-filter-clear" id="codeClearReviewFilters">Clear filters</button>
+            </div>
+            <div id="codeReviewVisibleCount" class="code-filter-count" role="status" aria-live="polite">Awaiting review queue.</div>
+            <div id="codeReviewRows" class="code-review-list"><div class="empty-state">No review candidates loaded.</div></div>
+          </section>
+          <!-- Moved into the open patch card, never cloned: one approval form for one immutable review. -->
+          <div id="codeReviewWorkspaceParking" hidden>
+          <div id="codeReviewWorkspace" class="code-review-workspace" hidden>
+          <div class="two-column code-review-grid">
+            <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">IMMUTABLE REVIEW EVIDENCE</div><h2>Patch &amp; verification</h2></div><button type="button" class="button button-outline button-sm" id="codeCopyDiff" disabled>Copy full diff</button></div>
+              <div id="codeReviewVerification" class="code-review-verification">Select a patch to see verifier evidence.</div>
+              <details class="code-review-metadata"><summary>Full verification &amp; immutable metadata</summary><pre class="code-display" id="codeReviewDetail">Select a validated repair from the review queue.</pre></details>
+              <div class="code-diff-toolbar"><div><div class="eyebrow code-diff-label">UNIFIED DIFF · FILES</div><span id="codeDiffSummary" class="small muted">No diff selected.</span></div><div id="codeDiffFileList" class="code-diff-file-list" role="group" aria-label="Changed files"></div></div>
+              <div class="code-diff" id="codeReviewDiff" role="region" aria-label="Patch diff" tabindex="0">No patch selected.</div>
+            </section>
+            <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">APPROVALS &amp; PUBLICATION</div><h2>Review decision</h2></div></div>
+              <div id="codeBearerNotice" class="code-bearer-notice" role="status" hidden>Read-only session detected. Approving, rejecting and publishing require an explicit DamageBDD bearer token. <button id="codeBearerLogin" type="button" class="text-button">Sign in for review actions</button>.</div>
+              <form class="stack-form" id="codeDecisionForm">
+                <label for="codeReviewNote">Review findings (8–2048 characters)<textarea id="codeReviewNote" rows="5" minlength="8" maxlength="2048" placeholder="Describe test evidence, risk, and why this change is safe to approve or should be rejected."></textarea></label>
+                <div class="inline-actions wrap-actions"><button type="button" class="button button-primary button-sm" id="codeApprove" disabled>Approve immutable diff</button><button type="button" class="button button-outline button-sm danger-outline" id="codeReject" disabled>Reject patch</button></div>
+              </form>
+              <hr class="section-rule">
+              <div class="eyebrow">SEPARATE PUBLISH GATE</div><p class="context-hint">The publisher must be a different node admin from every approving reviewer. Approval alone never pushes. Push must also be enabled server-side and the base commit must still match the configured repository HEAD.</p>
+              <div id="codePublishGate" class="code-publish-gate" role="status" aria-live="polite">Open a reviewed patch to inspect publication eligibility.</div>
+              <label for="codePublishPhrase">To authorize this push, type <code>push to origin</code><input id="codePublishPhrase" autocomplete="off" placeholder="push to origin"></label>
+              <div class="inline-actions wrap-actions"><button type="button" class="button button-primary button-sm" id="codePublish" disabled>Publish reviewed branch ↗</button><button type="button" class="button button-outline button-sm" id="codeReloadReview" disabled>Reload review</button></div>
+              <div class="context-hint" id="codeActionStatus" role="status" aria-live="polite">Review a patch before taking an action.</div>
+              <div class="eyebrow code-diff-label">AUDIT TRAIL</div><pre class="code-display code-status" id="codeReviewAudit">No audit events selected.</pre>
+            </section>
+          </div>
+          </div>
+          </div>
+        </section>
+
+        <section class="view" data-panel="api" aria-labelledby="apiTitle" hidden>
+          <div class="page-intro"><div class="eyebrow">REFERENCE &amp; EXECUTION</div><h1 id="apiTitle">API explorer</h1><p>Browse the routes exported by this ECAI node and make authenticated same-origin requests.</p></div>
+          <div class="api-explorer"><section class="surface api-list-panel"><label for="apiFilter" class="sr-only">Filter endpoints</label><input id="apiFilter" class="api-filter" type="search" placeholder="⌕  Filter endpoints"><div id="apiRoutes" class="api-route-list" aria-label="API endpoints"></div></section><section class="surface panel-pad api-request-panel"><div class="panel-heading"><div><div class="eyebrow">REQUEST</div><h2 id="apiRequestTitle">Choose an endpoint</h2></div><span class="status-tag" id="apiMethodTag">REST</span></div><p id="apiRequestDescription" class="context-hint">Select a route on the left to inspect its parameters.</p><form id="apiRequestForm" class="stack-form"><div id="apiPathParams"></div><div id="apiQueryParams"></div><div id="apiRequestBodyWrapper" hidden><label for="apiRequestBody">JSON body</label><textarea id="apiRequestBody" class="code-input" rows="9" spellcheck="false"></textarea></div><div class="inline-actions"><button type="submit" id="apiRequestSubmit" class="button button-primary" disabled>Send request ↗</button><button type="button" id="apiCopyResponse" class="button button-outline" disabled>Copy response</button></div></form><div class="form-meta"><span id="apiResponseMeta" role="status">No request sent.</span></div><pre id="apiResponse" class="code-display">Select an endpoint to get started.</pre></section></div>
+        </section>
+      </main>
+    </div>
+    <div id="consoleToast" class="console-toast" role="status" aria-live="polite" hidden></div>
+    <div class="mobile-scrim" id="mobileScrim" hidden></div>
+  </div>
+
+  <dialog id="consoleLoginDialog" class="auth-dialog" aria-labelledby="consoleLoginTitle">
+    <form id="consoleLoginForm" class="stack-form">
+      <div class="login-header"><div><div class="eyebrow">SECURE ACCESS</div><h2 id="consoleLoginTitle">Sign in to DamageBDD</h2><p>Use the same account as your existing node dashboard.</p></div><button type="button" class="icon-button" id="consoleLoginClose" aria-label="Close sign in">×</button></div>
+      <label>Email<input name="email" type="email" autocomplete="username" required></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+      <p id="consoleLoginStatus" class="form-error" role="status" aria-live="polite"></p>
+      <button type="submit" id="consoleLoginSubmit" class="button button-primary">Sign in</button>
+    </form>
+  </dialog>
+  <script type="module" src="/static/js/sidekick.js"></script>
+  <script type="module" src="/static/js/ecai-console.js"></script>
+</body>
+</html>

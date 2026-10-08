@@ -232,7 +232,7 @@ from_json(Req0, #{action := Action} = State) when
                                 State
                             );
                         {ok, {error, Reason}} ->
-                            reply_error(Req0, 409, Reason, State);
+                            reply_error(Req0, control_error_code(Reason), Reason, State);
                         {error, Reason} ->
                             reply_error(Req0, 503, Reason, State)
                     end;
@@ -340,6 +340,11 @@ enqueue_error_code({idempotency_conflict, _Existing, _Requested}) -> 409;
 enqueue_error_code({queue_capacity_exceeded, _Current, _Limit}) -> 429;
 enqueue_error_code({owner_queue_capacity_exceeded, _Owner, _Current, _Limit}) -> 429;
 enqueue_error_code(_Reason) -> 422.
+
+%% Retry re-admission has the same capacity constraints as enqueue.
+control_error_code({queue_capacity_exceeded, _Count, _Limit}) -> 429;
+control_error_code({owner_queue_capacity_exceeded, _Owner, _Count, _Limit}) -> 429;
+control_error_code(_Reason) -> 409.
 
 control_function(pause) -> fun ecai_index_jobs_srv:pause/1;
 control_function(resume) -> fun ecai_index_jobs_srv:resume/1;

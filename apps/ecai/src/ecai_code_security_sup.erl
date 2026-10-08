@@ -61,7 +61,7 @@ init([]) ->
         Integration,
         Reconciler
     ],
-    {ok, {{rest_for_one, 10, 10}, Core ++ health_monitor_specs()}}.
+    {ok, {{rest_for_one, 10, 10}, Core ++ review_queue_specs() ++ health_monitor_specs()}}.
 
 health_monitor_specs() ->
     case application:get_env(ecai, code_health_monitor_enabled, true) of
@@ -71,4 +71,15 @@ health_monitor_specs() ->
             [];
         Invalid ->
             erlang:error({invalid_configuration, code_health_monitor_enabled, Invalid})
+    end.
+
+%% DETS review queue follows the learning store and repair workers in the
+%% rest_for_one tree; it is never available without the code-security stack.
+review_queue_specs() ->
+    case application:get_env(ecai, code_admin_enabled, false) of
+        true -> [#{id => ecai_code_review_queue,
+                   start => {ecai_code_review_queue, start_link, []},
+                   restart => permanent, shutdown => 5000, type => worker,
+                   modules => [ecai_code_review_queue]}];
+        _ -> []
     end.

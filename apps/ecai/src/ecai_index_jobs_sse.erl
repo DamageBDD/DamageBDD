@@ -68,8 +68,10 @@ stream_authorized_job(JobId, Req0, State) ->
     Req1 = cowboy_req:stream_reply(200, Headers, Req0),
     ok = ecai_index_job_events:subscribe(JobId, self()),
     try
-        {LastSeq1, ReplayedTerminal} = replay(JobId, LastSeq0, Req1),
-        case ReplayedTerminal orelse current_job_is_terminal(JobId) of
+        LastSeq1 = replay(JobId, LastSeq0, Req1),
+        %% A job can be canceled/failed and later requeued under the same ID.
+        %% A historical terminal event must not terminate the new live stream.
+        case current_job_is_terminal(JobId) of
             true -> cowboy_req:stream_body(<<>>, fin, Req1);
             false -> stream_loop(JobId, LastSeq1, Req1)
         end
@@ -81,32 +83,33 @@ stream_authorized_job(JobId, Req0, State) ->
     {ok, Req1, State}.
 
 replay(JobId, LastSeq, Req) ->
-    replay_pages(JobId, LastSeq, Req, false).
+    replay_pages(JobId, LastSeq, Req).
 
-replay_pages(JobId, LastSeq, Req, Terminal0) ->
+replay_pages(JobId, LastSeq, Req) ->
     case ecai_index_jobs_srv:events(JobId, LastSeq, ?REPLAY_LIMIT) of
         {ok, Events} ->
-            {NextSeq, Terminal1} = lists:foldl(
-                fun(Event, {AccSeq, AccTerminal}) ->
+            NextSeq = lists:foldl(
+                fun(Event, AccSeq) ->
                     Seq = event_seq(Event),
                     case Seq > AccSeq of
                         true ->
                             ok = send_event(Event, Req),
-                            {Seq, AccTerminal orelse terminal_event(Event)};
+                            Seq;
                         false ->
-                            {AccSeq, AccTerminal}
+                            AccSeq
                     end
                 end,
-                {LastSeq, Terminal0},
+                LastSeq,
                 Events
             ),
-            case {Terminal1, length(Events), NextSeq > LastSeq} of
-                {true, _Count, _Advanced} -> {NextSeq, true};
-                {false, ?REPLAY_LIMIT, true} -> replay_pages(JobId, NextSeq, Req, false);
-                _ -> {NextSeq, false}
+            %% Read all requested history, including transitions *after* a
+            %% former canceled/failed state, before following live events.
+            case length(Events) =:= ?REPLAY_LIMIT andalso NextSeq > LastSeq of
+                true -> replay_pages(JobId, NextSeq, Req);
+                false -> NextSeq
             end;
         {error, _Reason} ->
-            {LastSeq, Terminal0}
+            LastSeq
     end.
 
 stream_loop(JobId, LastSeq, Req) ->
@@ -116,7 +119,7 @@ stream_loop(JobId, LastSeq, Req) ->
             case Seq > LastSeq of
                 true ->
                     ok = send_event(Event, Req),
-                    case terminal_event(Event) of
+                    case terminal_event(Event) andalso current_job_is_terminal(JobId) of
                         true -> cowboy_req:stream_body(<<>>, fin, Req);
                         false -> stream_loop(JobId, Seq, Req)
                     end;

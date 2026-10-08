@@ -619,7 +619,8 @@ normalize_event(Event) when is_map(Event) ->
     App = maps:get(application, Event, undefined),
     Module = maps:get(module, Event, undefined),
     Fingerprint = optional_binary(maps:get(fingerprint, Event, undefined)),
-    case {is_atom(App), is_atom(Module), Fingerprint} of
+    case {is_atom(App) andalso App =/= undefined,
+          is_atom(Module) andalso Module =/= undefined, Fingerprint} of
         {true, true, Fp} when is_binary(Fp), byte_size(Fp) > 0 ->
             {ok, #{
                 schema => <<"damage.ecai-log-event">>,
