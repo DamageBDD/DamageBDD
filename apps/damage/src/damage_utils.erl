@@ -22,6 +22,9 @@
         load_template/2,
         load_template/3,
         send_email/4,
+        send_email/5,
+        prepare_email/5,
+        send_prepared_email/1,
         atom_to_binary_keys/1,
         binary_to_atom_keys/1,
         get_concurrency_level/1,
@@ -238,6 +241,17 @@ render(Template, Context) when is_list(Template) ->
     render(list_to_binary(Template), Context);
 render(Template, Context) when is_binary(Template) ->
     bbmustache:render(Template, normalize_context(Context)).
+
+%% Attachment-aware synchronous mail API. send_email/4 retains its existing
+%% asynchronous behaviour; an outbox should prepare, persist sending, then send.
+prepare_email(To, Subject, Text, Html, Options) ->
+    damage_mail:prepare(To, Subject, Text, Html, Options).
+send_prepared_email(Prepared) -> damage_mail:send(Prepared).
+send_email(To, Subject, Text, Html, Options) ->
+    case prepare_email(To, Subject, Text, Html, Options) of
+        {ok, Prepared} -> send_prepared_email(Prepared);
+        Error -> Error
+    end.
 
 send_email({ToName, To}, Subject, TextBody, HtmlBody) ->
     {ok, SmtpHost} = application:get_env(damage, smtp_host),

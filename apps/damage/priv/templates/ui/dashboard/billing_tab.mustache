@@ -1,0 +1,108 @@
+<section id="enterprise-billing" class="billing" aria-labelledby="billing-title" hidden>
+  <header class="billing-header">
+    <div><p class="billing-eyebrow">ENTERPRISE BILLING</p><h2 id="billing-title">Invoices &amp; retainers</h2>
+      <p class="billing-muted">Recurring services, private records, controlled delivery.</p></div>
+    <div class="billing-header-actions"><span id="billing-role" class="billing-badge"></span>
+      <button type="button" data-billing-action="refresh">Refresh</button></div>
+  </header>
+  <p id="billing-notice" class="billing-notice" role="status" aria-live="polite" hidden></p>
+  <p id="billing-clock" class="billing-muted"></p>
+  <nav class="billing-nav" aria-label="Invoice management">
+    <button type="button" data-billing-pane="invoices" aria-pressed="true">Invoices</button>
+    <button type="button" data-billing-pane="customers" aria-pressed="false">Customers</button>
+    <button type="button" data-billing-pane="plans" aria-pressed="false">Recurring plans</button>
+    <button type="button" data-billing-pane="admins" id="billing-admins-nav" aria-pressed="false" hidden>Invoice admins</button>
+  </nav>
+  <section data-billing-content="invoices">
+    <div class="billing-toolbar"><label>Status <select id="billing-status-filter">
+      <option value="">All invoices</option><option value="draft">Draft</option><option value="issuing">Issuing</option>
+      <option value="issue_failed">Issue failed</option><option value="issued">Issued / unpaid</option>
+      <option value="paid">Paid</option><option value="void">Void</option></select></label>
+      <label>Customer <select id="billing-customer-filter"><option value="">All customers</option></select></label>
+      <span id="billing-page-summary" class="billing-muted"></span>
+    </div>
+    <div class="billing-table-scroll"><table><caption class="billing-sr-only">Enterprise invoices</caption>
+      <thead><tr><th>Invoice</th><th>Customer &amp; service period</th><th>Total</th><th>Due</th><th>Status</th><th>Email</th><th></th></tr></thead>
+      <tbody id="billing-invoice-rows"></tbody></table></div>
+    <div class="billing-pagination"><button type="button" data-billing-action="previous">Previous</button>
+      <span id="billing-page-label"></span><button type="button" data-billing-action="next">Next</button></div>
+    <article id="billing-detail" class="billing-detail" aria-live="polite" hidden></article>
+  </section>
+  <section data-billing-content="customers" hidden>
+    <div class="billing-toolbar"><button type="button" class="billing-primary" data-billing-action="new-customer">Add customer</button>
+      <label class="billing-file-label">Import reviewed seed JSON <input id="billing-import" type="file" accept="application/json,.json"></label>
+      <span class="billing-muted">Imports are paused. Existing IDs are not overwritten.</span></div>
+    <div class="billing-table-scroll"><table><thead><tr><th>Customer</th><th>Billing email</th><th>Status</th><th></th></tr></thead><tbody id="billing-customer-rows"></tbody></table></div>
+  </section>
+  <section data-billing-content="plans" hidden>
+    <div class="billing-toolbar"><button type="button" class="billing-primary" data-billing-action="new-plan">Add recurring plan</button>
+      <p class="billing-muted">Monthly or every 14 days. Missed periods become drafts for review.</p></div>
+    <div class="billing-table-scroll"><table><thead><tr><th>Plan / customer</th><th>Recurrence</th><th>Next service period</th><th>Scheduling</th><th>Auto-send</th><th></th></tr></thead><tbody id="billing-plan-rows"></tbody></table></div>
+  </section>
+  <section data-billing-content="admins" hidden>
+    <p>Invoice admins can manage customers, recurring plans and invoices, but cannot manage node wallets or grant roles.</p>
+    <form id="billing-admin-form" class="billing-toolbar"><label>Aeternity account <input name="account" required placeholder="ak_…" autocomplete="off"></label>
+      <button class="billing-primary" type="submit">Grant invoice admin</button></form>
+    <div class="billing-table-scroll"><table><thead><tr><th>Account</th><th>Grant source</th><th></th></tr></thead><tbody id="billing-admin-rows"></tbody></table></div>
+    <details><summary>Billing configuration audit</summary><div id="billing-admin-audit"></div></details>
+  </section>
+
+  <dialog id="billing-customer-dialog" aria-labelledby="billing-customer-title">
+    <form id="billing-customer-form"><h3 id="billing-customer-title">Customer</h3>
+      <div class="billing-form-grid">
+        <label>Customer ID <input name="id" required pattern="[a-z0-9][a-z0-9_-]{0,63}" maxlength="64"></label>
+        <label>Legal / billing name <input name="name" required maxlength="200"></label>
+        <label>Billing email <input name="email" type="email" maxlength="254"></label>
+        <label>ABN / reference <input name="abn" maxlength="40"></label>
+      </div>
+      <label>Billing address / attention <textarea name="address" rows="3" maxlength="2000"></textarea></label>
+      <label class="billing-check"><input name="enabled" type="checkbox"> Customer details reviewed and active</label>
+      <p class="billing-muted">An active customer needs a valid billing email. Existing invoice snapshots do not change.</p>
+      <p class="billing-form-error" role="alert" hidden></p>
+      <footer><button type="button" data-billing-close>Cancel</button><button type="submit" class="billing-primary">Save customer</button></footer>
+    </form>
+  </dialog>
+  <dialog id="billing-plan-dialog" aria-labelledby="billing-plan-title">
+    <form id="billing-plan-form"><h3 id="billing-plan-title">Recurring plan</h3>
+      <div class="billing-form-grid">
+        <label>Plan ID <input name="id" required pattern="[a-z0-9][a-z0-9_-]{0,63}" maxlength="64"></label>
+        <label>Plan name <input name="name" required maxlength="200"></label>
+        <label>Customer <select name="customer_id" required></select></label>
+        <label>Recurrence <select name="cadence"><option value="monthly">Monthly</option><option value="fortnightly">Every 14 days</option></select></label>
+        <label>Service commencement <input name="start_date" type="date" min="2000-01-01" max="2199-12-31"></label>
+        <label>Payment terms (days from issue) <input name="terms_days" type="number" min="0" max="90" value="7" required></label>
+        <label>Currency <select name="currency"><option>AUD</option><option>USD</option><option>EUR</option><option>GBP</option></select></label>
+        <label>Node-managed payment instructions <select name="payment_profile"></select></label>
+      </div>
+      <div id="billing-plan-lines" class="billing-lines"></div>
+      <button type="button" data-billing-add-line="billing-plan-lines">Add line item</button>
+      <label>Scope, exclusions and notes <textarea name="notes" rows="4" maxlength="5000"></textarea></label>
+      <label class="billing-check"><input name="enabled" type="checkbox"> Enable scheduled draft generation</label>
+      <label class="billing-check"><input name="auto_send" type="checkbox"> Automatically issue and email on-time periods</label>
+      <p class="billing-muted">Auto-send also requires the node's global opt-in. Historic catch-up periods always remain drafts.
+        Once invoicing begins, customer, commencement and cadence are fixed; create a new plan to change them.</p>
+      <p class="billing-form-error" role="alert" hidden></p>
+      <footer><button type="button" data-billing-close>Cancel</button><button type="submit" class="billing-primary">Save plan</button></footer>
+    </form>
+  </dialog>
+  <dialog id="billing-draft-dialog" aria-labelledby="billing-draft-title">
+    <form id="billing-draft-form"><h3 id="billing-draft-title">Edit draft</h3>
+      <div id="billing-draft-lines" class="billing-lines"></div>
+      <button type="button" data-billing-add-line="billing-draft-lines">Add line item</button>
+      <label>Payment terms (days from issue) <input name="terms_days" type="number" min="0" max="90" required></label>
+      <label>Notes <textarea name="notes" rows="4" maxlength="5000"></textarea></label>
+      <p class="billing-form-error" role="alert" hidden></p>
+      <footer><button type="button" data-billing-close>Cancel</button><button type="submit" class="billing-primary">Save draft</button></footer>
+    </form>
+  </dialog>
+  <dialog id="billing-payment-dialog" aria-labelledby="billing-payment-title">
+    <form id="billing-payment-form"><h3 id="billing-payment-title">Record confirmed payment</h3>
+      <p>This records a payment you have independently verified. It does not charge a wallet or monitor a bank account.</p>
+      <label>Payment date <input name="paid_on" type="date" required></label>
+      <label>Bank / Bitcoin / other transaction reference <input name="payment_reference" required maxlength="200"></label>
+      <label>Verification note <textarea name="note" rows="3" required maxlength="1000"></textarea></label>
+      <p class="billing-form-error" role="alert" hidden></p>
+      <footer><button type="button" data-billing-close>Cancel</button><button type="submit" class="billing-primary">Record payment</button></footer>
+    </form>
+  </dialog>
+</section>

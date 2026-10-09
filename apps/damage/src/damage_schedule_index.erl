@@ -172,6 +172,9 @@ upsert_internal(Account, Id, ScheduleMap, CronSpec, NowMin) ->
     end.
 
 run_tick() ->
+    %% Private operational billing shares this heartbeat, not the public BDD
+    %% execution/report pipeline or its token-balance/chain dependency.
+    damage_enterprise_invoices:tick(),
     NowMin = epoch_minute(),
     %% Look backwards to pick up briefly missed buckets; never scan future
     %% buckets, otherwise a schedule can execute before its due minute.

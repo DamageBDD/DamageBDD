@@ -58,6 +58,7 @@
     <link rel="stylesheet" type="text/css" href='/static/css/invoice-modal.css' />
     <link rel="stylesheet" href="/static/css/ipfs-filepicker.css">
     <link rel="stylesheet" href="/static/css/nwc.css">
+    <link rel="stylesheet" href="/static/css/billing.css">
 
   </head>
   <body data-logo-image="{{logo_image}}">
@@ -95,6 +96,9 @@
       </div>
       <div id="schedules-tab">
         {{{schedules_tab}}}
+      </div>
+      <div id="billing-tab">
+        {{{billing_tab}}}
       </div>
       <div id="settings-tab">
         {{{settings_tab}}}
@@ -139,6 +143,7 @@
     <script type='module' src="/static/js/pricing.js" defer></script>
 
     <script type='module' src="/static/js/main.js" defer></script>
+    <script type="module" src="/static/js/billing.js"></script>
     {{#node_admin}}
     <script src="/static/js/node-admin.js"></script>
     <script>

@@ -75,6 +75,14 @@ init([]) ->
                     modules => [nostr_pool]
                 },
                 #{
+                    id => damage_enterprise_invoices,
+                    start => {damage_enterprise_invoices, start_link, []},
+                    restart => permanent,
+                    shutdown => 10000,
+                    type => worker,
+                    modules => [damage_enterprise_invoices]
+                },
+                #{
                     id => damage_schedule,
                     start => {damage_schedule, start_link, []},
                     restart => permanent,

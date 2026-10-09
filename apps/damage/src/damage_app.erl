@@ -53,6 +53,7 @@ get_trails() ->
             damage_market,
             damage_schedule,
             damage_invoicing,
+            damage_invoice_http,
             damage_accounts,
             damage_tests,
             damage_analytics,
