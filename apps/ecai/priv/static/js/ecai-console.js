@@ -57,6 +57,19 @@
     { group: "Code administration", method: "POST", path: "/ecai/admin/code/reviews/:id/approve", params: ["id"], description: "Approve a pinned patch SHA.", body: { patch_sha256: "<review SHA-256>", note: "Code reviewed and verified" }, confirm: "Approve this pinned patch?" },
     { group: "Code administration", method: "POST", path: "/ecai/admin/code/reviews/:id/reject", params: ["id"], description: "Reject a pinned patch SHA.", body: { patch_sha256: "<review SHA-256>", note: "Request regeneration before merging" }, confirm: "Reject this pinned patch?" },
     { group: "Code administration", method: "POST", path: "/ecai/admin/code/reviews/:id/publish", params: ["id"], description: "Two-stage approval gate: publish verified commit to origin review branch (not main).", body: { patch_sha256: "<review SHA-256>", revision: 2, confirm: "push to origin" }, confirm: "Create a remote review branch in origin?" },
+    { group: "Funded indexing", method: "GET", path: "/ecai/admin/index-pool/status", description: "Funded jobs, registered nodes, plans and read-only budget accounting." },
+    { group: "Funded indexing", method: "POST", path: "/ecai/admin/index-pool/nodes", description: "Enroll an operator-allowlisted private-cluster node with a Lightning identity proof.", body: {} },
+    { group: "Funded indexing", method: "POST", path: "/ecai/admin/index-pool/prepare", description: "Prepare bounded segments from a stopped or completed local source job.", body: {} },
+    { group: "Funded indexing", method: "POST", path: "/ecai/admin/index-pool/channels", description: "Refresh advisory CLN channel observations. Does not open channels.", body: {} },
+    { group: "Funded indexing", method: "POST", path: "/ecai/admin/index-pool/quote", description: "Calculate a fixed source-byte weighted reward split.", body: {} },
+    { group: "Funded indexing", method: "POST", path: "/ecai/admin/index-pool/jobs", description: "Create a pinned participation contract. Idempotency key required.", body: {}, key: true },
+    { group: "Funded indexing", method: "POST", path: "/ecai/admin/index-pool/jobs/:id/start", description: "Authorize indexing and optionally bounded payments for verified segments.", params: ["id"], body: {} },
+    { group: "Funded indexing", method: "POST", path: "/ecai/admin/index-pool/jobs/:id/pause", description: "Pause further scheduling and automatic payments.", params: ["id"], body: {} },
+    { group: "Funded indexing", method: "POST", path: "/ecai/admin/index-pool/jobs/:id/reconcile", description: "Read funding or payment state; no new payment.", params: ["id"], body: {} },
+    { group: "Funded indexing", method: "POST", path: "/ecai/admin/index-pool/jobs/:id/refund", description: "Reserve unallocated funds for an external-wallet refund.", params: ["id"], body: {} },
+    { group: "Funded indexing", method: "POST", path: "/ecai/admin/index-pool/jobs/:id/refund-pay", description: "Pay an explicitly confirmed refund invoice.", params: ["id"], body: {} },
+    { group: "Funded indexing", method: "POST", path: "/ecai/admin/index-pool/jobs/:id/search", description: "Search the verified logical merge.", params: ["id"], body: {} },
+    { group: "Funded indexing", method: "GET", path: "/ecai/admin/index-pool/jobs/:id/contract", description: "Export contract, participant consent and current accounting.", params: ["id"] },
     { group: "Realtime", method: "WS", path: "/ecai/ws/", description: "WebSocket: ping and get_price. Connect from Operations to inspect events." }
   ];
 
@@ -67,7 +80,7 @@
     ask: { question: "What is known about this topic?", destination: "local" }
   };
   const marketExamples = { claim: { miner_ak: "ak_..." }, submit: { miner_ak: "ak_...", attestation: "attestation", evidence_ref: "" }, pay: { admin_ak: "ak_..." } };
-  const VIEW_NAMES = { overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", operations: "Operations", code: "Code learning & repair", api: "API explorer" };
+  const VIEW_NAMES = { overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing" };
   const state = {
     authenticated: false, accessToken: null, email: "", view: "overview", jobs: [], presets: [], marketJobs: [],
     nodeAdmin: false, codeAdmin: false, codeFeatureConfigured: false, adminProbeSequence: 0, codeQueue: {}, codeRepairs: [], codeReviews: [], codeReview: null, codeReviewOpenId: "", codeReviewLoadSerial: 0, codeDiffFiles: [], codeDiffSelectedFile: "0",
@@ -502,6 +515,7 @@
       // #code. Close the redundant login dialog and load the admin workspace.
       closeLogin();
       applyCodeSession(session);
+      if (state.view === "network") await window.EcaiIndexPool?.refresh();
       await probeCodeAccess();
       if (state.view === "code") await refreshCode();
       const result = await request("/ecai/index-jobs/status", { ignoreAuth: true });
@@ -531,6 +545,7 @@
     put("viewBreadcrumb", VIEW_NAMES[view]);
     if (location.hash !== `#${view}`) history.replaceState(null, "", `#${view}`);
     closeNav();
+    window.EcaiIndexPool?.setVisible(view === "network");
     if (previous === "indexing" && view !== "indexing") stopStream();
     if (view !== "overview") refreshView().catch((error) => toast(showError(error), true));
   }
@@ -1823,6 +1838,8 @@
   // requests remain checked independently by DamageBDD and ECAI on the server.
   function showCodeAdminNavigation() {
     $("codeAdminNav").hidden = !(state.authenticated && (state.nodeAdmin || state.codeAdmin));
+    $("indexPoolNav").hidden = !(state.authenticated && state.nodeAdmin);
+    window.EcaiIndexPool?.setSession(state.authenticated, state.nodeAdmin);
   }
   function setCodeActionsEnabled(allowed) {
     for (const id of ["codeLearn", "codeScan", "codeIntegrate", "codeProposeSubmit"]) {
@@ -2433,6 +2450,7 @@
       case "overview": await refreshOverview(); break;
       case "indexing": await refreshIndexing(); break;
       case "wikimedia": await refreshWikiProjects(); break;
+      case "network": await window.EcaiIndexPool?.refresh(); break;
       case "code": await refreshCode(); break;
       case "marketplace": await refreshMarket(); break;
       case "operations": await yelpGet("/yelp/status", "yelpStatusOutput"); break;
@@ -2559,6 +2577,7 @@
   }
   function init() {
     if (!$("ecaiConsole")) return;
+    window.EcaiIndexPool?.init({request, toast, openLogin, currentToken});
     bindEvents(); resetChat(); fillPrivateExample(); updateMarketActionExample();
     $("indexIdempotency").value = newKey("ecai-job");
     setAuthenticated(false);

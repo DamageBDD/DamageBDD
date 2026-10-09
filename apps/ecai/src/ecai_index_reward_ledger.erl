@@ -35,9 +35,11 @@ mutate({create, Owner, Key, Contract}, S, Config, Now) ->
     Verify = amount(maps:get(verify_msat, Contract)),
     Fee = amount(maps:get(fee_cap_msat, Contract)),
     check(Budget > 0 andalso Budget =< maps:get(max_budget_msat, Config, 10000000), budget_limit),
-    check(Index + Verify > 0 andalso Fee =< maps:get(max_fee_msat, Config, 1000), invalid_pricing),
-    Terms = #{plan_root => Root, unit_ids => Units, budget_msat => Budget,
-              index_msat => Index, verify_msat => Verify, fee_cap_msat => Fee},
+    check((Index + Verify > 0 orelse maps:is_key(unit_prices, Contract)) andalso
+          Fee =< maps:get(max_fee_msat, Config, 1000), invalid_pricing),
+    BaseTerms = #{plan_root => Root, unit_ids => Units, budget_msat => Budget,
+                  index_msat => Index, verify_msat => Verify, fee_cap_msat => Fee},
+    Terms = priced_terms(Contract, BaseTerms),
     Id = digest({reward_campaign_v1, Owner, Key}),
     Existing = maps:get(campaigns, S),
     case maps:find(Id, Existing) of
@@ -97,14 +99,15 @@ mutate({allocate, Owner, Id, Unit, Indexer, Verifier}, S, Config, Now) ->
     check(maps:get(state, U) =:= ready, unit_already_allocated),
     IndexNode = participant(Indexer, Config), VerifyNode = participant(Verifier, Config),
     check(Indexer =/= Verifier andalso IndexNode =/= VerifyNode, independent_verifier_required),
-    check(IndexNode =/= maps:get(treasury_node, C) andalso VerifyNode =/= maps:get(treasury_node, C), self_payment_disallowed),
-    Terms = maps:get(terms, C),
+    Terms = unit_terms(Unit, C),
+    check(IndexNode =/= maps:get(treasury_node, C) andalso
+          (VerifyNode =/= maps:get(treasury_node, C) orelse reward(verify, Terms) =:= 0), self_payment_disallowed),
     Claim = {Owner, maps:get(plan_root, Terms), Unit},
     Claims = maps:get(work_claims, S, #{}),
     check(maps:get(Claim, Claims, Id) =:= Id, unit_reserved_or_paid_elsewhere),
     Hold = role_hold(index, Terms) + role_hold(verify, Terms),
     check(Hold =< available(C), budget_exhausted),
-    U1 = #{state => allocated, indexer => Indexer, verifier => Verifier,
+    U1 = #{state => allocated, unit_id => Unit, indexer => Indexer, verifier => Verifier,
            indexer_node => IndexNode, verifier_node => VerifyNode, hold_msat => Hold},
     C1 = put_unit(Unit, U1, C#{reserved_msat => maps:get(reserved_msat, C) + Hold}),
     save(C1, S#{work_claims => Claims#{Claim => Id}}, Owner, unit_allocated, Now, none);
@@ -140,7 +143,7 @@ mutate({accept_work, Owner, Id, Unit, Artifact, Decision}, S, _Config, Now) ->
     check(maps:get(artifact_sha256, U) =:= Artifact, artifact_mismatch),
     check(Decision =:= maps:get(verdict, maps:get(attestation, U)), verdict_mismatch),
     Roles = case Decision of accept -> [index, verify]; reject -> [verify] end,
-    Terms = maps:get(terms, C),
+    Terms = unit_terms(Unit, C),
     Payouts = lists:foldl(fun(Role, Acc) ->
         case reward(Role, Terms) of
             0 -> Acc;
@@ -274,6 +277,31 @@ new_payout(C, Unit, Role, U, N, Fee) ->
 invoice_description(Id, Pid, Hash) ->
     <<"ecai-index:v1:", Id/binary, ":", Pid/binary, ":", Hash/binary>>.
 
+%% v1 campaigns keep their fixed prices. Dashboard contracts freeze a complete
+%% price table, and all reservations/earnings read the SAME per-segment prices.
+priced_terms(Contract, Base) ->
+    case maps:find(unit_prices, Contract) of
+        error -> Base;
+        {ok, Prices} ->
+            Ids = maps:get(unit_ids, Base),
+            check(is_map(Prices) andalso lists:sort(maps:keys(Prices)) =:= lists:sort(Ids), invalid_unit_prices),
+            Clean = maps:map(fun(_Id, P) ->
+                I = amount(maps:get(index_msat, P)), V = amount(maps:get(verify_msat, P)),
+                check(I + V > 0, invalid_pricing), #{index_msat => I, verify_msat => V}
+            end, Prices),
+            Held = lists:sum([role_hold(index, maps:merge(Base, P)) +
+                             role_hold(verify, maps:merge(Base, P)) || P <- maps:values(Clean)]),
+            check(Held =< maps:get(budget_msat, Base), quoted_budget_exceeded),
+            Base#{unit_prices => Clean, allocation_policy => <<"source-bytes-largest-remainder/v1">>,
+                  participation_contract => hash_value(maps:get(participation_contract, Contract))}
+    end.
+unit_terms(Unit, C) ->
+    T = maps:get(terms, C),
+    case maps:find(unit_prices, T) of
+        {ok, Prices} -> maps:merge(T, maps:get(Unit, Prices));
+        error -> T
+    end.
+
 reward(index, T) -> maps:get(index_msat, T);
 reward(verify, T) -> maps:get(verify_msat, T).
 role_hold(Role, T) -> case reward(Role, T) of 0 -> 0; N -> N + maps:get(fee_cap_msat, T) end.
@@ -304,9 +332,9 @@ digest(Term) -> ecai_index_job_codec:id_hex(crypto:hash(sha256, ecai_index_job_c
 %% Accounting reservations by participant; never represented as an exclusive
 %% CLN channel balance. Shared node liquidity remains an independent resource.
 node_allocations(C) ->
-    Terms = maps:get(terms, C),
-    Active = [U || U <- maps:values(maps:get(units, C)), maps:get(hold_msat, U, 0) > 0],
-    A = lists:foldl(fun(U, Acc) ->
+    Active = [{Id, U} || {Id, U} <- maps:to_list(maps:get(units, C)), maps:get(hold_msat, U, 0) > 0],
+    A = lists:foldl(fun({Id, U}, Acc) ->
+        Terms = unit_terms(Id, C),
         lists:foldl(fun({Role, ActorKey, NodeKey}, A0) ->
             N = reward(Role, Terms),
             case N of

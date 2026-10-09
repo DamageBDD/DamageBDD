@@ -29,6 +29,8 @@
         {env, [
             {marketplace_enabled, false},
             {index_rewards_enabled, false},
+            {index_pool_enabled, false},
+            {index_pool_participant_enabled, false},
             %% DamageBDD node_admins is authoritative; default is disabled.
             {code_admin_enabled, false},
             %% [] permits all DamageBDD node admins; nonempty is an intersection.

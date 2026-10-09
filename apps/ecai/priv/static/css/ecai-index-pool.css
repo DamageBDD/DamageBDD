@@ -1,0 +1,60 @@
+/* Funded indexing: dependency-free, container-safe and reduced-motion aware. */
+.pool-notice { padding: 12px 16px; margin-bottom: 16px; border: 1px solid #dbe4f5; background: #eff4ff; color: #435d88; border-radius: 12px; font-size: 12px; overflow-wrap: anywhere; }
+.pool-notice.is-error { border-color: #f1c8cc; background: #fff3f4; color: #a23445; }
+.pool-metrics { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin-bottom: 18px; }
+.pool-metric { padding: 16px 18px; background: white; border: 1px solid var(--line); border-radius: 13px; min-width: 0; }
+.pool-metric span { display: block; color: var(--muted); font-size: 11px; }
+.pool-metric strong { display: block; font-size: 25px; letter-spacing: -.04em; color: var(--ink); overflow-wrap: anywhere; margin-top: 5px; }
+.pool-builder { display: grid; grid-template-columns: minmax(0,1.1fr) minmax(0,1fr); gap: 20px; align-items: start; }
+.pool-builder > * { min-width: 0; }
+.pool-field-label { font-size: 11px; font-weight: 650; color: #4e5c73; margin-bottom: 7px; }
+.pool-checks { display: flex; flex-wrap: wrap; gap: 8px; }
+.pool-check { display: flex; flex-direction: row; align-items: center; gap: 7px; border: 1px solid #dfe6f5; background: #f8faff; border-radius: 9px; padding: 8px 10px; cursor: pointer; min-width: 0; overflow-wrap: anywhere; }
+.pool-check:has(input:checked) { background: #eff1ff; border-color: #a4b3f7; }
+.pool-check input[type=checkbox], .pool-pay-consent input[type=checkbox] { width: 16px; height: 16px; min-height: 16px; margin: 0; flex: 0 0 16px; accent-color: var(--blue); }
+.pool-advanced { padding: 11px 12px; border: 1px solid #e3e9f4; border-radius: 10px; font-size: 12px; margin: 7px 0; min-width: 0; }
+.pool-advanced summary { cursor: pointer; color: #4b6491; font-weight: 600; }
+.pool-advanced label { margin-top: 12px; }
+.pool-advanced button { margin-top: 10px; }
+.pool-quote { border-radius: 12px; border: 1px solid #e0e7f3; padding: 15px; margin: 16px 0 12px; background: #f8faff; font-size: 12px; color: #596e8e; }
+.pool-quote.is-ready { background: #f2fbf7; border-color: #bde4d3; }
+.pool-quote-line { display: flex; justify-content: space-between; gap: 14px; padding: 6px 0; }
+.pool-quote-line strong { color: var(--ink); text-align: right; overflow-wrap: anywhere; }
+.pool-quote .context-hint { margin: 10px 0 0; }
+.pool-join { display: flex; align-items: end; gap: 9px; margin: 16px 0; }
+.pool-join label { flex: 1; min-width: 0; }
+.pool-nodes { display: grid; gap: 9px; margin: 17px 0 14px; }
+.pool-node { background: #fafcff; border: 1px solid #e2e9f4; border-radius: 11px; padding: 13px 14px; min-width: 0; }
+.pool-node-head { display: flex; align-items: start; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.pool-node-head strong { font-size: 13px; overflow-wrap: anywhere; }
+.pool-node .mono { display: block; margin-top: 8px; font-size: 10px; overflow-wrap: anywhere; color: #7385a2; }
+.pool-node p { margin: 8px 0 0; font-size: 11px; }
+.pool-jobs { display: grid; gap: 12px; }
+.pool-job { border: 1px solid #dfe6f4; border-radius: 14px; overflow: hidden; min-width: 0; }
+.pool-job[open] { border-color: #bdcafe; }
+.pool-job > summary { display: grid; grid-template-columns: minmax(0,1.6fr) auto auto auto 15px; align-items: center; gap: 16px; padding: 17px; cursor: pointer; list-style: none; }
+.pool-job > summary::-webkit-details-marker { display: none; }
+.pool-job-identity { min-width: 0; }
+.pool-job-identity strong { display: block; overflow-wrap: anywhere; }
+.pool-job-identity small { display: block; font-size: 10px; color: #7b89a2; margin-top: 4px; }
+.pool-job-meta { display: flex; flex-direction: column; font-size: 12px; }
+.pool-job-meta small { color: #7c899f; font-size: 10px; margin-top: 3px; }
+.pool-job-content { background: #fbfcff; border-top: 1px solid #e5ebf6; padding: 18px; min-width: 0; }
+.pool-job-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.pool-pay-consent { display: flex; flex-direction: row; gap: 8px; align-items: center; margin: 14px 0; font-size: 12px; }
+.pool-funding { border: 1px solid #efd899; background: #fffbf0; border-radius: 11px; padding: 15px; margin-bottom: 16px; }
+.pool-funding h3 { margin-bottom: 6px; }
+.pool-invoice { width: 100%; font: 10px/1.5 ui-monospace,monospace; height: 66px; margin: 10px 0; overflow-wrap: anywhere; }
+.pool-timeline { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0; font-size: 11px; color: #647694; }
+.pool-timeline span { padding: 6px 10px; border: 1px solid #e2e8f2; background: white; border-radius: 99px; }
+.pool-timeline span.is-done { color: #197554; background: #eefbf4; border-color: #c4e9d6; }
+.pool-segment-list { display: grid; gap: 6px; max-height: 360px; overflow-y: auto; margin-top: 12px; }
+.pool-segment { display: grid; grid-template-columns: minmax(0,1fr) auto auto; gap: 12px; align-items: center; background: white; border: 1px solid #e7ecf5; border-radius: 9px; padding: 10px 12px; min-width: 0; font-size: 11px; }
+.pool-segment strong { display: block; overflow-wrap: anywhere; }
+.pool-segment small { color: #7e8ca5; font-size: 10px; }
+.pool-detail-error { color: #a33447; background: #fff1f3; padding: 10px 12px; border-radius: 9px; font-size: 12px; margin: 12px 0; overflow-wrap: anywhere; }
+.pool-hash { overflow-wrap: anywhere; font: 10px/1.6 ui-monospace,monospace; color: #647693; }
+.pool-search-form { display: flex; gap: 8px; margin-top: 12px; }
+.pool-search-form label { flex: 1; }
+@media(max-width:1100px) { .pool-builder { grid-template-columns: minmax(0,1fr); } .pool-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); } .pool-job > summary { grid-template-columns: minmax(0,1fr) auto auto; } .pool-job > summary .pool-job-meta:last-of-type { display: none; } }
+@media(max-width:560px) { .pool-join { flex-wrap: wrap; } .pool-join label { flex-basis: 100%; } .pool-job > summary { gap: 9px; padding: 13px; } .pool-job-identity { grid-column:1/-1; } .pool-job-content { padding: 12px; } .pool-segment { grid-template-columns: minmax(0,1fr) auto; } .pool-segment > :last-child { grid-column:1/-1; } .pool-search-form { flex-wrap: wrap; } .pool-search-form label { flex-basis:100%; } .pool-metric { padding: 13px; } }

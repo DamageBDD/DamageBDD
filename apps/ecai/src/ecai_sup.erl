@@ -98,6 +98,7 @@ init([]) ->
                 }
             ] ++
             indexing_rewards_specs() ++
+            indexing_pool_specs() ++
             code_security_specs() ++
             marketplace_specs() ++
             vulnerability_monitor_specs() ++
@@ -114,6 +115,17 @@ indexing_rewards_specs() ->
                    modules => [ecai_index_rewards]}];
         false -> [];
         Invalid -> erlang:error({invalid_configuration, index_rewards_enabled, Invalid})
+    end.
+
+indexing_pool_specs() ->
+    case application:get_env(ecai, index_pool_enabled, false) of
+        true ->
+            true = application:get_env(ecai, index_rewards_enabled, false),
+            [#{id => ecai_index_pool, start => {ecai_index_pool, start_link, []},
+               restart => permanent, shutdown => 30000, type => worker,
+               modules => [ecai_index_pool]}];
+        false -> [];
+        Invalid -> erlang:error({invalid_configuration, index_pool_enabled, Invalid})
     end.
 
 %% The experimental chunk-job ledger is disabled by default and is NOT durable.

@@ -55,13 +55,13 @@ class ConsoleContractTests(unittest.TestCase):
 
     def test_ten_views_have_navigation(self):
         views = {'overview','search','chat','indexing','wikimedia',
-                 'knowledge','marketplace','operations','code','api'}
+                 'knowledge','marketplace','operations','code','api','network'}
         self.assertEqual(set(self.markup.views), views)
         self.assertEqual(set(self.markup.panels), views)
 
     def test_api_catalog_matches_cowboy_routes(self):
         catalog = set(re.findall(r'method:\s*"(GET|POST|SSE|WS)",\s*path:\s*"([^"]+)"', self.js))
-        self.assertEqual(len(catalog), 53)
+        self.assertEqual(len(catalog), 66)
         declared = {
             ('GET','/ecai/auth/session'),
             ('POST','/ecai/search'), ('GET','/ecai/chat'), ('POST','/ecai/chat'),
@@ -82,6 +82,8 @@ class ConsoleContractTests(unittest.TestCase):
         declared |= {('POST',f'/ecai/admin/code/{action}') for action in ('learn','scan','propose','integrate')}
         declared.add(('GET','/ecai/admin/code/reviews/:id'))
         declared |= {('POST',f'/ecai/admin/code/reviews/:id/{action}') for action in ('approve','reject','publish')}
+        declared |= {('GET', '/ecai/admin/index-pool' + p) for p in ('/status', '/jobs/:id/contract')}
+        declared |= {('POST', '/ecai/admin/index-pool' + p) for p in ('/nodes','/prepare','/channels','/quote','/jobs','/jobs/:id/start','/jobs/:id/pause','/jobs/:id/reconcile','/jobs/:id/refund','/jobs/:id/refund-pay','/jobs/:id/search')}
         self.assertEqual(catalog, declared)
 
     def test_canceled_retry_requeues_durable_checkpoint(self):

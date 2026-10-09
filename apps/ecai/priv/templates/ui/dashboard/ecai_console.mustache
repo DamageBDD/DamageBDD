@@ -7,6 +7,7 @@
   <meta name="theme-color" content="#101b32">
   <title>ECAI · Control plane</title>
   <link rel="stylesheet" href="/static/css/ecai-console.css">
+  <link rel="stylesheet" href="/static/css/ecai-index-pool.css">
 </head>
 <body>
   <div class="console-shell" id="ecaiConsole" data-node-version="{{node_version}}">
@@ -22,6 +23,7 @@
         <button type="button" data-view="search" class="nav-link"><span class="nav-icon" aria-hidden="true">⌕</span>Knowledge search</button>
         <button type="button" data-view="chat" class="nav-link"><span class="nav-icon" aria-hidden="true">▤</span>Conversation</button>
         <button type="button" data-view="indexing" class="nav-link"><span class="nav-icon" aria-hidden="true">▦</span>Index jobs</button>
+        <button type="button" data-view="network" class="nav-link" id="indexPoolNav" hidden><span class="nav-icon" aria-hidden="true">ϟ</span>Funded indexing</button>
         <button type="button" data-view="wikimedia" class="nav-link"><span class="nav-icon" aria-hidden="true">◎</span>Wikimedia</button>
         <button type="button" data-view="knowledge" class="nav-link"><span class="nav-icon" aria-hidden="true">⌘</span>Knowledge &amp; privacy</button>
         <button type="button" data-view="marketplace" class="nav-link"><span class="nav-icon" aria-hidden="true">◇</span>Marketplace</button>
@@ -271,6 +273,37 @@
           </div>
         </section>
 
+        <section class="view" data-panel="network" aria-labelledby="poolTitle" hidden>
+          <div class="page-intro page-intro-actions"><div><div class="eyebrow">PAID INDEXING · NODE ADMIN</div><h1 id="poolTitle">Fund an index.</h1><p>Set a satoshi budget. Your approved DamageBDD nodes build and independently verify the segments.</p></div><button type="button" id="poolRefresh" class="button button-outline">Refresh</button></div>
+          <div id="poolNotice" class="pool-notice" role="status" aria-live="polite">Checking the indexing pool…</div>
+          <div id="poolMetrics" class="pool-metrics" aria-label="Funded indexing totals"></div>
+          <div class="pool-builder">
+            <section class="surface panel-pad">
+              <div class="panel-heading"><div><div class="eyebrow">01 · DEFINE THE JOB</div><h2>Source &amp; budget</h2></div><span class="status-tag">SATS</span></div>
+              <form id="poolQuoteForm" class="stack-form" novalidate>
+                <label>Prepared segment plan<select id="poolPlan" required><option value="">Prepare a source first</option></select></label>
+                <details class="pool-advanced"><summary>Prepare segments from an existing job</summary><p class="context-hint">Use a paused, canceled or completed JSONL/NDJSON job. Completed Wikimedia jobs can supply their normalized records. Source files must be in the configured shared root.</p><label>Source job<select id="poolSource"><option value="">No eligible source jobs loaded</option></select></label><button type="button" id="poolPrepare" class="button button-outline button-sm">Prepare desktop-size segments</button></details>
+                <label>Total budget, including payout routing fees (sats)<input id="poolBudget" type="number" min="1" max="100000000" step="1" value="10000" required></label>
+                <div class="pool-node-selection"><div class="pool-field-label">Nodes to do the work</div><div id="poolNodeChoices" class="pool-checks"><p class="context-hint">Add an approved node to continue.</p></div></div>
+                <details class="pool-advanced"><summary>Verification, fees &amp; refund destination</summary><label>Verification<select id="poolVerify"><option value="0">Coordinator rebuilds · no verifier reward</option><option value="20">Independent peer rebuilds · 20% of rewards</option><option value="30">Independent peer rebuilds · 30% of rewards</option></select></label><label>Maximum routing fee per payout (sats)<input id="poolFee" type="number" min="0" max="1000" step="1" value="1" required></label><label>Creator's external Lightning node for refunds<input id="poolRefundNode" autocomplete="off" spellcheck="false" maxlength="66" placeholder="02… or 03… · not the treasury node" required></label><p class="context-hint">This destination is pinned when the contract is created. A channel balance is not an escrow or an exclusive reservation.</p></details>
+                <button type="submit" id="poolPreview" class="button button-outline">Calculate reward split</button>
+              </form>
+              <div id="poolQuote" class="pool-quote" aria-live="polite">Choose a plan, budget and participating nodes.</div>
+              <button type="button" id="poolCreate" class="button button-primary" disabled>Create contract &amp; funding invoice</button>
+            </section>
+            <section class="surface panel-pad">
+              <div class="panel-heading"><div><div class="eyebrow">02 · PARTICIPATING NODES</div><h2>Your indexing pool</h2></div></div>
+              <p class="context-hint">Only operator-allowlisted nodes can join this private cluster. Each node opts in and proves its Lightning identity. Joining does not open a channel or send sats.</p>
+              <form id="poolJoinForm" class="pool-join"><label>Approved DamageBDD node<select id="poolAvailableNode"><option value="">No allowlisted nodes</option></select></label><button type="submit" id="poolJoin" class="button button-outline">Add node</button></form>
+              <div id="poolNodes" class="pool-nodes"></div>
+              <button type="button" id="poolChannels" class="text-button">Refresh channel observations ↻</button>
+              <p id="poolChannelAge" class="context-hint">Channel capacity has not been checked. Routed payments do not require a direct channel.</p>
+              <details class="pool-advanced"><summary>First-time node setup</summary><p class="context-hint">Configure <code>indexing_worker_nodes</code> on the coordinator. On each peer, enable <code>index_pool_participant_enabled</code>, set <code>index_pool_account</code> to its node-admin account and allow the coordinator in <code>index_pool_coordinators</code>. Mount the same shared artifact root on every node. Keep Erlang distribution private.</p></details>
+            </section>
+          </div>
+          <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">03 · WORK, VERIFY, EARN</div><h2>Funded jobs</h2></div><span id="poolJobsCount" class="small muted">Not loaded</span></div><div id="poolJobs" class="pool-jobs"><div class="empty-state">No funded jobs yet.</div></div></section>
+        </section>
+
         <section class="view" data-panel="api" aria-labelledby="apiTitle" hidden>
           <div class="page-intro"><div class="eyebrow">REFERENCE &amp; EXECUTION</div><h1 id="apiTitle">API explorer</h1><p>Browse the routes exported by this ECAI node and make authenticated same-origin requests.</p></div>
           <div class="api-explorer"><section class="surface api-list-panel"><label for="apiFilter" class="sr-only">Filter endpoints</label><input id="apiFilter" class="api-filter" type="search" placeholder="⌕  Filter endpoints"><div id="apiRoutes" class="api-route-list" aria-label="API endpoints"></div></section><section class="surface panel-pad api-request-panel"><div class="panel-heading"><div><div class="eyebrow">REQUEST</div><h2 id="apiRequestTitle">Choose an endpoint</h2></div><span class="status-tag" id="apiMethodTag">REST</span></div><p id="apiRequestDescription" class="context-hint">Select a route on the left to inspect its parameters.</p><form id="apiRequestForm" class="stack-form"><div id="apiPathParams"></div><div id="apiQueryParams"></div><div id="apiRequestBodyWrapper" hidden><label for="apiRequestBody">JSON body</label><textarea id="apiRequestBody" class="code-input" rows="9" spellcheck="false"></textarea></div><div class="inline-actions"><button type="submit" id="apiRequestSubmit" class="button button-primary" disabled>Send request ↗</button><button type="button" id="apiCopyResponse" class="button button-outline" disabled>Copy response</button></div></form><div class="form-meta"><span id="apiResponseMeta" role="status">No request sent.</span></div><pre id="apiResponse" class="code-display">Select an endpoint to get started.</pre></section></div>
@@ -291,6 +324,7 @@
     </form>
   </dialog>
   <script type="module" src="/static/js/sidekick.js"></script>
+  <script type="module" src="/static/js/ecai-index-pool.js"></script>
   <script type="module" src="/static/js/ecai-console.js"></script>
 </body>
 </html>

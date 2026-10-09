@@ -4,7 +4,7 @@
 -module(ecai_index_rewards).
 -behaviour(gen_server).
 -export([start_link/0, start_link/1, status/0, campaign/1, events/0,
-         create/3, funding_invoice/2, refresh_funding/2, allocate/5,
+         create/3, pool_create/3, register_participant/3, funding_invoice/2, refresh_funding/2, allocate/5,
          submit/5, attest/6, accept_work/5, cancel_unit/3, close/2,
          refund/2, submit_invoice/4, pay/4, reconcile/3, liquidity/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
@@ -21,6 +21,12 @@ status() -> gen_server:call(?MODULE, status).
 campaign(Id) -> gen_server:call(?MODULE, {campaign, Id}).
 events() -> gen_server:call(?MODULE, events).
 create(Owner, Key, Contract) -> command({create, Owner, Key, Contract}).
+%% Called only by the opt-in pool after DamageBDD bearer authentication. Keep
+%% the ordinary operator API and its creator allowlist unchanged.
+pool_create(Owner, Key, Contract) ->
+    gen_server:call(?MODULE, {pool_create, Owner, Key, Contract}, 30000).
+register_participant(Admin, Account, LightningNode) ->
+    gen_server:call(?MODULE, {register_participant, Admin, Account, LightningNode}, 30000).
 funding_invoice(Owner, Id) -> command({funding_invoice, Owner, Id}).
 refresh_funding(Owner, Id) -> gen_server:call(?MODULE, {refresh_funding, Owner, Id}, 30000).
 allocate(Owner, Id, Unit, Indexer, Verifier) -> command({allocate, Owner, Id, Unit, Indexer, Verifier}).
@@ -44,12 +50,19 @@ reconcile(Owner, Id, Pid) -> command({reconcile, Owner, Id, Pid}).
 liquidity() -> ecai_index_rewards_cln:liquidity().
 command(C) -> gen_server:call(?MODULE, {command, C}, 30000).
 
-init(Config) ->
+init(Config0) ->
     %% Explicit operator-owned storage only; no private keys/runes are stored here.
-    File = filename:absname(maps:get(ledger_file, Config)),
+    File = filename:absname(maps:get(ledger_file, Config0)),
     ok = filelib:ensure_dir(File),
     case dets:open_file(?TAB, [{file, File}, {type, set}, {auto_save, 10000}]) of
         {ok, Tab} ->
+            Saved = case dets:lookup(Tab, pool_participants) of
+                [{pool_participants, P}] when is_map(P) -> P;
+                [] -> #{}
+            end,
+            Configured = maps:get(participants, Config0, #{}),
+            true = maps:fold(fun(A, N, Ok) -> Ok andalso maps:get(A, Configured, N) =:= N end, true, Saved),
+            Config = Config0#{participants => maps:merge(Configured, Saved)},
             Old = case dets:lookup(Tab, ledger) of
                 [] -> ecai_index_reward_ledger:new();
                 [{ledger, #{schema := 1} = L}] -> L
@@ -64,6 +77,31 @@ init(Config) ->
         {error, R} -> {stop, {reward_ledger_unavailable, R}}
     end.
 
+handle_call({register_participant, Admin, Account, Node}, _From, S) ->
+    Allowed = application:get_env(ecai, index_pool_enabled, false) =:= true andalso
+              ecai_node_admin:is_node_admin(Admin),
+    Valid = is_binary(Account) andalso byte_size(Account) > 0 andalso byte_size(Account) =< 256
+        andalso is_binary(Node) andalso re:run(Node, <<"^(02|03)[0-9a-f]{64}$">>, [{capture, none}]) =:= match,
+    Ps = maps:get(participants, S#st.config, #{}),
+    case {Allowed andalso Valid, maps:get(Account, Ps, Node) =:= Node} of
+        {true, true} ->
+            Next = Ps#{Account => Node},
+            ok = dets:insert(S#st.tab, {pool_participants, Next}), ok = dets:sync(S#st.tab),
+            {reply, ok, S#st{config = (S#st.config)#{participants => Next}}};
+        {true, false} -> {reply, {error, participant_identity_pinned}, S};
+        _ -> {reply, {error, admin_or_participant_invalid}, S}
+    end;
+handle_call({pool_create, Owner, Key, Contract}, _From, S) ->
+    case application:get_env(ecai, index_pool_enabled, false) =:= true andalso
+         ecai_node_admin:is_node_admin(Owner) of
+        true ->
+            Cfg = (S#st.config)#{creators => [Owner]},
+            case ecai_index_reward_ledger:change({create, Owner, Key, Contract}, S#st.ledger, Cfg, erlang:system_time(second)) of
+                {ok, Reply, L, none} -> persist(S#st.tab, L), {reply, {ok, Reply}, S#st{ledger = L}};
+                Error -> {reply, Error, S}
+            end;
+        false -> {reply, {error, node_admin_required}, S}
+    end;
 handle_call(status, _From, S) ->
     Summary = ecai_index_reward_ledger:summary(S#st.ledger),
     {reply, Summary#{payments_enabled => maps:get(payments_enabled, S#st.config, false),

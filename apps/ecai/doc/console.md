@@ -440,3 +440,12 @@ Optional browser regression (mock API, no real enqueue):
 ```bash
 python3 apps/ecai/test/test_wikimedia_picker_browser.py
 ```
+
+### Funded indexing pool
+
+The opt-in **Funded indexing** view (`/dashboard#network`) adds participant
+enrollment, prepared segment plans, server-computed satoshi budgets, funding
+invoices, independently verified execution and bounded payout authorization.
+It reuses the existing Lightning ledger and private cluster; it is not public
+worker admission or channel escrow. See [Funded indexing pool](funded-indexing-pool.md)
+and `priv/config/index_pool.example.config` for the deployment and test gates.

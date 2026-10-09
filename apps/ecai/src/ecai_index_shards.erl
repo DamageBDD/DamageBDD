@@ -5,7 +5,7 @@
 -module(ecai_index_shards).
 -include_lib("kernel/include/file.hrl").
 
--export([plan/3, read_plan/1, enqueue_batch/3, merge/2,
+-export([plan/3, read_plan/1, enqueue_batch/3, merge/2, merge_plan/2,
          read_manifest/1, search/3, snapshot/2]).
 
 -define(SCHEMA, <<"ecai-shard-plan/v1">>).
@@ -288,8 +288,15 @@ with_plan_lock(PlanPath, Fun) ->
 
 %% Merge only fully completed receipts; no global in-memory postings merge.
 merge(PlanPath, OutputPath0) ->
+    case read_plan(PlanPath) of
+        {ok, Plan} -> merge_plan(Plan, OutputPath0);
+        Error -> Error
+    end.
+
+%% Trusted coordinator API for frozen per-node placements. Public clients
+%% cannot submit their own receipts or bypass the verified_receipt checks.
+merge_plan(Plan, OutputPath0) ->
     try
-        {ok, Plan} = expect(read_plan(PlanPath)),
         Entries = maps:get(entries, Plan),
         Receipts = maps:get(receipts, Plan, #{}),
         case map_size(Receipts) =:= length(Entries) of
