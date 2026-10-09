@@ -31,6 +31,8 @@
     newaddr/0,
     newaddr/1,
     getinfo/0,
+    sign_index_pool_message/1,
+    check_index_pool_message/3,
     create_invoice/2,
     create_invoice/3,
     create_invoice/4,
@@ -412,6 +414,9 @@ cln_failure(Function, Arity, Class, Reason) ->
 newaddr() -> call(newaddr, []).
 newaddr(A) -> call(newaddr, [A]).
 getinfo() -> call(getinfo, []).
+sign_index_pool_message(Message) -> call(sign_index_pool_message, [Message]).
+check_index_pool_message(Message, Signature, Pubkey) ->
+    call(check_index_pool_message, [Message, Signature, Pubkey]).
 create_invoice(A, B) -> call(create_invoice, [A, B]).
 create_invoice(A, B, C) -> call(create_invoice, [A, B, C]).
 create_invoice(A, B, C, D) -> call(create_invoice, [A, B, C, D]).

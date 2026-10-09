@@ -107,6 +107,7 @@
 ]).
 -define(DEFAULT_LIST_INVOICES_PAGE_LIMIT, 100).
 -export([test/0]).
+-export([sign_index_pool_message/1, check_index_pool_message/3]).
 
 %% Cache / timeouts
 -define(CACHE_TTL_SECS, 300).
@@ -713,6 +714,19 @@ list_pays(#{payment_hash := Hash} = Params) when is_binary(Hash),
                                                map_size(Params) =:= 1 ->
     poolboy:transaction(?MODULE, fun(W) ->
         gen_server:call(W, {list_pays, Params}, ?CLN_HTTP_TIMEOUT)
+    end).
+
+%% Domain-separated participation proof; no general HTTP signing endpoint.
+sign_index_pool_message(<<"ecai-index-pool:v1:", _/binary>> = Message)
+  when byte_size(Message) =:= 83 ->
+    poolboy:transaction(?MODULE, fun(W) ->
+        gen_server:call(W, {sign_index_pool_message, Message}, ?CLN_HTTP_TIMEOUT)
+    end).
+check_index_pool_message(<<"ecai-index-pool:v1:", _/binary>> = Message, Signature, Pubkey)
+  when byte_size(Message) =:= 83, is_binary(Signature), byte_size(Signature) =< 256,
+       is_binary(Pubkey), byte_size(Pubkey) =:= 66 ->
+    poolboy:transaction(?MODULE, fun(W) ->
+        gen_server:call(W, {check_index_pool_message, Message, Signature, Pubkey}, ?CLN_HTTP_TIMEOUT)
     end).
 
 %% xpay is supported by CLN >= 24.11. No automatic pay/xpay fallback on error:
@@ -1748,6 +1762,13 @@ handle_call(
         payment_hash => PaymentHash
     }),
     {reply, Invoice, State};
+handle_call({sign_index_pool_message, Message}, _From,
+    #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} = State) ->
+    {reply, cln_post_json(Host, Port, Options, Rune, "/v1/signmessage", #{message => Message}), State};
+handle_call({check_index_pool_message, Message, Signature, Pubkey}, _From,
+    #state{cln_host = Host, cln_port = Port, readonly_rune = Rune, options = Options} = State) ->
+    {reply, cln_post_json(Host, Port, Options, Rune, "/v1/checkmessage",
+        #{message => Message, zbase => Signature, pubkey => Pubkey}), State};
 handle_call(list_peerchannels, _From,
     #state{cln_host = Host, cln_port = Port, options = Options, readonly_rune = Rune} = State) ->
     %% Raw, uncached capacity data; never turn an RPC failure into an empty list.
