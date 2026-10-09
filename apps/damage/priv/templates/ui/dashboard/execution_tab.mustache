@@ -1,21 +1,79 @@
 <!-- -*- mode: html -*- -->
-<div class="pure-g">
-  <div class="pure-u-1 pure-u-md-1-2">
-    <form id="damageForm">
-      <div>
-        <h3>Create/Edit Feature</h3>
-        <button type="button" class="styled-btn" id="open-feature-picker">Pick feature…</button>
-        <button type="button" class="styled-btn" id="open-ipfs-feature-picker">Pick from IPFS…</button>
-        <button type="button" class="styled-btn" id="edit-execution-context-btn"
-                aria-expanded="false" aria-controls="execution-context-editor">
-          Execution context…
-        </button>
-        <span id="selected-ipfs-feature" hidden>
-          IPFS: <code id="selected-ipfs-feature-path"></code>
-          <button type="button" class="styled-btn" id="clear-ipfs-feature">Use editor text</button>
-        </span>
-      </div>
+<div class="workspace-heading">
+  <div>
+    <p class="workspace-eyebrow">BEHAVIOUR VERIFICATION</p>
+    <h1>Verification workspace</h1>
+    <p>Turn an expectation into a feature you can inspect, check and run.</p>
+  </div>
+  <a class="workspace-reference" href="/steps" target="_blank" rel="noopener">Step reference <span aria-hidden="true">↗</span></a>
+</div>
 
+<section id="bdd-composer" class="bdd-composer workspace-card" aria-labelledby="bdd-composer-title">
+  <div class="card-heading">
+    <div class="composer-title-row"><span class="composer-mark" aria-hidden="true">✦</span>
+      <div><p class="workspace-eyebrow">START WITH AN EXPECTATION</p><h2 id="bdd-composer-title">What should your system do?</h2></div>
+    </div>
+    <span class="engine-badge">ECAI <span aria-hidden="true">·</span> code-grounded drafts</span>
+  </div>
+  <form id="bdd-prompt-form">
+    <label class="visually-hidden" for="bdd-prompt">Describe the behaviour to verify</label>
+    <textarea id="bdd-prompt" rows="3" maxlength="8000" autocomplete="off" spellcheck="true"
+      aria-describedby="bdd-prompt-help bdd-prompt-count"
+      placeholder="Check that GET https://api.example.com/health returns HTTP 200 and JSON status is ok."></textarea>
+    <div class="composer-bottom">
+      <div class="prompt-examples" aria-label="Example prompts">
+        <span>Try</span>
+        <button type="button" data-bdd-example="health">API health check</button>
+        <button type="button" data-bdd-example="auth">Authenticated request</button>
+        <button type="button" data-bdd-example="negative">Unauthorised access</button>
+      </div>
+      <div class="composer-submit">
+        <span id="bdd-prompt-count">0 / 8000 bytes</span>
+        <button id="bdd-cancel" type="button" class="workspace-button" hidden>Cancel</button>
+        <button id="bdd-generate" type="submit" class="workspace-button workspace-primary" disabled>
+          <span aria-hidden="true">✦</span> Generate draft
+        </button>
+      </div>
+    </div>
+  </form>
+  <div class="composer-meta">
+    <p id="bdd-prompt-help">Sent to this node’s configured ECAI model. Keep secrets in account context. <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> to generate.</p>
+    <span><span id="bdd-catalog-status">Loading step signatures…</span> <button type="button" class="workspace-button" id="bdd-refresh-catalog">Refresh</button></span>
+  </div>
+  <p id="bdd-generation-status" role="status" aria-live="polite"></p>
+  <span id="bdd-elapsed" aria-hidden="true"></span>
+  <section id="bdd-draft-panel" class="draft-panel" aria-labelledby="bdd-draft-title" hidden>
+    <div class="card-heading">
+      <div><p class="workspace-eyebrow">REVIEW BEFORE APPLYING</p><h3 id="bdd-draft-title">Generated feature</h3></div>
+      <div class="workspace-actions">
+        <button id="bdd-copy-draft" class="workspace-button" type="button">Copy draft</button>
+        <button id="bdd-accept" class="workspace-button workspace-primary" type="button" disabled>Use draft in editor</button>
+      </div>
+    </div>
+    <pre class="draft-source"><code id="bdd-draft-source" class="language-gherkin"></code></pre>
+    <div id="bdd-draft-notes"></div>
+  </section>
+</section>
+
+<div class="workspace-columns">
+  <section class="workspace-card feature-workspace" aria-labelledby="feature-editor-heading">
+    <form id="damageForm">
+      <div class="card-heading">
+        <div><p class="workspace-eyebrow">01 / FEATURE</p><h2 id="feature-editor-heading">Review the behaviour</h2></div>
+        <span id="bdd-editor-count" class="workspace-muted">No feature yet</span>
+      </div>
+      <div class="feature-toolbar">
+        <button type="button" class="styled-btn" id="open-feature-picker">Open feature</button>
+        <button type="button" class="styled-btn" id="open-ipfs-feature-picker">Open from IPFS</button>
+        <button type="button" class="styled-btn" id="edit-execution-context-btn"
+                aria-expanded="false" aria-controls="execution-context-editor">Execution context</button>
+        <button type="button" class="styled-btn" id="bdd-download">Export .feature</button>
+        <button type="button" class="styled-btn" id="bdd-undo" hidden>Undo draft</button>
+      </div>
+      <div id="selected-ipfs-feature" class="workspace-source-note" hidden>
+        IPFS source: <code id="selected-ipfs-feature-path"></code>
+        <button type="button" class="styled-btn" id="clear-ipfs-feature">Use editor text</button>
+      </div>
       <div id="execution-context-editor" hidden>
         <fieldset>
           <legend>Execution Context</legend>
@@ -112,24 +170,50 @@
           </div>
         </fieldset>
       </div>
-      <p>Edit Feature in the textarea below.</p>
+
+      <label for="damageTextArea" class="visually-hidden">Gherkin feature editor</label>
+      <div class="editor-filebar"><span aria-hidden="true">▤</span> feature.feature <span>Gherkin</span></div>
       <div class="damage-editor">
         <div id="damageLineNumbers" aria-hidden="true"></div>
-        <textarea id="damageTextArea" language="gherkin" template="syntax-highlighted"
-                  placeholder="Enter test case here ..." rows="20"></textarea>
+        <textarea id="damageTextArea" wrap="off" language="gherkin" template="syntax-highlighted" spellcheck="false"
+          autocapitalize="off" autocomplete="off" aria-describedby="bdd-editor-help"
+          placeholder="Feature: Describe your expectation&#10;&#10;  Scenario: Verify the behaviour&#10;    Given ...&#10;    When ...&#10;    Then ..." rows="18"></textarea>
       </div>
-      <div>
-        <button type="submit" class="styled-btn" id="execute-feature-btn">Execute Feature</button>
+      <div class="editor-actionbar">
+        <p id="bdd-editor-help">Check signatures without running. <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> runs the feature.</p>
+        <div class="workspace-actions">
+          <button type="button" class="styled-btn" id="bdd-validate">Validate</button>
+          <button type="submit" class="styled-btn workspace-primary" id="execute-feature-btn"><span aria-hidden="true">▶</span> Run feature</button>
+        </div>
+      </div>
+      <div class="validation-panel">
+        <p id="bdd-validation-status" role="status" aria-live="polite">Not checked. Validate step signatures before running.</p>
+        <div id="bdd-diagnostics"></div>
       </div>
     </form>
-  </div>
-  <div class="pure-u-1 pure-u-md-1-2">
-    <div id="run-reports-panel">
-      <h3>Run Report</h3>
-      <p>Result of the run will be streamed here.</p>
-      <p>You can see previous results in the <a id="activity-link" href="#activity-tab">activity tab</a>.</p>
-      <div id="run-reports"><ul id="run-reports-ul" data-tabs-reports></ul></div>
-    </div>
-  </div>
-</div>
+    <details class="bdd-step-library">
+      <summary>Step library <span id="bdd-step-total" class="workspace-muted"></span></summary>
+      <label for="bdd-step-search">Find an available step</label>
+      <input id="bdd-step-search" type="search" autocomplete="off" placeholder="Search HTTP, JSON, IPFS, or a step phrase…">
+      <p id="bdd-search-status" role="status" aria-live="polite"></p>
+      <div id="bdd-step-results"></div>
+    </details>
+  </section>
 
+  <section id="run-reports-panel" class="workspace-card output-workspace" aria-labelledby="run-output-heading">
+    <div class="card-heading">
+      <div><p class="workspace-eyebrow">02 / EVIDENCE</p><h2 id="run-output-heading">Run output</h2></div>
+      <span id="bdd-run-status" class="run-state" role="status">Not run</span>
+    </div>
+    <div class="output-toolbar"><a id="activity-link" href="#activity-tab">View run history <span aria-hidden="true">↗</span></a>
+      <button id="bdd-copy-report" type="button" class="styled-btn" disabled>Copy output</button></div>
+    <div id="bdd-report-empty" class="report-empty">
+      <span class="report-empty-mark" aria-hidden="true">&gt;_</span>
+      <h3>Evidence starts with a run</h3>
+      <p>Your output will appear here when you explicitly run a feature.</p>
+      <p class="workspace-muted">Generating and validating a draft do not execute it.</p>
+    </div>
+    <div id="run-reports"><ul id="run-reports-ul" data-tabs-reports></ul></div>
+    <p class="output-footnote">Run only against systems you are authorised to test. Execution may use your balance.</p>
+  </section>
+</div>

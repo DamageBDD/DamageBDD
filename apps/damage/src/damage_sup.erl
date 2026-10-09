@@ -83,6 +83,14 @@ init([]) ->
                     modules => [damage_enterprise_invoices]
                 },
                 #{
+                    id => damage_bdd_service,
+                    start => {damage_bdd_service, start_link, []},
+                    restart => permanent,
+                    shutdown => 5000,
+                    type => worker,
+                    modules => [damage_bdd_service]
+                },
+                #{
                     id => damage_schedule,
                     start => {damage_schedule, start_link, []},
                     restart => permanent,

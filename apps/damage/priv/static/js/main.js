@@ -63,7 +63,10 @@ async function loadIpfsFeaturePreview(path) {
 		if (!response.ok) return;
 		const text = await response.text();
 		const editor = document.getElementById("damageTextArea");
-		if (editor && text.trim()) editor.value = text;
+		if (editor && text.trim()) {
+			editor.value = text;
+			editor.dispatchEvent(new Event("damage:source-loaded"));
+		}
 	} catch (err) {
 		console.debug("IPFS feature preview unavailable:", err);
 	}
@@ -448,6 +451,7 @@ function restoreFeatureDraftFromShareLink() {
 	if (!txt || !txt.trim()) return;
 
 	ta.value = txt.trim();
+	ta.dispatchEvent(new Event("damage:source-loaded"));
 
 	if (autorun) {
 		// defer so all handlers are bound
@@ -730,7 +734,7 @@ function restoreFeatureDraftFromShareLink() {
 			document.getElementById("activity-link").addEventListener("click", (event) => {
 				event.preventDefault();
 				var tabs = Tabby('[data-tabs]');
-				tabs.toggle('activity');
+				tabs.toggle('activity-tab');
 			});
 		}
 
@@ -838,18 +842,11 @@ function restoreFeatureDraftFromShareLink() {
 		}, false);
 
 		document.getElementById("damageTextArea").addEventListener("keydown", async function(event) {
-			if (event.ctrlKey && event.key === "Enter") {
+			if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
 				event.preventDefault();
-				await submitDamageForm();
+				document.getElementById("damageForm").requestSubmit();
 			}});
-		// Execute feature (API → wrap)
-		wrapApiButton(
-			document.getElementById("execute-feature-btn"),
-			async function (event) {
-				event.preventDefault();
-				await submitDamageForm();
-			}
-		);
+		// All execution paths share the same in-flight guard below.
 		document.getElementById("damageForm").addEventListener("submit", async function (event) {
 			event.preventDefault();
 			await submitDamageForm();
@@ -875,7 +872,7 @@ function restoreFeatureDraftFromShareLink() {
 
 		// Tabs (UI only → no debounce)
 		var tabs = Tabby('[data-tabs]');
-		tabs.toggle('execution');
+		tabs.toggle('execution-tab');
 
 
 		// Optional bridge (no change)
@@ -1873,7 +1870,23 @@ function restoreFeatureDraftFromShareLink() {
 	}
 
 
+	let executionInFlight = false;
 	async function submitDamageForm() {
+		if (executionInFlight) return;
+		executionInFlight = true;
+		const button = document.getElementById("execute-feature-btn");
+		if (button) { button.disabled = true; button.textContent = "Running…"; }
+		document.dispatchEvent(new CustomEvent("damage:execution-state", { detail: { running: true } }));
+		try {
+			return await submitDamageFormRequest();
+		} finally {
+			executionInFlight = false;
+			if (button) { button.disabled = false; button.textContent = "▶ Run feature"; }
+			document.dispatchEvent(new CustomEvent("damage:execution-state", { detail: { running: false } }));
+		}
+	}
+
+	async function submitDamageFormRequest() {
 		const inputText = document.getElementById("damageTextArea").value.trim();
 		const featureCid = selectedIpfsFeaturePath;
 		const concurrency = 1;

@@ -87,6 +87,8 @@ document.addEventListener('DOMContentLoaded', () => {
   );
 
   const getTextareaVisualLineCount = () => {
+    // Non-wrapping source editors must number logical Gherkin lines.
+    if (textarea.wrap === "off") return getLogicalLineCount();
     const lineHeight = getLineHeight(textarea);
     const measurementHeight = getTextareaMeasurementHeight();
     const visualLinesFromHeight = Math.round(measurementHeight / lineHeight);

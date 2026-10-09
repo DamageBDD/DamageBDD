@@ -59,9 +59,10 @@
     <link rel="stylesheet" href="/static/css/ipfs-filepicker.css">
     <link rel="stylesheet" href="/static/css/nwc.css">
     <link rel="stylesheet" href="/static/css/billing.css">
+    <link rel="stylesheet" href="/static/css/dashboard-workspace.css">
 
   </head>
-  <body data-logo-image="{{logo_image}}">
+  <body class="damage-dashboard" data-logo-image="{{logo_image}}">
     {{#reset_password}}
     {{/reset_password}}
     {{{auth_modal}}}
@@ -79,13 +80,14 @@
     {{{notification_modal}}}
     {{{ecai_job_detail_modal}}}
     {{{nwc_modal}}}
-    <div id="background"></div>
+    <div id="background" aria-hidden="true"></div>
+    {{#authenticated}}<a class="workspace-skip" href="#execution-tab">Skip to workspace</a>{{/authenticated}}
 {{#authenticated}}
     <div id="content">
       {{{topbar}}}
       {{{tabs_bar}}}
 
-      <div id="execution-tab" class="execute-container">
+      <div id="execution-tab" class="execute-container" tabindex="-1">
         {{{execution_tab}}}
       </div>
       <div id="activity-tab">
@@ -144,6 +146,7 @@
 
     <script type='module' src="/static/js/main.js" defer></script>
     <script type="module" src="/static/js/billing.js"></script>
+    <script type="module" src="/static/js/bdd-composer.js"></script>
     {{#node_admin}}
     <script src="/static/js/node-admin.js"></script>
     <script>
