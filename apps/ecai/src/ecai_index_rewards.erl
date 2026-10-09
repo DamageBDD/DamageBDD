@@ -51,31 +51,105 @@ liquidity() -> ecai_index_rewards_cln:liquidity().
 command(C) -> gen_server:call(?MODULE, {command, C}, 30000).
 
 init(Config0) ->
-    %% Explicit operator-owned storage only; no private keys/runes are stored here.
-    File = filename:absname(maps:get(ledger_file, Config0)),
-    ok = filelib:ensure_dir(File),
-    case dets:open_file(?TAB, [{file, File}, {type, set}, {auto_save, 10000}]) of
-        {ok, Tab} ->
-            Saved = case dets:lookup(Tab, pool_participants) of
-                [{pool_participants, P}] when is_map(P) -> P;
-                [] -> #{}
-            end,
-            Configured = maps:get(participants, Config0, #{}),
-            true = maps:fold(fun(A, N, Ok) -> Ok andalso maps:get(A, Configured, N) =:= N end, true, Saved),
-            Config = Config0#{participants => maps:merge(Configured, Saved)},
-            Old = case dets:lookup(Tab, ledger) of
-                [] -> ecai_index_reward_ledger:new();
-                [{ledger, #{schema := 1} = L}] -> L
-            end,
-            ok = ecai_index_reward_ledger:validate(Old, Config),
-            L1 = ecai_index_reward_ledger:recover(Old, erlang:system_time(second)),
-            persist(Tab, L1),
-            _ = file:change_mode(File, 8#600),
-            self() ! subscribe_funding,
-            {ok, #st{tab = Tab, ledger = L1, config = Config,
-                     adapter = maps:get(adapter, Config, ecai_index_rewards_cln)}};
-        {error, R} -> {stop, {reward_ledger_unavailable, R}}
+    %% Startup failures must be reported, never converted to an empty balance.
+    try init_storage(Config0)
+    catch
+        throw:{reward_ledger_startup, Reason} ->
+            {stop, {reward_ledger_unavailable, Reason}};
+        Class:Reason ->
+            {stop, {reward_ledger_unavailable, {startup_exception, Class, Reason}}}
     end.
+
+init_storage(Config0) when is_map(Config0) ->
+    %% Explicit operator-owned storage only; no private keys/runes are stored here.
+    File0 = maps:get(ledger_file, Config0, undefined),
+    case (is_list(File0) andalso File0 =/= []) orelse
+         (is_binary(File0) andalso byte_size(File0) > 0) of
+        true -> ok;
+        false -> startup_error({invalid_config, ledger_file})
+    end,
+    Configured = maps:get(participants, Config0, #{}),
+    case is_map(Configured) of
+        true -> ok;
+        false -> startup_error({invalid_config, participants})
+    end,
+    File = filename:absname(File0),
+    startup_ok(ensure_dir, fun() -> filelib:ensure_dir(File) end),
+    NewFile = case file:read_file_info(File) of
+        {error, enoent} -> true;
+        {ok, _} -> false;
+        {error, Why} -> startup_error({stat, Why})
+    end,
+    %% DETS is not a transactional payment database. Repair can lose records;
+    %% an operator must preserve and reconcile a damaged ledger before repair.
+    Tab = case dets:open_file(?TAB, [
+        {file, File}, {type, set}, {keypos, 1}, {auto_save, 10000}, {repair, false}
+    ]) of
+        {ok, Opened} -> Opened;
+        {error, WhyOpen} -> startup_error({open, WhyOpen})
+    end,
+    try init_opened(Tab, File, NewFile, Config0, Configured)
+    catch
+        Class:Reason:Stack ->
+            %% terminate/2 is not called when init/1 fails. Release our DETS
+            %% handle explicitly, including on read, validation or sync errors.
+            _ = try dets:close(Tab) catch _:_ -> ok end,
+            erlang:raise(Class, Reason, Stack)
+    end;
+init_storage(_) ->
+    startup_error({invalid_config, expected_map}).
+
+init_opened(Tab, File, NewFile, Config0, Configured) ->
+    Saved = case startup_lookup(Tab, pool_participants) of
+        [{pool_participants, P}] when is_map(P) -> P;
+        [] -> #{};
+        _ -> startup_error({invalid_record, pool_participants})
+    end,
+    case maps:fold(fun(A, N, Ok) ->
+        Ok andalso maps:get(A, Configured, N) =:= N
+    end, true, Saved) of
+        true -> ok;
+        false -> startup_error(participant_identity_mismatch)
+    end,
+    Config = Config0#{participants => maps:merge(Configured, Saved)},
+    Old = case startup_lookup(Tab, ledger) of
+        [] when NewFile ->
+            case dets:info(Tab, size) of
+                0 -> ecai_index_reward_ledger:new();
+                _ -> startup_error({missing_record, ledger})
+            end;
+        [] -> startup_error({missing_record, ledger});
+        [{ledger, #{schema := 1, campaigns := Cs, hashes := Hs,
+                    events := Es, sequence := Seq} = L}]
+            when is_map(Cs), is_map(Hs), is_list(Es), is_integer(Seq), Seq >= 0 -> L;
+        _ -> startup_error({invalid_record, ledger})
+    end,
+    startup_ok(validate, fun() -> ecai_index_reward_ledger:validate(Old, Config) end),
+    L1 = ecai_index_reward_ledger:recover(Old, erlang:system_time(second)),
+    %% Do not subscribe or launch any CLN work until recovery is durable.
+    startup_ok(permissions, fun() -> file:change_mode(File, 8#600) end),
+    startup_ok(insert, fun() -> dets:insert(Tab, {ledger, L1}) end),
+    startup_ok(sync, fun() -> dets:sync(Tab) end),
+    self() ! subscribe_funding,
+    {ok, #st{tab = Tab, ledger = L1, config = Config,
+             adapter = maps:get(adapter, Config, ecai_index_rewards_cln)}}.
+
+startup_lookup(Tab, Key) ->
+    case dets:lookup(Tab, Key) of
+        Rows when is_list(Rows) -> Rows;
+        {error, Reason} -> startup_error({lookup, Key, Reason});
+        _ -> startup_error({invalid_lookup_reply, Key})
+    end.
+
+startup_ok(Operation, Fun) ->
+    case Fun() of
+        ok -> ok;
+        {error, Reason} -> startup_error({Operation, Reason});
+        _ -> startup_error({unexpected_result, Operation})
+    end.
+
+startup_error(Reason) ->
+    throw({reward_ledger_startup, Reason}).
 
 handle_call({register_participant, Admin, Account, Node}, _From, S) ->
     Allowed = application:get_env(ecai, index_pool_enabled, false) =:= true andalso

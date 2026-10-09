@@ -421,3 +421,49 @@ Core Lightning documentation, retrieved for this implementation:
 
 Source integration points inspected: DamageBDD `damage_cln.erl`, `cln(1).erl`,
 `cln_ws_mgr(1).erl` invoice-paid broadcast and `damage_ae(1).erl` invoice namespace.
+
+## Reward-ledger startup failures and EUnit isolation
+
+`ecai_index_rewards` handles DETS open, lookup, validation, permission, insert
+and sync failures as a failed startup. In particular, `dets:lookup/2` returning
+`{error, Reason}` is not an empty result and must not initialize new balances.
+A lookup failure is reported as:
+
+```erlang
+{error, {reward_ledger_unavailable, {lookup, Key, Reason}}}
+```
+
+Startup closes any DETS handle it opened before returning the error. It does
+not subscribe to invoice notifications or start a CLN effect until the loaded
+ledger has been validated, recovered and synced. Existing participant bindings
+remain pinned. A missing or malformed ledger record in an existing file is
+rejected; only a previously absent ledger file can initialize empty state.
+
+The service now opens DETS with `{repair, false}`. A file requiring repair is
+left unavailable rather than automatically salvaged and trusted as a complete
+payment history. This is a deliberate fail-closed change: an unclean VM halt
+can require operator recovery even when no disk hardware fault occurred.
+Preserve the original file with the service stopped, work on a separate copy,
+and reconcile funding, reservations and attempted payments against CLN before
+restoring service. Do not delete a funded ledger, silently start with an empty
+ledger, or force repair a live payment database to make a test pass.
+
+The rewards EUnit fixture uses `TMPDIR` (falling back to `/tmp`) and atomically
+creates a random per-test directory. VM-local integer counters alone are not
+sufficient to isolate successive `rebar3` runs. Test startup is unlinked so an
+init failure becomes a failed assertion instead of cancelling the test group;
+production `start_link/1` remains linked and supervised. Cleanup covers startup
+as well as assertions and stops only the exact process owned by that fixture.
+
+Run the focused storage/recovery checks before the full application suite:
+
+```bash
+rebar3 compile
+rebar3 eunit --module=ecai_index_reward_ledger_tests,ecai_index_rewards_tests
+rebar3 eunit --app ecai
+```
+
+Negative-path tests deliberately create invalid files inside their own temporary
+directories. Expected startup error reports are not failed tests by themselves;
+check the final failure and cancellation counts. No test should use the live
+reward ledger or a production Lightning adapter.
