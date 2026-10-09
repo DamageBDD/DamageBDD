@@ -1,0 +1,289 @@
+# syntax=docker/dockerfile:1.7
+# DamageBDD package BUILD environment for Arch Linux ARM / PinePhone Pro.
+# This is not a phone OS image or a minimal application runtime.
+# Build with --platform linux/arm64. No local COPY inputs are required.
+# Community-maintained base; override with an audited image@sha256 digest.
+ARG BASE_IMAGE=menci/archlinuxarm:base
+FROM ${BASE_IMAGE} AS builder
+
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+ARG TARGETARCH
+ARG TARGETOS
+ARG BUILD_JOBS=2
+
+# Conservative defaults for a small ARM machine. These are not a RAM limit.
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    GIT_TERMINAL_PROMPT=0 \
+    MAKEFLAGS="-j${BUILD_JOBS}" \
+    CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" \
+    ERL_AFLAGS="+S ${BUILD_JOBS}:${BUILD_JOBS} +SDcpu 1 +SDio 1" \
+    PKG_CONFIG_PATH=/usr/local/lib/pkgconfig \
+    CCACHE_DIR=/home/damage/.cache/ccache \
+    CCACHE_MAXSIZE=512M
+
+# Keep the ARM base's repositories/mirrors. Do not use the x86 reflector list,
+# install archlinux-keyring instead of archlinuxarm-keyring, or disable signatures.
+RUN <<'PACKAGES'
+[[ "${TARGETOS:-linux}" == linux && "${TARGETARCH:-arm64}" == arm64 ]] || {
+    echo 'Build this Dockerfile with --platform linux/arm64' >&2; exit 1;
+}
+[[ "$(uname -m)" == aarch64 ]] || {
+    echo 'The selected base must execute as aarch64, not x86_64 or armv7' >&2; exit 1;
+}
+[[ "$BUILD_JOBS" =~ ^[1-9][0-9]*$ && "$BUILD_JOBS" -le 128 ]] || {
+    echo 'BUILD_JOBS must be an integer from 1 to 128' >&2; exit 1;
+}
+test -r /usr/share/pacman/keyrings/archlinuxarm.gpg
+pacman-key --init
+pacman-key --populate archlinuxarm
+sed -i -E 's/^[#[:space:]]*ParallelDownloads[[:space:]]*=.*/ParallelDownloads = 3/' /etc/pacman.conf
+
+packages=(
+    archlinuxarm-keyring base-devel ca-certificates git curl wget which util-linux
+    tar gzip unzip xz zstd patch pkgconf cmake ninja binutils file
+    erlang rebar3 jq pacman-contrib ccache python
+    openssl gmp libsodium libcap libx11 libxcb xcb-proto
+    gtk4 libshumate kubo pass
+)
+# Every attempt refreshes + upgrades + installs in the SAME transaction.
+# A failed last attempt is fatal; never continue with a partially provisioned image.
+for attempt in 1 2 3; do
+    if pacman -Syu --noconfirm --needed "${packages[@]}"; then
+        break
+    fi
+    if [[ "$attempt" == 3 ]]; then
+        echo 'ARM package transaction failed after three attempts' >&2; exit 1;
+    fi
+    sleep 5
+done
+pacman-key --populate archlinuxarm
+install -d /usr/local/share/damage-builder
+pacman -Q > /usr/local/share/damage-builder/packages.txt
+pacman -Scc --noconfirm
+PACKAGES
+
+# liboqs 0.16.0 release commit; pin the actual source, not a moving branch/tag.
+# The available DamageBDD OQS NIF supports ML-KEM-768. Override MINIMAL_BUILD
+# to include more algorithms (empty means the upstream default algorithm set).
+ARG LIBOQS_COMMIT=5a1a854b0dc9f2141bdc771c555ee60c37950183
+ARG LIBOQS_MINIMAL_BUILD=KEM_ml_kem_768
+RUN <<'OQS'
+[[ "$LIBOQS_COMMIT" =~ ^[0-9a-f]{40}$ ]] || {
+    echo 'LIBOQS_COMMIT must be a full lowercase commit SHA' >&2; exit 1;
+}
+build_dir=$(mktemp -d)
+trap 'rm -rf "$build_dir"' EXIT
+git init "$build_dir/source"
+git -C "$build_dir/source" remote add origin https://github.com/open-quantum-safe/liboqs.git
+git -C "$build_dir/source" fetch --depth 1 origin "$LIBOQS_COMMIT"
+git -C "$build_dir/source" checkout --detach FETCH_HEAD
+test "$(git -C "$build_dir/source" rev-parse HEAD)" = "$LIBOQS_COMMIT"
+
+# PIC static liboqs can be linked into the NIF without deploying liboqs.so.
+# OQS_DIST_BUILD retains portable ARM64 code and runtime CPU dispatch.
+cmake -S "$build_dir/source" -B "$build_dir/build" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr/local \
+    -DCMAKE_INSTALL_LIBDIR=lib \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DOQS_BUILD_ONLY_LIB=ON \
+    -DOQS_DIST_BUILD=ON \
+    -DOQS_USE_OPENSSL=OFF \
+    -DOQS_USE_CUPQC=OFF \
+    "-DOQS_MINIMAL_BUILD=$LIBOQS_MINIMAL_BUILD"
+cmake --build "$build_dir/build" --parallel "$BUILD_JOBS"
+cmake --install "$build_dir/build"
+test -s /usr/local/lib/liboqs.a
+pkg-config --print-errors --exists liboqs
+
+# Expose static transitive link flags to hooks using ordinary `pkg-config --libs`.
+# Keep the upstream .pc alongside the adjusted one for auditability.
+pc=/usr/local/lib/pkgconfig/liboqs.pc
+cp "$pc" /usr/local/share/damage-builder/liboqs.pc.upstream
+static_libs=$(pkg-config --static --libs liboqs)
+awk -v flags="$static_libs" '
+    /^Libs:/ { print "Libs: " flags; next }
+    /^(Requires.private|Libs.private):/ { next }
+    { print }
+' "$pc" > "$pc.tmp"
+mv "$pc.tmp" "$pc"
+printf '%s\n' "$LIBOQS_COMMIT" > /usr/local/share/damage-builder/LIBOQS_COMMIT
+printf '%s\n' "$LIBOQS_MINIMAL_BUILD" > /usr/local/share/damage-builder/LIBOQS_ALGORITHMS
+install -d /usr/local/share/licenses/liboqs
+install -m 0644 "$build_dir/source/LICENSE.txt" /usr/local/share/licenses/liboqs/LICENSE.txt
+OQS
+
+# Self-contained check: no display, external service or repository source needed.
+COPY --chmod=0755 <<'CHECK' /usr/local/bin/damage-builder-check
+#!/bin/bash
+set -euo pipefail
+export LC_ALL=C
+fail() { echo "[damagebdd] builder-check: $*" >&2; exit 1; }
+[[ "$(uname -m)" == aarch64 ]] || fail 'expected aarch64'
+for tool in cc c++ readelf pkg-config erl erlc escript rebar3 git flock makepkg fakeroot tar zstd sha256sum; do
+    command -v "$tool" >/dev/null || fail "missing tool: $tool"
+done
+case "$(cc -dumpmachine)" in aarch64-*) ;; *) fail 'compiler is not AArch64' ;; esac
+modules=(gtk4 shumate-1.0 openssl gmp libsodium libcap x11 xcb xcb-screensaver xcb-dpms liboqs)
+for module in "${modules[@]}"; do
+    pkg-config --print-errors --exists "$module" || fail "missing pkg-config module: $module"
+done
+erts=$(erl -noshell -eval 'io:format("~s/erts-~s", [code:root_dir(), erlang:system_info(version)]), halt().')
+ei=$(erl -noshell -eval 'io:format("~s", [code:lib_dir(erl_interface)]), halt().')
+test -r "$erts/include/erl_nif.h" || fail 'missing erl_nif.h'
+test -r "$ei/include/ei.h" || fail 'missing ei.h'
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+assert_arm64() {
+    local header
+    header=$(readelf -h "$1")
+    grep -Eq 'Machine:[[:space:]]+AArch64' <<< "$header" || fail "not AArch64: $1"
+}
+assert_arm64 "$erts/bin/beam.smp"
+
+cat > "$work/native.c" <<'C'
+#include <gtk/gtk.h>
+#include <shumate/shumate.h>
+#include <xcb/dpms.h>
+#include <xcb/screensaver.h>
+#include <X11/Xlib.h>
+#include <openssl/crypto.h>
+#include <gmp.h>
+#include <sodium.h>
+#include <sys/capability.h>
+#include <ei.h>
+#include <erl_nif.h>
+int main(void) {
+    ei_x_buff buffer;
+    mpz_t value;
+    if (ei_x_new(&buffer) != 0) return 1;
+    ei_x_free(&buffer);
+    mpz_init_set_ui(value, 1);
+    mpz_clear(value);
+    return gtk_get_major_version() < 4 ||
+           shumate_map_get_type() == G_TYPE_INVALID ||
+           OpenSSL_version_num() == 0 || sodium_init() < 0;
+}
+C
+# These standard install paths contain no spaces; split flag lists without eval.
+cflags_text=$(pkg-config --cflags "${modules[@]}")
+libs_text=$(pkg-config --libs "${modules[@]}")
+read -r -a cflags <<< "$cflags_text"
+read -r -a libs <<< "$libs_text"
+cc -std=c17 -Wall -Wextra "${cflags[@]}" \
+    -I"$erts/include" -I"$ei/include" "$work/native.c" \
+    -L"$ei/lib" -lei "${libs[@]}" -o "$work/native"
+assert_arm64 "$work/native"
+"$work/native"
+
+cat > "$work/oqs.c" <<'C'
+#include <oqs/oqs.h>
+#include <stdlib.h>
+#include <string.h>
+int main(void) {
+    int result = 1;
+    OQS_init();
+    OQS_KEM *kem = OQS_KEM_new(OQS_KEM_alg_ml_kem_768);
+    if (kem == NULL) { OQS_destroy(); return 1; }
+    unsigned char *pk = malloc(kem->length_public_key);
+    unsigned char *sk = malloc(kem->length_secret_key);
+    unsigned char *ct = malloc(kem->length_ciphertext);
+    unsigned char *ss1 = malloc(kem->length_shared_secret);
+    unsigned char *ss2 = malloc(kem->length_shared_secret);
+    if (pk && sk && ct && ss1 && ss2 &&
+        OQS_KEM_keypair(kem, pk, sk) == OQS_SUCCESS &&
+        OQS_KEM_encaps(kem, ct, ss1, pk) == OQS_SUCCESS &&
+        OQS_KEM_decaps(kem, ss2, ct, sk) == OQS_SUCCESS &&
+        memcmp(ss1, ss2, kem->length_shared_secret) == 0) result = 0;
+    free(pk); free(ct);
+    if (sk) OQS_MEM_secure_free(sk, kem->length_secret_key);
+    if (ss1) OQS_MEM_secure_free(ss1, kem->length_shared_secret);
+    if (ss2) OQS_MEM_secure_free(ss2, kem->length_shared_secret);
+    OQS_KEM_free(kem);
+    OQS_destroy();
+    return result;
+}
+C
+cflags_text=$(pkg-config --cflags liboqs)
+libs_text=$(pkg-config --libs liboqs)
+read -r -a cflags <<< "$cflags_text"
+read -r -a libs <<< "$libs_text"
+cc -std=c17 "${cflags[@]}" "$work/oqs.c" "${libs[@]}" -o "$work/oqs"
+assert_arm64 "$work/oqs"
+"$work/oqs"
+# Model a NIF's shared-library link and reject unresolved static dependencies.
+cc -std=c17 -fPIC -shared -Wl,-z,defs "${cflags[@]}" \
+    "$work/oqs.c" "${libs[@]}" -o "$work/oqs-link.so"
+assert_arm64 "$work/oqs-link.so"
+readelf -d "$work/oqs-link.so" > "$work/dynamic.txt"
+if grep -Eq 'NEEDED.*liboqs' "$work/dynamic.txt"; then
+    fail 'OQS probe unexpectedly depends on a shared liboqs'
+fi
+pkg-config --modversion gtk4 shumate-1.0 liboqs
+# Avoid loading the project plugins (and their network fetches) just for a version.
+(cd "$work" && rebar3 version)
+printf '%s\n' '[damagebdd] builder-check: passed (AArch64, GTK/Shumate, EI/NIF headers, ML-KEM-768, static OQS link)'
+CHECK
+
+ARG BUILD_UID=1000
+ARG BUILD_GID=1000
+RUN groupadd --gid "$BUILD_GID" damage \
+    && useradd --uid "$BUILD_UID" --gid "$BUILD_GID" --create-home --shell /bin/bash damage \
+    && install -d -o damage -g damage /opt/workspace /out /home/damage/.cache/ccache /home/damage/.cache/rebar3
+USER damage
+ENV HOME=/home/damage XDG_CACHE_HOME=/home/damage/.cache
+WORKDIR /opt/workspace
+
+# Makepkg is always run without root; use generic ARMv8-A and bounded compression.
+RUN <<'MAKEPKG'
+cat > "$HOME/.makepkg.conf" <<CONFIG
+CARCH='aarch64'
+CFLAGS='-march=armv8-a -mtune=generic -O2 -pipe'
+CXXFLAGS='-march=armv8-a -mtune=generic -O2 -pipe'
+MAKEFLAGS='-j${BUILD_JOBS}'
+PKGEXT='.pkg.tar.zst'
+COMPRESSZST=(zstd -c -T${BUILD_JOBS} -6 -)
+CONFIG
+damage-builder-check
+MAKEPKG
+
+# Fetch only after native dependencies pass. Full history supports the release
+# version generator and the existing feature's git pull --ff-only on branches.
+# REPO_REF accepts an unqualified branch/tag or a full commit SHA. SHA/tag
+# checkouts are detached: do not run git pull in features using those refs.
+ARG REPO_URL=https://github.com/DamageBDD/DamageBDD.git
+ARG REPO_REF=develop
+ARG REPO_COMMIT=
+# Change SOURCE_REFRESH to invalidate just the source layer for a moving branch.
+ARG SOURCE_REFRESH=0
+RUN <<'SOURCE'
+printf '[damagebdd] fetching ref=%s refresh=%s\n' "$REPO_REF" "$SOURCE_REFRESH"
+[[ -n "$REPO_REF" && "$REPO_REF" != -* ]] || { echo 'Invalid REPO_REF' >&2; exit 1; }
+git clone --no-checkout -- "$REPO_URL" .
+if git show-ref --verify --quiet "refs/remotes/origin/$REPO_REF"; then
+    git checkout -B "$REPO_REF" --track "origin/$REPO_REF"
+elif git show-ref --verify --quiet "refs/tags/$REPO_REF"; then
+    git checkout --detach "refs/tags/$REPO_REF"
+else
+    [[ "$REPO_REF" =~ ^[0-9a-f]{40}$ ]] || { echo 'Unknown branch/tag or invalid commit SHA' >&2; exit 1; }
+    if ! git cat-file -e "$REPO_REF^{commit}"; then
+        git fetch origin "$REPO_REF"
+    fi
+    git checkout --detach "$REPO_REF"
+fi
+if [[ -n "$REPO_COMMIT" ]]; then
+    [[ "$REPO_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo 'Invalid REPO_COMMIT' >&2; exit 1; }
+    test "$(git rev-parse HEAD)" = "$REPO_COMMIT"
+fi
+git submodule update --init --recursive
+test -f rebar.config
+test -f rebar.lock
+git diff --exit-code HEAD -- .
+git rev-parse HEAD > "$HOME/BUILDER_SOURCE_COMMIT"
+SOURCE
+
+# No ENTRYPOINT: DamageBDD's Docker step supplies /bin/sh + its mounted script.
+# No CUDA, Docker daemon, systemd daemon or release compilation in this image.
+CMD ["/bin/bash"]

@@ -1,0 +1,6 @@
+%% Replace IDs, paths and names with actual entries from your dataset.
+%% File paths are relative to data_dir. Use meshes in shared world coordinates.
+[
+ #{id => <<"heart">>, name => <<"Heart">>, file => "heart.obj", color => {195,70,80}},
+ #{id => <<"ribcage">>, name => <<"Rib cage">>, file => "ribcage.obj", color => {220,210,180}}
+].
