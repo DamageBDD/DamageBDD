@@ -1,12 +1,10 @@
 <!-- -*- mode: html -*- -->
-<div class="topbar">
-  <div class="site-header">
-    <img class="logo" src="{{logo_image}}" alt="DamageBDD Logo" />
-    <div class="brand-text">
-      <div class="title">DamageBDD</div>
-      <div class="subtitle">
-        Behaviour verification at planetary scale
-      </div>
+<header class="topbar dashboard-topbar">
+  <div class="dashboard-topbar-heading">
+    <button type="button" id="dashboard-nav-toggle" class="dashboard-icon-button" aria-controls="dashboard-sidebar" aria-expanded="true" aria-label="Collapse navigation" title="Collapse navigation"><svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16M13 9h4M13 13h4"/></svg></button>
+    <div class="dashboard-location">
+      <p class="dashboard-breadcrumb"><span id="dashboard-section-group">Verification</span><svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m9 5 7 7-7 7"/></svg><strong id="dashboard-section-title">Workspace</strong></p>
+      <p id="dashboard-section-description" class="dashboard-section-description">Describe, review and run behaviours</p>
     </div>
   </div>
 
@@ -62,13 +60,6 @@
       </div>
     </div>
 
-    <div id="toolbar-btns">
-      <button type="button" id="installBtn" class="install-btn" data-micromodal-trigger="install-modal">
-        Install Node
-      </button>
-      <button type="button" id="logoutBtn" class="logout-btn" data-micromodal-trigger="logout-modal">
-        Logout
-      </button>
-    </div>
+
   </div>
-</div>
+</header>

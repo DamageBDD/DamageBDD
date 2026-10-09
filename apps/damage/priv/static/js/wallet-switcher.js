@@ -193,8 +193,10 @@ document.addEventListener('DOMContentLoaded', () => {
 				try { MicroModal.close("connect-wallet-modal"); } catch (_e) {}
 				try { MicroModal.close("login-modal"); } catch (_e) {}
 
-				const content = document.getElementById("content");
-				if (content) content.style.display = "block";
+				const shell = document.querySelector("[data-dashboard-shell]") || document.getElementById("content");
+				if (shell) { shell.hidden = false; shell.style.removeProperty("display"); }
+				const skip = document.querySelector(".workspace-skip");
+				if (skip) skip.hidden = false;
 
 				await refreshAfterAuthChange();
 			} else {

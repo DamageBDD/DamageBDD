@@ -43,13 +43,6 @@
 .damage-dashboard .wallet-balance-value { color: var(--ws-text); font-size: 13px; font-variant-numeric: tabular-nums; text-shadow: none; }
 .damage-dashboard .wallet-toolbar-actions, .damage-dashboard #toolbar-btns { display: flex; flex-direction: row; gap: 6px; }
 .damage-dashboard #toolbar-btns { margin: 0; }
-.damage-dashboard .tabsbar { position: static; padding: 0; margin: 0; border: 0; border-bottom: 1px solid var(--ws-line); border-radius: 0; background: none; box-shadow: none; }
-.damage-dashboard .tabsbar::before, .damage-dashboard .tabsbar::after { display: none; }
-.damage-dashboard ul[data-tabs] { margin: 0; padding: 0; display: flex; justify-content: flex-start; gap: 8px; overflow-x: auto; background: none; border: 0; list-style: none; }
-.damage-dashboard ul[data-tabs] li { flex: 0 0 auto; margin: 0; }
-.damage-dashboard ul[data-tabs] a { display: block; padding: 14px 13px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; color: var(--ws-muted); font-size: 13px; background: none; box-shadow: none; white-space: nowrap; text-decoration: none; }
-.damage-dashboard ul[data-tabs] a[aria-selected="true"] { color: var(--ws-text); border-bottom-color: var(--ws-accent); background: none; }
-.damage-dashboard ul[data-tabs] a::after { display: none; }
 .damage-dashboard .execute-container { padding: 0; margin: 0; background: none; max-width: none; }
 .damage-dashboard .workspace-heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; margin: 30px 0 22px; }
 .damage-dashboard .workspace-heading > div > p:last-child { margin: 0; color: var(--ws-muted); }
@@ -194,15 +187,10 @@
 @media (prefers-reduced-motion: reduce) {
   .damage-dashboard *, .damage-dashboard *::before, .damage-dashboard *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
-/* Neutralise legacy high-specificity Tabby overrides, not application modals. */
+/* Reset the legacy execution container without changing application modals. */
 .damage-dashboard #content { display: block; height: auto; min-height: 100vh; }
 .damage-dashboard .execute-container { border: 0; border-radius: 0; box-shadow: none; height: auto; }
 .damage-dashboard .topbar::after { display: none; }
-.damage-dashboard ul[data-tabs][role="tablist"] { padding: 0 !important; }
-.damage-dashboard ul[data-tabs] [role="tab"] { padding: 14px 13px !important; border: 0 !important; border-bottom: 2px solid transparent !important; border-radius: 0; }
-.damage-dashboard ul[data-tabs] [role="tab"][aria-selected="true"] { border-bottom-color: var(--ws-accent) !important; }
-.damage-dashboard ul[data-tabs] [role="tab"]:hover { border-bottom-color: #748568 !important; }
-.damage-dashboard ul[data-tabs] a:focus-visible { outline: 3px solid var(--ws-accent); outline-offset: -4px; box-shadow: none; }
 .damage-dashboard #bdd-refresh-catalog { margin-left: 5px; min-height: 26px; padding: 3px 7px; font-size: 10px; background: transparent; }
 .damage-dashboard #bdd-diagnostics { max-height: 220px; overflow-y: auto; }
 @media (max-width: 620px) {

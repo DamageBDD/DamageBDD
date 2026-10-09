@@ -380,7 +380,7 @@ function bind() {
         write(async () => {await api("/admins", {method: "POST", body: {account: field(form, "account").value.trim(), enabled: true}}); form.reset(); await loadAdmins(); notice("Invoice administrator granted.");});});
     $("billing-import").addEventListener("change", event => {const file = event.target.files[0]; write(async () => {try {await importSeed(file);} finally {event.target.value = "";}});});
     document.addEventListener("auth:changed", authenticate);
-    document.addEventListener("tabby", event => {if (event.detail?.tab?.getAttribute("href") === "#billing-tab" && state.session) refresh().catch(e => notice(e.message, true));});
+    document.addEventListener("damage:panelchange", event => {if (event.detail?.id === "billing-tab" && state.session) refresh().catch(e => notice(e.message, true));});
     setInterval(() => {
         if (state.session && document.visibilityState === "visible" && root.offsetParent !== null && !writeInFlight && !root.querySelector("dialog[open]")) {
             loadInvoices().then(() => state.selected ? viewInvoice(state.selected.id, false) : undefined).catch(e => notice(e.message, true));

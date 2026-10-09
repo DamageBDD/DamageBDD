@@ -1,3 +1,4 @@
+import { initDashboardNavigation } from "./dashboard-navigation.js";
 import * as wallet from "/static/js/wallet.js";
 import * as nwc from "/static/js/nwc.js";
 import { showLightningQR } from '/static/js/damage-lightning-ui.js';
@@ -14,6 +15,26 @@ const NODE_BASE = "https://mainnet.aeternity.io";
 
 let selectedIpfsFeaturePath = null;
 let ipfsFeaturePicker = null;
+
+// Navigation owns section visibility; this hook owns existing lazy data loads.
+function bindDashboardPanelRefresh(navigation) {
+	if (!navigation || bindDashboardPanelRefresh.bound) return;
+	bindDashboardPanelRefresh.bound = true;
+	const refresh = event => {
+		const id = event.detail?.id;
+		const task = async () => {
+			if (id === "activity-tab") {
+				await window.Reports?.renderRunReports(window.TokenManager?.getAddress?.(), {limit: 10});
+			} else if (id === "schedules-tab" && window.TokenManager?.getToken?.()) {
+				await updateSchedulesTable();
+			}
+		};
+		task().catch(error => console.warn("Dashboard panel refresh failed:", error));
+	};
+	document.addEventListener("damage:panelchange", refresh);
+	// Navigation may have initialized before this module's wallet imports settled.
+	refresh({detail: {id: navigation.activePanel}});
+}
 
 function normalizeIpfsExecutionPath(path) {
 	let value = String(path || "").trim();
@@ -632,6 +653,8 @@ function restoreFeatureDraftFromShareLink() {
 		Tabby('[data-node-wallet-tabs]');
 		MicroModal.init({
 			onShow: modal => {
+				// Programmatic modals must also release the mobile navigation trap.
+				initDashboardNavigation()?.closeDrawer({focus: false});
 				console.info(`${modal.id} is shown`);
 
 				if (typeof window.initInstallForm === 'function') window.initInstallForm();
@@ -733,8 +756,7 @@ function restoreFeatureDraftFromShareLink() {
 		if (activityLink) {
 			document.getElementById("activity-link").addEventListener("click", (event) => {
 				event.preventDefault();
-				var tabs = Tabby('[data-tabs]');
-				tabs.toggle('activity-tab');
+				initDashboardNavigation()?.navigate('activity-tab');
 			});
 		}
 
@@ -765,24 +787,7 @@ function restoreFeatureDraftFromShareLink() {
 			}
 			// When seed phrase tab is shown, initialize reveal button if seed phrase is already available
 			document.addEventListener('tabby', function(event) {
-				if (event.detail.tab.id === 'tabby-toggle_execution-tab') {
-					initDamageBDDPicker({
-						opener: "#open-feature-picker",
-						mount: "#feature-picker-mount",
-						editor: '#damageTextArea',
-						gateway: "/features/",
-						samplesIndexUrl: "/samples/features/index.json"
-					});
-					document.addEventListener("click", (e) => {
-						const btn = e.target.closest("#open-feature-picker");
-						if (!btn) return;
 
-						e.preventDefault();
-						clearIpfsFeatureSelection();
-						console.log("feature picker clicked");
-						MicroModal.show("feature-picker-modal");
-					});
-				}
 				if (event.detail && event.detail.content && event.detail.content.id === 'seed-phrase-backup-tab') {
 					// Check if seed phrase was already set
 					const revealBtn = document.getElementById("reveal-seed-phrase-btn");
@@ -820,18 +825,17 @@ function restoreFeatureDraftFromShareLink() {
 
 		bindIpfsFeaturePicker();
 		
-		var tabs =Tabby('[data-tabs]');
-		document.addEventListener('tabby', function (event) {
-			var tab = event.target;
-			var content = event.detail.content;
-			if (event.detail.tab.id === 'tabby-toggle_activity-tab'){
-				const address = TokenManager.getAddress();
-				Reports.renderRunReports(address, { limit: 10 });
-			}else if (event.detail.tab.id === 'tabby-toggle_schedules-tab'){
-				if(window.TokenManager.getToken() != undefined){
-					updateSchedulesTable();}
-			}
-		}, false);
+		const navigation = initDashboardNavigation();
+		bindDashboardPanelRefresh(navigation);
+		// Initialize the picker once, not on every return to the workspace.
+		document.getElementById("open-feature-picker")?.addEventListener("click", clearIpfsFeatureSelection, {capture: true});
+		initDamageBDDPicker({
+			opener: "#open-feature-picker",
+			mount: "#feature-picker-mount",
+			editor: "#damageTextArea",
+			gateway: "/features/",
+			samplesIndexUrl: "/samples/features/index.json"
+		}).catch(error => console.warn("Feature picker initialization failed:", error));
 		var tabs =Tabby('[data-token-tabs]');
 		Tabby('[data-node-wallet-tabs]');
 		document.addEventListener('tabby', function (event) {
@@ -870,9 +874,7 @@ function restoreFeatureDraftFromShareLink() {
 		});
 
 
-		// Tabs (UI only → no debounce)
-		var tabs = Tabby('[data-tabs]');
-		tabs.toggle('execution-tab');
+		// Primary navigation retains the requested URL; do not reset it to Workspace.
 
 
 		// Optional bridge (no change)
@@ -1268,28 +1270,26 @@ function restoreFeatureDraftFromShareLink() {
 		}
 	}
 
+	function setDashboardVisible(visible) {
+		const shell = document.querySelector("[data-dashboard-shell]") || document.getElementById("content");
+		if (!visible) initDashboardNavigation()?.closeDrawer();
+		if (shell) { shell.hidden = !visible; shell.style.removeProperty("display"); }
+		const skip = document.querySelector(".workspace-skip");
+		if (skip) skip.hidden = !visible;
+	}
 	function showLoginButton(){
 		const background = document.getElementById("background");
-
-		background.style.display = "block";
-		const content = document.getElementById("content");
-		if(content)content.style.display = "none";
+		if (background) background.style.display = "block";
+		setDashboardVisible(false);
 		MicroModal.show('login-modal');
 	}
 	function showHideLoginButton(){
-		const content = document.getElementById("content");
-		if(!content)return;
-		const background = document.getElementById("background");
+		if (!document.getElementById("content")) return;
 		if (isAuthenticated()) {
-			try{
-				MicroModal.close('login-modal');
-			}catch(e){};
-			content.style.display = "block";
+			try { MicroModal.close('login-modal'); } catch (_e) {}
+			setDashboardVisible(true);
 		} else {
-
-			content.style.display = "none";
-			background.style.display = "block";
-			MicroModal.show('login-modal');
+			showLoginButton();
 		}
 	}
 	window.showHideLoginButton = showHideLoginButton;

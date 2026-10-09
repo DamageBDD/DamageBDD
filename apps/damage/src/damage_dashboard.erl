@@ -64,9 +64,8 @@ logo_image() ->
 %% -------------------------- Page -----------------------------
 render_full_page(Ctx) ->
     %% Assemble from mustache fragments so you can also SSR each piece independently
-    %% page_shell.mustache should call {{{topbar}}}, {{{tabs_bar}}}, etc. (triple-stache = HTML safe)
+    %% page_shell.mustache should call {{{topbar}}}, {{{sidebar}}}, etc. (triple-stache = HTML safe)
     Top = render_tpl(?TPL("topbar.mustache"), Ctx),
-    Tabs = render_tpl(?TPL("tabs_bar.mustache"), Ctx),
     Exec = render_tpl(?TPL("execution_tab.mustache"), Ctx),
     Activity = render_tpl(?TPL("activity_tab.mustache"), Ctx),
     Anal = render_tpl(?TPL("analytics_tab.mustache"), Ctx),
@@ -98,7 +97,7 @@ render_full_page(Ctx) ->
     %% pass the assembled parts into the shell
     PageCtx = Ctx#{
         topbar => Top,
-        tabs_bar => Tabs,
+        sidebar => render_tpl(?TPL("sidebar.mustache"), Ctx#{footer => Foot}),
         execution_tab => Exec,
         activity_tab => Activity,
         analytics_tab => Anal,
@@ -134,8 +133,12 @@ render_component(page, Ctx) ->
     render_full_page(Ctx);
 render_component(topbar, Ctx) ->
     render_tpl(?TPL("topbar.mustache"), Ctx);
+render_component(sidebar, Ctx) ->
+    Footer = render_tpl(?TPL("footer.mustache"), Ctx),
+    render_tpl(?TPL("sidebar.mustache"), Ctx#{footer => Footer});
+%% Keep the existing component URL usable; it now returns sidebar navigation.
 render_component(tabs, Ctx) ->
-    render_tpl(?TPL("tabs_bar.mustache"), Ctx);
+    render_component(sidebar, Ctx);
 render_component(execution_tab, Ctx) ->
     render_tpl(?TPL("execution_tab.mustache"), Ctx);
 render_component(activity_tab, Ctx) ->

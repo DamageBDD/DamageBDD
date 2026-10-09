@@ -1,5 +1,7 @@
 # DamageBDD workspace and ECAI feature composer
 
+The dashboard now uses sidebar navigation. See [dashboard-sidebar.md](dashboard-sidebar.md) for shell integration, patch baselines and navigation tests.
+
 ## Delivery and verification status
 
 This patch was rebased onto the latest uploaded `latest-damage.tar.gz`, SHA-256:
@@ -10,7 +12,7 @@ d1b507eff0673f1cfdae60346b159754a99d0b1201a2e0db968d316f309012ed
 
 The upload contains `apps/damage`, not a complete compiled umbrella. The implementation uses the ECAI interfaces in the saved September 27 code-learning patch: `ecai_codebase_learning:module/2` and `ecai_ollama_client:generate_json/2`. It does not vendor or replace ECAI.
 
-Verified here: five JavaScript files (including the retained billing controller) pass `node --check`; nine Node unit tests pass; twenty-two checks pass in the Chromium fixture suite (including static integration wiring assertions). These exercise the actual composer controller, actual templates/local CSS, the actual execution-in-flight wrapper with a stub execution body, and the line-number script. The preview includes six fixture signatures, not a count of deployed signatures or a live inference result. Full dashboard bootstrap, wallet signing, payment flows, report streaming and the Cowboy endpoints have NOT been exercised end-to-end here.
+Composer verification: nine Node unit tests and twenty-two Chromium fixture checks pass (including static integration wiring assertions). The sidebar adds its own syntax, helper and navigation checks, documented separately. These exercise the actual composer controller, actual templates/local CSS, the actual execution-in-flight wrapper with a stub execution body, and the line-number script. The preview includes six fixture signatures, not a count of deployed signatures or a live inference result. Full dashboard bootstrap, wallet signing, payment flows, report streaming and the Cowboy endpoints have NOT been exercised end-to-end here.
 
 **Erlang compilation, the included EUnit tests, and live ECAI inference have not been run.** No Erlang runtime/compiler or running Damage/ECAI node was available in the build environment. Compile and run the backend tests in the full repository before deploying.
 
@@ -20,20 +22,20 @@ The latest upload adds enterprise invoicing in the same dashboard shell and OTP
 supervisor touched by the composer. The rebase retains `billing.css`, `billing.js`,
 `billing_tab`, the initially hidden `billing-nav` navigation item, the
 `damage_invoice_http` route registration, and the supervised
-`damage_enterprise_invoices` worker. Workspace CSS remains last in stylesheet order.
+`damage_enterprise_invoices` worker. `dashboard-shell.css` follows `dashboard-workspace.css` in stylesheet order.
 The invoice implementation and dashboard billing renderer are not replaced.
 
-The original patch had conflicts in `page_shell.mustache` and `damage_sup.erl`;
-both sides' additions are preserved. The browser fixture now derives placeholder
-panels from the retained navigation links rather than maintaining a fixed list.
-New assertions check combined shell/route/supervisor wiring, resolved tab targets,
-and invoice navigation visibility and switching. The fixture does not execute
+The original composer rebase resolved conflicts in `page_shell.mustache` and
+`damage_sup.erl` while preserving both integrations. The current browser fixture
+renders the actual shell and panel templates. Assertions check combined
+shell/route/supervisor wiring, resolved navigation targets, and invoice
+visibility and switching. The fixture does not execute
 invoice authentication, issuance, email, PDF generation or payment workflows.
 
-Use `damagebdd-dashboard-ecai-rebased.patch` instead of the previous patch. It is a
-complete replacement patch against the uploaded snapshot, not a follow-up patch
-for a working tree that already contains the previous composer changes. The
-upload contains no Git history; no real branch rebase or remote fetch was performed.
+The sidebar delivery includes an incremental patch on top of the rebased
+composer and an alternative combined patch against the uploaded snapshot. Use
+only the patch matching your checkout; see `dashboard-sidebar.md`. The upload
+contains no Git history; no remote fetch or branch rebase was performed.
 
 ## UX review of the uploaded baseline
 

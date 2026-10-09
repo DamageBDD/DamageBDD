@@ -1,0 +1,97 @@
+<!-- -*- mode: html -*- -->
+<aside id="dashboard-sidebar" class="dashboard-sidebar" aria-label="DamageBDD navigation">
+  <div class="dashboard-sidebar-brand">
+    <a class="dashboard-brand" href="#execution-tab" data-dashboard-home title="DamageBDD workspace">
+      <img src="{{logo_image}}" width="36" height="36" alt="" />
+      <span class="dashboard-brand-copy"><strong>DamageBDD</strong><span>Verification workspace</span></span>
+    </a>
+    <button id="dashboard-nav-close" class="dashboard-icon-button dashboard-nav-close" type="button" aria-label="Close navigation"><svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6 6 12 12M6 18 18 6"/></svg></button>
+  </div>
+  <nav id="dashboard-navigation" aria-label="Primary">
+    <section class="dashboard-nav-group" aria-labelledby="dashboard-group-verification">
+      <h2 id="dashboard-group-verification" class="dashboard-nav-heading">Verification</h2>
+      <ul class="dashboard-nav-list">
+        <li>
+          <a id="dashboard-link-execution" href="#execution-tab" data-dashboard-panel="execution-tab" data-nav-title="Workspace" data-nav-group="Verification" data-nav-description="Describe, review and run behaviours" title="Workspace" aria-current="page">
+            <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 9v12"/></svg><span class="dashboard-nav-label">Workspace</span>
+          </a>
+        </li>
+        <li>
+          <a id="dashboard-link-activity" href="#activity-tab" data-dashboard-panel="activity-tab" data-nav-title="Run history" data-nav-group="Verification" data-nav-description="Review previous runs and published reports" title="Run history">
+            <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 11a9 9 0 1 1 2.5 7M3 4v7h7M12 7v5l3 2"/></svg><span class="dashboard-nav-label">Run history</span>
+          </a>
+        </li>
+        <li>
+          <a id="dashboard-link-analytics" href="#analytics-tab" data-dashboard-panel="analytics-tab" data-nav-title="Analytics" data-nav-group="Verification" data-nav-description="Explore on-chain verification activity" title="Analytics">
+            <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 4v16h16M8 15v-4M12 15V7M16 15v-6"/></svg><span class="dashboard-nav-label">Analytics</span>
+          </a>
+        </li>
+        <li>
+          <a id="dashboard-link-schedules" href="#schedules-tab" data-dashboard-panel="schedules-tab" data-nav-title="Schedules" data-nav-group="Verification" data-nav-description="Manage recurring verification runs" title="Schedules">
+            <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M7 3v4M17 3v4M3 11h18M8 15h2M14 15h2"/></svg><span class="dashboard-nav-label">Schedules</span>
+          </a>
+        </li>
+      </ul>
+    </section>
+    <section class="dashboard-nav-group" aria-labelledby="dashboard-group-assets">
+      <h2 id="dashboard-group-assets" class="dashboard-nav-heading">Assets</h2>
+      <ul class="dashboard-nav-list">
+        <li>
+          <a id="dashboard-link-swap-options" href="#swap-options-tab" data-dashboard-panel="swap-options-tab" data-nav-title="Swaps" data-nav-group="Assets" data-nav-description="Explore available swap options" title="Swaps">
+            <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 7h15l-4-4M20 17H5l4 4M19 7l-4 4M5 17l4-4"/></svg><span class="dashboard-nav-label">Swaps</span>
+          </a>
+        </li>
+        <li>
+          <a id="dashboard-link-ecai-jobs" href="#ecai-jobs-tab" data-dashboard-panel="ecai-jobs-tab" data-nav-title="NFTs" data-nav-group="Assets" data-nav-description="Browse verification and ECAI job assets" title="NFTs">
+            <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m12 3 9 5v8l-9 5-9-5V8l9-5ZM3 8l9 5 9-5M12 13v8"/></svg><span class="dashboard-nav-label">NFTs</span>
+          </a>
+        </li>
+        <li id="billing-nav" hidden>
+          <a id="dashboard-link-billing" href="#billing-tab" data-dashboard-panel="billing-tab" data-nav-title="Invoices" data-nav-group="Assets" data-nav-description="Manage private enterprise receivables" title="Invoices">
+            <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3ZM9 7h6M9 11h6M9 15h3"/></svg><span class="dashboard-nav-label">Invoices</span>
+          </a>
+        </li>
+      </ul>
+    </section>
+    {{#node_admin}}
+    <section class="dashboard-nav-group" aria-labelledby="dashboard-group-node">
+      <h2 id="dashboard-group-node" class="dashboard-nav-heading">Node administration</h2>
+      <ul class="dashboard-nav-list">
+        <li>
+          <a id="dashboard-link-node-transactions" href="#node-transactions-tab" data-dashboard-panel="node-transactions-tab" data-nav-title="Transactions" data-nav-group="Node administration" data-nav-description="Inspect node transaction activity" title="Transactions">
+            <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 6h16M4 12h16M4 18h16M8 3v6M16 9v6M8 15v6"/></svg><span class="dashboard-nav-label">Transactions</span>
+          </a>
+        </li>
+        <li>
+          <a id="dashboard-link-node-channels" href="#node-channels-tab" data-dashboard-panel="node-channels-tab" data-nav-title="CLN channels" data-nav-group="Node administration" data-nav-description="Manage node Lightning channels" title="CLN channels">
+            <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="5" cy="12" r="3"/><circle cx="19" cy="5" r="3"/><circle cx="19" cy="19" r="3"/><path d="m8 11 8-5M8 13l8 5"/></svg><span class="dashboard-nav-label">CLN channels</span>
+          </a>
+        </li>
+        <li>
+          <a id="dashboard-link-node-cln-admin" href="#node-cln-admin-tab" data-dashboard-panel="node-cln-admin-tab" data-nav-title="CLN admin" data-nav-group="Node administration" data-nav-description="Administer the node Lightning service" title="CLN admin">
+            <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3ZM8 12l3 3 5-6"/></svg><span class="dashboard-nav-label">CLN admin</span>
+          </a>
+        </li>
+      </ul>
+    </section>
+    {{/node_admin}}
+    <section class="dashboard-nav-group" aria-labelledby="dashboard-group-manage">
+      <h2 id="dashboard-group-manage" class="dashboard-nav-heading">Manage</h2>
+      <ul class="dashboard-nav-list">
+        <li>
+          <a id="dashboard-link-settings" href="#settings-tab" data-dashboard-panel="settings-tab" data-nav-title="Settings" data-nav-group="Manage" data-nav-description="Configure your verification workspace" title="Settings">
+            <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3"/><path d="m9 3-1 3-3 1-2 3 2 2-1 3 3 3 3-1 2 2 3-2 1-3 3-1v-4l-3-1-1-3-3-1-3 2Z"/></svg><span class="dashboard-nav-label">Settings</span>
+          </a>
+        </li>
+      </ul>
+    </section>
+  </nav>
+  <div class="dashboard-sidebar-bottom">
+    <p class="dashboard-sidebar-note">Behaviour verification<br />at planetary scale.</p>
+    <div id="toolbar-btns" class="dashboard-sidebar-actions">
+      <button type="button" id="installBtn" class="dashboard-sidebar-action" data-micromodal-trigger="install-modal" title="Install node"><svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3v12m-5-5 5 5 5-5M5 16v5h14v-5"/></svg><span class="dashboard-nav-label">Install node</span></button>
+      <button type="button" id="logoutBtn" class="dashboard-sidebar-action" data-micromodal-trigger="logout-modal" title="Sign out"><svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M10 4H4v16h6M10 12h10m-4-4 4 4-4 4"/></svg><span class="dashboard-nav-label">Sign out</span></button>
+    </div>
+    {{{footer}}}
+  </div>
+</aside>

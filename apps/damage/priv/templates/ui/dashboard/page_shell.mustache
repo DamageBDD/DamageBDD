@@ -52,7 +52,6 @@
     <link rel="stylesheet" type="text/css" href='/static/css/ecai-jobs.css' />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs/themes/prism-tomorrow.min.css" />
     <link rel="stylesheet" type="text/css" href='/static/css/analytics.css' />
-    <link rel="stylesheet" type="text/css" href='/static/css/slick-tabs.css' />
     <link rel="stylesheet" type="text/css" href='/static/css/reports.css' />
     <link rel="stylesheet" type="text/css" href='/static/css/topbar.css' />
     <link rel="stylesheet" type="text/css" href='/static/css/invoice-modal.css' />
@@ -60,6 +59,11 @@
     <link rel="stylesheet" href="/static/css/nwc.css">
     <link rel="stylesheet" href="/static/css/billing.css">
     <link rel="stylesheet" href="/static/css/dashboard-workspace.css">
+    <link rel="stylesheet" href="/static/css/dashboard-shell.css">
+    <noscript><style>
+      .damage-dashboard [data-dashboard-view][hidden] { display: block !important; }
+      .damage-dashboard #dashboard-nav-toggle, .damage-dashboard #dashboard-nav-close { display: none; }
+    </style></noscript>
 
   </head>
   <body class="damage-dashboard" data-logo-image="{{logo_image}}">
@@ -81,49 +85,53 @@
     {{{ecai_job_detail_modal}}}
     {{{nwc_modal}}}
     <div id="background" aria-hidden="true"></div>
-    {{#authenticated}}<a class="workspace-skip" href="#execution-tab">Skip to workspace</a>{{/authenticated}}
+    {{#authenticated}}<a class="workspace-skip" href="#dashboard-main">Skip to main content</a>{{/authenticated}}
 {{#authenticated}}
-    <div id="content">
-      {{{topbar}}}
-      {{{tabs_bar}}}
+    <div class="dashboard-app" data-dashboard-shell>
+      {{{sidebar}}}
+      <div id="dashboard-main" class="dashboard-main" tabindex="-1">
+        {{{topbar}}}
+        <main id="content" class="dashboard-panels" aria-label="Dashboard content">
 
-      <div id="execution-tab" class="execute-container" tabindex="-1">
-        {{{execution_tab}}}
+          <div id="execution-tab" class="dashboard-panel execute-container" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-execution">
+            {{{execution_tab}}}
+          </div>
+          <div id="activity-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-activity" hidden>
+            {{{activity_tab}}}
+          </div>
+          <div id="analytics-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-analytics" hidden>
+            {{{analytics_tab}}}
+          </div>
+          <div id="schedules-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-schedules" hidden>
+            {{{schedules_tab}}}
+          </div>
+          <div id="billing-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-billing" hidden>
+            {{{billing_tab}}}
+          </div>
+          <div id="settings-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-settings" hidden>
+            {{{settings_tab}}}
+          </div>
+          <div id="swap-options-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-swap-options" hidden>
+            {{{swaps_tab}}}
+          </div>
+          <div id="ecai-jobs-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-ecai-jobs" hidden>
+            {{{gallery_tab}}}
+          </div>
+          {{#node_admin}}
+          <div id="node-transactions-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-node-transactions" hidden>
+            {{{node_transactions_tab}}}
+          </div>
+          <div id="node-channels-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-node-channels" hidden>
+            {{{node_channels_tab}}}
+          </div>
+          <div id="node-cln-admin-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-node-cln-admin" hidden>
+            {{{node_cln_admin_tab}}}
+          </div>
+          {{/node_admin}}
+        </main>
       </div>
-      <div id="activity-tab">
-        {{{activity_tab}}}
-      </div>
-      <div id="analytics-tab">
-        {{{analytics_tab}}}
-      </div>
-      <div id="schedules-tab">
-        {{{schedules_tab}}}
-      </div>
-      <div id="billing-tab">
-        {{{billing_tab}}}
-      </div>
-      <div id="settings-tab">
-        {{{settings_tab}}}
-      </div>
-      <div id="swap-options-tab">
-        {{{swaps_tab}}}
-      </div>
-      <div id="ecai-jobs-tab">
-        {{{gallery_tab}}}
-      </div>
-      {{#node_admin}}
-      <div id="node-transactions-tab">
-        {{{node_transactions_tab}}}
-      </div>
-      <div id="node-channels-tab">
-        {{{node_channels_tab}}}
-      </div>
-      <div id="node-cln-admin-tab">
-        {{{node_cln_admin_tab}}}
-      </div>
-      {{/node_admin}}
+      <div id="dashboard-nav-backdrop" class="dashboard-nav-backdrop" aria-hidden="true" hidden></div>
     </div>
-      {{{footer}}}
 {{/authenticated}}
 
     <script src="https://cdn.jsdelivr.net/npm/prismjs/prism.min.js"></script>
@@ -144,6 +152,7 @@
     <script type='module' src="/static/js/analytics.js" defer></script>
     <script type='module' src="/static/js/pricing.js" defer></script>
 
+    <script type="module" src="/static/js/dashboard-navigation.js"></script>
     <script type='module' src="/static/js/main.js" defer></script>
     <script type="module" src="/static/js/billing.js"></script>
     <script type="module" src="/static/js/bdd-composer.js"></script>

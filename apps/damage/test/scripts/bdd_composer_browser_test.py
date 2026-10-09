@@ -7,27 +7,47 @@ from pathlib import Path
 import argparse
 import base64
 import json
+import html
 import re
 from playwright.sync_api import sync_playwright
 
 APP = Path(__file__).resolve().parents[2]
 
-def build_preview() -> str:
+def render_template(text: str, context: dict) -> str:
+    """Render the scalar/boolean Mustache subset used by the dashboard fixtures."""
+    sections = re.compile(r'{{([#^])\s*(\w+)\s*}}((?:(?!{{[#^]).)*?){{/\s*\2\s*}}', re.S)
+    while sections.search(text):
+        text = sections.sub(lambda m: m[3] if bool(context.get(m[2])) == (m[1] == '#') else '', text)
+    text = re.sub(r'{{{\s*(\w+)\s*}}}', lambda m: str(context.get(m[1], '')), text)
+    return re.sub(r'{{\s*(\w+)\s*}}', lambda m: html.escape(str(context.get(m[1], ''))), text)
+
+def build_preview(node_admin: bool = False) -> str:
     templates = APP / 'priv/templates/ui/dashboard'
     static = APP / 'priv/static'
     shell = (templates / 'page_shell.mustache').read_text()
     css_paths = re.findall(r'href=[\'\"](/static/css/[^\'\"]+)', shell)
     css = '\n'.join((static / path.removeprefix('/static/')).read_text() for path in css_paths)
-    topbar = (templates / 'topbar.mustache').read_text()
     logo = base64.b64encode((static / 'img/logo.png').read_bytes()).decode()
-    topbar = topbar.replace('{{logo_image}}', 'data:image/png;base64,' + logo)
-    tabs = re.sub(r'{{#node_admin}}.*?{{/node_admin}}', '', (templates / 'tabs_bar.mustache').read_text(), flags=re.S)
-    workspace = (templates / 'execution_tab.mustache').read_text()
-    # Keep a target for every retained navigation link, including the invoice tab.
-    # Those panels are placeholders: this fixture does not run billing/wallet APIs.
-    ids = list(dict.fromkeys(re.findall(r'href="#([^"]+)"', tabs)))
-    ids = [panel_id for panel_id in ids if panel_id != 'execution-tab']
-    panels = ''.join(f'<section id="{i}" hidden><h1>{i.removesuffix("-tab").replace("-", " ").title()}</h1><p>This standalone preview covers the workspace. The patch preserves the existing application screens.</p></section>' for i in ids)
+    context = {'logo_image': 'data:image/png;base64,' + logo, 'authenticated': True,
+               'node_admin': node_admin, 'node_version': 'fixture'}
+    context['footer'] = render_template((templates / 'footer.mustache').read_text(), context)
+    context['sidebar'] = render_template((templates / 'sidebar.mustache').read_text(), context)
+    # Use the production shell and server-rendered panels, not an alternate DOM.
+    # Backend/wallet integrations remain simulated and are not exercised here.
+    names = {'swaps_tab': 'swap_options_tab', 'node_cln_admin_tab': 'node_cln_admin',
+             'node_public_key_modal': 'node_details_modal'}
+    for key in re.findall(r'{{{(\w+)}}}', shell):
+        if key in context:
+            continue
+        template = templates / (names.get(key, key) + '.mustache')
+        context[key] = render_template(template.read_text(), context) if template.exists() else ''
+    page_html = render_template(shell, context)
+    page_html = re.sub(r'<script\b[^>]*>.*?</script>', '', page_html, flags=re.S | re.I)
+    page_html = re.sub(r'<link\b[^>]*>', '', page_html, flags=re.I)
+    page_html = re.sub(r'<meta\b[^>]*(?:property|name)=["\'](?:og:|twitter:)[^>]*>', '', page_html, flags=re.I)
+    page_html = page_html.replace('<head>', '<head><style>' + css + '</style>')
+    page_html = page_html.replace('<main id="content"', '<div class="preview-banner"><strong>INTERACTIVE PREVIEW</strong> · Simulated API responses. No wallet, model or target requests.</div><main id="content"')
+    page_html = page_html.replace('</head>', '<style>.preview-banner {padding:8px 12px; background:#172335; color:#c6d3e4; font:11px/1.5 system-ui; text-align:center;} .preview-banner strong {color:#eef3fa;}</style></head>')
     helpers = (static / 'js/bdd-composer-model.js').read_text().replace('export ', '')
     controller = re.sub(r'^import .*?;\s*', '', (static / 'js/bdd-composer.js').read_text(), count=1, flags=re.S)
     main = (static / 'js/main.js').read_text()
@@ -66,7 +86,9 @@ window.fetch = async (url, options = {}) => {
   }
   throw new Error('No live network requests are allowed in this preview.');
 };
-window.TokenManager = {getToken: () => undefined};
+window.TokenManager = {getToken: () => undefined, getAddress: () => 'ak_fixture'};
+window.Reports = {renderRunReports: () => {window.__mock.reportRefreshes = (window.__mock.reportRefreshes || 0) + 1;}};
+async function updateSchedulesTable() {window.__mock.scheduleRefreshes = (window.__mock.scheduleRefreshes || 0) + 1;}
 '''
     setup = r'''
 async function submitDamageFormRequest() {
@@ -81,7 +103,8 @@ async function submitDamageFormRequest() {
 }
 window.__submitDamageForm = submitDamageForm;
 document.addEventListener('DOMContentLoaded', () => {
-  new Tabby('[data-tabs]');
+  initDashboardNavigation();
+  bindDashboardPanelRefresh(window.dashboardNavigation);
   document.getElementById('damageForm').addEventListener('submit', event => {event.preventDefault(); submitDamageForm();});
   document.getElementById('damageTextArea').addEventListener('keydown', event => {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {event.preventDefault(); document.getElementById('damageForm').requestSubmit();}
@@ -95,13 +118,15 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById(id)?.addEventListener('click', event => { event.preventDefault(); alert('Preview only. This action uses the existing dashboard integration in the deployed application.'); });
   }
   document.querySelector('.workspace-reference').addEventListener('click', event => {event.preventDefault(); document.querySelector('.bdd-step-library').open = true; document.getElementById('bdd-step-search').focus();});
-  document.getElementById('activity-link').addEventListener('click', () => document.querySelector('[href="#activity-tab"]').click());
+  document.getElementById('activity-link').addEventListener('click', event => {event.preventDefault(); window.dashboardNavigation.navigate('activity-tab');});
 });
 '''
     # Inline local assets: the downloadable preview works without a server or CDN.
-    script = fixtures + mock + execution_guard + setup + '\n' + (static/'js/tabby.polyfills.min.js').read_text() + '\n' + (static/'js/lineNumbers.js').read_text()
+    navigation = (static / 'js/dashboard-navigation.js').read_text().replace('export ', '')
+    panel_refresh = main[main.index('function bindDashboardPanelRefresh('):main.index('function normalizeIpfsExecutionPath(')]
+    script = navigation + fixtures + mock + execution_guard + panel_refresh + setup + '\n' + (static/'js/lineNumbers.js').read_text()
     safe_script = script.replace('</script', '<\\/script')
-    return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DamageBDD workspace — interactive preview</title><style>{css}</style><style>.preview-banner{{padding:9px 20px;border-bottom:1px solid #354153;color:#c6d3e4;font:12px/1.5 system-ui;text-align:center;background:#172335}} .preview-banner strong{{color:#eef3fa}} </style></head><body class="damage-dashboard"><div class="preview-banner"><strong>INTERACTIVE PREVIEW</strong> · Simulated responses, six fixture signatures. No model, wallet or target requests. Production patch uses live node APIs.</div><a class="workspace-skip" href="#execution-tab">Skip to workspace</a><div id="content">{topbar}{tabs}<main id="execution-tab" class="execute-container" tabindex="-1">{workspace}</main>{panels}</div><script>{safe_script}</script><script type="module">{helpers}\n{controller}</script></body></html>'''
+    return page_html.replace('</body>', f'<script>{safe_script}</script><script type="module">{helpers}\n{controller}</script></body>')
 
 def run(out: Path, chromium: str) -> None:
     out.mkdir(parents=True, exist_ok=True)
@@ -142,7 +167,8 @@ def run(out: Path, chromium: str) -> None:
             assert supervisor.count('start => {' + module + ', start_link, []}') == 1, module
         passed('shell, route and supervisor wiring retain both invoice and composer integrations')
 
-        assert page.evaluate("""() => [...document.querySelectorAll('[data-tabs] a')].every(
+        assert not page.locator('[data-tabs], .tabsbar').count()
+        assert page.evaluate("""() => [...document.querySelectorAll('#dashboard-navigation a[data-dashboard-panel]')].every(
             a => document.getElementById(a.getAttribute('href').slice(1)))""")
         passed('all retained dashboard navigation links resolve to panels')
 
@@ -152,7 +178,7 @@ def run(out: Path, chromium: str) -> None:
         page.locator('[href="#billing-tab"]').click()
         assert page.locator('#billing-tab').is_visible()
         assert page.locator('#execution-tab').is_hidden()
-        page.locator('[data-tabs] [href="#execution-tab"]').click()
+        page.locator('#dashboard-navigation [href="#execution-tab"]').click()
         page.locator('#billing-nav').evaluate('(e) => { e.hidden = true; }')
         assert page.locator('#execution-tab').is_visible()
         assert page.locator('#billing-nav').is_hidden()
