@@ -5,6 +5,10 @@
 -export([trails/0, init/2, is_authorized/2, allowed_methods/2,
          content_types_provided/2, content_types_accepted/2, to_json/2, from_json/2]).
 
+-ifdef(TEST).
+-export([externalize/1]).
+-endif.
+
 -define(TAG, ["ECAI Code Administration"]).
 -define(LIMIT, 8192).
 
@@ -48,12 +52,22 @@ from_json(Req, State) ->
             %% Require an explicit bearer header for all mutations; a cookie
             %% automatically attached by a cross-site request is insufficient.
             case cowboy_req:header(<<"authorization">>, Req, <<>>) of
-                <<"Bearer ", Token/binary>> when byte_size(Token) >= 10 ->
-                    case read_json(Req) of
-                        {ok, Body, Req1} ->
-                            safely(fun() -> respond_post(Req1, State, Actor, Body) end, Req1, State);
-                        {error, Code, Error, Req1} ->
-                            reply(Req1, Code, #{ok => false, error => Error}, State)
+                <<"Bearer ", Token/binary>> when byte_size(Token) >= 10, byte_size(Token) =< 8192 ->
+                    %% Bind this exact bearer token, not merely its presence,
+                    %% to the already authorized principal. No cookie fallback.
+                    case damage_auth:resolve_oauth(Token, #{}) of
+                        {ok, TokenAuth} ->
+                            case actor(TokenAuth) of
+                                {ok, Actor} ->
+                                    case read_json(Req) of
+                                        {ok, Body, Req1} ->
+                                            safely(fun() -> respond_post(Req1, State, Actor, Body) end, Req1, State);
+                                        {error, Code, Error, Req1} ->
+                                            reply(Req1, Code, #{ok => false, error => Error}, State)
+                                    end;
+                                _ -> reply(Req, 403, #{ok => false, error => bearer_identity_rejected}, State)
+                            end;
+                        _ -> reply(Req, 403, #{ok => false, error => invalid_bearer}, State)
                     end;
                 _ -> reply(Req, 403, #{ok => false, error => bearer_required}, State)
             end;
@@ -70,7 +84,8 @@ actor_enabled(State) ->
     %% trust an owner/admin/account field from request JSON or headers.
     case damage_auth:authenticated_account(State) of
         {ok, Account} when is_binary(Account), byte_size(Account) > 0 ->
-            case ecai_node_admin:can_manage_code(Account) of
+            case ecai_node_admin:session_is_node_admin(State) andalso
+                 ecai_node_admin:can_manage_code(Account) of
                 true -> {ok, Account};
                 false -> {error, admin_role_required}
             end;
@@ -203,6 +218,11 @@ externalize(Map) when is_map(Map) -> maps:from_list([
 externalize(L) when is_list(L) -> [externalize(V) || V <- L];
 externalize(T) when is_tuple(T) -> to_binary(io_lib:format("~0tp", [T]));
 externalize(P) when is_pid(P) -> <<"<pid>">>;
+%% Keep JSON authority/eligibility flags boolean, not the truthy string "false".
+externalize(true) -> true;
+externalize(false) -> false;
+externalize(null) -> null;
+externalize(undefined) -> null;
 externalize(A) when is_atom(A) -> atom_to_binary(A, utf8);
 externalize(V) -> V.
 

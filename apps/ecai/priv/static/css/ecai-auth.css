@@ -1,0 +1,28 @@
+/* ECAI embeds DamageBDD's current auth template and controller, not copies. */
+.console-session-kind { font-size:10px; color:var(--muted); white-space:nowrap; }
+.console-auth-status { color:var(--alert); font-size:12px; overflow-wrap:anywhere; margin-bottom:12px; }
+.console-auth-status:empty { display:none; }
+.console-wallet-notice { display:flex; gap:18px; align-items:center; justify-content:space-between; padding:17px 20px; border:1px solid #ccd9fa; background:#edf3ff; border-radius:12px; margin-bottom:22px; }
+.console-wallet-notice strong { color:#284a8c; font-size:13px; }
+.console-wallet-notice p { font-size:12px; margin:6px 0 0; max-width:850px; }
+#login-modal { display:none; --auth-bg:#fff; --auth-panel:#f5f7fc; --auth-line:#dbe3f0; --auth-text:#14223d; --auth-muted:#61718c; --auth-accent:#465dec; }
+#login-modal.is-open { display:block; }
+#login-modal .modal__overlay { position:fixed; inset:0; z-index:80; display:flex; justify-content:center; background:#0d182fa6; }
+#login-modal .auth-modal { margin:auto; }
+#login-modal #login_modal_content { padding:28px; }
+#login-modal .auth-heading { margin:22px 0; }
+#login-modal .auth-brand img { background:#17253c; }
+#login-modal .auth-tabs { background:#f3f6fb; }
+#login-modal .auth-tabs [aria-selected="true"] { background:#fff; color:#3048ca; box-shadow:0 2px 6px #192f7020; }
+#login-modal .auth-mode-note strong, #login-modal label { color:var(--auth-text); }
+#login-modal input, #login-modal pre { background:#fff; }
+#login-modal .auth-primary { color:#fff; }
+#login-modal .auth-primary:hover:not(:disabled) { background:#364dd8; }
+#login-modal .auth-dismiss { display:block; margin-left:auto; padding:0; min-height:30px; }
+#login-modal .auth-confirmation { background:#eaf8f0; color:#176644; }
+#login-modal .auth-confirmation p { color:#35664f; }
+#login-modal .auth-status[data-kind="success"] { color:#19734b; }
+#login-modal .auth-status[data-kind="error"] { color:#922e42; background:#fff0f2; }
+#login-modal .auth-primary, #login-modal .auth-wallet-choice { min-height:46px; }
+@media(max-width:1000px) { .console-session-kind { display:none; } .console-topbar { padding-inline:18px; } }
+@media(max-width:650px) { .console-wallet-notice { flex-direction:column; align-items:flex-start; } .console-topbar { height:auto; min-height:65px; flex-wrap:wrap; padding:10px 14px; gap:8px; } .topbar-actions { flex-wrap:wrap; gap:6px; } .topbar-actions .button { font-size:11px; padding:7px 9px; } #login-modal #login_modal_content { padding:20px; } }

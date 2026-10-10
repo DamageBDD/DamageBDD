@@ -1,3 +1,8 @@
+// Use the current DamageBDD browser-session and authentication modules.
+// Wallet transport remains a lazy import inside auth-wallet-loader.js.
+import {TokenManager, logoutActiveSession} from "/ecai/auth-assets/js/wallet-switcher.js";
+import {initAuthUI} from "/ecai/auth-assets/js/auth-ui.js?v=ecai-browser-v1";
+
 /* ECAI Control Plane. Uses only routes exported by the current ECAI Cowboy handlers. */
 (() => {
   "use strict";
@@ -82,7 +87,7 @@
   const marketExamples = { claim: { miner_ak: "ak_..." }, submit: { miner_ak: "ak_...", attestation: "attestation", evidence_ref: "" }, pay: { admin_ak: "ak_..." } };
   const VIEW_NAMES = { overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing" };
   const state = {
-    authenticated: false, accessToken: null, email: "", view: "overview", jobs: [], presets: [], marketJobs: [],
+    authenticated: false, sessionMode: "anonymous", authEpoch: 0, email: "", view: "overview", jobs: [], presets: [], marketJobs: [],
     nodeAdmin: false, codeAdmin: false, codeFeatureConfigured: false, adminProbeSequence: 0, codeQueue: {}, codeRepairs: [], codeReviews: [], codeReview: null, codeReviewOpenId: "", codeReviewLoadSerial: 0, codeDiffFiles: [], codeDiffSelectedFile: "0",
     selectedIndexId: "", selectedIndexJob: null, jobEntries: new Map(), selectedMarketId: "", activeRoute: -1, lastApiResult: null,
     chatSession: randomHex(16), chatUser: `console-${randomHex(12)}`, chatBusy: false,
@@ -384,9 +389,44 @@
     if (url.origin !== location.origin || !value.startsWith("/")) throw new Error("Only local ECAI endpoints are permitted");
     return url.pathname + url.search;
   }
-  function currentToken() {
-    if (state.accessToken) return state.accessToken;
-    try { return window.TokenManager?.getToken?.() || ""; } catch (_) { return ""; }
+  function currentToken() { return TokenManager.getToken(); }
+  function managedSession() { return state.authenticated && state.sessionMode === "custodial"; }
+  const WALLET_PUBLIC_REQUESTS = new Set([
+    "GET /ecai/auth/session", "GET /ecai/chat", "POST /ecai/chat",
+    "POST /ecai/search", "GET /yelp/status"
+  ]);
+  function walletRequestAllowed(path, method = "GET") {
+    return WALLET_PUBLIC_REQUESTS.has(`${method} ${new URL(path, location.origin).pathname}`);
+  }
+  function applyConsoleCapabilities() {
+    const wallet = state.authenticated && state.sessionMode === "wallet";
+    $("consoleWalletNotice").hidden = !wallet;
+    for (const panel of document.querySelectorAll("[data-ecai-managed]")) {
+      for (const control of panel.querySelectorAll("button, input, select, textarea")) {
+        if (wallet) {
+          if (!control.hasAttribute("data-auth-disabled")) control.dataset.authDisabled = String(control.disabled);
+          control.disabled = true;
+          control.title = "This operation needs a managed email session. Wallet sign-in does not authorize it.";
+        } else if (control.hasAttribute("data-auth-disabled")) {
+          control.disabled = control.dataset.authDisabled === "true";
+          control.removeAttribute("data-auth-disabled");
+          control.removeAttribute("title");
+        }
+      }
+    }
+  }
+  let observedToken = "";
+  function syncBrowserSession() {
+    const session = TokenManager.session();
+    const token = TokenManager.getToken();
+    if (token !== observedToken) {
+      state.authEpoch++;
+      if (state.authenticated) setAuthenticated(false);
+      observedToken = token;
+    }
+    state.sessionMode = session?.mode || "anonymous";
+    state.email = session?.email || session?.address || "";
+    setAuthenticated(Boolean(session), state.email);
   }
   function headers(extra = {}) {
     const h = { Accept: "application/json", ...extra };
@@ -395,19 +435,27 @@
     return h;
   }
   async function request(path, options = {}) {
-    const opts = { credentials: "include", method: options.method || "GET", signal: options.signal, headers: headers(options.headers) };
+    const method = options.method || "GET";
+    if (state.sessionMode === "wallet" && !walletRequestAllowed(path, method))
+      throw new Error("Wallet identity is verified, but this operation requires managed email sign-in.");
+    const epoch = state.authEpoch;
+    const opts = { credentials: "include", mode: "same-origin", redirect: "error", cache: "no-store",
+      method, signal: options.signal, headers: headers(options.headers) };
     if (Object.prototype.hasOwnProperty.call(options, "body")) {
       opts.headers["Content-Type"] = "application/json";
       opts.body = JSON.stringify(options.body);
     }
     const response = await fetch(safePath(path), opts);
     const raw = await response.text();
+    // A response from the previous identity must not refill private/admin panels.
+    if (epoch !== state.authEpoch && !["/ecai/chat", "/yelp/status"].includes(path))
+      throw new DOMException("Session changed", "AbortError");
     let data;
     try { data = raw ? JSON.parse(raw) : {}; } catch (_) { data = { raw: raw.slice(0, 4000) }; }
     if (!response.ok) {
       const error = new Error(`HTTP ${response.status}`);
       error.status = response.status; error.body = data;
-      if (response.status === 401 && !options.ignoreAuth) setAuthenticated(false);
+      if (response.status === 401 && !options.ignoreAuth) TokenManager.logout();
       // 402 can mean an L402 challenge, not a stopped service. Never auto-pay.
       throw error;
     }
@@ -418,7 +466,11 @@
     state.authenticated = !!on;
     if (on && label) state.email = label;
     $("loginBtn").hidden = !!on;
+    $("createAccountBtn").hidden = !!on;
+    $("connectWalletBtn").hidden = !!on;
+    $("switchAccountBtn").hidden = !on;
     $("logoutBtn").hidden = !on;
+    put("consoleSessionKind", !on ? "" : state.sessionMode === "wallet" ? "Wallet · restricted" : "Managed account");
     put("authIdentity", on ? (state.email || "DamageBDD session") : "Guest access");
     if (!on) {
       state.adminProbeSequence++;
@@ -433,7 +485,7 @@
       renderCodeRepairs(); renderCodeReviews();
       showCodeAdminNavigation();
       setCodeActionsEnabled(false);
-      if (state.view === "code") navigate("overview");
+      if (["code", "network"].includes(state.view)) navigate("overview");
       put("codeReviewDetail", "Select a validated repair from the review queue.");
       put("codeReviewDiff", "No patch selected.");
       codeReviewButtons();
@@ -451,80 +503,58 @@
     // The read-only session probe supplies the node-admin role before the
     // privileged API probe. Never infer a role from login success alone.
     if (newlyAuthenticated) state.adminProbeSequence++;
+    applyConsoleCapabilities();
   }
-  function openLogin(message = "") {
-    put("consoleLoginStatus", message);
-    const dlg = $("consoleLoginDialog");
-    if (!dlg.open) { if (dlg.showModal) dlg.showModal(); else dlg.setAttribute("open", ""); }
-  }
-  function closeLogin() {
-    const dlg = $("consoleLoginDialog");
-    if (dlg.open) { if (dlg.close) dlg.close(); else dlg.removeAttribute("open"); }
-  }
-  async function login(event) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const email = form.elements.email.value.trim();
-    const password = form.elements.password.value;
-    if (!email || !password) return;
-    $("consoleLoginSubmit").disabled = true;
-    put("consoleLoginStatus", "Signing in…");
-    try {
-      const response = await fetch("/accounts/auth/", {
-        method: "POST", credentials: "include", headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ username: email, password })
-      });
-      let data = {};
-      try { data = await response.json(); } catch (_) { /* server may return HTML */ }
-      if (response.status === 404) throw new Error("DamageBDD login route is missing on this ECAI listener. Deploy the auth route fix and reload the router.");
-      if (!response.ok || !data.access_token) throw new Error(data.message || data.error || `Authentication failed (HTTP ${response.status})`);
-      state.accessToken = data.access_token;
-      state.email = data.email || email;
-      try {
-        window.TokenManager?.on_custodial_login?.(data.address, state.email, data.access_token);
-        window.TokenManager?.activate?.("custodial");
-      } catch (_) { /* explicit bearer token still works in this tab */ }
-      form.elements.password.value = "";
-      setAuthenticated(true, state.email);
-      closeLogin();
-      toast("Signed in to DamageBDD");
-      await refreshOverview();
-      if (state.view !== "overview") await refreshView();
-    } catch (error) { put("consoleLoginStatus", showError(error)); }
-    finally { $("consoleLoginSubmit").disabled = false; }
+  function openLogin(message = "", mode = "login") {
+    initAuthUI();
+    if (!window.DamageAuth) { toast("Authentication UI unavailable. Reload the matching DamageBDD/ECAI assets.", true); return; }
+    window.DamageAuth.open(mode);
+    if (message) window.DamageAuth.status(message);
   }
   async function logout() {
-    try { await request("/accounts/logout", { method: "POST", body: {} }); } catch (_) { /* clear local state regardless */ }
-    try { window.TokenManager?.logout?.(window.TokenManager?.getMode?.()); } catch (_) { /* optional */ }
-    state.accessToken = null; state.email = "";
-    setAuthenticated(false);
-    toast("Signed out of the console");
+    $("logoutBtn").disabled = true;
+    put("consoleAuthStatus", "Confirming sign-out…");
+    try {
+      // This revokes ds1 server-side; the legacy /accounts/logout only clears cookies.
+      await logoutActiveSession();
+      syncBrowserSession();
+      put("consoleAuthStatus", "Signed out.");
+      location.reload();
+    } catch (error) {
+      put("consoleAuthStatus", "Sign-out could not be confirmed. Retry before leaving this device.");
+      throw error;
+    } finally { $("logoutBtn").disabled = false; }
   }
   async function probeAuth() {
     try {
-      // The index-jobs endpoint invokes the L402 authorization flow on guests.
-      // Probe the account session first; only authenticated clients query jobs.
+      // /accounts/session restores the new revocable ds1 token in memory only.
+      // A 401 there is signed out, never a fallback to an old ae1 credential.
+      await TokenManager.refreshSession();
+      syncBrowserSession();
+      if (!state.authenticated) { state.services.queue = "auth"; return false; }
       const session = await request("/ecai/auth/session", { ignoreAuth: true });
-      if (!session.authenticated) {
-        state.services.queue = "auth";
-        if (state.authenticated) { state.accessToken = null; setAuthenticated(false); }
-        return false;
+      if (!session.authenticated || session.public_key !== TokenManager.getAddress()) {
+        TokenManager.logout();
+        throw new Error("Session identity changed. Sign in again.");
       }
-      if (!state.authenticated) setAuthenticated(true, state.email || session.public_key || "DamageBDD session");
-      // A persisted DamageBDD session may be recovered after deep-linking to
-      // #code. Close the redundant login dialog and load the admin workspace.
-      closeLogin();
       applyCodeSession(session);
-      if (state.view === "network") await window.EcaiIndexPool?.refresh();
-      await probeCodeAccess();
-      if (state.view === "code") await refreshCode();
+      put("consoleAuthStatus", "");
+      if (state.sessionMode === "wallet") {
+        state.services.queue = "restricted";
+        applyConsoleCapabilities();
+        return false; // Do not trigger L402, admin or queue requests for wallet-only sessions.
+      }
+      if (state.nodeAdmin) await probeCodeAccess();
+      if (state.view === "network" && state.nodeAdmin) await window.EcaiIndexPool?.refresh();
+      if (state.view === "code" && state.nodeAdmin) await refreshCode();
       const result = await request("/ecai/index-jobs/status", { ignoreAuth: true });
       state.services.queue = "online";
       updateQueueMetrics(result.status || {});
       return true;
     } catch (error) {
       state.services.queue = error.status === 402 ? "payment" : error.status === 401 ? "auth" : "unavailable";
-      if (error.status === 401) setAuthenticated(false);
+      if (error.status === 401) TokenManager.logout();
+      put("consoleAuthStatus", showError(error));
       return false;
     }
   }
@@ -559,7 +589,7 @@
     put("metricQueued", queued ?? "—"); put("queueQueued", queued ?? "—");
     put("queueWorkers", data.max_concurrency ?? data.active_workers ?? data.workers ?? "—");
   }
-  function statusText(service) { return service === "online" ? "Available" : service === "auth" ? "Sign in required" : service === "payment" ? "Access/L402 challenge (402)" : service === "unavailable" ? "Unavailable" : "Not checked"; }
+  function statusText(service) { return service === "online" ? "Available" : service === "auth" ? "Sign in required" : service === "restricted" ? "Managed sign-in required" : service === "payment" ? "Access/L402 challenge (402)" : service === "unavailable" ? "Unavailable" : "Not checked"; }
   function renderServices() {
     const container = $("overviewServices"); container.replaceChildren();
     for (const [name, key] of [["Local conversation", "chat"], ["Durable indexing", "queue"], ["Yelp index", "yelp"]]) {
@@ -704,7 +734,7 @@
     return 0;
   }
   async function refreshJobs() {
-    if (!state.authenticated) return;
+    if (!managedSession()) return;
     const query = new URLSearchParams({ limit: "50" });
     if (state.view === "indexing" && $("indexState").value) query.set("state", $("indexState").value);
     const data = expectSuccess(await request(`/ecai/index-jobs?${query}`));
@@ -874,7 +904,7 @@
     }
   }
   async function pollJobTelemetry() {
-    if (!state.authenticated || document.hidden || state.view !== "indexing") return;
+    if (!managedSession() || document.hidden || state.view !== "indexing") return;
     const entry = state.jobEntries.get(state.selectedIndexId);
     if (!entry?.item.open || !isRunningLike(entry.job?.state) || entry.telemetryBusy) return;
     entry.telemetryBusy = true;
@@ -882,7 +912,7 @@
     finally { entry.telemetryBusy = false; }
   }
   function jobIsOpen(entry) {
-    return state.authenticated && state.view === "indexing" && !document.hidden &&
+    return managedSession() && state.view === "indexing" && !document.hidden &&
       state.jobEntries.get(entry.id) === entry && entry.item.open && state.selectedIndexId === entry.id;
   }
   function onJobToggle(entry) {
@@ -1020,7 +1050,7 @@
     if (response.job?.id) await selectIndexJob(response.job.id);
   }
   async function refreshIndexing() {
-    if (!state.authenticated) return;
+    if (!managedSession()) return;
     const results = await Promise.allSettled([
       request("/ecai/index-jobs/status"), request("/ecai/index-jobs/presets"), refreshJobs()
     ]);
@@ -1622,7 +1652,7 @@
   }
 
   async function refreshMarket() {
-    if (!state.authenticated) return;
+    if (!managedSession()) return;
     const filter = $("marketStatus").value;
     const data = expectSuccess(await request(`/ecai/market/jobs${queryString({ status: filter })}`));
     state.marketJobs = Array.isArray(data.jobs) ? data.jobs : [];
@@ -1765,7 +1795,7 @@
     put("apiResponse", "No request sent.");
     put("apiResponseMeta", "Ready to send.");
     $("apiCopyResponse").disabled = true;
-    $("apiRequestSubmit").disabled = false;
+    $("apiRequestSubmit").disabled = state.sessionMode === "wallet" && !walletRequestAllowed(route.path, route.method);
     $("apiRequestSubmit").textContent = route.method === "SSE" ? "Track job events ↗" : route.method === "WS" ? "Open socket ↗" : "Send request ↗";
     const pathWrapper = $("apiPathParams"); pathWrapper.replaceChildren();
     for (const key of route.params || []) {
@@ -1848,7 +1878,7 @@
     codeReviewButtons();
   }
   function applyCodeSession(session) {
-    state.nodeAdmin = session?.node_admin === true;
+    state.nodeAdmin = state.sessionMode !== "wallet" && session?.node_admin === true;
     state.codeFeatureConfigured = session?.code_admin_enabled === true;
     // A session capability hint cannot replace a successful privileged API
     // response. Probe the actual role gate before enabling mutation controls.
@@ -2446,6 +2476,10 @@
   }
 
   async function refreshView() {
+    if (state.sessionMode === "wallet" && !["overview", "search", "chat", "api"].includes(state.view)) {
+      applyConsoleCapabilities();
+      return;
+    }
     switch (state.view) {
       case "overview": await refreshOverview(); break;
       case "indexing": await refreshIndexing(); break;
@@ -2469,10 +2503,12 @@
     $("refreshView").addEventListener("click", () => task(refreshView));
     $("refreshHealth").addEventListener("click", () => task(refreshOverview));
     $("loginBtn").addEventListener("click", () => openLogin());
+    $("createAccountBtn").addEventListener("click", () => openLogin("", "signup"));
+    $("connectWalletBtn").addEventListener("click", () => openLogin("", "wallet"));
+    $("switchAccountBtn").addEventListener("click", () => openLogin("Switching replaces this browser session; it does not link accounts."));
+    $("walletManagedLogin").addEventListener("click", () => openLogin("Use managed email sign-in for indexing, private data and node administration."));
+    document.addEventListener("auth:changed", syncBrowserSession);
     $("logoutBtn").addEventListener("click", () => task(logout));
-    $("consoleLoginForm").addEventListener("submit", login);
-    $("consoleLoginClose").addEventListener("click", closeLogin);
-    $("consoleLoginDialog").addEventListener("click", (event) => { if (event.target === $("consoleLoginDialog")) closeLogin(); });
     $("searchForm").addEventListener("submit", search);
     $("chatForm").addEventListener("submit", sendChat);
     $("chatPrompt").addEventListener("keydown", (event) => {
@@ -2578,16 +2614,17 @@
   function init() {
     if (!$("ecaiConsole")) return;
     window.EcaiIndexPool?.init({request, toast, openLogin, currentToken});
+    initAuthUI();
     bindEvents(); resetChat(); fillPrivateExample(); updateMarketActionExample();
     $("indexIdempotency").value = newKey("ecai-job");
-    setAuthenticated(false);
+    syncBrowserSession();
     navigate(location.hash.slice(1) || "overview");
     renderRoutes();
     refreshOverview().catch(() => { renderServices(); });
     state.clockTicker = setInterval(tickJobClocks, 1000);
     state.telemetryPoller = setInterval(() => void task(pollJobTelemetry), 7000);
     state.poller = setInterval(() => {
-      if (document.hidden || !state.authenticated) return;
+      if (document.hidden || !managedSession()) return;
       if (state.view === "code") {
         if (state.codeReview?.status === "publishing") task(refreshCode);
         else if (!state.codeStatusLastPoll || Date.now() - state.codeStatusLastPoll >= 24000) task(refreshCodeStatusOnly);

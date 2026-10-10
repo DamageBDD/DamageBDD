@@ -1,38 +1,37 @@
 """Optional Chromium regression for Wikimedia dataset selection and durable queueing.
 
 Run: python3 apps/ecai/test/test_wikimedia_picker_browser.py
-All requests are mocked; nothing is sent to a real node.
+All requests, origin/storage/reload are mocked. Uses current shared ds1 auth modules; nothing is sent to a real node.
 """
 import asyncio
 import re
+import tempfile
 from pathlib import Path
 from playwright.async_api import async_playwright
 
 APP = Path(__file__).resolve().parents[1]
-HTML = (APP / 'priv/templates/ui/dashboard/ecai_console.mustache').read_text()
-HTML = re.sub(r'<script[^>]+src="[^"]+"[^>]*></script>', '', HTML)
-HTML = re.sub(r'<link[^>]+href="/static/css/ecai-console.css"[^>]*>', '', HTML)
-JS = (APP / 'priv/static/js/ecai-console.js').read_text().replace(
-    '''    const url = new URL(value, location.origin);
-    if (url.origin !== location.origin || !value.startsWith("/")) throw new Error("Only local ECAI endpoints are permitted");
-    return url.pathname + url.search;''',
-    '''    if (!value.startsWith("/")) throw new Error("Test route must be local");
-    return value;''')
-CSS = (APP / 'priv/static/css/ecai-console.css').read_text()
+from test_dashboard_auth_browser import console_html
+from dashboard_auth_dom_fixture import business_fixture_html
+SCREENSHOTS = Path(tempfile.gettempdir())
 MOCK = r'''(() => {
   window.__loggedIn = false;
   window.__posts = [];
   window.__failOnce = true;
   window.__planCount = 0;
   window.confirm = () => true;
-  window.history.replaceState = () => {};
+  const fixtureSession=()=>({authenticated:true,status:'ok',mode:'custodial',
+  address:window.__actor==='reviewerA'?'ak_2a9NeTAfBwLn87TT77raYc6MKmwsZApa3PBLMTwkvcCHkaGpHE':'ak_11111111111111111111111111111111273Yts',
+  email:'operator@example.invalid',access_token:'ds1.'+'1'.repeat(64),expires_at:Math.floor(Date.now()/1000)+3600,
+  capabilities:{execute:true,transfer:true}});
   window.fetch = async (uri, options={}) => {
     const u = new URL(String(uri), 'http://mock.test');
     const path = u.pathname, method = options.method || 'GET';
     let payload = {ok:true}, status = 200;
-    if (path === '/ecai/auth/session') payload = {authenticated:window.__loggedIn, node_admin:false, code_admin:false, public_key: window.__loggedIn ? 'ak-test' : null};
-    else if (path === '/accounts/auth/') {window.__loggedIn = true; payload={access_token:'test_bearer',email:'operator@testing.invalid'};}
-    else if (path === '/accounts/logout') {window.__loggedIn = false;}
+    if(path==='/accounts/auth/options') payload={origin:'https://ecai-auth.test',network_id:'ae_mainnet'};
+    else if(path==='/accounts/session'){payload=window.__loggedIn?fixtureSession():{authenticated:false};status=window.__loggedIn?200:401;}
+    else if (path === '/ecai/auth/session') payload = {authenticated:window.__loggedIn, node_admin:false, code_admin:false, public_key: window.__loggedIn ? fixtureSession().address : null};
+    else if (path === '/accounts/login') {window.__loggedIn = true; payload=fixtureSession();}
+    else if (path === '/accounts/session/logout') {window.__loggedIn = false;}
     else if (path === '/ecai/chat') payload={status:'ok'};
     else if (path === '/yelp/status') payload={index_size:{docs:100}};
     else if (path === '/ecai/index-jobs/status') payload={ok:true,status:{running_jobs:0,queued_jobs:0}};
@@ -75,16 +74,15 @@ async def main():
         errors=[]
         page.on('pageerror', lambda e: errors.append(str(e)))
         await page.goto('about:blank')
-        await page.set_content(HTML)
-        await page.add_style_tag(content=CSS)
-        await page.evaluate(MOCK)
-        await page.add_script_tag(content=JS)
+        await page.set_content(business_fixture_html(console_html(), MOCK))
+        await page.wait_for_function('!!window.DamageAuth')
+        await page.wait_for_timeout(100)
         await page.locator('[data-view="wikimedia"]').click()
         assert await page.locator('#wikiQueueSelected').is_disabled()
         await page.locator('#loginBtn').click()
-        await page.locator('#consoleLoginForm input[name="email"]').fill('operator@testing.invalid')
-        await page.locator('#consoleLoginForm input[name="password"]').fill('mock-secret')
-        await page.locator('#consoleLoginSubmit').click()
+        await page.locator('#login-username').fill('operator@testing.invalid')
+        await page.locator('#password').fill('mock-secret')
+        await page.locator('#loginSubmitBtn').click()
         await page.locator('.wiki-project-card').first.wait_for(state='visible')
         assert await page.locator('.wiki-project-card').count() == 3
         await page.locator('#wikiPresetSearch').fill('German')
@@ -138,11 +136,11 @@ async def main():
         assert custom['body']['options']['limit']==6000
         await page.evaluate('window.scrollTo(0, 0)')
         await page.wait_for_timeout(200)
-        await page.screenshot(path='/mnt/data/ecai-wikimedia-source-picker-desktop.png',full_page=True)
+        await page.screenshot(path=str(SCREENSHOTS/'ecai-wikimedia-source-picker-desktop.png'),full_page=True)
         await page.set_viewport_size({'width':390,'height':844})
         await page.wait_for_timeout(150)
         overflow=await page.evaluate('document.documentElement.scrollWidth-document.documentElement.clientWidth')
-        await page.screenshot(path='/mnt/data/ecai-wikimedia-source-picker-mobile.png',full_page=True)
+        await page.screenshot(path=str(SCREENSHOTS/'ecai-wikimedia-source-picker-mobile.png'),full_page=True)
         assert overflow <= 1, f'Mobile overflow: {overflow}px'
         assert not errors, errors
         print('PASS: guest gate, searchable multi-select, partial queue recovery, per-preset idempotency, catalog release/month picker, validated-plan invalidation, custom enqueue, mobile layout, no JS errors')

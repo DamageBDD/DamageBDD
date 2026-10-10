@@ -1,7 +1,7 @@
 """Optional isolated Chromium test of review-gate UX and live status metrics.
 
 python3 apps/ecai/test/test_code_metrics_browser.py
-Requires playwright + chromium. Simulates node APIs; never pushes to Git.
+Requires playwright + chromium. Uses shared ds1 auth modules with simulated origin/storage/reload and node APIs; never pushes to Git.
 """
 import asyncio
 import re
@@ -10,16 +10,8 @@ from pathlib import Path
 from playwright.async_api import async_playwright
 
 APP = Path(__file__).resolve().parents[1]
-HTML = (APP / 'priv/templates/ui/dashboard/ecai_console.mustache').read_text()
-HTML = re.sub(r'<script[^>]+src="[^"]+"[^>]*></script>', '', HTML)
-HTML = re.sub(r'<link[^>]+href="/static/css/ecai-console.css"[^>]*>', '', HTML)
-JS = (APP / 'priv/static/js/ecai-console.js').read_text().replace(
-    '''    const url = new URL(value, location.origin);
-    if (url.origin !== location.origin || !value.startsWith("/")) throw new Error("Only local ECAI endpoints are permitted");
-    return url.pathname + url.search;''',
-    '''    if (!value.startsWith("/")) throw new Error("Test route must be local");
-    return value;''')
-CSS = (APP / 'priv/static/css/ecai-console.css').read_text()
+from test_dashboard_auth_browser import console_html
+from dashboard_auth_dom_fixture import business_fixture_html
 SCREENSHOTS = Path(tempfile.gettempdir())
 MOCK = r'''(() => {
   window.__actor = null;
@@ -36,17 +28,22 @@ MOCK = r'''(() => {
     patch:'diff --git a/apps/ecai/src/test.erl b/apps/ecai/src/test.erl\n--- a/apps/ecai/src/test.erl\n+++ b/apps/ecai/src/test.erl\n@@ -1 +1 @@\n-old\n+new\n',events:[]
   };
   window.confirm = () => true;
-  window.history.replaceState = () => {};
+  const fixtureSession=()=>({authenticated:true,status:'ok',mode:'custodial',
+  address:window.__actor==='reviewerA'?'ak_2a9NeTAfBwLn87TT77raYc6MKmwsZApa3PBLMTwkvcCHkaGpHE':'ak_11111111111111111111111111111111273Yts',
+  email:'operator@example.invalid',access_token:'ds1.'+'1'.repeat(64),expires_at:Math.floor(Date.now()/1000)+3600,
+  capabilities:{execute:true,transfer:true}});
   window.fetch = async (url, options={}) => {
     const path = String(url).split('?')[0], method=options.method||'GET';
     const actor=window.__actor;
     let payload={ok:true}, status=200;
-    if(path==='/accounts/auth/') {
+    if(path==='/accounts/auth/options') payload={origin:'https://ecai-auth.test',network_id:'ae_mainnet'};
+    else if(path==='/accounts/session'){payload=actor?fixtureSession():{authenticated:false};status=actor?200:401;}
+    else if(path==='/accounts/login') {
       const data=JSON.parse(options.body);
       window.__actor = data.username.includes('reviewer') ? 'reviewerA' : 'publisherB';
-      payload={access_token:'test_bearer_'+window.__actor,email:data.username};
-    } else if(path==='/accounts/logout') { window.__actor=null; }
-    else if(path==='/ecai/auth/session') payload={authenticated:!!actor,node_admin:!!actor && !window.__nonAdmin,code_admin:!!actor && !window.__nonAdmin,public_key:actor||null};
+      payload=fixtureSession();
+    } else if(path==='/accounts/session/logout') { window.__actor=null; }
+    else if(path==='/ecai/auth/session') payload={authenticated:!!actor,node_admin:!!actor && !window.__nonAdmin,code_admin:!!actor && !window.__nonAdmin,auth_mode:'custodial',code_admin_enabled:true,public_key:actor?fixtureSession().address:null};
     else if(path==='/ecai/chat') payload={status:'ok'};
     else if(path==='/yelp/status') payload={index_size:{docs:57}};
     else if(path==='/ecai/index-jobs/status') payload={ok:true,status:{running_jobs:0,queued_jobs:0}};
@@ -85,9 +82,9 @@ MOCK = r'''(() => {
 
 async def login(page, role):
     await page.locator('#loginBtn').click()
-    await page.locator('#consoleLoginForm input[name="email"]').fill(role+'@example.invalid')
-    await page.locator('#consoleLoginForm input[name="password"]').fill('test-only')
-    await page.locator('#consoleLoginSubmit').click()
+    await page.locator('#login-username').fill(role+'@example.invalid')
+    await page.locator('#password').fill('test-only')
+    await page.locator('#loginSubmitBtn').click()
     await page.locator('#codeAdminNav').wait_for(state='visible', timeout=10000)
 
 async def main():
@@ -98,10 +95,9 @@ async def main():
         errors=[]
         page.on('pageerror', lambda e: errors.append(str(e)))
         await page.goto('about:blank')
-        await page.set_content(HTML)
-        await page.add_style_tag(content=CSS)
-        await page.evaluate(MOCK)
-        await page.add_script_tag(content=JS)
+        await page.set_content(business_fixture_html(console_html(), MOCK))
+        await page.wait_for_function('!!window.DamageAuth')
+        await page.wait_for_timeout(100)
         await login(page,'reviewer')
         await page.locator('#codeAdminNav').click()
         await page.locator('#codeMetrics .code-metric').first.wait_for(state='visible')
@@ -148,9 +144,9 @@ async def main():
         await page.locator('#logoutBtn').click()
         await page.evaluate('window.__nonAdmin=true')
         await page.locator('#loginBtn').click()
-        await page.locator('#consoleLoginForm input[name="email"]').fill('ordinary@example.invalid')
-        await page.locator('#consoleLoginForm input[name="password"]').fill('test-only')
-        await page.locator('#consoleLoginSubmit').click()
+        await page.locator('#login-username').fill('ordinary@example.invalid')
+        await page.locator('#password').fill('test-only')
+        await page.locator('#loginSubmitBtn').click()
         await page.wait_for_timeout(200)
         assert await page.locator('#codeAdminNav').is_hidden(), 'Nonadmin must not see review queue'
         assert not errors, errors

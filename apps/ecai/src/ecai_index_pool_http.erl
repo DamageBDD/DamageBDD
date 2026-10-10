@@ -54,7 +54,7 @@ authenticate(Req, <<"POST">>) ->
 authenticate(Req, _) -> actor(damage_auth:authenticate(Req, #{})).
 actor({ok, Auth}) ->
     case damage_auth:authenticated_account(Auth) of
-        {ok, A} -> case ecai_node_admin:is_node_admin(A) of true -> {ok, A}; false -> {error, node_admin_required} end;
+        {ok, A} -> case ecai_node_admin:session_is_node_admin(Auth) of true -> {ok, A}; false -> {error, node_admin_required} end;
         _ -> {error, authenticated_admin_required}
     end;
 actor(_) -> {error, authenticated_admin_required}.

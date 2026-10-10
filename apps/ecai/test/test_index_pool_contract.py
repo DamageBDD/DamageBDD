@@ -14,14 +14,14 @@ class PoolContract(unittest.TestCase):
         for p in ['css/ecai-index-pool.css','js/ecai-index-pool.js']:
             self.assertIn('/static/'+p,t)
             self.assertTrue((APP/'priv/static'/p).is_file())
-        self.assertLess(t.index('src="/static/js/ecai-index-pool.js"'),t.index('src="/static/js/ecai-console.js"'))
+        self.assertLess(t.index('src="/static/js/ecai-index-pool.js"'),t.index('src="/static/js/ecai-console.js'))
     def test_mutations_validate_explicit_bearer(self):
         s=read('src/ecai_index_pool_http.erl')
         body=s.split('authenticate(Req, <<"POST">>) ->',1)[1].split('authenticate(Req, _)')[0]
         self.assertIn('damage_auth:resolve_oauth(Token, #{})',body)
         self.assertNotIn('damage_http:is_authorized',body)
         self.assertIn('byte_size(Raw) =< 16384',s)
-        self.assertIn('ecai_node_admin:is_node_admin(A)',s)
+        self.assertIn('ecai_node_admin:session_is_node_admin(Auth)',s)
     def test_http_client_cannot_supply_actor_source_paths(self):
         s=read('src/ecai_index_pool_http.erl')
         keys=s.split('quote_keys() ->',1)[1].split('\nkeys(')[0]

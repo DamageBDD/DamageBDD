@@ -4,9 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="ECAI node control plane: search, conversational access, indexing, private knowledge and operations">
+  <meta name="referrer" content="no-referrer">
   <meta name="theme-color" content="#101b32">
   <title>ECAI · Control plane</title>
   <link rel="stylesheet" href="/static/css/ecai-console.css">
+  <link rel="stylesheet" href="/ecai/auth-assets/css/auth.css">
+  <link rel="stylesheet" href="/static/css/ecai-auth.css">
   <link rel="stylesheet" href="/static/css/ecai-index-pool.css">
 </head>
 <body>
@@ -50,13 +53,22 @@
           <span class="topbar-runtime" id="topbarRuntime">Connecting to node…</span>
           <button type="button" id="refreshView" class="icon-button refresh-icon" title="Refresh current view" aria-label="Refresh current view">↻</button>
           <span class="topbar-divider" aria-hidden="true"></span>
+          <span class="console-session-kind" id="consoleSessionKind"></span>
           <span class="signed-in" id="authIdentity">Guest access</span>
           <button type="button" class="button button-outline button-sm" id="loginBtn">Sign in</button>
+          <button type="button" class="button button-outline button-sm" id="createAccountBtn">Create account</button>
+          <button type="button" class="button button-primary button-sm" id="connectWalletBtn">Connect wallet</button>
+          <button type="button" class="button button-outline button-sm" id="switchAccountBtn" hidden>Switch account</button>
           <button type="button" class="button button-outline button-sm" id="logoutBtn" hidden>Sign out</button>
         </div>
       </header>
 
       <main class="console-main" id="consoleMain">
+        <div id="consoleAuthStatus" class="console-auth-status" role="status" aria-live="polite"></div>
+        <aside id="consoleWalletNotice" class="console-wallet-notice" hidden>
+          <div><strong>Wallet identity verified · restricted session</strong><p>Public search and conversation are available. Indexing, private corpora, node administration and Lightning rewards require managed email sign-in. Connecting a wallet does not authorize payments or link it to an email account.</p></div>
+          <button type="button" id="walletManagedLogin" class="button button-outline button-sm">Sign in with email</button>
+        </aside>
         <section class="view is-visible" data-panel="overview" aria-labelledby="overviewTitle">
           <div class="welcome-banner">
             <div>
@@ -106,7 +118,7 @@
           </div>
         </section>
 
-        <section class="view" data-panel="indexing" aria-labelledby="indexTitle" hidden>
+        <section class="view" data-panel="indexing" data-ecai-managed aria-labelledby="indexTitle" hidden>
           <div class="page-intro page-intro-actions"><div><div class="eyebrow">DURABLE PIPELINE</div><h1 id="indexTitle">Index jobs</h1><p>Enqueue curated sources, inspect persisted jobs and follow execution events.</p></div><a class="button button-outline" href="/indexer/advanced">Advanced builder ↗</a></div>
           <div class="three-stats"><div class="surface mini-stat"><span>Running</span><strong id="queueRunning">—</strong></div><div class="surface mini-stat"><span>Queued</span><strong id="queueQueued">—</strong></div><div class="surface mini-stat"><span>Concurrency</span><strong id="queueWorkers">—</strong></div></div>
           <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">QUICK START</div><h2>Wikimedia presets</h2></div><button type="button" id="reloadPresets" class="text-button">Reload presets ↻</button></div><div id="indexPresets" class="preset-grid"><div class="empty-state">Sign in to load available presets.</div></div></section>
@@ -131,7 +143,7 @@
 }</textarea><label for="indexIdempotency">Idempotency key</label><div class="inline-actions"><input id="indexIdempotency" required placeholder="Unique request key"><button type="button" class="button button-outline" id="newIdempotency">Generate</button><button type="submit" class="button button-primary">Queue job</button></div></form></div></details>
         </section>
 
-        <section class="view" data-panel="wikimedia" aria-labelledby="wikiTitle" hidden>
+        <section class="view" data-panel="wikimedia" data-ecai-managed aria-labelledby="wikiTitle" hidden>
           <div class="page-intro"><div class="eyebrow">WIKIMEDIA · DURABLE INDEXING</div><h1 id="wikiTitle">Choose what to index</h1><p>Pick one or more server-approved datasets, or configure an exact release and month window. Review the selection before it joins the index queue.</p></div>
 
           <section class="surface panel-pad wiki-picker-surface" aria-labelledby="wikiPresetTitle">
@@ -176,25 +188,25 @@
           </div>
         </section>
 
-        <section class="view" data-panel="knowledge" aria-labelledby="knowledgeTitle" hidden>
+        <section class="view" data-panel="knowledge" data-ecai-managed aria-labelledby="knowledgeTitle" hidden>
           <div class="page-intro"><div class="eyebrow">STRUCTURED KNOWLEDGE</div><h1 id="knowledgeTitle">Knowledge &amp; privacy</h1><p>Encode structured facts and access account-scoped corpora through authenticated REST operations.</p></div>
           <div class="two-column"><section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">LEGACY EKEF</div><h2>Knowledge minting</h2></div><span class="status-tag">May incur chain fees</span></div><p class="context-hint">The existing /ecai/ekef route requires a configured server-side signing keypair. Confirm any minting attempt before submitting.</p><form id="ekefForm" class="stack-form"><label>Subject<input name="subject" required placeholder="ECAI"></label><label>Predicate<input name="predicate" required placeholder="indexes"></label><label>Object<input name="object" required placeholder="knowledge"></label><label>Context<input name="context" required placeholder="demonstration"></label><button type="submit" class="button button-primary">Submit knowledge ↗</button></form><pre id="ekefOutput" class="code-display">No knowledge submitted.</pre></section>
             <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">ACCOUNT-SCOPED</div><h2>Private corpus</h2></div><span class="privacy-label">PRIVATE</span></div><p class="context-hint">The server derives the principal from DamageBDD authentication; do not submit owner IDs, credentials or keys in request JSON.</p><form id="privateForm" class="stack-form"><label>Corpus identifier<input id="privateCorpus" required placeholder="my-corpus" pattern="[A-Za-z0-9_-]+" maxlength="80"></label><label>Operation<select id="privateAction"><option value="search">Search</option><option value="fetch">Fetch by ID</option><option value="index">Index batch</option><option value="ask">Ask with configured destination</option></select></label><label>Request JSON<textarea id="privatePayload" class="code-input" rows="7" spellcheck="false" required>{"query":"example","limit":8}</textarea></label><div class="inline-actions"><button type="button" class="button button-outline button-sm" id="privateExample">Insert example</button><button type="submit" class="button button-primary">Run private operation</button></div></form><pre id="privateOutput" class="code-display">Responses are only held in this browser session.</pre></section></div>
         </section>
 
-        <section class="view" data-panel="marketplace" aria-labelledby="marketTitle" hidden>
+        <section class="view" data-panel="marketplace" data-ecai-managed aria-labelledby="marketTitle" hidden>
           <div class="page-intro"><div class="eyebrow">DECENTRALIZED WORK</div><h1 id="marketTitle">Marketplace jobs</h1><p>Experimental local chunk-job workflow. <strong>Disabled by default</strong>; set <code>marketplace_enabled = true</code> to enable. State is not durable, and marking a job paid does not transfer funds on-chain.</p></div>
           <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">ACTIVE MARKET</div><h2>Published work</h2></div><div class="inline-actions"><select id="marketStatus" aria-label="Filter marketplace status"><option value="any">All statuses</option><option>open</option><option>claimed</option><option>submitted</option><option>paid</option><option>cancelled</option></select><button type="button" id="marketRefresh" class="button button-outline button-sm">Refresh</button></div></div><div class="table-scroll"><table class="data-table"><thead><tr><th>ID</th><th>Status</th><th>Owner</th><th>Reward</th><th></th></tr></thead><tbody id="marketRows"><tr><td colspan="5" class="empty-cell">Sign in to view marketplace jobs.</td></tr></tbody></table></div></section>
           <div class="two-column"><section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">PUBLISH</div><h2>Create chunk work</h2></div></div><form id="publishForm" class="stack-form"><label>Owner account<input name="owner_ak" required placeholder="ak_…"></label><label>Market contract<input name="market_ct" required placeholder="ct_…"></label><label>Input paths (one per line)<textarea name="paths" rows="3" placeholder="/data/chunk-001.ndjson"></textarea></label><div class="field-grid"><label>Reward (DAMAGE units)<input name="reward_damage" type="number" min="1" step="1" required></label><label>TTL in blocks<input name="ttl_blocks" type="number" min="1" step="1" required></label></div><button type="submit" class="button button-primary">Publish jobs</button></form></section><section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">JOB INSPECTOR</div><h2>Claims &amp; local status</h2></div></div><p id="marketSelection" class="context-hint">Select a marketplace job to inspect or update it.</p><pre id="marketDetail" class="code-display">No job selected.</pre><form id="marketActionForm" class="stack-form"><label>Action<select id="marketAction"><option value="claim">Claim</option><option value="submit">Submit proof</option><option value="pay">Mark paid (local only)</option></select></label><label>Action JSON<textarea class="code-input" id="marketActionBody" rows="5" required>{"miner_ak":"ak_..."}</textarea></label><button type="submit" id="marketActionSubmit" class="button button-primary" disabled>Run on selected job</button></form></section></div>
         </section>
 
-        <section class="view" data-panel="operations" aria-labelledby="opsTitle" hidden>
+        <section class="view" data-panel="operations" data-ecai-managed aria-labelledby="opsTitle" hidden>
           <div class="page-intro"><div class="eyebrow">NODE OPERATIONS</div><h1 id="opsTitle">Ingestion &amp; runtime</h1><p>Inspect Yelp loader state and run server-side ingestion and publication steps deliberately.</p></div>
           <div class="two-column"><section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">YELP INGESTION</div><h2>Pipeline status</h2></div><button type="button" class="button button-outline button-sm" id="yelpStatusBtn">Refresh status</button></div><pre id="yelpStatusOutput" class="code-display">Status not loaded.</pre><div class="inline-actions wrap-actions"><button type="button" class="button button-outline button-sm" id="yelpJobBtn">Chunk job</button><button type="button" class="button button-outline button-sm danger-outline" id="yelpCancelBtn">Cancel chunk job</button></div><pre id="yelpJobOutput" class="code-display">No chunk job selected.</pre></section><section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">NEW INGESTION</div><h2>Start chunking</h2></div></div><form id="yelpChunkForm" class="stack-form"><label>Input filename (on server)<input name="in" required placeholder="yelp_academic_dataset_business.json"></label><label>Output subdirectory<input name="out_dir" required value="chunks"></label><label>Lines per chunk<input name="chunk_size" type="number" min="1" step="1" value="5000" required></label><button type="submit" class="button button-primary">Start async chunk job</button></form><hr class="section-rule"><form id="yelpAssignForm" class="inline-actions"><label class="compact-field">Cluster ID<input name="cluster_id" type="number" min="0" value="0" required></label><label class="compact-field">Cluster size<input name="cluster_size" type="number" min="1" value="4" required></label><button type="submit" class="button button-outline">Assign shards</button></form><div class="inline-actions wrap-actions"><button type="button" id="yelpPinBtn" class="button button-outline button-sm">Pin chunks to IPFS</button><button type="button" id="yelpHeadersBtn" class="button button-outline button-sm">Export term headers</button><button type="button" id="yelpManifestBtn" class="button button-outline button-sm">Build manifest</button></div><pre id="yelpActionOutput" class="code-display">No operation run.</pre></section></div>
           <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">SOCKET</div><h2>WebSocket inspector</h2></div><span class="small muted">/ecai/ws/</span></div><div class="inline-actions wrap-actions"><button type="button" id="wsConnect" class="button button-outline button-sm">Connect</button><button type="button" id="wsPing" class="button button-outline button-sm" disabled>Ping</button><button type="button" id="wsPrice" class="button button-outline button-sm" disabled>Get price</button><button type="button" id="wsDisconnect" class="button button-outline button-sm" disabled>Disconnect</button></div><pre id="wsOutput" class="code-display">Not connected.</pre></section>
         </section>
 
-        <section class="view" data-panel="code" aria-labelledby="codeTitle" hidden>
+        <section class="view" data-panel="code" data-ecai-managed aria-labelledby="codeTitle" hidden>
           <div class="page-intro"><div class="eyebrow">NODE ADMINISTRATION · REVIEW GATE</div><h1 id="codeTitle">Code learning &amp; repair</h1><p>Inspect durable learning and repair activity, review verifier-validated Git diffs, and publish human-approved changes to a dedicated <code>origin</code> review branch. Nothing publishes automatically.</p></div>
           <div class="surface panel-pad">
             <div class="panel-heading"><div><div class="eyebrow">LEARNING CYCLE</div><h2>Code intelligence &amp; repair workers</h2></div><button type="button" class="button button-outline button-sm" id="codeRefresh">Refresh</button></div>
@@ -273,7 +285,7 @@
           </div>
         </section>
 
-        <section class="view" data-panel="network" aria-labelledby="poolTitle" hidden>
+        <section class="view" data-panel="network" data-ecai-managed aria-labelledby="poolTitle" hidden>
           <div class="page-intro page-intro-actions"><div><div class="eyebrow">PAID INDEXING · NODE ADMIN</div><h1 id="poolTitle">Fund an index.</h1><p>Set a satoshi budget. Your approved DamageBDD nodes build and independently verify the segments.</p></div><button type="button" id="poolRefresh" class="button button-outline">Refresh</button></div>
           <div id="poolNotice" class="pool-notice" role="status" aria-live="polite">Checking the indexing pool…</div>
           <div id="poolMetrics" class="pool-metrics" aria-label="Funded indexing totals"></div>
@@ -314,17 +326,9 @@
     <div class="mobile-scrim" id="mobileScrim" hidden></div>
   </div>
 
-  <dialog id="consoleLoginDialog" class="auth-dialog" aria-labelledby="consoleLoginTitle">
-    <form id="consoleLoginForm" class="stack-form">
-      <div class="login-header"><div><div class="eyebrow">SECURE ACCESS</div><h2 id="consoleLoginTitle">Sign in to DamageBDD</h2><p>Use the same account as your existing node dashboard.</p></div><button type="button" class="icon-button" id="consoleLoginClose" aria-label="Close sign in">×</button></div>
-      <label>Email<input name="email" type="email" autocomplete="username" required></label>
-      <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
-      <p id="consoleLoginStatus" class="form-error" role="status" aria-live="polite"></p>
-      <button type="submit" id="consoleLoginSubmit" class="button button-primary">Sign in</button>
-    </form>
-  </dialog>
-  <script type="module" src="/static/js/sidekick.js"></script>
+  {{{browser_auth_modal}}}
+  <script src="/ecai/auth-assets/js/micromodal.min.js"></script>
   <script type="module" src="/static/js/ecai-index-pool.js"></script>
-  <script type="module" src="/static/js/ecai-console.js"></script>
+  <script type="module" src="/static/js/ecai-console.js?v=browser-auth-v1"></script>
 </body>
 </html>

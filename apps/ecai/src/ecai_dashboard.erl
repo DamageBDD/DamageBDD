@@ -69,12 +69,12 @@ to_html(Req, #{action := index} = State) ->
                     <<"ecai.chat">> -> "ecai_chat.mustache";
                     _ -> application:get_env(ecai, default_page, "ecai_console.mustache")
                 end,
-            {render_tpl(?DASH_TPL(Template), Ctx), Req, State};
+            {render_dashboard_page(Template, Ctx), Req, State};
         _ ->
             {render_dashboard_component(Component, Ctx), Req, State}
     end;
 to_html(Req, #{action := dashboard} = State) ->
-    {render_tpl(?DASH_TPL("ecai_console.mustache"), base_context(Req)), Req, State};
+    {render_dashboard_page("ecai_console.mustache", base_context(Req)), Req, State};
 to_html(Req, #{action := search} = State) ->
     {render_tpl(?DASH_TPL("ecai_search.mustache"), base_context(Req)), Req, State};
 to_html(Req, #{action := chat} = State) ->
@@ -185,6 +185,14 @@ render_advanced_indexer_component(<<"page">>, Ctx) ->
     render_advanced_indexer_page(Ctx);
 render_advanced_indexer_component(_, _) ->
     <<>>.
+
+render_dashboard_page("ecai_console.mustache", Ctx) ->
+    AuthCtx = #{logo_image => <<"/ecai/auth-assets/img/logo.png">>,
+                auth_auto_open => <<"false">>, auth_callback_path => <<"/dashboard">>,
+                auth_allow_guest => true, auth_hide_node_wallet => true},
+    AuthHtml = damage_utils:load_template(damage, "ui/dashboard/auth_modal.mustache", AuthCtx),
+    render_tpl(?DASH_TPL("ecai_console.mustache"), Ctx#{browser_auth_modal => AuthHtml});
+render_dashboard_page(Template, Ctx) -> render_tpl(?DASH_TPL(Template), Ctx).
 
 %% ---------------------- Rendering helper ---------------------
 render_tpl(TemplateRelPath, Context) ->

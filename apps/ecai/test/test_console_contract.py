@@ -46,7 +46,12 @@ class ConsoleContractTests(unittest.TestCase):
         self.assertTrue(JS.is_file())
         self.assertTrue(CSS.is_file())
         for asset in self.markup.scripts + self.markup.styles:
-            self.assertTrue((APP / 'priv/static' / asset.removeprefix('/static/')).is_file(), asset)
+            path = asset.split('?', 1)[0]
+            if path.startswith('/ecai/auth-assets/'):
+                source = APP.parent / 'damage/priv/static' / path.removeprefix('/ecai/auth-assets/')
+            else:
+                source = APP / 'priv/static' / path.removeprefix('/static/')
+            self.assertTrue(source.is_file(), asset)
 
     def test_dom_ids_are_unique_and_used(self):
         self.assertEqual(len(self.markup.ids), len(set(self.markup.ids)))
@@ -257,7 +262,7 @@ class ConsoleContractTests(unittest.TestCase):
         self.assertIn('{marketplace_enabled, false}', (APP/'src/ecai.app.src').read_text(encoding='utf-8'))
 
 class ConsoleAuthContractTests(unittest.TestCase):
-    def test_account_routes_are_limited_to_login_logout(self):
+    def test_shared_browser_routes_and_legacy_indexer_routes_are_explicit(self):
         source = (APP/'src/ecai_app.erl').read_text(encoding='utf-8')
         self.assertIn('"/accounts/auth/", damage_accounts', source)
         self.assertIn('"/accounts/logout", damage_accounts', source)
@@ -281,7 +286,7 @@ class ConsoleAuthContractTests(unittest.TestCase):
         policy = (APP/'src/ecai_node_admin.erl').read_text(encoding='utf-8')
         http = (APP/'src/ecai_code_admin_http.erl').read_text(encoding='utf-8')
         js = JS.read_text(encoding='utf-8')
-        self.assertIn('ecai_node_admin:is_node_admin(PublicKey)', auth)
+        self.assertIn('ecai_node_admin:session_is_node_admin(Auth)', auth)
         self.assertIn('code_admin_enabled => CodeEnabled', auth)
         self.assertIn('ecai_node_admin:can_manage_code(Account)', http)
         self.assertIn('application:get_env(damage, node_admins, [])', policy)

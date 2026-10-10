@@ -113,29 +113,34 @@ at durable transitions and preserve it through pause, retry and restart.
 
 ## Authentication and privacy
 
-The Sign in dialog posts to `/accounts/auth/` on the *ECAI listener*. The
-ECAI router now mounts only the existing `damage_accounts` login and logout
-handlers at `/accounts/auth/` and `/accounts/logout`. The ECAI application
-already depends on the `damage` application; no second password database,
-OAuth service, or cross-origin credential POST is introduced. This avoids a
-404 when `ecai.damagebdd.com` is routed to the ECAI port (default 9003)
-instead of the DamageBDD HTTP port.
+The main console renders DamageBDD's shared email, Create account, recovery and
+wallet panels. It mounts the current browser-auth routes on the ECAI listener,
+using an explicit `ecai.browser_auth_origin`. Set this to the public ECAI HTTPS
+origin; leave DamageBDD's own browser origin unchanged. Shared auth assets are
+served from DamageBDD under `/ecai/auth-assets/`, not duplicated in ECAI.
 
-`GET /ecai/auth/session` is a read-only, no-store probe using
-`damage_auth:authenticate/2`. It returns only `authenticated`, `public_key`,
-and `node_admin`, never secrets or tokens, and **does not generate an L402
-invoice**. The UI probes it before reading protected `/ecai/index-jobs/*`
-endpoints. A 402 on the protected endpoint is displayed as an access/payment
-challenge, not silently treated as a network failure. No payments are made
-automatically.
+Email login uses `/accounts/login`. Signup requests the existing email-confirmation
+workflow at `/accounts/signup`; it does not log in automatically. Recovery uses
+`/accounts/recovery`. Wallet sign-in connects, displays an origin-bound challenge,
+and asks for an explicit signature before server verification. Mobile callbacks
+return to `/dashboard`. No address-only login or automatic spending is introduced.
 
-Authenticated REST requests pass the Bearer token and include same-origin
-cookies. When available, the existing `sidekick.js` `TokenManager` is also
-notified; no alternative account authority or anonymous fallback is added.
-The client never stores private-corpus responses in persistent storage. The
-`/ecai/private/...` service derives the corpus owner from server-side
-`damage_auth` state, and the console rejects user-supplied key/owner/provider
-fields.
+`/accounts/session` restores the revocable `ds1` browser bearer into memory.
+`/accounts/session/logout` revokes the session; legacy `/accounts/logout` only
+clears a cookie and is no longer used by this console. Older separate indexer
+pages retain their existing routes. Tokens are not saved in localStorage, and a
+failed switch preserves the current account until a new identity is verified.
+
+`GET /ecai/auth/session` returns sanitized identity, auth mode and server-derived
+node/code-admin flags without an L402 invoice. Wallet sessions remain restricted,
+even when their account is configured as a node admin. The console skips their
+protected polling and explains which operations need managed email sign-in.
+Funded-indexing and code-review APIs also enforce this boundary server-side.
+
+Authenticated REST requests use the shared `TokenManager` bearer and same-origin
+cookies. The session endpoint deliberately exposes the bearer to same-origin JS;
+this is not an HttpOnly-only/XSS-proof design. Read [browser-auth.md](browser-auth.md)
+for deployment, source-review findings, permission scope and tests.
 
 **Important security boundaries**:
 
@@ -172,7 +177,8 @@ DamageBDD node administrators *when* `code_admin_enabled=true`; a nonempty
 list further restricts access to the intersection of the lists. An account
 listed only in the ECAI allowlist is **never** elevated to node admin.
 The ID must match `damage_auth:authenticated_account/1`, not a client-supplied
-`owner` or an email address. Two **different** node-admin accounts are needed
+`owner` or an email address. The server-authenticated session must itself carry
+node-admin authority; wallet-only sessions never qualify. Two **different** node-admin accounts are needed
 to complete an approve + publish cycle: the publisher cannot be an approving
 reviewer.
 
@@ -338,13 +344,12 @@ previous review; stale asynchronous detail responses are ignored. The existing
 server-side hash, revision, role, verification, separate-publisher and
 no-force-push checks are unchanged.
 
-A restored cookie session may authenticate read-only requests but not carry an
-explicit bearer token. The server **requires `Authorization: Bearer ...` for
-all patch mutations** and returns `403 bearer_required` without it. The
-console therefore disables approval/rejection/publication for cookie-only
-sessions and offers **Sign in for review actions**. It never accepts cookie-only
-patch mutations or sends credentials from a stored patch record. Approval is
-still not publication; `code_review_push_enabled` defaults to `false`.
+A restored current browser session retrieves its `ds1` bearer from
+`/accounts/session` into memory. Patch mutations require that explicit bearer,
+validated against the same authenticated admin principal. If no valid bearer
+is available the console disables decisions and offers sign-in. Wallet-only
+sessions cannot approve or publish. Approval is still not publication;
+`code_review_push_enabled` and independent-publisher checks remain unchanged.
 
 ### Operator metrics and publication-gate diagnostics
 

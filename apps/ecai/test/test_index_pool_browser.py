@@ -1,7 +1,7 @@
 """Real Chromium + mocked HTTP: no CLN, funding or real work is executed.
 
 Run with Python Playwright and Chromium. Screenshots go to ECAI_SCREENSHOTS
-(or the system temporary directory). This tests browser integration only.
+(or the system temporary directory). This tests DOM integration with simulated origin/storage/reload only.
 """
 import asyncio
 import copy
@@ -9,6 +9,9 @@ import hashlib
 import json
 import os
 import re
+import time
+from test_dashboard_auth_browser import console_html
+from dashboard_auth_dom_fixture import business_fixture_html
 from types import SimpleNamespace
 import tempfile
 from pathlib import Path
@@ -18,7 +21,7 @@ from playwright.async_api import async_playwright
 APP = Path(__file__).resolve().parents[1]
 OUT = Path(os.environ.get('ECAI_SCREENSHOTS', tempfile.gettempdir()))
 ROOT = '/ecai/admin/index-pool'
-OWNER = 'ak_creator_demo'
+OWNER = 'ak_2a9NeTAfBwLn87TT77raYc6MKmwsZApa3PBLMTwkvcCHkaGpHE'
 LN = '02' + '1'*64
 PLAN = 'a'*64
 UNITS = [dict(id=str(i)*64,ordinal=i,bytes=i*2000000,lines=i*100) for i in [1,2,3]]
@@ -32,6 +35,11 @@ class Backend:
         self.auth=False; self.admin=True; self.token=True; self.fail_create=True
         self.posts=[]; self.jobs=[]; self.peers=[peer('desktop-a',2)]; self.status_calls=0
         self.delay_status=0; self.op=None
+
+    def session(self):
+        return dict(authenticated=True,status='ok',mode='custodial',address=OWNER,
+            access_token='ds1.'+'1'*64,email='admin@example.invalid',expires_at=int(time.time())+3600,
+            capabilities=dict(execute=True,transfer=True))
 
     def status(self):
         return dict(enabled=True,actor=OWNER,network='regtest',payments_enabled=True,
@@ -77,10 +85,13 @@ class Backend:
             p=APP/'priv'/path.lstrip('/')
             return await route.fulfill(body=p.read_text(),content_type='text/css' if p.suffix=='.css' else 'text/javascript')
         body=json.loads(r.post_data or '{}'); result={}; code=200
-        if path=='/accounts/auth/':
-            self.auth=True; result=dict(access_token='demo_explicit_token_12345',email='admin@example.invalid')
-        elif path=='/accounts/logout': self.auth=False; result=dict(ok=True)
-        elif path=='/ecai/auth/session': result=dict(authenticated=self.auth,node_admin=self.auth and self.admin,public_key=OWNER,code_admin_enabled=True)
+        if path=='/accounts/auth/options': result=dict(origin='https://ecai-auth.test',network_id='ae_mainnet')
+        elif path=='/accounts/session':
+            result=self.session() if self.auth else dict(authenticated=False);code=200 if self.auth else 401
+        elif path=='/accounts/login':
+            self.auth=True; result=self.session()
+        elif path=='/accounts/session/logout': self.auth=False; result=dict(ok=True)
+        elif path=='/ecai/auth/session': result=dict(authenticated=self.auth,node_admin=self.auth and self.admin,public_key=OWNER,auth_mode="custodial",code_admin_enabled=True)
         elif path=='/ecai/chat': result=dict(status='ok')
         elif path=='/yelp/status': result=dict(index_size=dict(docs=10))
         elif path=='/ecai/index-jobs/status': result=dict(ok=True,status=dict(running_jobs=0,queued_jobs=0,canceled_checkpoint_retry=True))
@@ -135,30 +146,24 @@ async def load_fixture(page, backend):
         await backend.route(fake)
         return dict(status=captured.get('status',200),body=captured.get('body',''))
     await page.expose_function('__pool_http_fixture', bridge)
-    html=(APP/'priv/templates/ui/dashboard/ecai_console.mustache').read_text()
-    html=re.sub(r'<script[^>]*src="[^"]+"[^>]*></script>','',html)
-    html=re.sub(r'<link[^>]*href="[^"]+"[^>]*>','',html)
-    await page.goto('about:blank'); await page.set_content(html.replace('{{node_version}}','browser test'))
-    for name in ['ecai-console.css','ecai-index-pool.css']:
-        await page.add_style_tag(content=(APP/'priv/static/css'/name).read_text())
-    await page.evaluate("""() => {
+    mock = """
       window.confirm=()=>true; window.__exports=[];
       HTMLAnchorElement.prototype.click=function(){window.__exports.push(this.download);};
-      if (!crypto.randomUUID) crypto.randomUUID=()=>Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,'0')).join('');
       window.fetch=async (url,opts={})=>{
         const res=await window.__pool_http_fixture(String(url),{method:opts.method||'GET',body:opts.body,headers:opts.headers||{}});
         return new Response(res.body,{status:res.status,headers:{'Content-Type':'application/json'}});
       };
-    }""")
-    await page.add_script_tag(content=(APP/'priv/static/js/ecai-index-pool.js').read_text())
-    main=(APP/'priv/static/js/ecai-console.js').read_text().replace('new URL(value, location.origin)','new URL(value, "http://fixture.test")').replace('url.origin !== location.origin','url.origin !== "http://fixture.test"')
-    await page.add_script_tag(content=main)
+    """
+    await page.goto('about:blank')
+    await page.set_content(business_fixture_html(console_html(),mock))
+    await page.wait_for_function('!!window.DamageAuth')
+    await page.wait_for_timeout(100)
 
 async def login(page):
     await page.locator('#loginBtn').click()
-    await page.locator('#consoleLoginForm input[name=email]').fill('admin@example.invalid')
-    await page.locator('#consoleLoginForm input[name=password]').fill('mock-only')
-    await page.locator('#consoleLoginSubmit').click()
+    await page.locator('#login-username').fill('admin@example.invalid')
+    await page.locator('#password').fill('mock-only')
+    await page.locator('#loginSubmitBtn').click()
     await page.locator('#indexPoolNav').wait_for(state='visible')
 
 async def main():
@@ -237,14 +242,16 @@ async def main():
         overflow=await page.evaluate('document.documentElement.scrollWidth-document.documentElement.clientWidth')
         assert overflow<=1, f'Mobile overflow: {overflow}'
         await page.screenshot(path=str(OUT/'ecai-funded-indexing-mobile.png'),full_page=True)
-        # Cookie-only restored sessions may read but must not offer mutations.
+        # New browser-session restore retrieves its revocable ds1 bearer into memory.
+        # A fresh document must restore the same managed permissions, not the old
+        # legacy revocable ds1 restoration behavior.
         cookie=await context.new_page(); cookie.on('pageerror',lambda e:errors.append(str(e)))
         await load_fixture(cookie, backend)
         await cookie.locator('#indexPoolNav').wait_for(state='visible')
         await cookie.locator('#indexPoolNav').click()
         await cookie.locator('#poolNodes .pool-node').first.wait_for()
-        assert await cookie.locator('#poolPreview').is_disabled()
-        assert await cookie.locator('#poolJoin').is_disabled()
+        assert (await cookie.evaluate('window.TokenManager.getToken()')).startswith('ds1.')
+        assert await cookie.locator('#poolJoin').is_enabled()
         await cookie.close()
         # A delayed read must not restore sensitive pool state after logout.
         backend.delay_status=0.4
@@ -257,12 +264,12 @@ async def main():
         backend.delay_status=0; backend.admin=False
         await page.set_viewport_size(dict(width=1440,height=1100))
         await page.locator('#loginBtn').click()
-        await page.locator('#consoleLoginForm input[name=email]').fill('ordinary@example.invalid')
-        await page.locator('#consoleLoginForm input[name=password]').fill('mock-only')
-        await page.locator('#consoleLoginSubmit').click(); await page.wait_for_timeout(200)
+        await page.locator('#login-username').fill('ordinary@example.invalid')
+        await page.locator('#password').fill('mock-only')
+        await page.locator('#loginSubmitBtn').click(); await page.wait_for_timeout(200)
         assert await page.locator('#indexPoolNav').is_hidden()
         assert not errors, errors
-        print('PASS: admin navigation; signed-join request; budget quote/invalidation; idempotent create retry; funding gate; separate payment consent; accordion preservation; contract export; desktop/mobile layout; cookie-only read-only; logout race; non-admin exclusion.')
+        print('PASS: admin navigation; signed-join request; budget quote/invalidation; idempotent create retry; funding gate; separate payment consent; accordion preservation; contract export; desktop/mobile layout; revocable ds1 restoration; logout race; non-admin exclusion.')
         print('Browser tests use mocked HTTP. No backend, CLN or payment executed.')
         await browser.close()
 

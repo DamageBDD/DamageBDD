@@ -2,7 +2,14 @@
 %% restrict that list but must never grant privileges to other accounts.
 -module(ecai_node_admin).
 
--export([is_node_admin/1, can_manage_code/1, allowed_by_policy/3]).
+-export([is_node_admin/1, can_manage_code/1, allowed_by_policy/3, session_is_node_admin/1]).
+
+%% The caller must pass server-derived authentication state. A wallet proof
+%% never confers treasury/code-admin authority even for a configured admin key.
+session_is_node_admin(#{auth_mode := wallet}) -> false;
+session_is_node_admin(#{authenticated := true, node_admin := true, public_key := Account}) ->
+    is_node_admin(Account);
+session_is_node_admin(_) -> false.
 
 is_node_admin(Account) ->
     member(Account, application:get_env(damage, node_admins, [])).
