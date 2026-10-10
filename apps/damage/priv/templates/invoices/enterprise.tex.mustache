@@ -2,7 +2,7 @@
 \usepackage[a4paper,margin=1.8cm]{geometry}
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
-\usepackage{array,longtable,xcolor,fancyhdr}
+\usepackage{array,longtable,xcolor,fancyhdr,graphicx}
 \usepackage[hidelinks]{hyperref}
 \definecolor{damageblue}{HTML}{143B5D}
 \pagestyle{fancy}\fancyhf{}
@@ -13,10 +13,8 @@
 \setlength{\emergencystretch}{3em}\sloppy
 \begin{document}
 \begin{minipage}[t]{0.58\textwidth}
-{\color{damageblue}\bfseries\LARGE {{seller_name}}}\\
-Verification Infrastructure\\[0.4em]
-ABN: {{seller_abn}}\\
-{{seller_email}}\\
+{{logo_block}}{\color{damageblue}\bfseries\LARGE {{seller_name}}}\\
+{{seller_legal_line}}{{seller_tax_line}}{{seller_country_line}}{{seller_email}}\\
 {{seller_address}}
 \end{minipage}\hfill
 \begin{minipage}[t]{0.39\textwidth}\raggedleft
@@ -31,7 +29,7 @@ Currency: {{currency}}
 {{customer_name}}\\
 {{customer_address}}\\
 {{customer_email}}\\
-ABN / reference: {{customer_abn}}
+{{customer_tax_line}}{{customer_country_line}}
 
 {\color{damageblue}\large\bfseries Engagement and service period}
 

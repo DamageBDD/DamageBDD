@@ -174,12 +174,12 @@ def run(out: Path, chromium: str) -> None:
 
         assert page.locator('#billing-nav').is_hidden()
         # Simulate a visibility change only; billing.js authorization is not mocked here.
-        page.locator('#billing-nav').evaluate('(e) => { e.hidden = false; }')
+        page.evaluate("() => { document.getElementById('billing-nav').hidden = false; document.getElementById('billing-nav-group').hidden = false; }")
         page.locator('[href="#billing-tab"]').click()
         assert page.locator('#billing-tab').is_visible()
         assert page.locator('#execution-tab').is_hidden()
         page.locator('#dashboard-navigation [href="#execution-tab"]').click()
-        page.locator('#billing-nav').evaluate('(e) => { e.hidden = true; }')
+        page.evaluate("() => { document.getElementById('billing-nav').hidden = true; document.getElementById('billing-nav-group').hidden = true; }")
         assert page.locator('#execution-tab').is_visible()
         assert page.locator('#billing-nav').is_hidden()
         passed('invoice navigation remains hidden and supports explicit reveal and return to workspace')

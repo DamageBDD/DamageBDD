@@ -8,9 +8,12 @@
 service_test_() ->
     {foreach, fun setup/0, fun cleanup/1,
      [fun(_) -> ?_test(roles()) end,
+      fun(_) -> ?_test(settings_and_generated_customer_ids()) end,
       fun(_) -> ?_test(period_idempotency()) end,
       fun(_) -> ?_test(concurrent_generation()) end,
       fun(_) -> ?_test(snapshot_and_payment()) end,
+      fun(_) -> ?_test(settlement_reward()) end,
+      fun(_) -> ?_test(settlement_unknown_retry()) end,
       fun(_) -> ?_test(render_retry_number()) end,
       fun(_) -> ?_test(smtp_acceptance()) end,
       fun(_) -> ?_test(smtp_unknown()) end,
@@ -29,7 +32,16 @@ setup() ->
     application:set_env(damage,invoice_admins,[?BILLER]),
     application:set_env(damage,l402_account,<<"ak_SharedPayer">>),
     application:set_env(damage,enterprise_invoices,[{enabled,true},{auto_send,false},
-        {backend,?B},{number_prefix,<<"TEST-ENT">>},{job_timeout_ms,5000}]),
+        {backend,?B},{number_prefix,<<"TEST-ENT">>},{job_timeout_ms,5000},
+        %% Issuing now snapshots the persisted/legacy seller identity. Keep a
+        %% complete fixture here so lifecycle tests exercise invoice behaviour
+        %% rather than failing seller validation before rendering.
+        {seller,[{name,<<"Test supplier">>},{legal_name,<<"Test supplier Pty Ltd">>},
+                 {email,<<"test@example.invalid">>},{address,<<"Sydney NSW">>},
+                 {country_code,<<"AU">>},{gst_registered,false},
+                 {payment_instructions,<<"TEST ONLY. DO NOT PAY.">>}]},
+        {settlement_nft,[{enabled,true},{contract_id,<<"ct_KxoBnfbSvhy3c2384VMS2j99YKuqtUihAMSsk6TekjqnZeNEQ">>},
+                         {reward_class,<<"customer">>}]}]),
     start(), Previous.
 cleanup(Previous) ->
     stop(), ?B:destroy(),
@@ -51,6 +63,36 @@ roles() ->
     ?assertMatch({ok,#{role := invoice_admin}},?S:request(<<"ak_ABC123">>,session)),
     {ok,_} = request({set_admin,#{<<"account">> => <<"ak_ABC123">>,<<"enabled">> => false}}),
     ?assertMatch({error,forbidden},?S:request(<<"ak_ABC123">>,session)).
+settings_and_generated_customer_ids() ->
+    {ok, Settings0} = request(settings),
+    ?assertEqual(0, maps:get(revision, Settings0)),
+    Save = #{<<"revision">> => 0, <<"seller">> => #{
+        <<"legal_name">> => <<"Example Billing Pty Ltd">>,
+        <<"display_name">> => <<"Example Billing">>,
+        <<"email">> => <<"accounts@example.invalid">>,
+        <<"address">> => <<"Sydney NSW">>,
+        <<"logo_path">> => <<"/static/img/logo.png">>,
+        <<"country_code">> => <<"GB">>,
+        <<"tax">> => #{<<"scheme">> => <<"vat">>, <<"name">> => <<"VAT">>,
+            <<"registration_label">> => <<"VAT number">>, <<"registration_id">> => <<"GB123456789">>,
+            <<"registered">> => false, <<"default_rate_bps">> => 0,
+            <<"invoice_title">> => <<"TAX INVOICE">>}
+    }},
+    ?assertMatch({error,forbidden}, ?S:request(?BILLER,{save_settings,Save})),
+    {ok, Settings1} = request({save_settings,Save}),
+    ?assertEqual(1, maps:get(revision, Settings1)),
+    {ok, C1} = request({create_customer,#{<<"name">> => <<"Generated One">>,
+        <<"email">> => <<"one@example.invalid">>, <<"enabled">> => true}}),
+    {ok, C2} = request({create_customer,#{<<"name">> => <<"Generated Two">>,
+        <<"email">> => <<"two@example.invalid">>, <<"enabled">> => true}}),
+    Id1 = maps:get(id,C1), Id2 = maps:get(id,C2),
+    ?assertMatch(<<"cus_",_/binary>>, Id1),
+    ?assert(Id1 =/= Id2),
+    ?assertEqual(<<"GB">>, maps:get(country_code,C1)),
+    seed(), I = issue(),
+    ?assertEqual(<<"Example Billing">>, maps:get(name,maps:get(seller,I))),
+    ?assertEqual(<<"VAT number">>, maps:get(tax_registration_label,maps:get(seller,I))).
+
 period_idempotency() ->
     seed(), {ok,I} = generate(), Id = maps:get(id,I),
     ?assertEqual({ok,I},generate()), stop(), start(),
@@ -77,6 +119,38 @@ snapshot_and_payment() ->
     ?assertEqual(<<"paid">>,maps:get(status,get_invoice(Id))),
     ?assertEqual({pdf,Number,PDF},request({get_pdf,Id})),
     ?assertEqual(0,?B:get(sends)).
+settlement_reward() ->
+    seed(), I = issue(), Id = maps:get(id,I),
+    {ok,_} = request({action,Id,<<"paid">>,(revision(I))#{<<"paid_on">> => <<"2026-10-09">>,
+        <<"payment_reference">> => <<"SETTLED-ONE">>,<<"note">> => <<"Verified">>,
+        <<"mint_settlement_nft">> => true}}),
+    Minted = wait_settlement(Id,<<"minted">>),
+    Settlement = maps:get(settlement_nft,Minted),
+    ?assertEqual(1,maps:get(token_id,Settlement)),
+    ?assertEqual(<<"customer">>,maps:get(reward_class,Settlement)),
+    ?assertEqual(<<"ak_2NgBkrcLxww49XuJAEa4sA3WFb6c3TbcinDptJGuwxyFRtWWwp">>,maps:get(recipient,Settlement)),
+    ?assertEqual(1,?B:get(mints)),
+    {ok,Summary} = request(summary),
+    ?assertEqual(1,maps:get(paid_count,Summary)),
+    ?assertEqual(1,maps:get(settlement_rewards_minted,Summary)),
+    stop(), start(), request(session), ?S:tick(), timer:sleep(40),
+    ?assertEqual(1,?B:get(mints)).
+settlement_unknown_retry() ->
+    seed(), I = issue(), Id = maps:get(id,I), ?B:set(settlement_mode,unknown),
+    {ok,_} = request({action,Id,<<"paid">>,(revision(I))#{<<"paid_on">> => <<"2026-10-09">>,
+        <<"payment_reference">> => <<"SETTLED-UNKNOWN">>,<<"note">> => <<"Verified">>,
+        <<"mint_settlement_nft">> => true}}),
+    Unknown = wait_settlement(Id,<<"unknown">>),
+    Hash = maps:get(attestation_sha256,maps:get(settlement_nft,Unknown)),
+    ?assertMatch({error,{conflict,_}}, request({action,Id,<<"settlement_nft">>,
+        (revision(Unknown))#{<<"settlement_recipient">> =>
+            <<"ak_2XhCkjzTwcq1coXSSzHJoMZkUzTwnjH88zmPGkkowUsFNTo9UE">>}})),
+    ?assertEqual(<<"unknown">>,maps:get(status,maps:get(settlement_nft,get_invoice(Id)))),
+    ?B:set(settlement_mode,accepted),
+    {ok,_} = request({action,Id,<<"settlement_nft">>,revision(Unknown)}),
+    Minted = wait_settlement(Id,<<"minted">>),
+    ?assertEqual(Hash,maps:get(attestation_sha256,maps:get(settlement_nft,Minted))),
+    ?assertEqual(2,?B:get(mints)).
 render_retry_number() ->
     seed(), ?B:set(render_mode,fail), {ok,D} = generate(), Id = maps:get(id,D),
     {ok,Pending} = request({action,Id,<<"issue">>,revision(D)}),
@@ -158,7 +232,9 @@ wait_single_invoice() ->
     {ok,#{items := [I]}} = request({list_invoices,#{}}), I.
 seed() ->
     {ok,_} = request({save_customer,<<"fixture">>,#{<<"name">> => <<"Fixture enterprise">>,
-        <<"email">> => <<"billing@example.invalid">>,<<"enabled">> => true}}),
+        <<"email">> => <<"billing@example.invalid">>,
+        <<"account">> => <<"ak_2NgBkrcLxww49XuJAEa4sA3WFb6c3TbcinDptJGuwxyFRtWWwp">>,
+        <<"enabled">> => true}}),
     {ok,_} = request({save_plan,<<"retainer">>,#{<<"customer_id">> => <<"fixture">>,
         <<"name">> => <<"Monthly support">>,<<"start_date">> => <<"2026-10-09">>,
         <<"items">> => [#{<<"description">> => <<"Support">>,<<"unit_price_minor">> => 85000}]}}), ok.
@@ -168,6 +244,7 @@ issue() ->
     {ok,_} = request({action,Id,<<"issue">>,revision(D)}), wait_status(Id,<<"issued">>).
 wait_status(Id,Status) -> await(fun() -> maps:get(status,get_invoice(Id)) =:= Status end),get_invoice(Id).
 wait_delivery(Id,Status) -> await(fun() -> maps:get(status,maps:get(delivery,get_invoice(Id))) =:= Status end),get_invoice(Id).
+wait_settlement(Id,Status) -> await(fun() -> maps:get(status,maps:get(settlement_nft,get_invoice(Id),#{}),<<>>) =:= Status end),get_invoice(Id).
 await(F) -> await(F,200).
 await(F,0) -> ?assert(F());
 await(F,N) -> case F() of true -> ok; false -> timer:sleep(10),await(F,N-1) end.

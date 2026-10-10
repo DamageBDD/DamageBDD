@@ -5,8 +5,22 @@ const $ = (id) => document.getElementById(id);
 const BASE = "/api/billing";
 const limit = 50;
 let authEpoch = 0, writeInFlight = false, invoiceReadSequence = 0, detailReadSequence = 0;
-let state = {session: null, customers: [], plans: [], invoices: [], total: 0, offset: 0, selected: null};
+let state = {session: null, settings: null, summary: null, customers: [], plans: [], invoices: [], total: 0, offset: 0, selected: null};
 const edits = {};
+const REGION_PRESETS = {
+    AU: {currency: "AUD", scheme: "gst", taxName: "GST", registrationLabel: "ABN", invoiceTitle: "TAX INVOICE"},
+    NZ: {currency: "NZD", scheme: "gst", taxName: "GST", registrationLabel: "GST number", invoiceTitle: "TAX INVOICE"},
+    GB: {currency: "GBP", scheme: "vat", taxName: "VAT", registrationLabel: "VAT number", invoiceTitle: "VAT INVOICE"},
+    US: {currency: "USD", scheme: "sales_tax", taxName: "Sales tax", registrationLabel: "Tax ID / EIN", invoiceTitle: "INVOICE"},
+    CA: {currency: "CAD", scheme: "gst", taxName: "GST/HST", registrationLabel: "GST/HST number", invoiceTitle: "INVOICE"},
+    IN: {currency: "INR", scheme: "gst", taxName: "GST", registrationLabel: "GSTIN", invoiceTitle: "TAX INVOICE"},
+    SG: {currency: "SGD", scheme: "gst", taxName: "GST", registrationLabel: "GST registration number", invoiceTitle: "TAX INVOICE"},
+    DE: {currency: "EUR", scheme: "vat", taxName: "VAT", registrationLabel: "VAT ID", invoiceTitle: "INVOICE"},
+    FR: {currency: "EUR", scheme: "vat", taxName: "VAT", registrationLabel: "VAT ID", invoiceTitle: "INVOICE"},
+    IE: {currency: "EUR", scheme: "vat", taxName: "VAT", registrationLabel: "VAT number", invoiceTitle: "VAT INVOICE"},
+    NL: {currency: "EUR", scheme: "vat", taxName: "VAT", registrationLabel: "VAT ID", invoiceTitle: "INVOICE"},
+    XX: {currency: "AUD", scheme: "other", taxName: "Tax", registrationLabel: "Tax registration ID", invoiceTitle: "INVOICE"}
+};
 const accessToken = () => window.TokenManager?.getToken?.() || "";
 
 function el(tag, text, className) {
@@ -38,6 +52,25 @@ export function decimalMinor(value) {
 const decimal = (minor = 0) => `${Math.floor(minor / 100)}.${String(minor % 100).padStart(2, "0")}`;
 function notice(message, error = false) {
     const node = $("billing-notice"); node.textContent = message; node.hidden = !message; node.dataset.error = String(error);
+}
+function setBillingNavigation(visible) {
+    const group = $("billing-nav-group"), item = $("billing-nav");
+    if (group) group.hidden = !visible;
+    if (item) item.hidden = !visible;
+}
+function settlementRewardEnabled() {
+    return state.session?.settlement_rewards?.enabled === true;
+}
+function renderSummary(summary) {
+    state.summary = summary || {};
+    $("billing-stat-action").textContent = String(summary?.needs_action ?? 0);
+    $("billing-stat-outstanding").textContent = String(summary?.outstanding_count ?? 0);
+    $("billing-stat-paid").textContent = String(summary?.paid_count ?? 0);
+    $("billing-stat-rewards").textContent = String(summary?.settlement_rewards_minted ?? 0);
+    const totals = Object.entries(summary?.outstanding_minor || {});
+    $("billing-stat-outstanding-amount").textContent = totals.length
+        ? totals.map(([currency, minor]) => amount(minor, currency)).join(" · ")
+        : "No issued unpaid invoices";
 }
 function formError(form, message = "") {
     const p = form.querySelector(".billing-form-error"); if (!p) return;
@@ -80,15 +113,17 @@ async function write(task, form = null) {
 }
 function clearPrivate() {
     authEpoch++; invoiceReadSequence++; detailReadSequence++;
-    state = {session: null, customers: [], plans: [], invoices: [], total: 0, offset: 0, selected: null};
+    state = {session: null, settings: null, summary: null, customers: [], plans: [], invoices: [], total: 0, offset: 0, selected: null};
     Object.keys(edits).forEach(k => delete edits[k]);
     ["billing-invoice-rows", "billing-customer-rows", "billing-plan-rows", "billing-admin-rows", "billing-admin-audit", "billing-detail", "billing-plan-lines", "billing-draft-lines"].forEach(id => $(id)?.replaceChildren());
     root.querySelectorAll("dialog").forEach(d => {if (d.open) d.close(); d.querySelector("form")?.reset();});
+    $("billing-settings-form")?.reset();
+    const logo = $("billing-logo-preview"); if (logo) {logo.hidden = true; logo.removeAttribute("src");}
     $("billing-customer-filter")?.replaceChildren(new Option("All customers", ""));
     const planForm = $("billing-plan-form");
     if (planForm) {field(planForm, "customer_id").replaceChildren(); field(planForm, "payment_profile").replaceChildren();}
     notice("");
-    root.hidden = true; $("billing-nav").hidden = true;
+    root.hidden = true; setBillingNavigation(false);
 }
 async function authenticate() {
     clearPrivate();
@@ -98,25 +133,39 @@ async function authenticate() {
         const session = await api("/session");
         if (epoch !== authEpoch) return;
         state.session = session;
-        root.hidden = false; $("billing-nav").hidden = false;
+        root.hidden = false; setBillingNavigation(true);
         $("billing-role").textContent = state.session.role.replaceAll("_", " ");
         $("billing-admins-nav").hidden = !state.session.can_manage_admins;
+        $("billing-settings-nav").hidden = !state.session.can_manage_settings;
         $("billing-clock").textContent = `Schedule clock: ${state.session.clock === "node_local" ? "node local time (configure TZ on the billing node)" : "UTC"}, from ${String(state.session.send_hour).padStart(2, "0")}:00. Global auto-send: ${state.session.auto_send_enabled ? "enabled" : "off — drafts require approval"}.`;
+        const reward = state.session.settlement_rewards || {};
+        $("billing-settlement-status").textContent = reward.enabled
+            ? `AEX-141 ${reward.reward_class || "settlement"} rewards enabled · transferable collectibles`
+            : "Optional AEX-141 settlement rewards are disabled";
         pane("invoices"); await refresh();
-    } catch (error) { if (root && !root.hidden) notice(error.message, true); }
+    } catch (error) {
+        // The panel is intentionally hidden until billing authorization succeeds.
+        // Keep unauthorized billing controls private, but do not fail silently in
+        // developer tools when session/bootstrap authentication is misconfigured.
+        if (root && !root.hidden) notice(error.message, true);
+        else console.warn("Enterprise billing authentication failed:", error.message);
+    }
 }
 function pane(name) {
     if (name === "admins" && !state.session?.can_manage_admins) return;
+    if (name === "settings" && !state.session?.can_manage_settings) return;
     root.querySelectorAll("[data-billing-content]").forEach(p => p.hidden = p.dataset.billingContent !== name);
     root.querySelectorAll("[data-billing-pane]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.billingPane === name)));
     if (name === "admins") loadAdmins().catch(e => notice(e.message, true));
+    if (name === "settings" && state.settings) renderBillingSettings(state.settings);
 }
 async function refresh() {
     const epoch = authEpoch;
-    const [customers, plans] = await Promise.all([api("/customers"), api("/plans")]);
+    const [customers, plans, summary, settings] = await Promise.all([api("/customers"), api("/plans"), api("/summary"), api("/settings")]);
     if (epoch !== authEpoch) return;
-    state.customers = customers.items; state.plans = plans.items;
-    renderCustomers(); renderPlans();
+    state.customers = customers.items; state.plans = plans.items; state.settings = settings;
+    renderSummary(summary); renderCustomers(); renderPlans();
+    if (state.session?.can_manage_settings) renderBillingSettings(settings);
     const filter = $("billing-customer-filter"), prior = filter.value;
     filter.replaceChildren(new Option("All customers", ""), ...state.customers.map(c => new Option(c.name, c.id)));
     filter.value = prior;
@@ -130,13 +179,15 @@ async function loadInvoices() {
     if (sequence !== invoiceReadSequence) return;
     state.invoices = page.items; state.total = page.total;
     const rows = $("billing-invoice-rows"); rows.replaceChildren();
-    if (!page.items.length) empty(rows, 7, "No invoices in this view. Add a customer and recurring plan, then create a draft.");
+    if (!page.items.length) empty(rows, 8, "No invoices in this view. Add a customer and recurring plan, then create a draft.");
     for (const i of page.items) {
         const tr = el("tr"); tr.append(el("td", i.number || "Draft"));
         const customer = el("td", i.customer.name); customer.append(el("span", `${i.period_start} → ${i.period_end}`, "billing-muted")); tr.append(customer);
         tr.append(el("td", amount(i.total_minor, i.currency), "billing-money"), el("td", i.due_on || "Not issued"));
         const status = el("td"); status.append(badge(i.status)); const delivery = el("td"); delivery.append(badge(i.delivery.status));
-        const action = el("td"); action.append(button("View", "view", i.id)); tr.append(status, delivery, action); rows.append(tr);
+        const reward = el("td"), rewardStatus = i.settlement_nft?.status || "not_requested";
+        if (i.status === "paid" || rewardStatus !== "not_requested") reward.append(badge(rewardStatus === "not_requested" ? "optional" : rewardStatus)); else reward.textContent = "—";
+        const action = el("td"); action.append(button("View", "view", i.id)); tr.append(status, delivery, reward, action); rows.append(tr);
     }
     $("billing-page-summary").textContent = `${page.total} matching invoice${page.total === 1 ? "" : "s"}`;
     $("billing-page-label").textContent = page.total ? `${state.offset + 1}–${state.offset + page.items.length} of ${page.total}` : "0 invoices";
@@ -149,11 +200,14 @@ function pagination() {
 function empty(tbody, count, text) { const tr = el("tr"), td = el("td", text, "billing-empty"); td.colSpan = count; tr.append(td); tbody.append(tr); }
 function renderCustomers() {
     const rows = $("billing-customer-rows"); rows.replaceChildren();
-    if (!state.customers.length) empty(rows, 4, "Add your enterprise customers or import the supplied paused seed file.");
+    if (!state.customers.length) empty(rows, 5, "Add your enterprise customers or import the supplied paused seed file.");
     for (const c of state.customers) {
         const tr = el("tr"), status = el("td"), action = el("td");
+        const account = el("td", c.account ? `${c.account.slice(0, 12)}…${c.account.slice(-8)}` : "Not set", "billing-token-ref");
+        if (c.account) account.title = c.account;
         status.append(badge(c.enabled ? "active" : "paused")); action.append(button("Edit", "edit-customer", c.id));
-        tr.append(el("td", c.name), el("td", c.email || "Email required"), status, action); rows.append(tr);
+        const name = el("td", c.name); name.append(el("span", c.id, "billing-muted"));
+        tr.append(name, el("td", c.email || "Email required"), account, status, action); rows.append(tr);
     }
 }
 function renderPlans() {
@@ -191,9 +245,13 @@ async function viewInvoice(id, scroll = true) {
         ["Period", `${i.period_start} to ${i.period_end}`], ["Issued / due", i.issued_on ? `${i.issued_on} / ${i.due_on}` : "Dates assigned on approval"],
         ["Delivery", i.delivery.status.replaceAll("_", " ")], ["Total due", amount(i.total_minor, i.currency)]];
     if (i.paid_on) fields.push(["Payment recorded", `${i.paid_on} — ${i.payment_reference}`]);
+    const currentCustomer = state.customers.find(c => c.id === i.customer.id);
+    const settlementAccount = currentCustomer?.account || i.customer.account;
+    if (settlementAccount) fields.push(["Settlement account", settlementAccount]);
     fields.forEach(([k, v]) => dl.append(el("dt", k), el("dd", v))); detail.append(dl);
     const error = i.delivery.last_error || (i.status === "issue_failed" ? i.last_error : "");
     if (error) detail.append(el("p", error, "billing-form-error"));
+    renderSettlementReward(i, detail);
     const wrap = el("div", null, "billing-table-scroll"), table = el("table"), thead = el("thead"), thr = el("tr");
     ["Description", "Qty", "Unit price", "Discount", "Tax", "Total"].forEach(v => thr.append(el("th", v))); thead.append(thr); table.append(thead);
     const tbody = el("tbody");
@@ -206,6 +264,126 @@ async function viewInvoice(id, scroll = true) {
     detail.append(audit);
     if (scroll) detail.scrollIntoView({behavior: "smooth", block: "start"});
 }
+function renderSettlementReward(invoice, detail) {
+    const settlement = invoice.settlement_nft || {status: "not_requested"};
+    const status = settlement.status || "not_requested";
+    if (invoice.status !== "paid" && status === "not_requested") return;
+    const card = el("section", null, "billing-reward-card");
+    const head = el("div", null, "billing-header");
+    const title = el("div");
+    title.append(el("strong", status === "minted" ? `Settlement reward NFT #${settlement.token_id}` : "Settlement attestation + reward"));
+    title.append(badge(status));
+    const actions = el("div", null, "billing-header-actions");
+    if (status === "minted") {
+        actions.append(button("Open NFT gallery", "view-nfts", invoice.id), button("Copy NFT ref", "copy-nft-ref", invoice.id));
+    } else if (invoice.status === "paid" && settlementRewardEnabled() && ["not_requested", "failed", "unknown"].includes(status)) {
+        actions.append(button(status === "not_requested" ? "Mint reward" : "Retry reward", "settlement-reward", invoice.id));
+    }
+    head.append(title, actions); card.append(head);
+    const lines = [];
+    if (settlement.recipient) lines.push(["Recipient", settlement.recipient]);
+    if (settlement.attestation_sha256) lines.push(["Attestation SHA-256", settlement.attestation_sha256]);
+    if (settlement.contract_id) lines.push(["AEX-141 contract", settlement.contract_id]);
+    if (settlement.token_id) lines.push(["Token", `#${settlement.token_id}`]);
+    if (settlement.reward_class) lines.push(["Reward class", settlement.reward_class]);
+    const dl = el("dl"); lines.forEach(([k, v]) => dl.append(el("dt", k), el("dd", v, "billing-token-ref"))); card.append(dl);
+    if (settlement.last_error) card.append(el("p", settlement.last_error, "billing-form-error"));
+    card.append(el("p", "The token is a transferable collectible and cryptographic settlement attestation. Trading it transfers the reward NFT only — never the invoice, payment, customer account or receivable.", "billing-muted"));
+    detail.append(card);
+}
+function openPayment() {
+    const invoice = state.selected; if (!invoice) return;
+    edits.payment = invoice;
+    const form = $("billing-payment-form");
+    const currentCustomer = state.customers.find(c => c.id === invoice.customer.id);
+    const recipient = currentCustomer?.account || invoice.customer.account || "";
+    fill(form, {paid_on: localDate(), payment_reference: "", note: "", mint_settlement_nft: false, settlement_recipient: recipient});
+    const option = $("billing-settlement-reward-option");
+    option.hidden = !settlementRewardEnabled();
+    $("billing-settlement-reward-copy").textContent = settlementRewardEnabled()
+        ? (recipient ? `Default reward recipient: ${recipient}` : "Set an Aeternity account to mint a settlement reward.")
+        : "Settlement reward NFTs are disabled on this node.";
+    syncSettlementRewardForm(form);
+    $("billing-payment-dialog").showModal();
+}
+function syncSettlementRewardForm(form) {
+    const enabled = settlementRewardEnabled() && field(form, "mint_settlement_nft").checked;
+    const recipient = field(form, "settlement_recipient");
+    recipient.required = enabled;
+    recipient.disabled = !enabled;
+}
+async function settlementRewardAction(id) {
+    const invoice = state.selected?.id === id ? state.selected : await api(`/invoices/${encodeURIComponent(id)}`);
+    const existing = invoice.settlement_nft?.status;
+    const body = {revision: invoice.revision};
+    if (existing === "unknown") {
+        const prior = invoice.settlement_nft?.recipient || "";
+        if (!prior) throw new Error("The original uncertain settlement recipient is unavailable; reconcile the invoice record before retrying.");
+        if (!confirm(`The previous mint outcome to ${prior} is uncertain. Retry will keep the same recipient and unique attestation hash so it can reconcile rather than mint a duplicate. Continue?`)) return;
+    } else {
+        const currentCustomer = state.customers.find(c => c.id === invoice.customer.id);
+        const prior = invoice.settlement_nft?.recipient || currentCustomer?.account || invoice.customer.account || "";
+        const recipient = prompt("Aeternity account to receive the transferable settlement reward NFT:", prior);
+        if (recipient === null) return;
+        const trimmed = recipient.trim();
+        if (!trimmed) throw new Error("A settlement reward recipient is required.");
+        if (!confirm(`Mint the settlement attestation + reward to ${trimmed}?`)) return;
+        body.settlement_recipient = trimmed;
+    }
+    await api(`/invoices/${encodeURIComponent(id)}/settlement_nft`, {method: "POST", body});
+    notice("Settlement reward queued. It will be minted only after billing state is durably saved.");
+    await refresh();
+}
+function openNftGallery() {
+    const link = document.getElementById("dashboard-link-ecai-jobs");
+    if (link) link.click(); else location.hash = "#ecai-jobs-tab";
+}
+async function copyNftRef(invoice) {
+    const s = invoice?.settlement_nft || {};
+    if (!s.contract_id || !s.token_id) throw new Error("Settlement reward token reference is unavailable.");
+    const ref = `aex141:${s.contract_id}:${s.token_id}:${s.attestation_sha256 || ""}`;
+    await navigator.clipboard.writeText(ref);
+    notice("Settlement reward NFT reference copied.");
+}
+function regionPreset(code) { return REGION_PRESETS[code] || REGION_PRESETS.XX; }
+function taxPercent(bps = 0) { return `${Math.floor(bps / 100)}.${String(Math.abs(bps) % 100).padStart(2, "0")}`; }
+function percentToBps(value) {
+    const bps = decimalMinor(value);
+    if (bps > 10000) throw new Error("Tax rate must be between 0.00 and 100.00 percent.");
+    return bps;
+}
+function applyRegionalTaxDefaults(form) {
+    const preset = regionPreset(field(form, "country_code").value);
+    field(form, "tax_scheme").value = preset.scheme;
+    field(form, "tax_name").value = preset.taxName;
+    field(form, "tax_registration_label").value = preset.registrationLabel;
+    field(form, "tax_invoice_title").value = preset.invoiceTitle;
+}
+function syncCustomerTaxRegion(form, force = false) {
+    const preset = regionPreset(field(form, "country_code").value);
+    const label = field(form, "tax_id_label");
+    if (force || !label.value.trim()) label.value = preset.registrationLabel;
+    $("billing-customer-tax-id-caption").textContent = label.value.trim() || "Tax registration ID";
+}
+function previewBillingLogo(path) {
+    const img = $("billing-logo-preview");
+    const value = String(path || "").trim();
+    const raster = /^\/static\/.+\.(png|jpe?g)$/i.test(value);
+    img.hidden = !raster;
+    if (raster) img.src = value; else img.removeAttribute("src");
+}
+function renderBillingSettings(settings) {
+    const form = $("billing-settings-form"); if (!form || !settings?.seller) return;
+    const seller = settings.seller, tax = seller.tax || {};
+    fill(form, {legal_name: seller.legal_name, display_name: seller.display_name, email: seller.email,
+        address: seller.address, logo_path: seller.logo_path, country_code: seller.country_code,
+        tax_scheme: tax.scheme, tax_name: tax.name, tax_registration_label: tax.registration_label,
+        tax_registration_id: tax.registration_id, tax_invoice_title: tax.invoice_title, tax_registered: tax.registered});
+    field(form, "default_tax_rate").value = taxPercent(tax.default_rate_bps || 0);
+    form.dataset.revision = String(settings.revision ?? 0);
+    previewBillingLogo(seller.logo_path);
+}
+
 const field = (form, name) => form.elements.namedItem(name);
 function fill(form, record) {
     form.reset(); formError(form);
@@ -216,12 +394,20 @@ function fill(form, record) {
 }
 function openCustomer(customer = null) {
     const form = $("billing-customer-form"); edits.customer = customer;
-    fill(form, customer || {id: "", name: "", email: "", abn: "", address: "", enabled: false});
-    field(form, "id").readOnly = Boolean(customer); $("billing-customer-dialog").showModal();
+    const country = customer?.country_code || state.settings?.seller?.country_code || state.session?.seller_country || "AU";
+    const record = customer ? {...customer, country_code: country, tax_id: customer.tax_id || customer.abn || "",
+        tax_id_label: customer.tax_id_label || regionPreset(country).registrationLabel} :
+        {id: "", name: "", email: "", account: "", address: "", country_code: country,
+         tax_id: "", tax_id_label: regionPreset(country).registrationLabel, enabled: false};
+    fill(form, record);
+    field(form, "id").readOnly = true;
+    syncCustomerTaxRegion(form, !customer);
+    $("billing-customer-dialog").showModal();
 }
 function addLine(containerId, data = {}) {
     const row = el("div", null, "billing-line");
-    const defaults = {description: "", quantity: 1, unit_price_minor: 0, discount_minor: 0, tax_bps: 0, ...data};
+    const defaults = {description: "", quantity: 1, unit_price_minor: 0, discount_minor: 0,
+        tax_bps: state.settings?.seller?.tax?.default_rate_bps ?? state.session?.default_tax_bps ?? 0, ...data};
     for (const [key, label] of [["description", "Description"], ["quantity", "Qty"], ["unit_price_minor", "Unit price"], ["discount_minor", "Discount"], ["tax_bps", "Tax %"]]) {
         const wrap = el("label", label), input = el(key === "description" ? "textarea" : "input"); input.dataset.lineField = key;
         if (key === "description") {input.rows = 2; input.maxLength = 1500; input.value = defaults[key];}
@@ -247,7 +433,8 @@ function openPlan(plan = null) {
     const form = $("billing-plan-form"); edits.plan = plan;
     field(form, "customer_id").replaceChildren(...state.customers.map(c => new Option(c.name, c.id)));
     field(form, "payment_profile").replaceChildren(...(state.session.payment_profiles || ["default"]).map(p => new Option(p, p)));
-    fill(form, plan || {id: "", name: "", customer_id: state.customers[0].id, cadence: "monthly", start_date: "", currency: "AUD", payment_profile: "default", terms_days: 7, notes: "", enabled: false, auto_send: false});
+    const defaultCurrency = regionPreset(state.settings?.seller?.country_code || state.session?.seller_country || "AU").currency;
+    fill(form, plan || {id: "", name: "", customer_id: state.customers[0].id, cadence: "monthly", start_date: "", currency: defaultCurrency, payment_profile: "default", terms_days: 7, notes: "", enabled: false, auto_send: false});
     field(form, "id").readOnly = Boolean(plan);
     ["customer_id", "cadence", "start_date"].forEach(k => field(form, k).disabled = Boolean(plan?.generated_count));
     $("billing-plan-lines").replaceChildren(); (plan?.items.length ? plan.items : [{}]).forEach(line => addLine("billing-plan-lines", line));
@@ -318,14 +505,15 @@ function bind() {
         if (action === "new-plan") return openPlan();
         if (action === "edit-plan") return openPlan(state.plans.find(p => p.id === id));
         if (action === "edit-draft") return openDraft();
-        if (action === "payment") {
-            edits.payment = state.selected; const form = $("billing-payment-form"); fill(form, {paid_on: localDate(), payment_reference: "", note: ""});
-            $("billing-payment-dialog").showModal(); return;
-        }
+        if (action === "payment") {openPayment(); return;}
+        if (action === "apply-tax-region") {applyRegionalTaxDefaults($("billing-settings-form")); return;}
         write(async () => {
             if (action === "refresh") return refresh();
             if (action === "view") return viewInvoice(id);
             if (action === "pdf") return downloadPDF(id);
+            if (action === "settlement-reward") return settlementRewardAction(id);
+            if (action === "view-nfts") return openNftGallery();
+            if (action === "copy-nft-ref") return copyNftRef(state.selected);
             if (action === "previous" || action === "next") {state.offset = action === "previous" ? Math.max(0, state.offset - limit) : state.offset + limit; return loadInvoices();}
             if (["issue", "send", "void"].includes(action)) return invoiceAction(action, id);
             if (action === "generate") {
@@ -343,10 +531,11 @@ function bind() {
     $("billing-customer-form").addEventListener("submit", event => {
         event.preventDefault(); const form = event.target;
         write(async () => {
-            const body = {}; ["id", "name", "email", "abn", "address"].forEach(k => body[k] = field(form, k).value.trim()); body.enabled = field(form, "enabled").checked;
-            if (edits.customer) body.revision = edits.customer.revision;
-            await api(edits.customer ? `/customers/${encodeURIComponent(body.id)}` : "/customers", {method: edits.customer ? "PUT" : "POST", body});
-            $("billing-customer-dialog").close(); await refresh(); notice("Customer saved.");
+            const body = {}; ["name", "email", "account", "address", "country_code", "tax_id", "tax_id_label"].forEach(k => body[k] = field(form, k).value.trim());
+            body.enabled = field(form, "enabled").checked;
+            if (edits.customer) {body.id = edits.customer.id; body.revision = edits.customer.revision;}
+            const saved = await api(edits.customer ? `/customers/${encodeURIComponent(edits.customer.id)}` : "/customers", {method: edits.customer ? "PUT" : "POST", body});
+            $("billing-customer-dialog").close(); await refresh(); notice(edits.customer ? "Customer saved." : `Customer created as ${saved.id}.`);
         }, form);
     });
     $("billing-plan-form").addEventListener("submit", event => {
@@ -372,11 +561,37 @@ function bind() {
     $("billing-payment-form").addEventListener("submit", event => {
         event.preventDefault(); const form = event.target;
         write(async () => {
-            const body = {revision: edits.payment.revision, paid_on: field(form, "paid_on").value, payment_reference: field(form, "payment_reference").value.trim(), note: field(form, "note").value.trim()};
+            const mintReward = settlementRewardEnabled() && field(form, "mint_settlement_nft").checked;
+            const body = {revision: edits.payment.revision, paid_on: field(form, "paid_on").value, payment_reference: field(form, "payment_reference").value.trim(), note: field(form, "note").value.trim(), mint_settlement_nft: mintReward};
+            if (mintReward) body.settlement_recipient = field(form, "settlement_recipient").value.trim();
             await api(`/invoices/${encodeURIComponent(edits.payment.id)}/paid`, {method: "POST", body});
-            $("billing-payment-dialog").close(); await refresh(); notice("Verified payment recorded.");
+            $("billing-payment-dialog").close(); await refresh(); notice(mintReward ? "Verified payment recorded and settlement reward queued." : "Verified payment recorded.");
         }, form);
     });
+    field($("billing-payment-form"), "mint_settlement_nft").addEventListener("change", event => syncSettlementRewardForm(event.target.form));
+    $("billing-settings-form").addEventListener("submit", event => {
+        event.preventDefault(); const form = event.target;
+        write(async () => {
+            const body = {revision: Number(form.dataset.revision || 0), seller: {
+                legal_name: field(form, "legal_name").value.trim(), display_name: field(form, "display_name").value.trim(),
+                email: field(form, "email").value.trim(), address: field(form, "address").value.trim(),
+                logo_path: field(form, "logo_path").value.trim(), country_code: field(form, "country_code").value,
+                tax: {scheme: field(form, "tax_scheme").value, name: field(form, "tax_name").value.trim(),
+                    registration_label: field(form, "tax_registration_label").value.trim(),
+                    registration_id: field(form, "tax_registration_id").value.trim(),
+                    registered: field(form, "tax_registered").checked,
+                    default_rate_bps: percentToBps(field(form, "default_tax_rate").value),
+                    invoice_title: field(form, "tax_invoice_title").value.trim()}
+            }};
+            state.settings = await api("/settings", {method: "PUT", body});
+            renderBillingSettings(state.settings);
+            notice("Billing identity and tax settings saved. New invoices will snapshot this profile.");
+        }, form);
+    });
+    field($("billing-settings-form"), "logo_path").addEventListener("input", event => previewBillingLogo(event.target.value));
+    field($("billing-settings-form"), "country_code").addEventListener("change", event => applyRegionalTaxDefaults(event.target.form));
+    field($("billing-customer-form"), "country_code").addEventListener("change", event => syncCustomerTaxRegion(event.target.form, true));
+    field($("billing-customer-form"), "tax_id_label").addEventListener("input", event => syncCustomerTaxRegion(event.target.form, false));
     $("billing-admin-form").addEventListener("submit", event => {event.preventDefault(); const form = event.target;
         write(async () => {await api("/admins", {method: "POST", body: {account: field(form, "account").value.trim(), enabled: true}}); form.reset(); await loadAdmins(); notice("Invoice administrator granted.");});});
     $("billing-import").addEventListener("change", event => {const file = event.target.files[0]; write(async () => {try {await importSeed(file);} finally {event.target.value = "";}});});

@@ -28,7 +28,10 @@
     const image = normalizeImageUrl(md.image || md.image_url || md.imageUrl || token?.image || null);
     const contract = token?.contract_id || token?.contractId || token?.contract;
     const tokenId = token?.token_id || token?.tokenId || token?.id;
-    return { name, desc, image, contract, tokenId };
+    const attestation = md.attestation_sha256 || md.attestation || null;
+    const rewardClass = md.reward_class || null;
+    const paidOn = md.paid_on || null;
+    return { name, desc, image, contract, tokenId, attestation, rewardClass, paidOn };
   }
 
   async function fetchJSON(url) {
@@ -77,7 +80,7 @@
     for (const row of rows) {
       const t = row.token;
       const owner = row.owner;
-      const { name, desc, image, contract, tokenId } = pickMeta(t);
+      const { name, desc, image, contract, tokenId, attestation, rewardClass, paidOn } = pickMeta(t);
 
       const card = document.createElement("article");
       card.className = "nft-card";
@@ -130,6 +133,55 @@
         p.className = "pill";
         p.textContent = `#${tokenId}`;
         meta.appendChild(p);
+      }
+      if (attestation) {
+        const p = document.createElement("span");
+        p.className = "pill";
+        p.title = attestation;
+        p.textContent = rewardClass ? `Settlement reward · ${rewardClass}` : "Settlement reward";
+        meta.appendChild(p);
+        if (paidOn) {
+          const paid = document.createElement("span");
+          paid.className = "pill";
+          paid.textContent = `Paid ${paidOn}`;
+          meta.appendChild(paid);
+        }
+        if (contract && tokenId !== undefined && tokenId !== null) {
+          const ref = `aex141:${contract}:${tokenId}:${attestation}`;
+          const copy = document.createElement("button");
+          copy.type = "button";
+          copy.className = "pill";
+          copy.textContent = "Copy attestation ref";
+          copy.addEventListener("click", async () => {
+            try {
+              await navigator.clipboard.writeText(ref);
+              copy.textContent = "Copied";
+              setTimeout(() => { if (copy.isConnected) copy.textContent = "Copy attestation ref"; }, 1500);
+            } catch {
+              setStatus("Could not copy the attestation reference.");
+            }
+          });
+          meta.appendChild(copy);
+
+          const share = document.createElement("button");
+          share.type = "button";
+          share.className = "pill";
+          share.textContent = "Share reward";
+          share.addEventListener("click", async () => {
+            const text = `${name} · ${ref}`;
+            try {
+              if (navigator.share) await navigator.share({title: name, text});
+              else await navigator.clipboard.writeText(text);
+              if (!navigator.share) {
+                share.textContent = "Copied for sharing";
+                setTimeout(() => { if (share.isConnected) share.textContent = "Share reward"; }, 1500);
+              }
+            } catch (error) {
+              if (error?.name !== "AbortError") setStatus("Could not share the settlement reward.");
+            }
+          });
+          meta.appendChild(share);
+        }
       }
 
       body.appendChild(title);

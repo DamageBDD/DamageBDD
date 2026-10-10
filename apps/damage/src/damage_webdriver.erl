@@ -306,7 +306,7 @@ operation(fixture_count, [Action, Count], S) ->
     await(fun(S1) -> script(<<"return arguments[0] === 'execute' ? window.__mock.executions : window.__mock.calls.filter(x => x.action === arguments[0]).length">>, [A], S1) =:= N end, S);
 operation(fixture_billing, [Visible], S) ->
     fixture(S), V = case bin(Visible) of <<"visible">> -> false; <<"hidden">> -> true end,
-    true = script(<<"document.querySelector('#billing-nav').hidden = arguments[0]; return true">>, [V], S), S;
+    true = script(<<"const v=arguments[0]; document.querySelector('#billing-nav').hidden=v; const g=document.querySelector('#billing-nav-group'); if(g) g.hidden=v; return true">>, [V], S), S;
 operation(fixture_no_injection, [], S) ->
     fixture(S), false = script(<<"return window.__injected === true">>, [], S), S.
 

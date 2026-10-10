@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1200" role="img" aria-labelledby="title desc">
+  <title id="title">DamageBDD settlement reward</title>
+  <desc id="desc">A verification shield surrounding a settlement check mark.</desc>
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#102a43"/><stop offset="1" stop-color="#174b71"/></linearGradient>
+    <radialGradient id="r"><stop stop-color="#b9f6d0"/><stop offset="1" stop-color="#58b982"/></radialGradient>
+  </defs>
+  <rect width="1200" height="1200" rx="120" fill="url(#g)"/>
+  <circle cx="600" cy="530" r="310" fill="#fff" opacity=".06"/>
+  <path d="M600 230 860 325v205c0 210-260 390-260 390S340 740 340 530V325l260-95Z" fill="none" stroke="#d6e9f7" stroke-width="42"/>
+  <circle cx="600" cy="530" r="155" fill="url(#r)"/>
+  <path d="m520 535 58 58 122-145" fill="none" stroke="#0f3b2b" stroke-width="42" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="600" y="1010" text-anchor="middle" fill="#f4f8fb" font-family="system-ui,sans-serif" font-size="64" font-weight="700">SETTLEMENT REWARD</text>
+  <text x="600" y="1080" text-anchor="middle" fill="#bad1e2" font-family="system-ui,sans-serif" font-size="34" letter-spacing="7">DAMAGEBDD · AEX-141</text>
+</svg>

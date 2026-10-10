@@ -2,7 +2,8 @@
 -module(damage_invoice_backend).
 -license("Apache-2.0").
 -export([ready/0, load/0, save/1, close/0, put_pdf/2, get_pdf/1,
-         billing_clock/0, seller/1, render/1, prepare_email/1, send/1, email_bodies/1]).
+         billing_clock/0, seller/1, render/1, prepare_email/1, send/1,
+         settlement_nft/1, email_bodies/1]).
 ready() -> secrets:ready().
 load() -> damage_invoice_store:load().
 save(D) -> damage_invoice_store:save(D).
@@ -11,6 +12,7 @@ put_pdf(Id, PDF) -> damage_invoice_store:put_pdf(Id, PDF).
 get_pdf(Id) -> damage_invoice_store:get_pdf(Id).
 render(I) -> damage_invoice_pdf:render(I).
 send(Mail) -> damage_utils:send_prepared_email(Mail).
+settlement_nft(I) -> damage_invoice_settlement_nft:mint(I).
 
 billing_clock() ->
     DT = case damage_enterprise_invoices:cfg(clock, node_local) of
@@ -22,20 +24,32 @@ billing_clock() ->
 
 seller(I) ->
     S = damage_enterprise_invoices:cfg(seller, []),
-    Registered = proplists:get_value(gst_registered, S, false),
-    true = is_boolean(Registered),
     Profile = maps:get(payment_profile, I, <<"default">>),
     Profiles = damage_enterprise_invoices:cfg(payment_profiles, []),
-    Instructions = case Profile of
+    Instructions0 = case Profile of
         <<"default">> -> proplists:get_value(payment_instructions, S, <<>>);
         _ -> proplists:get_value(Profile, Profiles, <<>>)
     end,
-    Fields = [name, abn, email, address],
-    M = maps:from_list([{K, damage_invoice_model:text(to_bin(proplists:get_value(K, S, <<>>)),
-                           case K of name -> 1; email -> 1; _ -> 0 end, 5000)} || K <- Fields]),
-    true = not Registered orelse maps:get(abn, M) =/= <<>>,
-    M#{gst_registered => Registered,
-       payment_instructions => damage_invoice_model:text(to_bin(Instructions), 1, 5000)}.
+    Instructions = damage_invoice_model:text(to_bin(Instructions0), 1, 5000),
+    case maps:get(billing_settings, I, undefined) of
+        #{seller := SellerSettings} ->
+            damage_invoice_model:seller_snapshot(SellerSettings, Instructions);
+        _ ->
+            %% Compatibility for callers that issue without the persisted settings snapshot.
+            Registered = proplists:get_value(gst_registered, S, false),
+            true = is_boolean(Registered),
+            Name = damage_invoice_model:text(to_bin(proplists:get_value(name, S, <<>>)), 1, 200),
+            RegId = damage_invoice_model:text(to_bin(proplists:get_value(abn, S, <<>>)), 0, 100),
+            true = not Registered orelse RegId =/= <<>>,
+            #{name => Name, legal_name => Name,
+              email => damage_invoice_model:text(to_bin(proplists:get_value(email, S, <<>>)), 1, 254),
+              address => damage_invoice_model:text(to_bin(proplists:get_value(address, S, <<>>)), 0, 2000),
+              logo_path => <<>>, country_code => <<"AU">>,
+              tax_registered => Registered, tax_name => <<"GST">>,
+              tax_registration_label => <<"ABN">>, tax_registration_id => RegId,
+              default_tax_bps => 0, invoice_title => <<"TAX INVOICE">>,
+              abn => RegId, gst_registered => Registered, payment_instructions => Instructions}
+    end.
 
 prepare_email(I) ->
     try
@@ -48,7 +62,8 @@ prepare_email(I) ->
         true = re:run(Hostname, <<"^[A-Za-z0-9.-]+$">>, [{capture, none}]) =:= match,
         Generation = integer_to_binary(maps:get(generation, maps:get(delivery, I))),
         MessageId = <<"<invoice-", Id/binary, "-", Generation/binary, "@", Hostname/binary, ">">>,
-        Subject = <<"DamageBDD invoice ", Number/binary>>,
+        SellerName = maps:get(name, maps:get(seller, I), <<"DamageBDD">>),
+        Subject = <<SellerName/binary, " invoice ", Number/binary>>,
         damage_utils:prepare_email({maps:get(name, Customer), maps:get(email, Customer)},
             Subject, Text, Html, [{message_id, MessageId}, {attachments, [{<<Number/binary, ".pdf">>, <<"application/pdf">>, PDF}]}])
     catch _:_ -> {error, email_preparation_failed} end.

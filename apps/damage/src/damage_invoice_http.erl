@@ -4,7 +4,7 @@
 -license("Apache-2.0").
 -export([trails/0, init/2]).
 -ifdef(TEST).
--export([route/3, bearer/1]).
+-export([route/3, bearer/1, auth_result/1]).
 -endif.
 -define(MAX_BODY, 262144).
 
@@ -24,12 +24,32 @@ init(Req0, _Opts) ->
 handle(Req0) ->
     case bearer(cowboy_req:header(<<"authorization">>, Req0, <<>>)) of
         {ok, Token} ->
-            case damage_access_token:verify_token(Token) of
-                {ok, Account, _} when is_binary(Account) -> authenticated(Account, Req0);
-                _ -> unauthorized(Req0)
+            %% Billing deliberately remains Bearer-only, but token validation must
+            %% follow the shared Damage auth path so both ae1 access tokens and
+            %% ds1 browser sessions use the same server-side session semantics.
+            case auth_result(damage_auth:resolve_oauth(Token, #{})) of
+                {ok, Account} -> authenticated(Account, Req0);
+                {error, _} -> unauthorized(Req0)
             end;
         error -> unauthorized(Req0)
     end.
+
+%% Browser wallet sessions intentionally cannot become billing sessions. The
+%% dashboard already treats that mode as wallet-only; enforcing it here keeps
+%% the authorization boundary server-side as well. Custodial browser sessions
+%% and legacy/signed ae1 access tokens resolve to the authenticated account.
+auth_result({ok, #{
+    public_key := Account,
+    auth_type := browser_session,
+    auth_mode := custodial
+}}) when is_binary(Account) ->
+    {ok, Account};
+auth_result({ok, #{auth_type := browser_session}}) ->
+    {error, wallet_session_forbidden};
+auth_result({ok, #{public_key := Account}}) when is_binary(Account) ->
+    {ok, Account};
+auth_result(_) ->
+    {error, invalid_oauth}.
 bearer(<<"Bearer ", Token/binary>>) when byte_size(Token) > 0, byte_size(Token) =< 8192 ->
     {ok, Token};
 bearer(_) -> error.
@@ -66,19 +86,22 @@ authenticated(Account, Req0) ->
     end.
 
 route(<<"GET">>, [<<"session">>], _) -> session;
+route(<<"GET">>, [<<"settings">>], _) -> settings;
+route(<<"PUT">>, [<<"settings">>], M) -> {save_settings, M};
+route(<<"GET">>, [<<"summary">>], _) -> summary;
 route(<<"GET">>, [<<"customers">>], _) -> {list, customers};
 route(<<"GET">>, [<<"plans">>], _) -> {list, plans};
 route(<<"GET">>, [<<"invoices">>], Q) -> {list_invoices, Q};
 route(<<"GET">>, [<<"invoices">>, Id], _) -> {get_invoice, valid_id(Id)};
 route(<<"GET">>, [<<"invoices">>, Id, <<"pdf">>], _) -> {get_pdf, valid_id(Id)};
-route(<<"POST">>, [<<"customers">>], M) -> {save_customer, body_id(M), M};
+route(<<"POST">>, [<<"customers">>], M) -> {create_customer, M};
 route(<<"PUT">>, [<<"customers">>, Id], M) -> {save_customer, matching_id(Id, M), M};
 route(<<"POST">>, [<<"plans">>], M) -> {save_plan, body_id(M), M};
 route(<<"PUT">>, [<<"plans">>, Id], M) -> {save_plan, matching_id(Id, M), M};
 route(<<"POST">>, [<<"plans">>, Id, <<"generate">>], M) -> {generate, valid_id(Id), M};
 route(<<"PUT">>, [<<"invoices">>, Id], M) -> {edit_invoice, valid_id(Id), M};
 route(<<"POST">>, [<<"invoices">>, Id, Action], M) ->
-    case lists:member(Action, [<<"issue">>, <<"send">>, <<"paid">>, <<"void">>]) of
+    case lists:member(Action, [<<"issue">>, <<"send">>, <<"paid">>, <<"void">>, <<"settlement_nft">>]) of
         true -> {action, valid_id(Id), Action, M};
         false -> throw(not_found)
     end;
@@ -94,6 +117,7 @@ matching_id(Id, M) ->
     end.
 success_code({action, _, <<"issue">>, _}) -> 202;
 success_code({action, _, <<"send">>, _}) -> 202;
+success_code({action, _, <<"settlement_nft">>, _}) -> 202;
 success_code(_) -> 200.
 
 read_json(Req0) ->

@@ -61,6 +61,22 @@ handle_call({begin_smtp, Ref}, _From, #{busy := #{ref := Ref, id := Id, kind := 
         _ -> {reply, {error, cancelled}, S}
     end;
 handle_call({begin_smtp, _}, _From, S) -> {reply, {error, cancelled}, S};
+handle_call({begin_settlement_nft, Ref}, _From,
+            #{busy := #{ref := Ref, id := Id, kind := settlement_nft}, data := D} = S)
+    when is_map(D) ->
+    I = fetch(invoices, Id, D),
+    Settlement = maps:get(settlement_nft, I, #{status => <<"not_requested">>}),
+    Permitted = settlement_allowed(Settlement),
+    case {maps:get(status, I), maps:get(status, Settlement, <<"not_requested">>), Permitted} of
+        {<<"paid">>, <<"queued">>, true} ->
+            S1Map = Settlement#{status => <<"minting">>, started_at => now_s()},
+            I1 = audit_invoice(I#{settlement_nft => S1Map}, <<"system">>,
+                               <<"settlement_reward_started">>, <<>>),
+            {Reply, S1} = commit(ok, put(invoices, Id, I1, D), S),
+            {reply, Reply, S1};
+        _ -> {reply, {error, cancelled}, S}
+    end;
+handle_call({begin_settlement_nft, _}, _From, S) -> {reply, {error, cancelled}, S};
 handle_call(_, _From, S) -> {reply, {error, bad_request}, S}.
 
 handle_cast(tick, S0) ->
@@ -138,14 +154,22 @@ load(#{backend := B} = S) ->
         _ -> B:close(), {error, S}
     end.
 recover(D) ->
-    Is = maps:map(fun(_, I) ->
-        Delivery = maps:get(delivery, I),
-        case maps:get(status, Delivery) of
+    Is = maps:map(fun(_, I0) ->
+        Delivery = maps:get(delivery, I0),
+        I1 = case maps:get(status, Delivery) of
             <<"sending">> ->
-                audit_invoice(I#{delivery => Delivery#{status => <<"unknown">>,
+                audit_invoice(I0#{delivery => Delivery#{status => <<"unknown">>,
                     last_error => <<"Restart during SMTP; check relay before retrying">>}},
                     <<"system">>, <<"smtp_outcome_unknown">>, <<>>);
-            _ -> I
+            _ -> I0
+        end,
+        Settlement = maps:get(settlement_nft, I1, #{status => <<"not_requested">>}),
+        case maps:get(status, Settlement, <<"not_requested">>) of
+            <<"minting">> ->
+                audit_invoice(I1#{settlement_nft => Settlement#{status => <<"unknown">>,
+                    last_error => <<"Restart during settlement mint; retry safely to reconcile the unique attestation hash">>}},
+                    <<"system">>, <<"settlement_reward_outcome_unknown">>, <<>>);
+            _ -> I1
         end
     end, maps:get(invoices, D)),
     D#{invoices => Is}.
@@ -161,11 +185,25 @@ commit(Reply, D, #{backend := B} = S) ->
     end.
 
 command(session, _A, Role, D, _S) ->
+    Settings = effective_settings(D),
     {{ok, #{role => Role, can_manage_admins => Role =:= node_admin,
+            can_manage_settings => Role =:= node_admin,
             auto_send_enabled => cfg(auto_send, false), clock => cfg(clock, node_local),
             send_hour => cfg(send_hour, 9),
             payment_profiles => [<<"default">> | [to_bin(K) || {K, _} <- cfg(payment_profiles, [])]],
+            settlement_rewards => damage_invoice_settlement_nft:status(),
+            seller_country => maps:get(country_code, maps:get(seller, Settings)),
+            default_tax_bps => maps:get(default_rate_bps, maps:get(tax, maps:get(seller, Settings))),
             admin_count => length(maps:get(admins, D))}}, D};
+command(settings, _, _, D, _) -> {{ok, effective_settings(D)}, D};
+command({save_settings, M}, A, node_admin, D, _) ->
+    Old = effective_settings(D),
+    damage_invoice_model:revision(M, Old),
+    Settings = damage_invoice_model:billing_settings(M, Old),
+    D1 = root_audit(D#{settings => Settings}, A, <<"billing_settings_saved">>, <<"seller">>),
+    {{ok, Settings}, D1};
+command({save_settings, _}, _, _, _, _) -> throw(forbidden);
+command(summary, _, _, D, _) -> {{ok, billing_summary(D)}, D};
 command({list, customers}, _, _, D, _) -> {{ok, #{items => sorted(customers, D)}}, D};
 command({list, plans}, _, _, D, _) -> {{ok, #{items => sorted(plans, D)}}, D};
 command({list_invoices, Query}, _, _, D, _) -> {{ok, invoice_page(Query, D)}, D};
@@ -183,6 +221,15 @@ command({get_pdf, Id}, _, _, D, #{backend := B}) ->
         _ -> {error, unavailable}
     end,
     {Reply, D};
+command({create_customer, M}, A, _, D, _) ->
+    Id = create_customer_id(M, D),
+    Seller = maps:get(seller, effective_settings(D)),
+    M1 = case maps:is_key(<<"country_code">>, M) of
+        true -> M;
+        false -> M#{<<"country_code">> => maps:get(country_code, Seller, <<"AU">>)}
+    end,
+    C = damage_invoice_model:customer(M1#{<<"id">> => Id}, #{}),
+    {{ok, C}, root_audit(put(customers, Id, C, D), A, <<"customer_created">>, Id)};
 command({save_customer, Id, M}, A, _, D, _) ->
     Old = maps:get(Id, maps:get(customers, D), #{}),
     update_revision(M, Old),
@@ -231,23 +278,32 @@ command({action, Id, <<"send">>, M}, A, _, D, _) ->
             {{ok, I1}, put(invoices, Id, I1, D)}
     end;
 command({action, Id, Action, M}, A, _, D, S) when Action =:= <<"paid">>; Action =:= <<"void">> ->
-    damage_invoice_model:json_keys(M, [revision, note, paid_on, payment_reference]),
+    Allowed = case Action of
+        <<"paid">> -> [revision, note, paid_on, payment_reference, mint_settlement_nft, settlement_recipient];
+        <<"void">> -> [revision, note]
+    end,
+    damage_invoice_model:json_keys(M, Allowed),
     I = fetch(invoices, Id, D),
     damage_invoice_model:revision(M, I),
     require(not busy_id(Id, S), <<"An operation is in flight for this invoice">>),
     Status = maps:get(status, I),
-    case Action of
+    I0 = case Action of
         <<"paid">> ->
             require(Status =:= <<"issued">>, <<"Only an issued invoice can be marked paid">>),
             PaidOn = damage_invoice_model:get(paid_on, M, <<>>),
             _ = damage_invoice_model:date(PaidOn),
             require(PaidOn =< today(S), <<"Payment date cannot be in the future">>),
             Reference = damage_invoice_model:text(damage_invoice_model:get(payment_reference, M, <<>>), 1, 200),
-            I0 = I#{status => <<"paid">>, paid_on => PaidOn, payment_reference => Reference};
+            Paid = I#{status => <<"paid">>, paid_on => PaidOn, payment_reference => Reference},
+            case damage_invoice_model:get(mint_settlement_nft, M, false) of
+                false -> Paid;
+                true -> queue_settlement_reward(Paid, M, D);
+                _ -> throw({validation, <<"mint_settlement_nft must be boolean">>})
+            end;
         <<"void">> ->
             require(lists:member(Status, [<<"draft">>, <<"issue_failed">>, <<"issued">>]),
                     <<"Cannot void this invoice; paid invoices need a separate adjustment">>),
-            I0 = I#{status => <<"void">>}
+            I#{status => <<"void">>}
     end,
     Note = damage_invoice_model:text(damage_invoice_model:get(note, M, <<>>), 1, 1000),
     Delivery0 = maps:get(delivery, I0),
@@ -255,6 +311,22 @@ command({action, Id, Action, M}, A, _, D, S) when Action =:= <<"paid">>; Action 
         <<"queued">> -> Delivery0#{status => <<"cancelled">>}; _ -> Delivery0
     end,
     I1 = audit_invoice(I0#{delivery => Delivery}, A, Action, Note),
+    {{ok, I1}, put(invoices, Id, I1, D)};
+command({action, Id, <<"settlement_nft">>, M}, A, _, D, S) ->
+    damage_invoice_model:json_keys(M, [revision, settlement_recipient]),
+    I = fetch(invoices, Id, D),
+    damage_invoice_model:revision(M, I),
+    require(maps:get(status, I) =:= <<"paid">>, <<"Settlement rewards require a paid invoice">>),
+    require(not busy_id(Id, S), <<"An operation is in flight for this invoice">>),
+    Settlement0 = maps:get(settlement_nft, I, #{status => <<"not_requested">>}),
+    SettlementStatus = maps:get(status, Settlement0, <<"not_requested">>),
+    require(not lists:member(SettlementStatus, [<<"queued">>, <<"minting">>, <<"minted">>]),
+            <<"Settlement reward is already queued, minting or minted">>),
+    I0 = case SettlementStatus of
+        <<"unknown">> -> retry_unknown_settlement_reward(I, M);
+        _ -> queue_settlement_reward(I, M, D)
+    end,
+    I1 = audit_invoice(I0, A, <<"settlement_reward_queued">>, <<>>),
     {{ok, I1}, put(invoices, Id, I1, D)};
 command(list_admins, _, node_admin, D, _) ->
     Configured = configured_admins(),
@@ -288,7 +360,9 @@ issue(#{status := <<"issue_failed">>} = I, A, D, _) ->
 issue(I, A, D, S) ->
     require(maps:get(status, I) =:= <<"draft">>, <<"Invoice has already been issued">>),
     B = maps:get(backend, S),
-    Seller = B:seller(I),
+    %% The current billing profile is snapshotted into the issued invoice.
+    %% Later configuration edits never rewrite an already-issued document.
+    Seller = B:seller(I#{billing_settings => effective_settings(D)}),
     Seq = maps:get(sequence, D) + 1,
     Prefix = to_bin(cfg(number_prefix, <<"DBDD-ENT">>)),
     require(re:run(Prefix, <<"^[A-Z0-9-]{1,32}$">>, [{capture, none}]) =:= match,
@@ -356,7 +430,10 @@ start_job(#{data := D, backend := B} = S) ->
             Render = [{render, I} || I <- All, maps:get(status, I) =:= <<"issuing">>],
             Emails = [{email, I} || I <- All, maps:get(status, I) =:= <<"issued">>,
                           maps:get(status, maps:get(delivery, I)) =:= <<"queued">>, email_allowed(I, D)],
-            case Render ++ Emails of
+            Settlements = [{settlement_nft, I} || I <- All, maps:get(status, I) =:= <<"paid">>,
+                          maps:get(status, maps:get(settlement_nft, I, #{status => <<"not_requested">>})) =:= <<"queued">>,
+                          settlement_allowed(maps:get(settlement_nft, I, #{}))],
+            case Render ++ Emails ++ Settlements of
                 [] -> S;
                 [{Kind, I} | _] ->
                     Owner = self(), Ref = make_ref(),
@@ -386,6 +463,11 @@ work(email, I, B, Owner, Ref) ->
                 _ -> {error, cancelled}
             end;
         _ -> {error, email_preparation_failed}
+    end;
+work(settlement_nft, I, B, Owner, Ref) ->
+    case gen_server:call(Owner, {begin_settlement_nft, Ref}, 30000) of
+        ok -> B:settlement_nft(I);
+        _ -> {error, cancelled}
     end.
 finish_job(#{id := Id, kind := Kind}, Result, #{data := D} = S) when is_map(D) ->
     I = fetch(invoices, Id, D),
@@ -407,17 +489,46 @@ finish_job(#{id := Id, kind := Kind}, Result, #{data := D} = S) when is_map(D) -
             I#{delivery => Delivery#{status => case Started of true -> <<"unknown">>; false -> <<"failed">> end,
                  last_error => case Started of
                     true -> <<"SMTP outcome uncertain. Check relay before retrying.">>;
-                    false -> <<"Email preparation failed before SMTP. Check PDF and mail configuration.">> end}}
+                    false -> <<"Email preparation failed before SMTP. Check PDF and mail configuration.">> end}};
+        {settlement_nft, {ok, Mint}} when is_map(Mint) ->
+            Current = maps:get(settlement_nft, I, #{}),
+            I#{settlement_nft => maps:merge(Current, Mint#{status => <<"minted">>, minted_at => now_s()})};
+        {settlement_nft, {error, cancelled}} -> I;
+        {settlement_nft, {error, settlement_outcome_unknown}} ->
+            Current = maps:get(settlement_nft, I, #{}),
+            I#{settlement_nft => Current#{status => <<"unknown">>,
+                last_error => <<"Mint outcome is uncertain. Retry safely to reconcile the unique attestation hash.">>}};
+        {settlement_nft, {error, settlement_lookup_failed}} ->
+            settlement_failed(I, <<"Settlement lookup failed before submission. Check contract/node read access, then retry.">>);
+        {settlement_nft, {error, settlement_mint_failed}} ->
+            settlement_failed(I, <<"Settlement mint failed before a tracked submission. Check signing and contract configuration, then retry.">>);
+        {settlement_nft, {error, {settlement_mint_rejected, _}}} ->
+            settlement_failed(I, <<"Settlement mint was rejected on chain. Check contract administration and configuration, then retry only after correcting the cause.">>);
+        {settlement_nft, _} ->
+            Current = maps:get(settlement_nft, I, #{}),
+            Started = maps:get(status, Current, <<"not_requested">>) =:= <<"minting">>,
+            I#{settlement_nft => Current#{status => case Started of true -> <<"unknown">>; false -> <<"failed">> end,
+                last_error => case Started of
+                    true -> <<"Mint outcome is uncertain. Retry safely to reconcile the unique attestation hash.">>;
+                    false -> <<"Settlement reward mint failed before submission. Check contract and node configuration, then retry.">>
+                end}}
     end,
     Action = case {Kind, Result} of
         {render, {ok, _}} -> <<"issued">>;
         {render, _} -> <<"issue_failed">>;
         {email, {ok, accepted}} -> <<"smtp_accepted">>;
-        _ -> <<"email_failed_or_unknown">>
+        {email, _} -> <<"email_failed_or_unknown">>;
+        {settlement_nft, {ok, _}} -> <<"settlement_reward_minted">>;
+        {settlement_nft, {error, cancelled}} -> <<"settlement_reward_cancelled">>;
+        {settlement_nft, _} -> <<"settlement_reward_failed_or_unknown">>
     end,
     I1 = audit_invoice(I0, <<"system">>, Action, <<>>),
     {_, S1} = commit(ok, put(invoices, Id, I1, D), S), S1;
 finish_job(_, _, S) -> S.
+settlement_failed(I, Message) ->
+    Current = maps:get(settlement_nft, I, #{}),
+    I#{settlement_nft => Current#{status => <<"failed">>, last_error => Message}}.
+
 %% Automatic outbox work also observes current opt-outs, not just the
 %% flags captured when a scheduled invoice was first generated.
 email_allowed(I, D) ->
@@ -435,6 +546,116 @@ stop_job(_) -> ok.
 cancel_job_timer(Job) -> erlang:cancel_timer(maps:get(timer, Job)), ok.
 busy_id(Id, #{busy := #{id := Id}}) -> true;
 busy_id(_, _) -> false.
+
+queue_settlement_reward(I, M, D) ->
+    SnapshotCustomer = maps:get(customer, I, #{}),
+    CustomerId = maps:get(id, SnapshotCustomer, <<>>),
+    CurrentCustomer = maps:get(CustomerId, maps:get(customers, D, #{}), #{}),
+    DefaultRecipient = maps:get(account, CurrentCustomer, maps:get(account, SnapshotCustomer, <<>>)),
+    Recipient = damage_invoice_model:get(settlement_recipient, M, DefaultRecipient),
+    Recipient1 = damage_invoice_model:text(Recipient, 1, 100),
+    case damage_invoice_settlement_nft:prepare(I, Recipient1) of
+        {ok, Settlement} -> I#{settlement_nft => Settlement};
+        {error, Message} when is_binary(Message) -> throw({validation, Message});
+        _ -> throw({validation, <<"Settlement reward configuration is unavailable">>})
+    end.
+
+retry_unknown_settlement_reward(I, M) ->
+    Settlement = maps:get(settlement_nft, I),
+    ExistingRecipient = maps:get(recipient, Settlement),
+    RequestedRecipient = damage_invoice_model:get(settlement_recipient, M, ExistingRecipient),
+    require(RequestedRecipient =:= ExistingRecipient,
+            <<"An uncertain mint must be retried with the original recipient">>),
+    require(maps:get(attestation_sha256, Settlement, <<>>) =:=
+                damage_invoice_settlement_nft:attestation_hash(I),
+            <<"Settlement attestation no longer matches the paid invoice">>),
+    Current = damage_invoice_settlement_nft:status(),
+    require(maps:get(enabled, Current, false) =:= true,
+            <<"Settlement reward NFT is not enabled on this node">>),
+    require(maps:get(contract_id, Current, null) =:= maps:get(contract_id, Settlement, undefined),
+            <<"The settlement contract changed while mint outcome was uncertain; reconcile the original contract before retrying">>),
+    require(maps:get(reward_class, Current, <<>>) =:= maps:get(reward_class, Settlement, <<>>),
+            <<"The settlement reward class changed while mint outcome was uncertain; restore the original configuration before retrying">>),
+    Settlement1 = maps:without([last_error, started_at, minted_at, token_id, tx_hash, reused], Settlement),
+    I#{settlement_nft => Settlement1#{status => <<"queued">>}}.
+
+settlement_allowed(Settlement) ->
+    Status = damage_invoice_settlement_nft:status(),
+    maps:get(enabled, Status, false) =:= true andalso
+        maps:get(contract_id, Status, null) =:= maps:get(contract_id, Settlement, undefined).
+
+effective_settings(D) ->
+    maps:get(settings, D, legacy_billing_settings()).
+
+legacy_billing_settings() ->
+    S = cfg(seller, []),
+    Name0 = to_bin(proplists:get_value(name, S, <<"DAMAGEBDD">>)),
+    Name = case Name0 of <<>> -> <<"DAMAGEBDD">>; _ -> Name0 end,
+    Legal0 = to_bin(proplists:get_value(legal_name, S, Name)),
+    Legal = case Legal0 of <<>> -> Name; _ -> Legal0 end,
+    Registered = proplists:get_value(gst_registered, S, false) =:= true,
+    Scheme = to_bin(proplists:get_value(tax_scheme, S,
+                 case Registered of true -> <<"gst">>; false -> <<"none">> end)),
+    TaxName0 = to_bin(proplists:get_value(tax_name, S, <<"GST">>)),
+    TaxName = case TaxName0 of <<>> -> <<"Tax">>; _ -> TaxName0 end,
+    RegLabel0 = to_bin(proplists:get_value(tax_registration_label, S, <<"ABN">>)),
+    RegLabel = case RegLabel0 of <<>> -> <<"Tax registration ID">>; _ -> RegLabel0 end,
+    RegId = to_bin(proplists:get_value(tax_registration_id, S,
+                                      proplists:get_value(abn, S, <<>>))),
+    Country0 = to_bin(proplists:get_value(country_code, S, <<"AU">>)),
+    Country = case Country0 of <<>> -> <<"AU">>; _ -> Country0 end,
+    #{revision => 0, seller => #{
+        legal_name => Legal, display_name => Name,
+        email => to_bin(proplists:get_value(email, S, <<>>)),
+        address => to_bin(proplists:get_value(address, S, <<>>)),
+        logo_path => to_bin(proplists:get_value(logo_path, S, <<>>)),
+        country_code => Country,
+        tax => #{scheme => Scheme, name => TaxName, registration_label => RegLabel,
+                 registration_id => RegId, registered => Registered,
+                 default_rate_bps => proplists:get_value(default_tax_bps, S, 0),
+                 invoice_title => to_bin(proplists:get_value(tax_invoice_title, S, <<"TAX INVOICE">>))}
+    }}.
+
+create_customer_id(M, D) ->
+    case damage_invoice_model:get(id, M, <<>>) of
+        <<>> -> unique_customer_id(maps:get(customers, D), 8);
+        Id0 ->
+            Id = damage_invoice_model:id(Id0),
+            require(not maps:is_key(Id, maps:get(customers, D)), <<"Customer ID already exists">>),
+            Id
+    end.
+
+unique_customer_id(_Customers, 0) ->
+    throw({conflict, <<"Could not allocate a unique customer ID; retry">>});
+unique_customer_id(Customers, Attempts) ->
+    Hex = string:lowercase(binary:encode_hex(crypto:strong_rand_bytes(12))),
+    Id = <<"cus_", Hex/binary>>,
+    case maps:is_key(Id, Customers) of
+        true -> unique_customer_id(Customers, Attempts - 1);
+        false -> Id
+    end.
+
+billing_summary(D) ->
+    Invoices = maps:values(maps:get(invoices, D)),
+    NeedsAction = length([ok || I <- Invoices, needs_billing_action(I)]),
+    Outstanding = [I || I <- Invoices, maps:get(status, I) =:= <<"issued">>],
+    Paid = [I || I <- Invoices, maps:get(status, I) =:= <<"paid">>],
+    Rewards = [I || I <- Paid, maps:get(status, maps:get(settlement_nft, I, #{status => <<"not_requested">>})) =:= <<"minted">>],
+    Amounts = lists:foldl(fun(I, Acc) ->
+        Currency = maps:get(currency, I),
+        Acc#{Currency => maps:get(Currency, Acc, 0) + maps:get(total_minor, I)}
+    end, #{}, Outstanding),
+    #{needs_action => NeedsAction, outstanding_count => length(Outstanding),
+      outstanding_minor => Amounts, paid_count => length(Paid),
+      settlement_rewards_minted => length(Rewards)}.
+
+needs_billing_action(I) ->
+    Status = maps:get(status, I),
+    DeliveryStatus = maps:get(status, maps:get(delivery, I)),
+    SettlementStatus = maps:get(status, maps:get(settlement_nft, I, #{status => <<"not_requested">>})),
+    lists:member(Status, [<<"draft">>, <<"issue_failed">>]) orelse
+        lists:member(DeliveryStatus, [<<"failed">>, <<"unknown">>]) orelse
+        lists:member(SettlementStatus, [<<"failed">>, <<"unknown">>]).
 
 invoice_page(Q, D) ->
     Limit = query_int(<<"limit">>, Q, 50, 1, 100), Offset = query_int(<<"offset">>, Q, 0, 0, 1000000),
@@ -469,4 +690,6 @@ today(#{backend := B}) -> {Today, _} = B:billing_clock(), Today.
 hash(B) -> string:lowercase(binary:encode_hex(crypto:hash(sha256, B))).
 to_bin(B) when is_binary(B) -> B;
 to_bin(L) when is_list(L) -> unicode:characters_to_binary(L);
+to_bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
+to_bin(I) when is_integer(I) -> integer_to_binary(I);
 to_bin(_) -> <<>>.

@@ -1,0 +1,7 @@
+%% Merge this tuple inside the existing enterprise_invoices proplist.
+%% Keep disabled until invoice_settlement_nft.aes is deployed and verified.
+{settlement_nft, [
+    {enabled, false},
+    {contract_id, <<"ct_REPLACE_WITH_DEPLOYED_CONTRACT">>},
+    {reward_class, <<"customer">>}
+]}.

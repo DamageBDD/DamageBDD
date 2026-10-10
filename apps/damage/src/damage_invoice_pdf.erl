@@ -9,8 +9,9 @@ render(Invoice) ->
     try
         ok = file:make_dir(Dir),
         ok = file:change_mode(Dir, 8#700),
+        Invoice1 = prepare_logo(Invoice, Dir),
         Source = filename:join(Dir, "invoice.tex"),
-        ok = file:write_file(Source, latex(Invoice), [binary, exclusive]),
+        ok = file:write_file(Source, latex(Invoice1), [binary, exclusive]),
         ok = file:change_mode(Source, 8#600),
         Engine0 = damage_enterprise_invoices:cfg(pdf_engine, "pdflatex"),
         Engine = case filename:pathtype(Engine0) of
@@ -35,6 +36,29 @@ render(Invoice) ->
     catch _:_ -> {error, pdf_generation_failed}
     after cleanup(Dir) end.
 
+prepare_logo(I, Dir) ->
+    Seller = maps:get(seller, I),
+    case maps:get(logo_path, Seller, <<>>) of
+        <<>> -> I;
+        <<"/static/", Rel/binary>> ->
+            true = binary:match(Rel, <<"..">>) =:= nomatch,
+            Root = filename:join(code:priv_dir(damage), "static"),
+            Src = filename:join(Root, binary_to_list(Rel)),
+            {ok, Bin} = file:read_file(Src),
+            true = byte_size(Bin) =< 5242880,
+            Ext0 = string:lowercase(filename:extension(Src)),
+            Ext = case Ext0 of ".jpeg" -> ".jpg"; ".jpg" -> ".jpg"; ".png" -> ".png"; ".pdf" -> ".pdf" end,
+            Name = list_to_binary("seller-logo" ++ Ext),
+            Target = filename:join(Dir, binary_to_list(Name)),
+            ok = file:write_file(Target, Bin, [binary, exclusive]),
+            I#{seller => Seller#{logo_pdf_name => Name}};
+        _ -> error(invalid_invoice_logo_path)
+    end.
+
+labelled_line(_Label, <<>>) -> <<>>;
+labelled_line(Label, Value) ->
+    <<(tex(Label))/binary, ": ", (tex(Value))/binary, "\\\\\n">>.
+
 wait(Port, Deadline) ->
     Remaining = max(0, Deadline - erlang:monotonic_time(millisecond)),
     receive
@@ -52,19 +76,40 @@ cleanup(Dir) ->
 latex(I) ->
     Seller = maps:get(seller, I), C = maps:get(customer, I),
     Number = maps:get(number, I),
+    SellerName = maps:get(name, Seller),
+    LegalName = maps:get(legal_name, Seller, SellerName),
+    TaxRegistered = maps:get(tax_registered, Seller, maps:get(gst_registered, Seller, false)),
+    TaxName = maps:get(tax_name, Seller, <<"Tax">>),
+    SellerTaxLine = labelled_line(maps:get(tax_registration_label, Seller, <<"Tax ID">>),
+                                  maps:get(tax_registration_id, Seller, maps:get(abn, Seller, <<>>))),
+    CustomerTaxLabel = maps:get(tax_id_label, C, case maps:get(country_code, C, <<"AU">>) of
+        <<"AU">> -> <<"ABN">>; _ -> <<"Tax ID">>
+    end),
+    CustomerTaxLine = labelled_line(CustomerTaxLabel, maps:get(tax_id, C, maps:get(abn, C, <<>>))),
+    LogoBlock = case maps:get(logo_pdf_name, Seller, <<>>) of
+        <<>> -> <<>>;
+        LogoName -> <<"\\includegraphics[height=1.25cm,keepaspectratio]{", LogoName/binary, "}\\\\[0.35em]\n">>
+    end,
+    LegalLine = case LegalName =:= SellerName of
+        true -> <<>>;
+        false -> labelled_line(<<"Legal name">>, LegalName)
+    end,
     Data = #{<<"document_title">> => tex(maps:get(document_title, I)),
       <<"number">> => tex(Number), <<"issued_on">> => tex(maps:get(issued_on, I)),
       <<"due_on">> => tex(maps:get(due_on, I)), <<"currency">> => tex(maps:get(currency, I)),
-      <<"seller_name">> => tex(maps:get(name, Seller)), <<"seller_abn">> => tex(maps:get(abn, Seller)),
+      <<"logo_block">> => LogoBlock, <<"seller_name">> => tex(SellerName),
+      <<"seller_legal_line">> => LegalLine, <<"seller_tax_line">> => SellerTaxLine,
+      <<"seller_country_line">> => labelled_line(<<"Country">>, maps:get(country_code, Seller, <<>>)),
       <<"seller_email">> => tex(maps:get(email, Seller)), <<"seller_address">> => tex(maps:get(address, Seller)),
-      <<"customer_name">> => tex(maps:get(name, C)), <<"customer_abn">> => tex(maps:get(abn, C)),
+      <<"customer_name">> => tex(maps:get(name, C)), <<"customer_tax_line">> => CustomerTaxLine,
+      <<"customer_country_line">> => labelled_line(<<"Country">>, maps:get(country_code, C, <<>>)),
       <<"customer_email">> => tex(maps:get(email, C)), <<"customer_address">> => tex(maps:get(address, C)),
       <<"engagement">> => tex(maps:get(title, I)), <<"period_start">> => tex(maps:get(period_start, I)),
       <<"period_end">> => tex(maps:get(period_end, I)), <<"notes">> => tex(maps:get(notes, I)),
       <<"subtotal">> => damage_invoice_model:money(maps:get(subtotal_minor, I)),
       <<"tax">> => damage_invoice_model:money(maps:get(tax_minor, I)),
       <<"total">> => damage_invoice_model:money(maps:get(total_minor, I)),
-      <<"tax_label">> => case maps:get(gst_registered, Seller) of true -> <<"GST">>; false -> <<"Tax (none charged)">> end,
+      <<"tax_label">> => case TaxRegistered of true -> tex(TaxName); false -> <<"Tax (none charged)">> end,
       <<"payment_instructions">> => tex(maps:get(payment_instructions, Seller)),
       <<"rows">> => iolist_to_binary([row(Line) || Line <- maps:get(items, I)])},
     Priv = case damage_enterprise_invoices:cfg(template_dir, undefined) of

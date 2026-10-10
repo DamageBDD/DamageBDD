@@ -8,11 +8,13 @@ Feature: Authorised billing read-only controls
     Then the WebDriver element "[data-dashboard-shell]" should be "visible"
 
   Scenario: An invoice-authorised test account can view invoice management
+    Then the WebDriver element "#billing-nav-group" property "hidden" should equal JSON "false"
     Then the WebDriver element "#billing-nav" property "hidden" should equal JSON "false"
     When I select the WebDriver dashboard section "billing-tab"
     Then the WebDriver element "#enterprise-billing" should be "visible"
     Then the WebDriver text in "#billing-title" should contain "Invoices"
     Then the WebDriver element "#billing-status-filter" should be "visible"
+    Then the WebDriver element ".billing-overview" should be "visible"
     When I click the WebDriver element "[data-billing-pane=customers]"
     Then the WebDriver element "[data-billing-content=customers]" should be "visible"
     When I click the WebDriver element "[data-billing-pane=invoices]"

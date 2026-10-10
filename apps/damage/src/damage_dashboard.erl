@@ -148,6 +148,8 @@ render_component(analytics_tab, Ctx) ->
     render_tpl(?TPL("analytics_tab.mustache"), Ctx);
 render_component(schedules_tab, Ctx) ->
     render_tpl(?TPL("schedules_tab.mustache"), Ctx);
+render_component(billing_tab, Ctx) ->
+    render_tpl(?TPL("billing_tab.mustache"), Ctx);
 render_component(settings_tab, Ctx) ->
     render_tpl(?TPL("settings_tab.mustache"), Ctx);
 render_component(invoice_modal, Ctx) ->
