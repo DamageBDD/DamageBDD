@@ -187,7 +187,10 @@ render_advanced_indexer_component(_, _) ->
     <<>>.
 
 render_dashboard_page("ecai_console.mustache", Ctx) ->
-    AuthCtx = #{logo_image => <<"/ecai/auth-assets/img/logo.png">>,
+    AuthCtx = #{logo_image => <<"/static/img/ecai-brain.svg">>,
+                auth_brand_name => <<"ECAI">>,
+                auth_brand_label => <<"INTELLIGENCE FABRIC">>,
+                auth_brand_alt => <<"ECAI brain mark">>,
                 auth_auto_open => <<"false">>, auth_callback_path => <<"/dashboard">>,
                 auth_allow_guest => true, auth_hide_node_wallet => true},
     AuthHtml = damage_utils:load_template(damage, "ui/dashboard/auth_modal.mustache", AuthCtx),

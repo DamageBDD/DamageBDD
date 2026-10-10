@@ -4,7 +4,7 @@
     <div class="modal__container auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" aria-describedby="auth-intro">
       <main class="modal__content" id="login_modal_content">
         {{#auth_allow_guest}}<button type="button" class="auth-link auth-dismiss" data-auth-dismiss data-auth-action>Continue browsing ×</button>{{/auth_allow_guest}}
-        <div class="auth-brand"><img src="{{logo_image}}" alt="" width="36" height="36"><span>DamageBDD<span class="auth-brand-label">VERIFY WHAT MATTERS</span></span></div>
+        <div class="auth-brand"><img src="{{logo_image}}" alt="{{auth_brand_alt}}" width="36" height="36"><span>{{#auth_brand_name}}{{auth_brand_name}}{{/auth_brand_name}}{{^auth_brand_name}}DamageBDD{{/auth_brand_name}}<span class="auth-brand-label">{{#auth_brand_label}}{{auth_brand_label}}{{/auth_brand_label}}{{^auth_brand_label}}VERIFY WHAT MATTERS{{/auth_brand_label}}</span></span></div>
         <header class="auth-heading"><h1 id="auth-modal-title">Welcome back</h1><p id="auth-intro">One workspace. Two ways to sign in.<br>Managed account or wallet proof.</p></header>
         <div class="auth-tabs" role="tablist" aria-label="Sign-in method">
           <button type="button" id="auth-login-tab" role="tab" aria-selected="true" aria-controls="auth-email" data-auth-mode="login">Email</button>

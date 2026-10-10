@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">ECAI brain</title>
+  <desc id="desc">Geometric brain mark with connected intelligence nodes</desc>
+  <defs>
+    <linearGradient id="g" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6476f0"/>
+      <stop offset="1" stop-color="#2fcbb2"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="#111d34"/>
+  <path d="M31.7 13.5c-5.1-3.4-11.7.2-11.7 6.2-4.9.7-7.8 6.2-5.3 10.5-4.2 3.1-3.8 9.7.7 12.3-.7 5.1 4.1 9.3 9 7.7 2 4 7.6 4.7 10.5 1.3V17.9c-.7-1.9-1.8-3.4-3.2-4.4Z" fill="none" stroke="url(#g)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M34.9 17.9v33.6c2.9 3.4 8.5 2.7 10.5-1.3 4.9 1.6 9.7-2.6 9-7.7 4.5-2.6 4.9-9.2.7-12.3 2.5-4.3-.4-9.8-5.3-10.5 0-6-6.6-9.6-11.7-6.2-1.4 1-2.5 2.5-3.2 4.4Z" fill="none" stroke="url(#g)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M20 29.5h8l6.9-7.3 7.2 8.3h7.6M19 40h9l6.9 7.1 7-7.1H50" fill="none" stroke="#8fa3ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity=".9"/>
+  <circle cx="20" cy="29.5" r="2.7" fill="#6cf0d8"/>
+  <circle cx="34.9" cy="22.2" r="2.7" fill="#91a1ff"/>
+  <circle cx="49.7" cy="30.5" r="2.7" fill="#6cf0d8"/>
+  <circle cx="19" cy="40" r="2.7" fill="#91a1ff"/>
+  <circle cx="34.9" cy="47.1" r="2.7" fill="#6cf0d8"/>
+  <circle cx="50" cy="40" r="2.7" fill="#91a1ff"/>
+</svg>

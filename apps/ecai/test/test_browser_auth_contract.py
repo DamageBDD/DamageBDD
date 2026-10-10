@@ -47,6 +47,17 @@ class BrowserAuthContract(unittest.TestCase):
         self.assertNotIn('id="consoleLoginForm"',t)
         self.assertIn('{{{browser_auth_modal}}}',t)
         self.assertIn('data-ecai-managed',t)
+    def test_ecai_auth_uses_ecai_brain_brand(self):
+        s=read(APP/'src/ecai_dashboard.erl')
+        self.assertIn('logo_image => <<"/static/img/ecai-brain.svg">>',s)
+        self.assertIn('auth_brand_name => <<"ECAI">>',s)
+        self.assertIn('auth_brand_label => <<"INTELLIGENCE FABRIC">>',s)
+        self.assertNotIn('logo_image => <<"/ecai/auth-assets/img/logo.png">>',s)
+        self.assertTrue((APP/'priv/static/img/ecai-brain.svg').is_file())
+        auth=read(DAMAGE/'priv/templates/ui/dashboard/auth_modal.mustache')
+        self.assertIn('{{auth_brand_name}}',auth)
+        self.assertIn('{{auth_brand_label}}',auth)
+
     def test_mobile_returns_to_console(self):
         s=read(APP/'src/ecai_dashboard.erl')
         self.assertIn('auth_callback_path => <<"/dashboard">>',s)
