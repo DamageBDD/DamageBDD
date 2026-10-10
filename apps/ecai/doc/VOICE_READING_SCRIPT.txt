@@ -1,0 +1,26 @@
+ECAI VOICE LOOP — HUMAN READING SCRIPT
+
+Use headphones. Keep the microphone in the same position and speak naturally.
+Wait for the spoken instruction to finish before reading the sentence aloud.
+
+ENROLLMENT — TAKE 1
+I am reading this sentence clearly, using my usual speaking voice.
+
+ENROLLMENT — TAKE 2
+The small garden behind the house looks peaceful in the morning.
+
+CALIBRATION — TAKE 1
+This different sentence checks how my voice sounds on another recording.
+
+CALIBRATION — TAKE 2
+Blue morning light slowly appeared above the roofs across the street.
+
+HELD-OUT TEST — TAKE 1
+The afternoon sunshine reached the steps beside my front door.
+
+HELD-OUT TEST — TAKE 2
+I wonder whether this recording matches the earlier voice samples.
+
+The Erlang module automatically displays the correct passage during each take.
+The synthetic TTS speaker uses separate sentences and is generated straight
+to PCM/WAV, without a virtual sound-card loopback.
