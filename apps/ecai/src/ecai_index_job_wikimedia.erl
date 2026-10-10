@@ -290,7 +290,14 @@ run_one_unit(Job, Runtime0, Checkpoint0, pageviews) ->
     Index = maps:get(pageview_index, Checkpoint0, 0),
     case Index >= length(Sources) of
         true ->
-            {ok, Runtime0, Checkpoint0#{stage => aggregating, partition_index => 0}};
+            case maps:get(pageview_rows, Checkpoint0, 0) of
+                0 -> {error, {empty_pageview_selection, #{
+                    pageview_files_processed => Index,
+                    pageview_rows => 0,
+                    pageview_total_views => maps:get(pageview_total_views, Checkpoint0, 0)
+                }}};
+                _ -> {ok, Runtime0, Checkpoint0#{stage => aggregating, partition_index => 0}}
+            end;
         false ->
             Source = lists:nth(Index + 1, Sources),
             ProgressFun = live_progress_fun(Job, Runtime0, Checkpoint0),

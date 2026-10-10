@@ -172,6 +172,15 @@ finish_job(Job, Checkpoint, AdapterResult) ->
 
 finalize_artifact(Job, AdapterResult) ->
     JobId = maps:get(id, Job),
+    case validate_search_result(Job, AdapterResult) of
+        ok -> finalize_validated_artifact(Job, AdapterResult);
+        {error, Reason} ->
+            _ = ecai_index_jobs_srv:worker_failed(JobId, Reason),
+            ok
+    end.
+
+finalize_validated_artifact(Job, AdapterResult) ->
+    JobId = maps:get(id, Job),
     case ecai_index_artifact:finalize(Job, AdapterResult) of
         {ok, Artifact} ->
             case maybe_activate_search(Job, AdapterResult, Artifact) of
@@ -193,15 +202,33 @@ finalize_artifact(Job, AdapterResult) ->
             ok
     end.
 
+validate_search_result(
+    #{spec := #{kind := wikimedia_visibility, target := #{mode := live_search}}},
+    Result
+) ->
+    Size = maps:get(search_size, Result, #{}),
+    case {maps:get(records_indexed, Result, 0), maps:get(docs, Size, 0)} of
+        {Records, Docs} when is_integer(Records), Records > 0,
+                             is_integer(Docs), Docs > 0 -> ok;
+        _ -> {error, {empty_search_index, #{
+            records_indexed => maps:get(records_indexed, Result, 0),
+            search_size => Size,
+            selection => maps:get(selection, Result, #{})
+        }}}
+    end;
+validate_search_result(_Job, _Result) -> ok.
+
 maybe_activate_search(
-    #{id := JobId, spec := #{kind := wikimedia_visibility}}, AdapterResult, Artifact
+    Job = #{id := JobId, spec := #{kind := wikimedia_visibility}}, AdapterResult, Artifact
 ) ->
     case maps:get(search_snapshot_path, AdapterResult, undefined) of
         Path when is_binary(Path), byte_size(Path) > 0 ->
             ecai_wikimedia_search_server:activate_snapshot(
                 Path,
-                maps:with([job_id, index_root, manifest_sha256, manifest_cid], #{
+                maps:with([job_id, index_id, namespace, index_root, manifest_sha256, manifest_cid], #{
                     job_id => JobId,
+                    index_id => maps:get(index_id, maps:get(target, maps:get(spec, Job, #{}), #{}), undefined),
+                    namespace => maps:get(namespace, maps:get(target, maps:get(spec, Job, #{}), #{}), undefined),
                     index_root => maps:get(index_root, Artifact, undefined),
                     manifest_sha256 => maps:get(manifest_sha256, Artifact, undefined),
                     manifest_cid => maps:get(manifest_cid, Artifact, undefined)
