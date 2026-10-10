@@ -27,7 +27,9 @@ validate() ->
     catch error:{invalid_configuration, _} = Reason -> {error, Reason} end.
 
 keys() ->
-    [http_enabled, websocket_enabled, nostr_clients_enabled, ip, port,
+    [dashboard_enabled, auth_signup_enabled, auth_store_file, auth_challenge_ttl_seconds,
+     auth_session_ttl_seconds, auth_max_challenges, auth_max_sessions, auth_max_accounts,
+     auth_attempts_per_minute, http_enabled, websocket_enabled, nostr_clients_enabled, ip, port,
      http_num_acceptors, http_max_connections, http_idle_timeout_ms,
      http_request_timeout_ms, websocket_idle_timeout_ms, max_subscriptions,
      max_total_subscriptions, max_filters, max_filter_values,
@@ -35,6 +37,15 @@ keys() ->
      websocket_messages_per_minute, subscriber_queue_max,
      ae_event_store_hydrate_page_size, ae_event_store_retry_ms].
 
+spec(dashboard_enabled) -> {true, boolean};
+spec(auth_signup_enabled) -> {true, boolean};
+spec(auth_store_file) -> {"data/nosternity/accounts.dets", path};
+spec(auth_challenge_ttl_seconds) -> {180, {integer, 30, 600}};
+spec(auth_session_ttl_seconds) -> {3600, {integer, 60, 86400}};
+spec(auth_max_challenges) -> {1000, {integer, 1, 10000}};
+spec(auth_max_sessions) -> {10000, {integer, 1, 100000}};
+spec(auth_max_accounts) -> {100000, {integer, 1, 1000000}};
+spec(auth_attempts_per_minute) -> {120, {integer, 1, 1000}};
 spec(enabled) -> {true, boolean};
 spec(http_enabled) -> {true, boolean};
 spec(websocket_enabled) -> {true, boolean};
@@ -58,6 +69,7 @@ spec(subscriber_queue_max) -> {256, {integer, 1, 10000}};
 spec(ae_event_store_hydrate_page_size) -> {25, {integer, 1, 100}};
 spec(ae_event_store_retry_ms) -> {5000, {integer, 1000, 3600000}}.
 
+valid(path, Value) -> is_list(Value) andalso Value =/= [] andalso lists:all(fun(C) -> is_integer(C) andalso C > 0 end, Value);
 valid(boolean, Value) -> is_boolean(Value);
 valid({integer, Min, Max}, Value) ->
     is_integer(Value) andalso Value >= Min andalso Value =< Max;

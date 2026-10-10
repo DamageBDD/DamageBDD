@@ -1,9 +1,9 @@
 %% Bounded JSON API for the local Nostr relay and public retrieval bridge.
 -module(nosternity_search_http).
--export([init/2, trails/0]).
+-export([init/2, trails/0, search_json/1]).
 
 -ifdef(TEST).
--export([authorize/2, query_filters/1, decode_body/1, search_json/1]).
+-export([authorize/2, query_filters/1, decode_body/1]).
 -endif.
 
 -define(MAX_BODY_BYTES, 65536).

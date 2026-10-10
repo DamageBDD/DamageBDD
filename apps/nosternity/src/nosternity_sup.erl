@@ -80,7 +80,7 @@ worker_specs() ->
                 type => worker,
                 modules => [nosternity_relay]
             }
-        ] ++ nostr_client_specs() ++ PoolSpecs,
+        ] ++ dashboard_specs() ++ nostr_client_specs() ++ PoolSpecs,
 
     ?LOG_DEBUG("Nosternity worker definitions ~p~n", [PoolSpecs0]),
     PoolSpecs0.
@@ -112,4 +112,13 @@ nostr_client_specs() ->
                 modules => [damage_nostr]
             }
             ]
+    end.
+
+
+dashboard_specs() ->
+    case nosternity_config:get(dashboard_enabled) of
+        false -> [];
+        true -> [#{id => nosternity_auth, start => {nosternity_auth, start_link, []},
+                   restart => permanent, shutdown => 5000, type => worker,
+                   modules => [nosternity_auth]}]
     end.

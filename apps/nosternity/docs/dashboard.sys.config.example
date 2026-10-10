@@ -1,0 +1,27 @@
+%% Merge these entries into your existing release sys.config.
+%% Use your real public HTTPS origin and a persistent path writable by the VM.
+[
+ {nosternity, [
+   {enabled, true},
+   {http_enabled, true},
+   {ip, {127,0,0,1}},
+   {port, 9001},
+   {dashboard_enabled, true},
+   {browser_auth_origin, "https://nosternity.example.com"},
+   {auth_store_file, "/var/lib/nosternity/accounts.dets"},
+   {auth_signup_enabled, true},
+   {auth_challenge_ttl_seconds, 180},
+   {auth_session_ttl_seconds, 3600},
+   {auth_max_challenges, 1000},
+   {auth_max_sessions, 10000},
+   {auth_max_accounts, 100000},
+   {auth_attempts_per_minute, 120},
+   {search_default_limit, 50},
+   {search_max_limit, 200}
+ ]},
+ {damage, [
+   {cookie_secure, true}
+   %% Retain your existing browser_auth, email, identity, chain, NWC and
+   %% nsecbunker configuration. This fragment does not provision those services.
+ ]}
+].

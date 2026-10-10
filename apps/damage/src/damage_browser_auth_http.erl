@@ -9,7 +9,7 @@ trails() -> trails(damage).
 
 %% App is a trusted router option, never supplied by the browser. Each listener
 %% has one exact configured origin; do not allow both origins on either listener.
-trails(App) when App =:= damage; App =:= ecai ->
+trails(App) when App =:= damage; App =:= ecai; App =:= nosternity ->
     [trails:trail(Path, ?MODULE, #{action => Action, browser_auth_app => App},
         #{Method => #{tags => ["Browser authentication"], produces => ["application/json"]}})
      || {Path, Action, Method} <- [
@@ -68,6 +68,11 @@ request_origin_allowed(Expected, Method, Origin, AuthHeader, FetchSite) ->
         _ -> Origin =:= Expected
     end,
     ValidOrigin andalso AuthHeader =:= <<"1">> andalso FetchSite =/= <<"cross-site">>.
+configured_origin(nosternity) ->
+    case application:get_env(nosternity, browser_auth_origin) of
+        {ok, Value} -> origin(Value);
+        undefined -> error(nosternity_browser_auth_origin_missing)
+    end;
 configured_origin(ecai) ->
     case application:get_env(ecai, browser_auth_origin) of
         {ok, Value} -> origin(Value);

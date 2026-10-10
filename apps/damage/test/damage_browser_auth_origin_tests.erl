@@ -11,6 +11,15 @@ per_listener_origins_test() ->
         end)
     end).
 
+nosternity_origin_test() ->
+    with_env(nosternity, browser_auth_origin, "https://nostr.example", fun() ->
+        ?assertEqual(<<"https://nostr.example">>, damage_browser_auth_http:configured_origin(nosternity))
+    end),
+    Old = application:get_env(nosternity, browser_auth_origin),
+    application:unset_env(nosternity, browser_auth_origin),
+    try ?assertError(nosternity_browser_auth_origin_missing, damage_browser_auth_http:configured_origin(nosternity))
+    after restore(nosternity, browser_auth_origin, Old) end.
+
 missing_ecai_origin_fails_closed_test() ->
     Old = application:get_env(ecai, browser_auth_origin),
     application:unset_env(ecai, browser_auth_origin),

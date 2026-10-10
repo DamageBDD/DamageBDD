@@ -9,7 +9,7 @@
 -behaviour(application).
 
 -export([start/2, stop/1]).
--export([start_phase/3]).
+-export([start_phase/3, routes/0]).
 
 -ifdef(TEST).
 -export([transport_options/0, protocol_options/1, start_listener/1]).
@@ -23,19 +23,19 @@ start(_StartType, _StartArgs) ->
         {error, _} = Error -> Error
     end.
 get_trails() ->
-    Handlers =
-        [
-            nosternity_http,
-            nosternity_search_http
-        ],
-    Trails =
-        [
-            {"/nostr", nosternity_websocket, #{}},
-            {"/", cowboy_static, {priv_file, nosternity, "static/nosternity.html"}}
-            | trails:trails(Handlers)
-        ],
-    trails:store(Trails),
-    trails:single_host_compile(Trails).
+    trails:store(routes()),
+    trails:single_host_compile(routes()).
+
+%% Trusted router tags select each listener's auth origin.
+routes() ->
+    Base = [{"/nostr", nosternity_websocket, #{}}] ++
+        trails:trails([nosternity_http, nosternity_search_http]),
+    case nosternity_config:get(dashboard_enabled) of
+        false -> Base;
+        true -> nosternity_dashboard:routes() ++ Base ++
+            nosternity_auth_http:trails() ++ nosternity_dashboard_api:trails() ++
+            nosternity_damage_http:trails() ++ damage_browser_auth_http:trails(nosternity)
+    end.
 
 start_phase(start_trails_http, _StartType, []) ->
     case nosternity_config:get(enabled) andalso nosternity_config:get(http_enabled) of

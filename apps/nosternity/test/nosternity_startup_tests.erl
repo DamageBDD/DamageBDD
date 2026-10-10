@@ -25,7 +25,7 @@ invalid_listener_config_fails_start_test() ->
     end).
 
 legacy_signer_gate_test() ->
-    with_env([{enabled, true}, {nostr_clients_enabled, false}, {pools, []}], fun() ->
+    with_env([{enabled, true}, {nostr_clients_enabled, false}, {dashboard_enabled, false}, {pools, []}], fun() ->
         {ok, {_, SearchOnly}} = nosternity_sup:init([]),
         ?assertEqual([nosternity_event_store, nosternity_relay], ids(SearchOnly)),
         application:set_env(nosternity, nostr_clients_enabled, true),
@@ -34,10 +34,16 @@ legacy_signer_gate_test() ->
             nosternity_nostr, inglorious_nostr], ids(WithSigners))
     end).
 
+dashboard_worker_gate_test() ->
+    with_env([{enabled, true}, {nostr_clients_enabled, false}, {dashboard_enabled, true}, {pools, []}], fun() ->
+        {ok, {_, WithAuth}} = nosternity_sup:init([]),
+        ?assertEqual([nosternity_event_store, nosternity_relay, nosternity_auth], ids(WithAuth))
+    end).
+
 http_disabled_keeps_relay_test() ->
     Dir = temp_dir("nosternity-startup-"),
     with_env([{enabled, true}, {http_enabled, false}, {nostr_clients_enabled, false},
-              {pools, []}, {ae_event_store_enabled, false},
+              {pools, []}, {dashboard_enabled, false}, {ae_event_store_enabled, false},
               {ae_event_store_rehydrate, false},
               {search_store_file, filename:join(Dir, "events.dets")}], fun() ->
         {ok, Sup} = nosternity_app:start(normal, []),
