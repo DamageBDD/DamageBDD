@@ -1,0 +1,32 @@
+:root{color-scheme:light;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f6f8fb;color:#102136}
+*{box-sizing:border-box}
+body{margin:0}
+.page{width:min(940px,calc(100% - 32px));margin:0 auto}
+.top{display:flex;justify-content:space-between;align-items:center;padding:22px 0}
+a{color:inherit}
+.brand{font-size:1.13rem;font-weight:790;text-decoration:none;letter-spacing:-.035em}
+.dashboard{font-size:.87rem;text-decoration:none;color:#586b83}
+.hero{padding:48px 0 28px}
+.eyebrow{color:#246cba;font-weight:800;font-size:.74rem;letter-spacing:.14em}
+h1{font-size:clamp(2.2rem,5vw,3.7rem);line-height:1.08;letter-spacing:-.06em;max-width:740px;margin:.55rem 0 1rem}
+.lede{font-size:1.08rem;color:#53657d;line-height:1.6;max-width:720px}
+.panel{background:#fff;border:1px solid #e0e6ef;border-radius:16px;padding:24px;margin:16px 0;box-shadow:0 10px 35px rgba(17,40,70,.03)}
+h2{font-size:1.12rem;letter-spacing:-.02em;margin:0 0 20px;display:flex;align-items:center;gap:13px}
+.number{background:#eef4fb;border-radius:8px;color:#246cba;font-size:.78rem;padding:8px 10px}
+label{display:block;font-weight:650;font-size:.88rem;margin-bottom:9px}
+.input-row{display:flex;gap:9px}
+input{font:inherit;border:1px solid #c6d1e1;border-radius:9px;padding:13px 14px;min-width:0;flex:1}
+input:focus-visible,button:focus-visible,a:focus-visible{outline:3px solid #72aff7;outline-offset:2px}
+button,.button{font:inherit;font-weight:700;font-size:.9rem;padding:12px 17px;border:1px solid #1464b2;background:#1464b2;color:white;border-radius:9px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
+button:disabled{cursor:not-allowed;opacity:.55}
+button.secondary,.button.secondary{background:white;border-color:#b9c8db;color:#144772}
+.hint{color:#687b93;font-size:.83rem;line-height:1.55;margin:14px 0 0}
+.section-head{display:flex;align-items:start;justify-content:space-between;gap:12px}
+.pill{font-size:.73rem;background:#f0f4f8;color:#557086;border-radius:99px;padding:6px 10px}
+pre{padding:20px;white-space:pre-wrap;overflow-wrap:anywhere;background:#111c2b;color:#dfefff;border-radius:10px;font:13px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace}
+.actions{display:flex;flex-wrap:wrap;gap:10px}
+.hidden{display:none}
+.status{min-height:22px;font-size:.88rem;color:#215d95}
+.status.error{color:#a13238}
+footer{padding:36px 0 65px;color:#78889d;font-size:.79rem}
+@media(max-width:640px){.hero{padding-top:22px}.panel{padding:17px}.input-row{flex-direction:column}.input-row button{width:100%}}

@@ -337,6 +337,9 @@ binary_spec_to_term_spec([Spec | Rest], Acc) ->
 
 validate(Gherkin) ->
     try egherkin:parse(Gherkin) of
+        %% egherkin releases may return either {ok, AST} or AST directly.
+        {ok, {_LineNo, _Tags, _Feature, _Description, _BackGround, _Scenarios}} ->
+            ok;
         {failed, LineNo, Message} ->
             ?LOG_ERROR("Parsing Failed LineNo +~p ~n     ~p.", [LineNo, Message]),
             {parse_error, LineNo, Message};

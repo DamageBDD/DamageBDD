@@ -88,6 +88,11 @@ get_trails() ->
             {"/.well-known/security.txt.asc", cowboy_static,
                 {priv_file, damage, "static/.well-known/security.txt.asc"}},
             {"/token_tos", cowboy_static, {priv_file, damage, "static/token_tos.html"}},
+            %% Opt-in, safe first-check onboarding. Normal execution remains costed.
+            {"/try", cowboy_static, {priv_file, damage, "static/quickstart.html"}},
+            {"/api/quickstart/generate", damage_quickstart_http, #{action => generate}},
+            {"/api/quickstart/run", damage_quickstart_http, #{action => run}},
+            {"/try/report/:id", damage_quickstart_http, #{action => report}},
             {"/install", cowboy_static,
                 {priv_file, damage, "scripts/install.sh", [
                     {mimetypes, {<<"text">>, <<"plain">>, []}}

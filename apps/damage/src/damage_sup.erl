@@ -121,6 +121,14 @@ init([]) ->
                     modules => [damage_schedule_index]
                 },
                 #{
+                    id => damage_quickstart_store,
+                    start => {damage_quickstart_store, start_link, []},
+                    restart => permanent,
+                    shutdown => 5000,
+                    type => worker,
+                    modules => [damage_quickstart_store]
+                },
+                #{
                     id => abduco_services,
                     start => {abduco_sup, start_link, [AbducoWorkers]},
                     restart => permanent,
