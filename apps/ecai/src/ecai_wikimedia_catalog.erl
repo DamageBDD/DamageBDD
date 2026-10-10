@@ -466,7 +466,10 @@ safe_source_url(Kind, Url) when is_binary(Url), byte_size(Url) > 0, byte_size(Ur
         Parsed ->
             Scheme = maps:get(scheme, Parsed, <<>>),
             Host = maps:get(host, Parsed, <<>>),
-            case source_host_allowed(Scheme, Host) of
+            case
+                source_host_allowed(Scheme, Host) orelse
+                    ecai_wikimedia_sample:source_url_allowed(Parsed)
+            of
                 true ->
                     Path = maps:get(path, Parsed, <<>>),
                     Name = unicode:characters_to_binary(filename:basename(binary_to_list(Path))),

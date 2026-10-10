@@ -203,23 +203,40 @@ search(Query, Opts) -> ecai_wikimedia_search:search(Query, Opts).
 
 -spec fixture_status() -> map() | {error, term()}.
 fixture_status() ->
-    ecai_wikimedia_fixture_server:status().
+    case ecai_wikimedia_sample:status() of
+        {ok, Status} -> Status;
+        {error, _Reason} = Error -> Error
+    end.
 
 -spec fixture_base_url() -> {ok, binary()} | {error, term()}.
 fixture_base_url() ->
-    ecai_wikimedia_fixture_server:base_url().
+    {ok, ecai_wikimedia_sample:api_base_url()}.
 
 -spec fixture_catalog_url() -> {ok, binary()} | {error, term()}.
 fixture_catalog_url() ->
-    ecai_wikimedia_fixture_server:catalog_url().
+    {ok, <<(ecai_wikimedia_sample:api_base_url())/binary, "/catalog">>}.
 
 -spec fixture_catalog_path() -> {ok, binary()} | {error, term()}.
 fixture_catalog_path() ->
-    ecai_wikimedia_fixture_server:catalog_path().
+    case ecai_wikimedia_sample:catalog() of
+        {ok, Path, _Catalog} -> {ok, Path};
+        {error, _Reason} = Error -> Error
+    end.
 
 -spec fixture_reload() -> {ok, map()} | {error, term()}.
 fixture_reload() ->
-    ecai_wikimedia_fixture_server:reload().
+    case ecai_wikimedia_sample:ensure_started() of
+        ok ->
+            case ecai_wikimedia_fixture_server:reload() of
+                {ok, _LegacyStatus} ->
+                    case ecai_wikimedia_sample:catalog() of
+                        {ok, _Path, _Catalog} -> ecai_wikimedia_sample:status();
+                        {error, _Reason} = Error -> Error
+                    end;
+                {error, _Reason} = Error -> Error
+            end;
+        {error, _Reason} = Error -> Error
+    end.
 
 -spec doctor() -> map().
 doctor() ->

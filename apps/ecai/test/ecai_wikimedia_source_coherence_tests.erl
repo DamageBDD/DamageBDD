@@ -28,6 +28,8 @@ runtime_contract_test() ->
         {ecai_wikimedia_ops, genesis_spec, 1},
         {ecai_wikimedia_ops, enqueue_genesis, 1},
         {ecai_wikimedia_http, trails, 0},
+        {ecai_wikimedia_sample, catalog, 0},
+        {ecai_wikimedia_sample, file_entry, 1},
         {ecai_index_artifact, finalize, 2}
     ],
     lists:foreach(

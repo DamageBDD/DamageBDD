@@ -27,9 +27,17 @@ spec(_PresetId, _Owner) ->
 presets() ->
     case application:get_env(ecai, wikimedia_index_presets) of
         {ok, Configured} when is_list(Configured), Configured =/= [] ->
-            ensure_unique_ids([normalize_preset(Preset) || Preset <- Configured]);
+            ensure_smoke_preset(
+                ensure_unique_ids([normalize_preset(Preset) || Preset <- Configured])
+            );
         _ ->
             builtin_presets()
+    end.
+
+ensure_smoke_preset(Presets) ->
+    case find_preset(<<"laptop-smoke">>, Presets) of
+        {ok, _Preset} -> Presets;
+        error -> [laptop_smoke_preset() | Presets]
     end.
 
 builtin_presets() ->
@@ -132,45 +140,7 @@ expand_spec(Preset, Owner) ->
     {ok, ecai_wikimedia_ops:genesis_spec(spec_overrides(Preset, Owner))}.
 
 ensure_fixture_catalog() ->
-    case ecai_wikimedia_fixture_server:catalog_path() of
-        {ok, CatalogPath} ->
-            read_fixture_catalog(CatalogPath);
-        {error, not_running} ->
-            case whereis(ecai_sup) of
-                undefined ->
-                    {error, wikimedia_fixture_supervisor_not_running};
-                _SupPid ->
-                    case start_fixture_supervised() of
-                        ok ->
-                            case ecai_wikimedia_fixture_server:catalog_path() of
-                                {ok, CatalogPath} -> read_fixture_catalog(CatalogPath);
-                                {error, Reason} -> {error, {wikimedia_fixture_catalog_unavailable, Reason}}
-                            end;
-                        {error, Reason} ->
-                            {error, {wikimedia_fixture_start_failed, Reason}}
-                    end
-            end
-    end.
-
-start_fixture_supervised() ->
-    PreviousPort = application:get_env(ecai, wikimedia_fixture_port),
-    try
-        ok = application:set_env(ecai, wikimedia_fixture_port, 0),
-        ecai_wikimedia_fixture_server:start_supervised(ecai_sup)
-    after
-        restore_env(wikimedia_fixture_port, PreviousPort)
-    end.
-
-restore_env(Key, {ok, Value}) ->
-    application:set_env(ecai, Key, Value);
-restore_env(Key, undefined) ->
-    application:unset_env(ecai, Key).
-
-read_fixture_catalog(CatalogPath) ->
-    case ecai_wikimedia_catalog:read(CatalogPath) of
-        {ok, Catalog} -> {ok, CatalogPath, Catalog};
-        {error, Reason} -> {error, {wikimedia_fixture_catalog_invalid, Reason}}
-    end.
+    ecai_wikimedia_sample:catalog().
 
 attach_catalog_path(Spec0, CatalogPath) ->
     Source0 = maps:get(<<"source">>, Spec0),

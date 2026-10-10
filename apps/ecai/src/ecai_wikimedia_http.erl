@@ -22,7 +22,10 @@ trails() ->
         get_trail("/ecai/wikimedia/sources", sources),
         get_trail("/ecai/wikimedia/plan", plan),
         get_trail("/ecai/wikimedia/search", search),
-        get_trail("/ecai/wikimedia/doctor", doctor)
+        get_trail("/ecai/wikimedia/doctor", doctor),
+        get_trail("/ecai/wikimedia/sample", sample_status),
+        get_trail("/ecai/wikimedia/sample/catalog", sample_catalog),
+        get_trail("/ecai/wikimedia/sample/files/:name", sample_file)
     ].
 
 get_trail(Path, Action) ->
@@ -33,9 +36,14 @@ get_trail(Path, Action) ->
         #{get => #{tags => ?TRAILS_TAG, produces => ["application/json"]}}
     ).
 
+init(Req, #{action := sample_file} = State) ->
+    serve_sample_file(Req, State);
 init(Req, State) ->
     {cowboy_rest, Req, State}.
 
+is_authorized(Req, #{action := Action} = State)
+    when Action =:= sample_status; Action =:= sample_catalog ->
+    {true, Req, State};
 is_authorized(Req, State) ->
     damage_http:is_authorized(Req, State).
 
@@ -95,6 +103,24 @@ to_json(Req0, #{action := doctor} = State) ->
     case safe_call(fun ecai_wikimedia_ops:doctor/0) of
         {ok, Result} ->
             reply_json(Req0, 200, #{ok => true, doctor => Result}, State);
+        {error, Reason} ->
+            reply_error(Req0, 503, Reason, State)
+    end;
+to_json(Req0, #{action := sample_status} = State) ->
+    case safe_call(fun ecai_wikimedia_sample:status/0) of
+        {ok, {ok, Result}} ->
+            reply_json(Req0, 200, #{ok => true, sample => Result}, State);
+        {ok, {error, Reason}} ->
+            reply_error(Req0, 503, Reason, State);
+        {error, Reason} ->
+            reply_error(Req0, 503, Reason, State)
+    end;
+to_json(Req0, #{action := sample_catalog} = State) ->
+    case safe_call(fun ecai_wikimedia_sample:catalog/0) of
+        {ok, {ok, _Path, Catalog}} ->
+            reply_json(Req0, 200, #{ok => true, catalog => Catalog}, State);
+        {ok, {error, Reason}} ->
+            reply_error(Req0, 503, Reason, State);
         {error, Reason} ->
             reply_error(Req0, 503, Reason, State)
     end;
@@ -247,6 +273,39 @@ search_options(Query) ->
             end;
         {error, _Reason} = Error ->
             Error
+    end.
+
+serve_sample_file(Req0, State) ->
+    Name =
+        case cowboy_req:binding(name, Req0) of
+            undefined -> <<>>;
+            Value -> Value
+        end,
+    case ecai_wikimedia_sample:file_entry(Name) of
+        {ok, Entry} ->
+            ecai_wikimedia_fixture_handler:init(
+                Req0,
+                #{action => file, entry => Entry, api_state => State}
+            );
+        {error, {unknown_wikimedia_sample_file, _}} ->
+            Req1 = cowboy_req:reply(
+                404,
+                #{<<"content-type">> => ?JSON},
+                jsx:encode(#{ok => false, error => not_found}),
+                Req0
+            ),
+            {ok, Req1, State};
+        {error, Reason} ->
+            Req1 = cowboy_req:reply(
+                503,
+                #{<<"content-type">> => ?JSON},
+                jsx:encode(#{
+                    ok => false,
+                    error => ecai_index_job_codec:externalize(Reason)
+                }),
+                Req0
+            ),
+            {ok, Req1, State}
     end.
 
 safe_call(Fun) ->
