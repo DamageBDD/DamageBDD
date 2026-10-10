@@ -102,7 +102,7 @@ empty_owner_is_rejected_test() ->
         )
     end).
 
-configured_presets_replace_builtins_test() ->
+configured_presets_preserve_smoke_and_replace_production_builtins_test() ->
     Previous = application:get_env(ecai, wikimedia_index_presets),
     try
         ok = application:set_env(
@@ -122,8 +122,11 @@ configured_presets_replace_builtins_test() ->
                 }
             ]
         ),
-        [Public] = ecai_wikimedia_presets:list(),
-        ?assertEqual(<<"testwiki">>, maps:get(id, Public)),
+        Public = ecai_wikimedia_presets:list(),
+        Ids = [maps:get(id, Preset) || Preset <- Public],
+        ?assert(lists:member(<<"laptop-smoke">>, Ids)),
+        ?assert(lists:member(<<"testwiki">>, Ids)),
+        ?assertNot(lists:member(<<"enwiki">>, Ids)),
         {ok, Spec0} = ecai_wikimedia_presets:spec(<<"testwiki">>, <<"owner">>),
         {ok, Spec} = ecai_index_job_codec:normalize_spec(Spec0),
         ?assertEqual(1000, maps:get(limit, maps:get(options, Spec)))

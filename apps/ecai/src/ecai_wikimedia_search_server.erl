@@ -1,7 +1,14 @@
 -module(ecai_wikimedia_search_server).
 -behaviour(gen_server).
 
--export([start_link/0, search/2, status/0, activate_snapshot/2]).
+-export([
+    start_link/0,
+    search/2,
+    status/0,
+    activate_snapshot/2,
+    upsert_live_record/4,
+    clear_live_index/1
+]).
 -export([
     init/1,
     handle_call/3,
@@ -19,7 +26,11 @@
 -record(st, {
     ctx = undefined,
     snapshot_path = undefined,
-    metadata = #{}
+    metadata = #{},
+    live_ctx = undefined,
+    live_metadata = #{},
+    live_owner_pid = undefined,
+    live_owner_ref = undefined
 }).
 
 start_link() ->
@@ -34,27 +45,105 @@ status() ->
 activate_snapshot(Path, Metadata) when is_map(Metadata) ->
     gen_server:call(?MODULE, {activate_snapshot, Path, Metadata}, infinity).
 
+upsert_live_record(Metadata, DocId, Record, Abstract) when
+    is_map(Metadata), is_binary(DocId), is_map(Record), is_binary(Abstract)
+->
+    gen_server:call(
+        ?MODULE,
+        {upsert_live_record, Metadata, DocId, Record, Abstract},
+        infinity
+    ).
+
+clear_live_index(JobId) when is_binary(JobId) ->
+    gen_server:call(?MODULE, {clear_live_index, JobId}, infinity).
+
 init([]) ->
     {ok, #st{}, {continue, restore_active_snapshot}}.
 
 handle_continue(restore_active_snapshot, State) ->
     {noreply, restore_active_snapshot(State)}.
 
-handle_call({search, _Query, _Opts}, _From, State = #st{ctx = undefined}) ->
-    {reply, {error, search_index_not_ready}, State};
-handle_call({search, Query, Opts}, _From, State = #st{ctx = Ctx}) ->
-    {reply, ecai_wikimedia_search:search(Ctx, Query, Opts), State};
-handle_call(status, _From, State = #st{ctx = undefined}) ->
-    {reply, #{ready => false, reason => search_index_not_ready}, State};
-handle_call(status, _From, State = #st{ctx = Ctx, snapshot_path = Path, metadata = Metadata}) ->
-    {reply,
-        #{
-            ready => true,
-            size => ecai_search:size(Ctx),
-            snapshot_path => Path,
-            metadata => Metadata
-        },
-        State};
+handle_call({search, Query, Opts}, _From, State0) ->
+    case active_search_context(State0) of
+        {live, Ctx, State1 = #st{live_metadata = LiveMetadata}} ->
+            %% Live writes are serialized through this gen_server. Rebuild
+            %% deferred proof roots only when a query actually needs them.
+            _ = ecai_search:finalize_roots(Ctx),
+            {reply,
+                annotate_index_result(
+                    ecai_wikimedia_search:search(Ctx, Query, Opts),
+                    LiveMetadata,
+                    true,
+                    false
+                ),
+                State1};
+        {stable, Ctx, State1 = #st{metadata = StableMetadata}} ->
+            {reply,
+                annotate_index_result(
+                    ecai_wikimedia_search:search(Ctx, Query, Opts),
+                    StableMetadata,
+                    false,
+                    true
+                ),
+                State1};
+        {none, State1} ->
+            {reply, {error, search_index_not_ready}, State1}
+    end;
+handle_call(status, _From, State0) ->
+    case active_search_context(State0) of
+        {live, Ctx, State1 = #st{live_metadata = Metadata, ctx = StableCtx}} ->
+            {reply,
+                #{
+                    ready => true,
+                    live => true,
+                    size => ecai_search:size(Ctx),
+                    records_indexed => maps:get(docs, ecai_search:size(Ctx), 0),
+                    records_searchable => maps:get(docs, ecai_search:size(Ctx), 0),
+                    metadata => Metadata,
+                    stable_ready => StableCtx =/= undefined
+                },
+                State1};
+        {stable, Ctx, State1 = #st{snapshot_path = Path, metadata = Metadata}} ->
+            {reply,
+                #{
+                    ready => true,
+                    live => false,
+                    size => ecai_search:size(Ctx),
+                    records_indexed => maps:get(docs, ecai_search:size(Ctx), 0),
+                    records_searchable => maps:get(docs, ecai_search:size(Ctx), 0),
+                    snapshot_path => Path,
+                    metadata => Metadata
+                },
+                State1};
+        {none, State1} ->
+            {reply, #{ready => false, live => false, reason => search_index_not_ready}, State1}
+    end;
+handle_call(
+    {upsert_live_record, Metadata, DocId, Record, Abstract},
+    {OwnerPid, _Tag},
+    State0
+) ->
+    {LiveCtx, State1} = ensure_live_context(Metadata, OwnerPid, State0),
+    case live_upsert(LiveCtx, DocId, Record, Abstract) of
+        ok ->
+            Size = ecai_search:size(LiveCtx),
+            Metadata1 = Metadata#{
+                live => true,
+                final => false,
+                records_indexed => maps:get(docs, Size, 0),
+                records_searchable => maps:get(docs, Size, 0)
+            },
+            {reply, {ok, Size}, State1#st{live_metadata = Metadata1}};
+        {error, Reason} ->
+            {reply, {error, Reason}, State1}
+    end;
+handle_call({clear_live_index, JobId}, _From, State = #st{live_metadata = Metadata}) ->
+    case maps:get(job_id, Metadata, undefined) of
+        JobId ->
+            {reply, ok, clear_live_state(State)};
+        _ ->
+            {reply, ok, State}
+    end;
 handle_call({activate_snapshot, Path0, Metadata}, _From, State) ->
     %% Install a private immutable copy first. The active pointer must never
     %% depend on a job work directory that can later be compacted or removed.
@@ -62,12 +151,19 @@ handle_call({activate_snapshot, Path0, Metadata}, _From, State) ->
         {ok, InstalledPath, SnapshotSha} ->
             case load_snapshot(InstalledPath) of
                 {ok, NewCtx, Path} ->
-                    Metadata1 = Metadata#{snapshot_sha256 => SnapshotSha},
+                    Metadata1 = Metadata#{
+                        snapshot_sha256 => SnapshotSha,
+                        live => false,
+                        final => true
+                    },
                     case persist_active_snapshot(Path, Metadata1) of
                         ok ->
                             wipe_ctx(State#st.ctx),
-                            {reply, ok, State#st{
-                                ctx = NewCtx, snapshot_path = Path, metadata = Metadata1
+                            ClearedState = clear_live_state(State),
+                            {reply, ok, ClearedState#st{
+                                ctx = NewCtx,
+                                snapshot_path = Path,
+                                metadata = Metadata1
                             }};
                         {error, Reason} ->
                             wipe_ctx(NewCtx),
@@ -83,13 +179,104 @@ handle_call(_Request, _From, State) ->
     {reply, {error, unsupported}, State}.
 
 handle_cast(_Message, State) -> {noreply, State}.
+handle_info(
+    {'DOWN', Ref, process, Pid, _Reason},
+    State = #st{live_owner_ref = Ref, live_owner_pid = Pid}
+) ->
+    {noreply, clear_live_state(State)};
 handle_info(_Message, State) -> {noreply, State}.
 
 terminate(_Reason, State) ->
+    _ = clear_live_state(State),
     wipe_ctx(State#st.ctx),
     ok.
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
+
+active_search_context(State = #st{live_ctx = LiveCtx}) when LiveCtx =/= undefined ->
+    case ctx_alive(LiveCtx) of
+        true -> {live, LiveCtx, State};
+        false ->
+            active_search_context(State#st{live_ctx = undefined, live_metadata = #{}})
+    end;
+active_search_context(State = #st{ctx = Ctx}) when Ctx =/= undefined ->
+    case ctx_alive(Ctx) of
+        true -> {stable, Ctx, State};
+        false -> {none, State#st{ctx = undefined, snapshot_path = undefined, metadata = #{}}}
+    end;
+active_search_context(State) ->
+    {none, State}.
+
+ctx_alive(Ctx) ->
+    try ecai_search:size(Ctx) of
+        Size when is_map(Size) -> true
+    catch
+        _:_ -> false
+    end.
+
+ensure_live_context(
+    Metadata,
+    OwnerPid,
+    State = #st{
+        live_ctx = LiveCtx,
+        live_metadata = Current,
+        live_owner_pid = CurrentOwner
+    }
+) ->
+    JobId = maps:get(job_id, Metadata, undefined),
+    SameLiveBuild =
+        LiveCtx =/= undefined andalso
+            maps:get(job_id, Current, undefined) =:= JobId andalso
+            CurrentOwner =:= OwnerPid andalso
+            ctx_alive(LiveCtx),
+    case SameLiveBuild of
+        true ->
+            {LiveCtx, State};
+        false ->
+            State1 = clear_live_state(State),
+            Ctx = ecai_search:set_opts(ecai_search:new(), #{root_mode => deferred}),
+            Ref = erlang:monitor(process, OwnerPid),
+            {Ctx, State1#st{
+                live_ctx = Ctx,
+                live_metadata = Metadata,
+                live_owner_pid = OwnerPid,
+                live_owner_ref = Ref
+            }}
+    end.
+
+clear_live_state(State = #st{live_ctx = LiveCtx, live_owner_ref = Ref}) ->
+    case Ref of
+        Reference when is_reference(Reference) ->
+            _ = erlang:demonitor(Reference, [flush]),
+            ok;
+        _ ->
+            ok
+    end,
+    wipe_ctx(LiveCtx),
+    State#st{
+        live_ctx = undefined,
+        live_metadata = #{},
+        live_owner_pid = undefined,
+        live_owner_ref = undefined
+    }.
+
+live_upsert(Ctx, DocId, Record, Abstract) ->
+    try
+        ok = ecai_search:upsert_record(Ctx, DocId, Record),
+        ok = ecai_search:index_text(Ctx, DocId, <<"abstract">>, Abstract, 120),
+        ok
+    catch
+        Class:Reason:Stacktrace -> {error, {live_index_update_failed, Class, Reason, Stacktrace}}
+    end.
+
+annotate_index_result({ok, Result}, Metadata, Live, Final) ->
+    {ok, Result#{
+        live => Live,
+        final => Final,
+        source_index => maps:with([job_id, index_id, namespace], Metadata)
+    }};
+annotate_index_result(Other, _Metadata, _Live, _Final) ->
+    Other.
 
 restore_active_snapshot(State) ->
     case file:read_file(active_state_path()) of

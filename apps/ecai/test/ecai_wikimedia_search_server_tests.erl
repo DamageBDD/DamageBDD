@@ -62,6 +62,60 @@ activation_is_owned_and_restartable_test() ->
         remove_tree(Base)
     end.
 
+
+live_record_is_searchable_before_final_snapshot_test() ->
+    OldPath = application:get_env(ecai, wikimedia_active_search_state_path),
+    Base = filename:join(
+        temp_dir(), "ecai-wikimedia-live-" ++ integer_to_list(erlang:unique_integer([positive]))
+    ),
+    Active = filename:join(Base, "state/active.etf"),
+    application:set_env(ecai, wikimedia_active_search_state_path, Active),
+    {ok, Pid} = gen_server:start_link(ecai_wikimedia_search_server, [], []),
+    try
+        Metadata = #{
+            job_id => <<"live-job">>,
+            index_id => <<"live-index">>,
+            namespace => <<"org.damagebdd.wikimedia.en">>
+        },
+        Record = #{
+            name => <<"Elliptic curve">>,
+            title => <<"Elliptic curve">>,
+            abstract => <<"A smooth projective algebraic curve">>,
+            text => <<"A smooth projective algebraic curve">>,
+            category => <<"wikipedia">>,
+            language => <<"en">>,
+            wikidata_id => <<"Q103237">>
+        },
+        {ok, Size} = gen_server:call(
+            Pid,
+            {upsert_live_record, Metadata, <<"enwiki:123">>, Record,
+                <<"A smooth projective algebraic curve">>},
+            infinity
+        ),
+        ?assertEqual(1, maps:get(docs, Size)),
+        {ok, Search} = gen_server:call(
+            Pid, {search, <<"elliptic">>, #{limit => 5}}, infinity
+        ),
+        ?assertEqual(true, maps:get(live, Search)),
+        ?assertEqual(false, maps:get(final, Search)),
+        ?assertEqual(<<"live-index">>, maps:get(index_id, maps:get(source_index, Search))),
+        [Result | _] = maps:get(results, Search),
+        ?assertEqual(<<"enwiki:123">>, maps:get(doc_id, Result)),
+        Status = gen_server:call(Pid, status),
+        ?assertEqual(true, maps:get(ready, Status)),
+        ?assertEqual(true, maps:get(live, Status)),
+        ?assertEqual(1, maps:get(records_searchable, Status)),
+        ok = gen_server:call(Pid, {clear_live_index, <<"live-job">>}, infinity),
+        ?assertEqual(
+            #{ready => false, live => false, reason => search_index_not_ready},
+            gen_server:call(Pid, status)
+        )
+    after
+        stop_server(Pid),
+        restore_env(wikimedia_active_search_state_path, OldPath),
+        remove_tree(Base)
+    end.
+
 stop_server(Pid) ->
     unlink(Pid),
     exit(Pid, shutdown),

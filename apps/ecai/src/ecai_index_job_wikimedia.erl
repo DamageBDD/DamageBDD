@@ -290,13 +290,17 @@ run_one_unit(Job, Runtime0, Checkpoint0, pageviews) ->
     Index = maps:get(pageview_index, Checkpoint0, 0),
     case Index >= length(Sources) of
         true ->
-            case maps:get(pageview_rows, Checkpoint0, 0) of
-                0 -> {error, {empty_pageview_selection, #{
-                    pageview_files_processed => Index,
-                    pageview_rows => 0,
-                    pageview_total_views => maps:get(pageview_total_views, Checkpoint0, 0)
-                }}};
-                _ -> {ok, Runtime0, Checkpoint0#{stage => aggregating, partition_index => 0}}
+            case {Sources, maps:get(pageview_rows, Checkpoint0, 0)} of
+                {[], _} ->
+                    {ok, Runtime0, Checkpoint0#{stage => aggregating, partition_index => 0}};
+                {_, 0} ->
+                    {error, {empty_pageview_selection, #{
+                        pageview_files_processed => Index,
+                        pageview_rows => 0,
+                        pageview_total_views => maps:get(pageview_total_views, Checkpoint0, 0)
+                    }}};
+                {_, _} ->
+                    {ok, Runtime0, Checkpoint0#{stage => aggregating, partition_index => 0}}
             end;
         false ->
             Source = lists:nth(Index + 1, Sources),
@@ -497,7 +501,7 @@ run_one_unit(Job, Runtime0, Checkpoint0, rank_finalize) ->
         {error, Reason} ->
             {error, {rank_finalize_failed, Reason}}
     end;
-run_one_unit(_Job, Runtime0, Checkpoint0, indexing) ->
+run_one_unit(Job, Runtime0, Checkpoint0, indexing) ->
     Files = ecai_wikimedia_content:index_files(maps:get(content, Runtime0)),
     Index = maps:get(index_file_index, Checkpoint0, 0),
     case Index >= length(Files) of
@@ -505,7 +509,7 @@ run_one_unit(_Job, Runtime0, Checkpoint0, indexing) ->
             {ok, Runtime0, Checkpoint0#{stage => done}};
         false ->
             Path = lists:nth(Index + 1, Files),
-            Opts = wikipedia_loader_opts(Runtime0),
+            Opts = wikipedia_loader_opts(Job, Runtime0, Checkpoint0),
             case ecai_wikipedia_loader:load(Path, Opts) of
                 ok ->
                     Indexed = count_lines(path_list(Path)),
@@ -620,7 +624,8 @@ append_activity(Runtime0, Event, Checkpoint) ->
 
 live_progress_fun(#{id := JobId}, Runtime, Checkpoint) ->
     fun(Delta) ->
-        Key = {?MODULE, JobId, last_progress_ms},
+        Stage = maps:get(stage, normalize_checkpoint(Checkpoint), catalog),
+        Key = {?MODULE, JobId, Stage, last_progress_ms},
         Now = erlang:monotonic_time(millisecond),
         Last =
             case get(Key) of
@@ -679,6 +684,10 @@ progress(Runtime, Checkpoint) ->
         index_files_total => IndexTotal,
         selection_candidates => maps:get(selection_count, Checkpoint, 0),
         records_indexed => maps:get(records_indexed, Checkpoint, 0),
+        records_searchable => maps:get(records_searchable, live_search_state(Runtime), 0),
+        search_ready => maps:get(search_ready, live_search_state(Runtime), false),
+        live_search => maps:get(live, live_search_state(Runtime), false),
+        live_search_error => maps:get(error, live_search_state(Runtime), undefined),
         current_source => maps:get(current_source, Checkpoint, undefined),
         checkpoint => public_checkpoint(Checkpoint),
         activity => ecai_ipfs_activity:status(maps:get(activity, Runtime))
@@ -715,13 +724,13 @@ final_result(Runtime, Checkpoint) ->
         search_size => ecai_search:size(maps:get(ctx, Runtime))
     }.
 
-wikipedia_loader_opts(Runtime) ->
+wikipedia_loader_opts(Job, Runtime, Checkpoint) ->
     JobId = maps:get(job_id, Runtime),
     CheckpointDir = filename:join(
         maps:get(work_dir, Runtime),
         filename:join("loader-checkpoints", binary_to_list(JobId))
     ),
-    #{
+    Base = #{
         auto_tune => true,
         %% The normalized files are intentionally small and bounded. Replaying
         %% one file is safer than trusting a loader offset that may be ahead of
@@ -738,7 +747,96 @@ wikipedia_loader_opts(Runtime) ->
             wikimedia_loader_checkpoint_every,
             100
         ),
-        checkpoint_dir => CheckpointDir
+        checkpoint_dir => CheckpointDir,
+        progress_fun => indexing_progress_fun(Job, Runtime, Checkpoint)
+    },
+    case live_search_enabled(Runtime) of
+        true -> Base#{record_fun => live_record_fun(Job, Runtime)};
+        false -> Base
+    end.
+
+indexing_progress_fun(#{id := JobId}, Runtime, Checkpoint) ->
+    BaseRecords = maps:get(records_indexed, Checkpoint, 0),
+    fun(Delta0) ->
+        InFile = maps:get(records_indexed, normalize_progress(Delta0), 0),
+        TotalRecords = BaseRecords + InFile,
+        Delta = #{
+            records_indexed => TotalRecords,
+            records_searchable => maps:get(records_searchable, live_search_state(Runtime), 0),
+            search_ready => maps:get(search_ready, live_search_state(Runtime), false),
+            live_search => maps:get(live, live_search_state(Runtime), false),
+            live_search_error => maps:get(error, live_search_state(Runtime), undefined)
+        },
+        ProgressFun = live_progress_fun(#{id => JobId}, Runtime, Checkpoint),
+        ProgressFun(Delta)
+    end.
+
+live_record_fun(Job, Runtime) ->
+    Metadata0 = live_search_metadata(Job),
+    fun(#{doc_id := DocId, record := Record, abstract := Abstract}) ->
+        JobId = maps:get(job_id, Runtime),
+        case whereis(ecai_wikimedia_search_server) of
+            Pid when is_pid(Pid) ->
+                case
+                    catch ecai_wikimedia_search_server:upsert_live_record(
+                        Metadata0, DocId, Record, Abstract
+                    )
+                of
+                    {ok, Size} when is_map(Size) ->
+                        put(
+                            {?MODULE, JobId, live_search_state},
+                            #{
+                                live => true,
+                                search_ready => true,
+                                records_searchable => maps:get(docs, Size, 0),
+                                error => undefined
+                            }
+                        ),
+                        ok;
+                    {'EXIT', Reason} ->
+                        remember_live_search_error(JobId, Reason);
+                    {error, Reason} ->
+                        remember_live_search_error(JobId, Reason);
+                    Other ->
+                        remember_live_search_error(JobId, {unexpected_live_search_result, Other})
+                end;
+            undefined ->
+                remember_live_search_error(JobId, search_server_not_running)
+        end,
+        ok
+    end.
+
+remember_live_search_error(JobId, Reason) ->
+    Previous = case get({?MODULE, JobId, live_search_state}) of
+        State when is_map(State) -> State;
+        _ -> #{}
+    end,
+    put(
+        {?MODULE, JobId, live_search_state},
+        Previous#{live => false, search_ready => false, error => Reason}
+    ),
+    ok.
+
+live_search_state(Runtime) ->
+    JobId = maps:get(job_id, Runtime),
+    case get({?MODULE, JobId, live_search_state}) of
+        State when is_map(State) -> State;
+        _ -> #{}
+    end.
+
+live_search_enabled(Runtime) ->
+    Spec = maps:get(spec, Runtime, #{}),
+    Target = maps:get(target, Spec, #{}),
+    maps:get(mode, Target, undefined) =:= live_search.
+
+live_search_metadata(#{id := JobId, spec := Spec}) ->
+    Target = maps:get(target, Spec, #{}),
+    #{
+        job_id => JobId,
+        index_id => maps:get(index_id, Target, undefined),
+        namespace => maps:get(namespace, Target, undefined),
+        live => true,
+        final => false
     }.
 
 material_files(CatalogMeta, Selector, Content) ->

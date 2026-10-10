@@ -204,6 +204,7 @@ read_lines(IoDevice, _File, Opts0, CkptPath, Lines0) ->
                 DecodedJson ->
                     ok = default_index(DecodedJson, Opts),
                     Lines1 = Lines0 + 1,
+                    ok = notify_progress(Opts, Lines1),
                     %% periodic checkpoint
                     case checkpoint_due(Opts, Lines1) of
                         true ->
@@ -516,8 +517,23 @@ default_index(Json, Opts) when is_map(Json), is_map(Opts) ->
     {DocId, Rec} = wiki_to_search_record(Json),
     ok = ecai_search:upsert_record(Ctx, DocId, Rec),
     Abstract = maps:get(<<"abstract">>, Json, <<>>),
-    ecai_search:index_text(Ctx, DocId, <<"abstract">>, Abstract, 120),
+    ok = ecai_search:index_text(Ctx, DocId, <<"abstract">>, Abstract, 120),
+    ok = notify_record(Opts, DocId, Rec, Abstract),
     ok.
+
+notify_record(Opts, DocId, Rec, Abstract) ->
+    case maps:get(record_fun, Opts, undefined) of
+        Fun when is_function(Fun, 1) ->
+            Fun(#{doc_id => DocId, record => Rec, abstract => Abstract});
+        _ ->
+            ok
+    end.
+
+notify_progress(Opts, Lines) ->
+    case maps:get(progress_fun, Opts, undefined) of
+        Fun when is_function(Fun, 1) -> Fun(#{records_indexed => Lines});
+        _ -> ok
+    end.
 
 index_context(Opts) ->
     case maps:find(ctx, Opts) of

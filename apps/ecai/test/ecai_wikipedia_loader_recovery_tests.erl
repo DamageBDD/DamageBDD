@@ -129,6 +129,52 @@ decoder_failure_is_not_silently_skipped_test() ->
         end
     end).
 
+
+loader_emits_record_and_live_count_callbacks_test() ->
+    with_tmp(fun(Dir) ->
+        SourcePath = filename:join(Dir, "callback-wikipedia.jsonl"),
+        Records = [
+            normalized_record(401, <<"First">>, <<"First abstract">>, <<"Q401">>, 10, 1),
+            normalized_record(402, <<"Second">>, <<"Second abstract">>, <<"Q402">>, 9, 2)
+        ],
+        ok = write_jsonl(SourcePath, Records),
+        Ctx = ecai_search:new(),
+        Self = self(),
+        Opts = (loader_opts(Ctx, Dir))#{
+            record_fun => fun(Event) -> Self ! {live_record, Event}, ok end,
+            progress_fun => fun(Progress) -> Self ! {live_progress, Progress}, ok end
+        },
+        try
+            ok = ecai_wikipedia_loader:load(SourcePath, Opts),
+            RecordEvents = collect_messages(live_record, 2, []),
+            ProgressEvents = collect_messages(live_progress, 2, []),
+            ?assertEqual(2, length(RecordEvents)),
+            ?assertEqual(
+                [1, 2],
+                [maps:get(records_indexed, Event) || Event <- ProgressEvents]
+            ),
+            lists:foreach(
+                fun(Event) ->
+                    ?assert(maps:is_key(doc_id, Event)),
+                    ?assert(maps:is_key(record, Event)),
+                    ?assert(maps:is_key(abstract, Event))
+                end,
+                RecordEvents
+            )
+        after
+            ok = ecai_search:wipe(Ctx)
+        end
+    end).
+
+collect_messages(_Tag, 0, Acc) ->
+    lists:reverse(Acc);
+collect_messages(Tag, Count, Acc) ->
+    receive
+        {Tag, Event} -> collect_messages(Tag, Count - 1, [Event | Acc])
+    after 1000 ->
+        erlang:error({callback_timeout, Tag, Count})
+    end.
+
 loader_opts(Ctx, Dir) ->
     #{
         ctx => Ctx,

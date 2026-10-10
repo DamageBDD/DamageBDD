@@ -3,9 +3,9 @@
 -include_lib("eunit/include/eunit.hrl").
 
 api_catalog_rewrites_fixture_urls_test_() ->
-    {timeout, 30, fun api_catalog_rewrites_fixture_urls_test/0}.
+    {timeout, 30, fun api_catalog_rewrites_fixture_urls_case/0}.
 
-api_catalog_rewrites_fixture_urls_test() ->
+api_catalog_rewrites_fixture_urls_case() ->
     PreviousPort = application:get_env(ecai, port),
     try
         ok = application:set_env(ecai, port, 19003),
@@ -44,11 +44,17 @@ with_fixture_server(Fun) ->
         Pid when is_pid(Pid) ->
             Fun();
         undefined ->
-            {ok, Pid} = ecai_wikimedia_fixture_server:start_link(#{port => 0}),
-            unlink(Pid),
-            try Fun()
+            PreviousFixturePort = application:get_env(ecai, wikimedia_fixture_port),
+            try
+                ok = application:set_env(ecai, wikimedia_fixture_port, 0),
+                {ok, Pid} = ecai_wikimedia_fixture_server:start_link(),
+                unlink(Pid),
+                try Fun()
+                after
+                    ok = ecai_wikimedia_fixture_server:stop(Pid)
+                end
             after
-                ok = ecai_wikimedia_fixture_server:stop(Pid)
+                restore_env(wikimedia_fixture_port, PreviousFixturePort)
             end
     end.
 
