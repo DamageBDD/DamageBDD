@@ -9,7 +9,7 @@ from auth_webdriver_fixture import fixture_html, STATIC, WALLET
 def data(source):return 'data:text/javascript;base64,'+base64.b64encode(source.encode()).decode()
 def environment(source):return 'const location=window.__fixtureLocation;const history=window.__fixtureHistory;\n'+source
 
-def offline_html(password=False):
+def offline_html(password=False, wallet_source=None):
     page=fixture_html(password)
     env=r'''<script>
 class FixtureStorage {
@@ -37,9 +37,14 @@ if(!crypto.randomUUID)crypto.randomUUID=()=>Array.from(crypto.getRandomValues(ne
     # Mock services run inside a lexical environment, not by modifying native Location.
     page=re.sub(r'<script>(\s*// EXPLICIT TEST-ONLY.*?)</script>',lambda m:'<script>(()=>{'+environment(m[1])+'})();</script>',page,flags=re.S)
     model=data(environment((STATIC/'js/auth-model.js').read_text()))
-    wallet=data(environment((STATIC/'js/wallet.js').read_text().replace('"./sidekick.js"',repr(data(WALLET)))))
+    wallet_code = (STATIC/'js/wallet.js').read_text() if wallet_source is None else wallet_source
+    wallet=data(environment(wallet_code.replace('"./sidekick.js"',repr(data(WALLET)))))
+    loader_code=(STATIC/'js/auth-wallet-loader.js').read_text()
+    loader_code, count=re.subn(r"(['\"])\./wallet\.js\?v=[a-f0-9]+\1", lambda _: repr(wallet), loader_code)
+    if count != 1: raise ValueError('Expected one versioned wallet import in auth-wallet-loader.js')
+    loader=data(environment(loader_code))
     token=data(environment((STATIC/'js/wallet-switcher.js').read_text().replace("'./auth-model.js'",repr(model))))
-    ui=environment((STATIC/'js/auth-ui.js').read_text().replace("'./wallet-switcher.js'",repr(token)).replace("'./wallet.js'",repr(wallet)).replace("'./auth-model.js'",repr(model)))
+    ui=environment((STATIC/'js/auth-ui.js').read_text().replace("'./wallet-switcher.js'",repr(token)).replace("'./auth-wallet-loader.js'",repr(loader)).replace("'./auth-model.js'",repr(model)))
     password_code=environment((STATIC/'js/password-completion.js').read_text().replace("'./auth-model.js'",repr(model)))
     page=page.replace('<script type="module" src="/static/js/auth-ui.js"></script>', '<script type="module">'+ui+'</script>')
     page=page.replace('<script type="module" src="/static/js/password-completion.js"></script>', '<script type="module">'+password_code+'</script>')

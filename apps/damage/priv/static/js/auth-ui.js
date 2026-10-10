@@ -1,5 +1,5 @@
 import {TokenManager} from './wallet-switcher.js';
-import {connectBrowserForAuth, signBrowserForAuth} from './wallet.js';
+import {authWallet} from './auth-wallet-loader.js';
 import {errorMessage, nonce, signatureHex, walletDeepLink, parseCallback} from './auth-model.js';
 
 const PENDING = 'damage_wallet_signin_pending_v1';
@@ -14,8 +14,8 @@ if (location.hash.startsWith('#wallet-callback?')) {
   history.replaceState(null, '', location.pathname);
 }
 
-export function initAuthUI({request = fetch, browserConnect = connectBrowserForAuth,
-  browserSign = signBrowserForAuth, navigate = url => location.assign(url),
+export function initAuthUI({request = fetch, browserConnect = authWallet.connect,
+  browserSign = authWallet.sign, navigate = url => location.assign(url),
   reload = () => location.reload()} = {}) {
   const root = document.getElementById('login-modal');
   if (!root || root.dataset.authBound) return;
@@ -152,7 +152,7 @@ export function initAuthUI({request = fetch, browserConnect = connectBrowserForA
   });
   $('connect-button').addEventListener('click', () => run('Waiting for your browser wallet…', async (signal, current) => {
     provider = 'browser'; resetChallenge();
-    const account = await browserConnect();
+    const account = await browserConnect({signal});
     if (current()) await createChallenge(account, signal, current);
   }, {cancellable: true}));
   $('connect-mobile-wallet').addEventListener('click', () => run('Opening Superhero Wallet…', async (signal, current) => {
@@ -163,7 +163,7 @@ export function initAuthUI({request = fetch, browserConnect = connectBrowserForA
     if (!challenge || challenge.expires_at <= Date.now() / 1000) { resetChallenge(); throw new Error('This request expired. Connect again.'); }
     if (provider === 'mobile') { saveRedirect('sign'); return; }
     const proof = challenge;
-    const signed = await browserSign(proof.message, proof.address);
+    const signed = await browserSign(proof.message, proof.address, {signal});
     if (!current()) return;
     // Once verification is sent it is not safe to promise cancellation of server-side login.
     $('auth-cancel').hidden = true;
