@@ -487,10 +487,12 @@ source_host_allowed(<<"https">>, <<"dumps.wikimedia.org">>) ->
 source_host_allowed(Scheme, Host) ->
     Allowed0 = application:get_env(ecai, wikimedia_source_allowed_hosts, []),
     Allowed = [to_binary(Value) || Value <- Allowed0],
-    Fixture = application:get_env(ecai, wikimedia_fixture_server_enabled, false),
+    FixtureEnabled =
+        application:get_env(ecai, wikimedia_fixture_server_enabled, false) =:= true orelse
+            is_pid(whereis(ecai_wikimedia_fixture_server)),
     Loopback = lists:member(Host, [<<"127.0.0.1">>, <<"localhost">>, <<"::1">>]),
     (Scheme =:= <<"https">> andalso lists:member(Host, Allowed)) orelse
-        (Fixture =:= true andalso Loopback andalso
+        (FixtureEnabled andalso Loopback andalso
             (Scheme =:= <<"http">> orelse Scheme =:= <<"https">>)).
 
 validate_ordinals(Sources, Kind) ->

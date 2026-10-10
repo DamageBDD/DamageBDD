@@ -17,7 +17,7 @@ spec(PresetId0, Owner) when is_binary(Owner), byte_size(Owner) > 0 ->
     PresetId = to_binary(PresetId0),
     case find_preset(PresetId, presets()) of
         {ok, Preset} ->
-            {ok, ecai_wikimedia_ops:genesis_spec(spec_overrides(Preset, Owner))};
+            expand_spec(Preset, Owner);
         error ->
             {error, {unknown_wikimedia_preset, PresetId}}
     end;
@@ -34,6 +34,7 @@ presets() ->
 
 builtin_presets() ->
     [
+        laptop_smoke_preset(),
         preset(
             <<"enwiki">>,
             <<"English Wikipedia">>,
@@ -76,6 +77,30 @@ builtin_presets() ->
         )
     ].
 
+
+laptop_smoke_preset() ->
+    Root = index_root(),
+    (preset(
+        <<"laptop-smoke">>,
+        <<"Laptop smoke test (3 records)">>,
+        <<"Bundled four-record Wikimedia fixture; indexes the top three records and exercises download, selection, live search and finalization without external Wikimedia downloads.">>,
+        <<"enwiki">>,
+        <<"en.wikipedia">>,
+        <<"org.damagebdd.wikimedia.smoke">>
+    ))#{
+        fixture => true,
+        index_id => <<"ecai-wikimedia-laptop-smoke">>,
+        base_dir => join_binary(Root, <<"laptop-smoke">>),
+        limit => 3,
+        minimum_active_months => 1,
+        selection_shards => 8,
+        oversample_percent => 125,
+        partition_buffer_bytes => 4096,
+        index_chunk_lines => 100,
+        publish_activity_ipfs => false,
+        publish_ipfs => false
+    }.
+
 preset(Id, Label, Description, Project, PageviewProject, Namespace) ->
     #{
         id => Id,
@@ -88,6 +113,68 @@ preset(Id, Label, Description, Project, PageviewProject, Namespace) ->
 
 public(Preset) ->
     maps:with([id, label, description, project], Preset).
+
+expand_spec(#{fixture := true} = Preset, Owner) ->
+    case ensure_fixture_catalog() of
+        {ok, CatalogPath, Catalog} ->
+            Preset1 = Preset#{
+                project => maps:get(project, Catalog),
+                pageview_project => maps:get(pageview_project, Catalog),
+                content_release => maps:get(cirrus_release, Catalog),
+                pageview_months => maps:get(pageview_months, Catalog)
+            },
+            Spec0 = ecai_wikimedia_ops:genesis_spec(spec_overrides(Preset1, Owner)),
+            {ok, attach_catalog_path(Spec0, CatalogPath)};
+        {error, _Reason} = Error ->
+            Error
+    end;
+expand_spec(Preset, Owner) ->
+    {ok, ecai_wikimedia_ops:genesis_spec(spec_overrides(Preset, Owner))}.
+
+ensure_fixture_catalog() ->
+    case ecai_wikimedia_fixture_server:catalog_path() of
+        {ok, CatalogPath} ->
+            read_fixture_catalog(CatalogPath);
+        {error, not_running} ->
+            case whereis(ecai_sup) of
+                undefined ->
+                    {error, wikimedia_fixture_supervisor_not_running};
+                _SupPid ->
+                    case start_fixture_supervised() of
+                        ok ->
+                            case ecai_wikimedia_fixture_server:catalog_path() of
+                                {ok, CatalogPath} -> read_fixture_catalog(CatalogPath);
+                                {error, Reason} -> {error, {wikimedia_fixture_catalog_unavailable, Reason}}
+                            end;
+                        {error, Reason} ->
+                            {error, {wikimedia_fixture_start_failed, Reason}}
+                    end
+            end
+    end.
+
+start_fixture_supervised() ->
+    PreviousPort = application:get_env(ecai, wikimedia_fixture_port),
+    try
+        ok = application:set_env(ecai, wikimedia_fixture_port, 0),
+        ecai_wikimedia_fixture_server:start_supervised(ecai_sup)
+    after
+        restore_env(wikimedia_fixture_port, PreviousPort)
+    end.
+
+restore_env(Key, {ok, Value}) ->
+    application:set_env(ecai, Key, Value);
+restore_env(Key, undefined) ->
+    application:unset_env(ecai, Key).
+
+read_fixture_catalog(CatalogPath) ->
+    case ecai_wikimedia_catalog:read(CatalogPath) of
+        {ok, Catalog} -> {ok, CatalogPath, Catalog};
+        {error, Reason} -> {error, {wikimedia_fixture_catalog_invalid, Reason}}
+    end.
+
+attach_catalog_path(Spec0, CatalogPath) ->
+    Source0 = maps:get(<<"source">>, Spec0),
+    Spec0#{<<"source">> => Source0#{<<"catalog_path">> => CatalogPath}}.
 
 spec_overrides(Preset, Owner) ->
     Project = maps:get(project, Preset),
@@ -107,6 +194,10 @@ spec_overrides(Preset, Owner) ->
         base_dir => maps:get(base_dir, Preset, join_binary(Root, Project)),
         limit => maps:get(limit, Preset, preset_limit()),
         minimum_active_months => maps:get(minimum_active_months, Preset, 6),
+        selection_shards => maps:get(selection_shards, Preset, 128),
+        oversample_percent => maps:get(oversample_percent, Preset, 125),
+        partition_buffer_bytes => maps:get(partition_buffer_bytes, Preset, 262144),
+        index_chunk_lines => maps:get(index_chunk_lines, Preset, 5000),
         priority => maps:get(priority, Preset, 100),
         keep_downloads => false,
         keep_intermediates => false,
@@ -154,6 +245,10 @@ normalize_preset(Preset0) when is_map(Preset0) ->
             base_dir,
             limit,
             minimum_active_months,
+            selection_shards,
+            oversample_percent,
+            partition_buffer_bytes,
+            index_chunk_lines,
             priority,
             publish_activity_ipfs,
             publish_ipfs
