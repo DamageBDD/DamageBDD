@@ -15,7 +15,7 @@ paths_test() ->
         ["../FJ1.obj","/tmp/FJ1.obj","a/../../b.obj","C:\\b.obj","a\\b.obj"]].
 
 source_test() ->
-    ?assertEqual([bodyparts3d_partof,bodyparts3d_isa],erm_anatomy_data:sources()),
+    ?assertEqual([bodyparts3d_partof,bodyparts3d_isa,openanatomy_brain,openanatomy_knee,openanatomy_abdomen],erm_anatomy_data:sources()),
     ?assertError({unknown_anatomy_source,random},erm_anatomy_data:source(random)).
 
 install_mapping_test() ->
@@ -60,3 +60,21 @@ with_dir(F) ->
     Dir=filename:join("/tmp","erm-anatomy-test-"++os:getpid()++"-"++integer_to_list(erlang:unique_integer([positive]))),
     ok=file:make_dir(Dir),
     try F(Dir) after file:del_dir_r(Dir) end.
+
+atlas_mapping_test() ->
+    Source=#{<<"@type">>=><<"DataSource">>,<<"@id">>=><<"#mesh">>,
+             <<"source">>=><<"Data/Model_1_left_kidney.vtk">>},
+    Part=#{<<"@type">>=><<"Structure">>,<<"@id">>=><<"#kidney">>,
+           <<"annotation">>=>#{<<"name">>=><<"left kidney">>},
+           <<"renderOption">>=>#{<<"color">>=><<"rgba(100,120,140,0.5)">>},
+           <<"sourceSelector">>=>[#{<<"@type">>=>[<<"Selector">>,<<"GeometrySelector">>],
+                                  <<"dataSource">>=><<"#mesh">>}]},
+    [P]=erm_anatomy_data:parse_atlas(jsx:encode([Source,Part])),
+    ?assertEqual({100,120,140},maps:get(color,P)),
+    ?assertEqual([<<"Data/Model_1_left_kidney.vtk">>],maps:get(paths,P)),
+    ?assertEqual([P],erm_anatomy_data:select([P],[<<"LEFT KIDNEY">>])),
+    [begin
+        Unsafe=Source#{<<"source">>=>Path},
+        ?assertError({badmatch,false},erm_anatomy_data:parse_atlas(jsx:encode([Unsafe,Part])))
+    end || Path <- [<<"../x.vtk">>,<<"/tmp/x.vtk">>,<<"Data/../../x.vtk">>,
+                    <<"https://evil.example/x.vtk">>,<<"Data/x%2f.vtk">>]].

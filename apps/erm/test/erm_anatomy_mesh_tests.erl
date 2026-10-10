@@ -16,3 +16,15 @@ render_rotation_test() ->
     ?assertNotEqual(S,erm_anatomy_mesh:svg(Ps,{0.5,0.0,1.0},B,undefined)),
     ?assertNotEqual(nomatch,binary:match(S,<<"<polygon">>)),
     ?assertEqual(nomatch,binary:match(erm_anatomy_mesh:svg([#{id=><<"test">>,mesh=>M,visible=>false}],{0.0,0.0,1.0},B,undefined),<<"<polygon">>)).
+
+picking_and_pan_test() ->
+    Mesh=#{triangles=>[{{-1.0,-1.0,0.0},{1.0,-1.0,0.0},{0.0,1.0,0.0}}]},
+    P=#{id=><<"back">>,mesh=>Mesh,visible=>true},
+    Front=P#{id=><<"front">>,mesh=>#{triangles=>[{{-1.0,-1.0,1.0},{1.0,-1.0,1.0},{0.0,1.0,1.0}}]}},
+    Parts=[P,Front],Bounds=erm_anatomy_mesh:bounds(Parts),Camera={0.0,0.0,1.0},
+    ?assertEqual(<<"front">>,erm_anatomy_mesh:pick(Parts,Camera,Bounds,{0,0},{450,350},{900,700})),
+    ?assertEqual(<<"back">>,erm_anatomy_mesh:pick([P,Front#{visible:=false}],Camera,Bounds,{0,0},{450,350},{900,700})),
+    ?assertEqual(undefined,erm_anatomy_mesh:pick(Parts,Camera,Bounds,{0,0},{10,450},{1800,900})),
+    ?assertEqual(<<"front">>,erm_anatomy_mesh:pick(Parts,Camera,Bounds,{100,0},{550,350},{900,700})),
+    ?assertNotEqual(erm_anatomy_mesh:svg(Parts,Camera,Bounds,undefined),
+                    erm_anatomy_mesh:svg(Parts,Camera,Bounds,undefined,{100,0})).

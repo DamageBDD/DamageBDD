@@ -22,7 +22,8 @@ fetch(File, Path, Progress, Timeout) ->
 request(Url, F, File, Progress, Timeout, Redirects) when Redirects >= 0 ->
     #{scheme := "https", host := Host} = Parsed = uri_string:parse(Url),
     false = maps:is_key(userinfo, Parsed),
-    true = Host =:= "dbarchive.biosciencedbc.jp",
+    true = lists:member(Host, ["dbarchive.biosciencedbc.jp", "www.openanatomy.org", "openanatomy.org"]),
+    true = maps:get(port, Parsed, 443) =:= 443,
     SSL = [
         {verify, verify_peer},
         {cacerts, public_key:cacerts_get()},

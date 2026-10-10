@@ -30,6 +30,11 @@ typedef struct {
   Gn4State *state;
   gboolean suppress_events;
   gboolean destroying;
+  GtkEventController *pointer_drag;
+  GtkEventController *pointer_click;
+  GtkEventController *pointer_scroll;
+  guint pointer_button;
+  gboolean pointer_events;
 } Gn4Widget;
 
 typedef struct {
@@ -59,6 +64,8 @@ typedef struct {
   gboolean shown;
   gboolean has_focus;
   gboolean focus;
+  gboolean has_pointer_events;
+  gboolean pointer_events;
   gboolean has_expand;
   gboolean expand;
   gboolean has_hexpand;
@@ -114,6 +121,16 @@ static char *gn4_strdup(const char *value) {
 static void gn4_disconnect_widget_signals(Gn4Widget *entry) {
   if (!entry)
     return;
+
+  GtkEventController *controllers[] = {
+      entry->pointer_drag, entry->pointer_click, entry->pointer_scroll};
+  for (guint i = 0; i < G_N_ELEMENTS(controllers); i++) {
+    if (controllers[i]) {
+      g_signal_handlers_disconnect_by_data(controllers[i], entry);
+      gtk_widget_remove_controller(entry->widget, controllers[i]);
+    }
+  }
+  entry->pointer_drag = entry->pointer_click = entry->pointer_scroll = NULL;
 
   /* Signal callbacks use entry as user_data. Disconnect them before entry is
    * released, otherwise a queued GTK signal can dereference freed memory. */
@@ -332,6 +349,7 @@ static gboolean gn4_decode_options(const char *buf, int *idx,
     GN4_BOOL_OPTION("enabled", has_enabled, enabled)
     GN4_BOOL_OPTION("shown", has_shown, shown)
     GN4_BOOL_OPTION("focus", has_focus, focus)
+    GN4_BOOL_OPTION("pointer_events", has_pointer_events, pointer_events)
     GN4_BOOL_OPTION("expand", has_expand, expand)
     GN4_BOOL_OPTION("hexpand", has_hexpand, hexpand)
     GN4_BOOL_OPTION("vexpand", has_vexpand, vexpand)
@@ -520,6 +538,99 @@ static void gn4_send_empty_event(Gn4Widget *entry, const char *name) {
   ei_x_buff event;
   gn4_event_begin(entry, &event, name, 0);
   gn4_event_send(entry, &event);
+}
+
+/* Opt-in pointer events keep existing picture widgets passive. Drag offsets
+ * are cumulative, so consumers can coalesce updates without losing motion. */
+static void gn4_send_pointer(Gn4Widget *entry, const char *name,
+                             const char *x_key, const char *y_key,
+                             double x, double y) {
+  ei_x_buff event;
+  if (!entry->pointer_events || entry->suppress_events || entry->destroying)
+    return;
+  gn4_event_begin(entry, &event, name, 5);
+  ei_x_encode_atom(&event, x_key);
+  ei_x_encode_double(&event, x);
+  ei_x_encode_atom(&event, y_key);
+  ei_x_encode_double(&event, y);
+  ei_x_encode_atom(&event, "width");
+  ei_x_encode_long(&event, gtk_widget_get_width(entry->widget));
+  ei_x_encode_atom(&event, "height");
+  ei_x_encode_long(&event, gtk_widget_get_height(entry->widget));
+  ei_x_encode_atom(&event, "button");
+  ei_x_encode_long(&event, entry->pointer_button);
+  gn4_event_send(entry, &event);
+}
+static void gn4_on_drag_begin(GtkGestureDrag *gesture, double x, double y,
+                              gpointer data) {
+  Gn4Widget *entry = data;
+  entry->pointer_button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
+  gn4_send_pointer(entry, "pointer_drag_begin", "x", "y", x, y);
+}
+static void gn4_on_drag_update(GtkGestureDrag *gesture, double dx, double dy,
+                               gpointer data) {
+  (void)gesture;
+  gn4_send_pointer(data, "pointer_drag_update", "dx", "dy", dx, dy);
+}
+static void gn4_on_drag_end(GtkGestureDrag *gesture, double dx, double dy,
+                            gpointer data) {
+  (void)gesture;
+  gn4_send_pointer(data, "pointer_drag_end", "dx", "dy", dx, dy);
+}
+static void gn4_on_drag_cancel(GtkGesture *gesture, GdkEventSequence *sequence,
+                               gpointer data) {
+  (void)gesture;
+  (void)sequence;
+  gn4_send_pointer(data, "pointer_cancel", "dx", "dy", 0, 0);
+}
+static void gn4_on_pointer_pressed(GtkGestureClick *gesture, int n_press,
+                                   double x, double y, gpointer data) {
+  Gn4Widget *entry = data;
+  if (n_press != 2)
+    return;
+  entry->pointer_button = gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture));
+  gn4_send_pointer(entry, "pointer_doubleclick", "x", "y", x, y);
+}
+static gboolean gn4_on_pointer_scroll(GtkEventControllerScroll *controller,
+                                      double dx, double dy, gpointer data) {
+  Gn4Widget *entry = data;
+  (void)controller;
+  if (!entry->pointer_events || entry->destroying)
+    return FALSE;
+  gn4_send_pointer(entry, "pointer_scroll", "dx", "dy", dx, dy);
+  return TRUE;
+}
+static void gn4_pointer_events(Gn4Widget *entry, gboolean enabled) {
+  if (!GTK_IS_PICTURE(entry->widget))
+    return;
+  if (enabled && !entry->pointer_drag) {
+    GtkGesture *drag = gtk_gesture_drag_new();
+    GtkGesture *click = gtk_gesture_click_new();
+    GtkEventController *scroll = gtk_event_controller_scroll_new(
+        GTK_EVENT_CONTROLLER_SCROLL_BOTH_AXES | GTK_EVENT_CONTROLLER_SCROLL_DISCRETE);
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(drag), 0);
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), 0);
+    g_signal_connect(drag, "drag-begin", G_CALLBACK(gn4_on_drag_begin), entry);
+    g_signal_connect(drag, "drag-update", G_CALLBACK(gn4_on_drag_update), entry);
+    g_signal_connect(drag, "drag-end", G_CALLBACK(gn4_on_drag_end), entry);
+    g_signal_connect(drag, "cancel", G_CALLBACK(gn4_on_drag_cancel), entry);
+    g_signal_connect(click, "pressed", G_CALLBACK(gn4_on_pointer_pressed), entry);
+    g_signal_connect(scroll, "scroll", G_CALLBACK(gn4_on_pointer_scroll), entry);
+    entry->pointer_drag = GTK_EVENT_CONTROLLER(drag);
+    entry->pointer_click = GTK_EVENT_CONTROLLER(click);
+    entry->pointer_scroll = scroll;
+    gtk_widget_add_controller(entry->widget, entry->pointer_drag);
+    gtk_widget_add_controller(entry->widget, entry->pointer_click);
+    gtk_widget_add_controller(entry->widget, scroll);
+    gtk_gesture_group(drag, click);
+  }
+  entry->pointer_events = enabled;
+  if (entry->pointer_drag) {
+    GtkPropagationPhase phase = enabled ? GTK_PHASE_BUBBLE : GTK_PHASE_NONE;
+    gtk_event_controller_set_propagation_phase(entry->pointer_drag, phase);
+    gtk_event_controller_set_propagation_phase(entry->pointer_click, phase);
+    gtk_event_controller_set_propagation_phase(entry->pointer_scroll, phase);
+  }
 }
 
 static void gn4_on_button_clicked(GtkButton *button, gpointer user_data) {
@@ -974,6 +1085,8 @@ static gboolean gn4_apply_options(Gn4Widget *entry, Gn4Options *opts) {
   }
 #endif
 
+  if (opts->has_pointer_events)
+    gn4_pointer_events(entry, opts->pointer_events);
   if (opts->label) {
     if (GTK_IS_BUTTON(target))
       gtk_button_set_label(GTK_BUTTON(target), opts->label);
@@ -1892,7 +2005,7 @@ gboolean gn4_send_hello(Gn4State *st) {
   ei_x_encode_tuple_header(&hello, 2);
   ei_x_encode_atom(&hello, st->register_name);
   ei_x_encode_atom(&hello, st->node_name);
-  ei_x_encode_map_header(&hello, 7);
+  ei_x_encode_map_header(&hello, 8);
   ei_x_encode_atom(&hello, "protocol");
   ei_x_encode_long(&hello, GN4_PROTOCOL_VERSION);
   ei_x_encode_atom(&hello, "widgets");
@@ -1909,6 +2022,8 @@ gboolean gn4_send_hello(Gn4State *st) {
   ei_x_encode_atom(&hello, "set_stylesheet");
   ei_x_encode_atom(&hello, "remove_stylesheet");
   ei_x_encode_empty_list(&hello);
+  ei_x_encode_atom(&hello, "pointer_events");
+  ei_x_encode_atom(&hello, "true");
   ei_x_encode_atom(&hello, "list_selection_index");
   ei_x_encode_atom(&hello, "true");
   ei_x_encode_atom(&hello, "libshumate");

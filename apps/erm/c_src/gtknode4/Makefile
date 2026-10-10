@@ -7,11 +7,12 @@ ERL_EI_LIB      := $(ERL_ROOT)/usr/lib
 
 GTK_CFLAGS      ?= $(shell pkg-config --cflags gtk4)
 GTK_LIBS        ?= $(shell pkg-config --libs gtk4)
+X11_LIBS        ?= $(shell pkg-config --silence-errors --libs x11)
 SHUMATE_CFLAGS  ?= $(shell pkg-config --silence-errors --cflags shumate-1.0)
 SHUMATE_LIBS    ?= $(shell pkg-config --silence-errors --libs shumate-1.0)
 
-CFLAGS  := -O2 -Wall -Wextra $(GTK_CFLAGS) -I$(ERL_EI_INC)
-LDFLAGS := $(GTK_LIBS) -L$(ERL_EI_LIB) -lei
+CFLAGS  := -O2 -Wall -Wextra -pthread $(GTK_CFLAGS) -I$(ERL_EI_INC)
+LDFLAGS := $(GTK_LIBS) $(X11_LIBS) -L$(ERL_EI_LIB) -lei -pthread
 PRIV_BIN := ../../priv/bin
 INSTALLED_TARGET := $(PRIV_BIN)/gtknode4
 

@@ -39,6 +39,7 @@ init(Opts) ->
         visual_capture => false,
         list_selection_index => true,
         libshumate => fake,
+        pointer_events => true,
         dialogs => deterministic
     },
     {ok, #state{test_mode = TestMode}, Capabilities}.

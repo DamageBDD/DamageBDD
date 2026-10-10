@@ -308,3 +308,29 @@ gtknode4
 
 Read the cookie from the named environment variable. Do not require the
 cookie in argv, where it is visible to local process inspection.
+
+
+## Opt-in picture pointer events
+
+The hello capability `pointer_events => true` advertises support for
+`{pointer_events, true}` on GTKGS `picture` widgets (native `picture`). Pictures
+remain passive by default. Event controllers are detached and their callbacks
+disconnected before releasing the widget registry entry.
+
+GTKGS forwards each event as `{gtkgs, NameOrRef, Event, Data, [Payload]}` using its
+existing generic event mapping. All payloads contain `width`, `height` in widget
+logical pixels and `button` (1 left, 2 middle, 3 right; touch can report 0).
+
+| Event | Other payload fields |
+| --- | --- |
+| `pointer_drag_begin` | `x`, `y`: starting widget coordinates |
+| `pointer_drag_update` | `dx`, `dy`: cumulative offsets from the start |
+| `pointer_drag_end` | `dx`, `dy`: final cumulative offsets |
+| `pointer_cancel` | `dx`, `dy`: zero; discard active gesture state |
+| `pointer_scroll` | `dx`, `dy`: discrete scroll steps; ignore button |
+| `pointer_doubleclick` | `x`, `y`: widget coordinates |
+
+Offsets are cumulative to allow coalescing. Scroll uses GTK's discrete mode for
+consistent wheel/touchpad zoom increments. Consumers must not reinterpret a
+cancelled drag or a drag over the threshold as a click. These events are scoped
+to the opted-in picture, not global input capture.

@@ -1,6 +1,6 @@
 %% Local OBJ loading and orthographic SVG software rendering. Apache-2.0.
 -module(erm_anatomy_mesh).
--export([load/1, parse/1, svg/4, bounds/1]).
+-export([load/1, parse/1, svg/4, svg/5, pick/6, bounds/1]).
 -include_lib("kernel/include/file.hrl").
 -define(MAX_BYTES, 16777216).
 -define(MAX_TRIANGLES, 50000).
@@ -9,7 +9,10 @@ load(Path) ->
     case file:read_file_info(Path) of
         {ok, Info} when Info#file_info.size =< ?MAX_BYTES ->
             case file:read_file(Path) of
-                {ok, B} -> parse(B);
+                {ok, B} -> case filename:extension(Path) of
+                    Ext when Ext=:= ".vtk"; Ext=:= <<".vtk">> -> erm_anatomy_vtk:parse(B);
+                    _ -> parse(B)
+                end;
                 E -> E
             end;
         {ok, _} -> {error, mesh_too_large};
@@ -64,8 +67,9 @@ bounds(Parts) ->
                 (X1-X0)*(X1-X0)+(Y1-Y0)*(Y1-Y0)+(Z1-Z0)*(Z1-Z0)))}
     end.
 
-svg(Parts, {Yaw,Pitch,Zoom}, Bounds, Selected) ->
-    Project = fun(P) -> project(P,Yaw,Pitch,Zoom,Bounds) end,
+svg(Parts, Camera, Bounds, Selected) -> svg(Parts,Camera,Bounds,Selected,{0.0,0.0}).
+svg(Parts, {Yaw,Pitch,Zoom}, Bounds, Selected, Pan) ->
+    Project = fun(P) -> translate(project(P,Yaw,Pitch,Zoom,Bounds),Pan) end,
     Faces = lists:append([[
         face(Project(A),Project(B),Project(C),maps:get(color,P,{175,190,205}),
              maps:get(id,P) =:= Selected)
@@ -89,3 +93,37 @@ face({X,Y,Z},{A,B,C},{D,E,F},{R,G,H},Selected) ->
     {CR,CG,CB}=Color,
     {(Z+C+F)/3,io_lib:format("<polygon points=\"~.2f,~.2f ~.2f,~.2f ~.2f,~.2f\" fill=\"rgb(~B,~B,~B)\"/>",
         [X,Y,A,B,D,E,round(CR*Light),round(CG*Light),round(CB*Light)])}.
+
+translate({X,Y,Z},{PX,PY}) -> {X+PX,Y+PY,Z}.
+
+%% Match the software renderer's painter order; hidden parts cannot be picked.
+pick(Parts,{Yaw,Pitch,Zoom},Bounds,Pan,{X,Y},{Width,Height})
+  when Width>0, Height>0 ->
+    Scale = min(Width/900,Height/700),
+    SX = (X-(Width-900*Scale)/2)/Scale,
+    SY = (Y-(Height-700*Scale)/2)/Scale,
+    case SX>=0 andalso SX=<900 andalso SY>=0 andalso SY=<700 of
+        false -> undefined;
+        true ->
+            Project = fun(P) -> translate(project(P,Yaw,Pitch,Zoom,Bounds),Pan) end,
+            Hits = lists:append([[begin
+                PA={_,_,ZA}=Project(A), PB={_,_,ZB}=Project(B), PC={_,_,ZC}=Project(C),
+                case inside({SX,SY},PA,PB,PC) of
+                    true -> {(ZA+ZB+ZC)/3,maps:get(id,P)};
+                    false -> none
+                end
+            end || {A,B,C} <- maps:get(triangles,maps:get(mesh,P))]
+            || P <- Parts,maps:get(visible,P,true)]),
+            case lists:keysort(1,[H || H <- Hits,H=/=none]) of
+                [] -> undefined;
+                Sorted -> element(2,lists:last(Sorted))
+            end
+    end;
+pick(_,_,_,_,_,_) -> undefined.
+inside({X,Y},{AX,AY,_},{BX,BY,_},{CX,CY,_}) ->
+    Area=(BX-AX)*(CY-AY)-(BY-AY)*(CX-AX),
+    A=(BX-AX)*(Y-AY)-(BY-AY)*(X-AX),
+    B=(CX-BX)*(Y-BY)-(CY-BY)*(X-BX),
+    C=(AX-CX)*(Y-CY)-(AY-CY)*(X-CX),
+    abs(Area)>0.000001 andalso
+        ((A>=0 andalso B>=0 andalso C>=0) orelse (A=<0 andalso B=<0 andalso C=<0)).

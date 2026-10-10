@@ -4,13 +4,16 @@
 -include_lib("kernel/include/file.hrl").
 -include_lib("stdlib/include/zip.hrl").
 -export([ensure/2, sources/0, source/1, parse_elements/1, select/2,
-         safe_entry/1, install/4, default_structures/0]).
+         safe_entry/1, install/4, default_structures/0, default_structures/1, catalog/2, parse_atlas/1]).
 -define(BASE, "https://dbarchive.biosciencedbc.jp/data/bodyparts3d/LATEST/").
 -define(CREDIT, "BodyParts3D, © The Database Center for Life Science licensed under CC Attribution 4.0 International").
 
-sources() -> [bodyparts3d_partof, bodyparts3d_isa].
+sources() -> [bodyparts3d_partof, bodyparts3d_isa, openanatomy_brain, openanatomy_knee, openanatomy_abdomen].
 source(bodyparts3d_partof) -> spec("partof", 100*1024*1024);
 source(bodyparts3d_isa) -> spec("isa", 180*1024*1024);
+source(openanatomy_brain) -> atlas_spec("brain-2017-01", "SPL/NAC Brain Atlas");
+source(openanatomy_knee) -> atlas_spec("knee-2016-09", "SPL Knee Atlas");
+source(openanatomy_abdomen) -> atlas_spec("abdomen-2016-09", "SPL Abdominal Atlas");
 source(Other) -> error({unknown_anatomy_source,Other}).
 spec(Prefix,Max) ->
     #{archive => ?BASE++Prefix++"_BP3D_4.0_obj_99.zip",
@@ -23,13 +26,19 @@ ensure(Opts,Progress) ->
     try
         Root=filename:absname(maps:get(data_dir,Opts,
             filename:join(filename:basedir(user_cache,"erm"),"anatomy"))),
-        case filelib:is_regular(filename:join(Root,"manifest.config")) of
+        case maps:get(manual_manifest,Opts,true) andalso filelib:is_regular(filename:join(Root,"manifest.config")) of
             true -> {ok,Root,#{attribution=>maps:get(attribution,Opts,"Local anatomy meshes"),source=>local}};
             false ->
                 global:trans({{?MODULE,Root},self()},fun()-> prepare(Root,Opts,Progress) end,[node()])
         end
     catch C:R -> {error,{C,R}} end.
 prepare(Root,Opts,Progress) ->
+    Source=maps:get(source,Opts,bodyparts3d_partof),
+    case source(Source) of
+        #{format:=vtk_atlas}=Spec -> prepare_atlas(Root,Source,Spec,Opts,Progress);
+        _ -> prepare_bodyparts(Root,Opts,Progress)
+    end.
+prepare_bodyparts(Root,Opts,Progress) ->
     Source=maps:get(source,Opts,bodyparts3d_partof),
     Spec=source(Source),
     Base=filename:join(Root,atom_to_list(Source)),
@@ -66,7 +75,7 @@ cached(URL,Path,Limit,Pin,Network,Opts,Progress) ->
         {ok,Hash} -> Progress(#{stage=>cached,file=>filename:basename(Path)}), Hash;
         false when Network=:=false -> error({offline_cache_missing_or_invalid,Path});
         false ->
-            Tmp=filename:join(filename:dirname(Path),".download-"++integer_to_list(erlang:unique_integer([positive]))),
+            Tmp=filename:join(filename:dirname(Path),".download-"++os:getpid()++"-"++integer_to_list(erlang:unique_integer([positive]))),
             Spec0=#{url=>URL,max_bytes=>Limit},
             Spec=case Pin of undefined -> Spec0; _ -> Spec0#{sha256=>Pin} end,
             try
@@ -185,3 +194,109 @@ atomic_write(Path,Data) ->
     ok=file:rename(Tmp,Path).
 unicode_data(B) when is_binary(B) -> B;
 unicode_data(L) -> unicode:characters_to_binary(L).
+
+
+atlas_spec(Release,Title) ->
+    Base="https://www.openanatomy.org/atlases/nac/"++Release++"/",
+    #{format=>vtk_atlas,base=>Base,elements=>Base++"atlasStructure.json",up_axis=>z,
+      attribution=>Title++", Surgical Planning Laboratory, Brigham and Women's Hospital; 3D Slicer License (Part B)",
+      license_url=>"https://www.openanatomy.org/atlas-pages/slicer-license.html"}.
+default_structures(openanatomy_brain) ->
+    [<<"left hippocampus">>,<<"right hippocampus">>,<<"left amygdala">>,<<"right amygdala">>];
+default_structures(openanatomy_knee) ->
+    [<<"anterior cruciate ligament">>,<<"posterior cruciate ligament">>];
+default_structures(openanatomy_abdomen) ->
+    [<<"left kidney">>,<<"right kidney">>,<<"gallbladder">>];
+default_structures(_) -> default_structures().
+
+%% Metadata-only catalogue lookup; never downloads meshes or patient volumes.
+catalog(Source,Opts) ->
+    try
+        Spec=source(Source),
+        Root=filename:absname(maps:get(data_dir,Opts,
+            filename:join(filename:basedir(user_cache,"erm"),"anatomy"))),
+        global:trans({{?MODULE,Root},self()},fun()->
+            Base=filename:join(Root,atom_to_list(Source)),
+            ok=filelib:ensure_dir(filename:join(Base,"placeholder")),
+            Path=filename:join(Base,"elements.tsv"),
+            _=cached(maps:get(elements,Spec),Path,2*1024*1024,undefined,
+                     maps:get(auto_fetch,Opts,true),Opts,fun(_)->ok end),
+            {ok,B}=file:read_file(Path),
+            Parts=case maps:get(format,Spec,obj_archive) of
+                vtk_atlas -> parse_atlas(B);
+                _ -> parse_elements(B)
+            end,
+            {ok,[maps:with([id,name],P) || P <- Parts]}
+        end,[node()])
+    catch C:R -> {error,{C,R}} end.
+
+parse_atlas(B) when byte_size(B)=<2*1024*1024 ->
+    Nodes=jsx:decode(B,[return_maps]),
+    true=is_list(Nodes) andalso length(Nodes)=<10000,
+    Sources=maps:from_list([{maps:get(<<"@id">>,N),maps:get(<<"source">>,N,<<>>)}
+        || N <- Nodes,maps:get(<<"@type">>,N,undefined)=:= <<"DataSource">>]),
+    Parts=[begin
+        ID=maps:get(<<"@id">>,N), Name=maps:get(<<"name">>,maps:get(<<"annotation">>,N)),
+        true=is_binary(ID) andalso is_binary(Name),
+        Paths=lists:usort([maps:get(maps:get(<<"dataSource">>,Sel),Sources)
+            || Sel <- maps:get(<<"sourceSelector">>,N,[]),
+               lists:member(<<"GeometrySelector">>,maps:get(<<"@type">>,Sel,[]))]),
+        true=Paths=/=[] andalso length(Paths)=<20,
+        [true=safe_atlas_path(P) || P <- Paths],
+        Color=atlas_color(maps:get(<<"color">>,maps:get(<<"renderOption">>,N,#{}),<<"rgb(175,190,205)">>)),
+        #{id=>ID,name=>Name,paths=>Paths,color=>Color}
+    end || N <- Nodes,maps:get(<<"@type">>,N,undefined)=:= <<"Structure">>,
+        lists:any(fun(Sel)->lists:member(<<"GeometrySelector">>,maps:get(<<"@type">>,Sel,[])) end,
+                  maps:get(<<"sourceSelector">>,N,[]))],
+    true=Parts=/=[],
+    true=length(Parts)=:=length(lists:usort([maps:get(id,P)||P<-Parts])),
+    lists:sort(fun(A,C)->maps:get(name,A)<maps:get(name,C) end,Parts).
+safe_atlas_path(P) when is_binary(P) ->
+    re:run(P,<<"^(Data|models)/[A-Za-z0-9_().-]+\\.vtk$">>,[{capture,none}])=:=match
+        andalso not lists:member(<<"..">>,binary:split(P,<<"/">>,[global]));
+safe_atlas_path(_) -> false.
+atlas_color(B) ->
+    {match,Channels}=re:run(B,<<"^rgba?\\(([0-9]+),([0-9]+),([0-9]+)(?:,[0-9.]+)?\\)$">>,[{capture,[1,2,3],binary}]),
+    Values=[binary_to_integer(V)||V<-Channels],
+    true=lists:all(fun(V)->V>=0 andalso V=<255 end,Values),list_to_tuple(Values).
+
+prepare_atlas(Root,Source,Spec,Opts,Progress) ->
+    Base=filename:join(Root,atom_to_list(Source)),
+    ok=filelib:ensure_dir(filename:join(Base,"placeholder")),
+    [file:delete(P) || P <- filelib:wildcard(filename:join(Base,".download-*"))],
+    Network=maps:get(auto_fetch,Opts,true),
+    Meta=filename:join(Base,"elements.tsv"),
+    MetaHash=cached(maps:get(elements,Spec),Meta,2*1024*1024,undefined,Network,Opts,Progress),
+    {ok,B}=file:read_file(Meta),
+    Parts=select(parse_atlas(B),maps:get(structures,Opts,default_structures(Source))),
+    %% Retain the complete upstream licence beside every prepared selection.
+    License=filename:join(Base,"LICENSE.html"),
+    LicenseHash=cached(maps:get(license_url,Spec),License,1024*1024,undefined,Network,Opts,Progress),
+    Key=hex(crypto:hash(sha256,term_to_binary({Parts,MetaHash,LicenseHash}))),
+    Dest=filename:join(Base,Key),ok=filelib:ensure_dir(filename:join(Dest,"placeholder")),
+    {Manifest,Receipts,_}=lists:foldl(fun(P,{Ms,Rs,Triangles})->
+        {Files,Hashes,Count}=lists:foldl(fun(Path,{Fs,Hs,N})->
+            File=hex(crypto:hash(sha256,Path))++".vtk",
+            Full=filename:join(Dest,File),Url=maps:get(base,Spec)++binary_to_list(Path),
+            Hash=cached(Url,Full,16*1024*1024,undefined,Network,Opts,Progress),
+            {ok,Mesh}=erm_anatomy_mesh:load(Full),
+            Added=length(maps:get(triangles,Mesh)),
+            case Triangles+N+Added=<50000 of
+                true -> ok;
+                false -> error({triangle_budget_exceeded,Triangles+N+Added,50000})
+            end,
+            {[File|Fs],[#{url=>Url,sha256=>Hash}|Hs],N+Added}
+        end,{[],[],0},maps:get(paths,P)),
+        Progress(#{stage=>extracting,meshes=>length(Ms)+1,total_meshes=>length(Parts)}),
+        {[maps:without([paths],P#{files=>lists:reverse(Files)})|Ms],
+         Hashes++Rs,Triangles+Count}
+    end,{[],[],0},Parts),
+    {ok,LicenseBytes}=file:read_file(License),
+    atomic_write(filename:join(Dest,"LICENSE.html"),LicenseBytes),
+    Credit=maps:get(attribution,Spec),
+    atomic_write(filename:join(Dest,"ATTRIBUTION.txt"),unicode:characters_to_binary(
+        [Credit,"\n",maps:get(license_url,Spec),"\nSource meshes are unmodified; the viewer triangulates strips for rendering.\n"])),
+    Receipt=Spec#{source=>Source,metadata_sha256=>MetaHash,files=>Receipts},
+    atomic_term(filename:join(Dest,"source.config"),Receipt),
+    atomic_term(filename:join(Dest,"manifest.config"),lists:reverse(Manifest)),
+    {ok,Dest,Receipt}.
