@@ -9,7 +9,6 @@ import base64
 import json
 import html
 import re
-from playwright.sync_api import sync_playwright
 
 APP = Path(__file__).resolve().parents[2]
 
@@ -129,6 +128,7 @@ document.addEventListener('DOMContentLoaded', () => {
     return page_html.replace('</body>', f'<script>{safe_script}</script><script type="module">{helpers}\n{controller}</script></body>')
 
 def run(out: Path, chromium: str) -> None:
+    from playwright.sync_api import sync_playwright
     out.mkdir(parents=True, exist_ok=True)
     preview = out / 'damagebdd-dashboard-preview.html'
     preview.write_text(build_preview())

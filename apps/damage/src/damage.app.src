@@ -15,6 +15,7 @@
                 kernel,
                 stdlib,
                 ssl,
+                inets,
                 gun,
                 gproc,
                 erlexec,
