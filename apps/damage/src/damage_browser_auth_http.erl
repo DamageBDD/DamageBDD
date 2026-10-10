@@ -1,9 +1,16 @@
 %% Same-origin browser authentication API. Deliberately separate from ae1 API tokens.
 -module(damage_browser_auth_http).
--export([trails/0, init/2, configured_origin/0, origin/1]).
+-export([trails/0, trails/1, init/2, configured_origin/0, configured_origin/1, origin/1]).
+-ifdef(TEST).
+-export([request_origin_allowed/5]).
+-endif.
 
-trails() ->
-    [trails:trail(Path, ?MODULE, #{action => Action},
+trails() -> trails(damage).
+
+%% App is a trusted router option, never supplied by the browser. Each listener
+%% has one exact configured origin; do not allow both origins on either listener.
+trails(App) when App =:= damage; App =:= ecai ->
+    [trails:trail(Path, ?MODULE, #{action => Action, browser_auth_app => App},
         #{Method => #{tags => ["Browser authentication"], produces => ["application/json"]}})
      || {Path, Action, Method} <- [
         {"/accounts/auth/options", options, get},
@@ -16,21 +23,24 @@ trails() ->
         {"/accounts/session/logout", logout, post}]].
 
 init(Req, #{action := Action} = State) ->
-    try handle(Action, Req) of
+    try handle(Action, Req, configured_origin(maps:get(browser_auth_app, State, damage))) of
         Req1 -> {ok, Req1, State}
-    catch _:_ -> {ok, reply(503, #{status => <<"error">>, error => <<"auth_unavailable">>,
+    catch error:ecai_browser_auth_origin_missing ->
+        {ok, reply(503, #{status => <<"error">>, error => <<"auth_origin_not_configured">>,
+            message => <<"Configure ecai.browser_auth_origin with this dashboard's exact public HTTPS origin.">>}, Req), State};
+        _:_ -> {ok, reply(503, #{status => <<"error">>, error => <<"auth_unavailable">>,
         message => <<"Authentication is unavailable. Retry without changing your wallet or password.">>}, Req), State}
     end.
 
-handle(options, Req) ->
+handle(options, Req, Origin) ->
     case cowboy_req:method(Req) of
-        <<"GET">> -> reply(200, #{status => <<"ok">>, origin => configured_origin(),
+        <<"GET">> -> reply(200, #{status => <<"ok">>, origin => Origin,
             network_id => maps:get(network_id, damage_browser_auth:options())}, Req);
         _ -> reply(405, #{error => <<"method_not_allowed">>}, Req)
     end;
-handle(Action, Req) ->
+handle(Action, Req, Origin) ->
     Expected = case Action of session -> <<"GET">>; _ -> <<"POST">> end,
-    case {cowboy_req:method(Req) =:= Expected, same_origin(Req, Expected)} of
+    case {cowboy_req:method(Req) =:= Expected, same_origin(Req, Expected, Origin)} of
         {false, _} -> reply(405, #{error => <<"method_not_allowed">>}, Req);
         {_, false} -> reply(403, #{error => <<"origin_rejected">>,
             message => <<"Open the configured DamageBDD origin and try again.">>}, Req);
@@ -43,19 +53,27 @@ handle(Action, Req) ->
         {true, true} ->
             {Peer, _Port} = cowboy_req:peer(Req),
             case damage_browser_auth:attempt(Peer) of
-                ok -> read(Action, Peer, Req);
+                ok -> read(Action, Peer, Req, Origin);
                 {error, Why} -> auth_error(Why, Req)
             end
     end.
 
-same_origin(Req, Method) ->
-    Origin = cowboy_req:header(<<"origin">>, Req),
+same_origin(Req, Method, Expected) ->
+    request_origin_allowed(Expected, Method, cowboy_req:header(<<"origin">>, Req),
+        cowboy_req:header(<<"x-damage-auth">>, Req),
+        cowboy_req:header(<<"sec-fetch-site">>, Req)).
+request_origin_allowed(Expected, Method, Origin, AuthHeader, FetchSite) ->
     ValidOrigin = case Origin of
         undefined -> Method =:= <<"GET">>;
-        _ -> Origin =:= configured_origin()
+        _ -> Origin =:= Expected
     end,
-    ValidOrigin andalso cowboy_req:header(<<"x-damage-auth">>, Req) =:= <<"1">> andalso
-        cowboy_req:header(<<"sec-fetch-site">>, Req) =/= <<"cross-site">>.
+    ValidOrigin andalso AuthHeader =:= <<"1">> andalso FetchSite =/= <<"cross-site">>.
+configured_origin(ecai) ->
+    case application:get_env(ecai, browser_auth_origin) of
+        {ok, Value} -> origin(Value);
+        undefined -> error(ecai_browser_auth_origin_missing)
+    end;
+configured_origin(damage) -> configured_origin().
 configured_origin() ->
     C = application:get_env(damage, browser_auth, []),
     origin(proplists:get_value(origin, C, application:get_env(damage, api_url, ""))).
@@ -74,40 +92,40 @@ origin(Value) ->
         _ -> error(invalid_browser_auth_origin)
     end.
 
-read(Action, Peer, Req0) ->
+read(Action, Peer, Req0, Origin) ->
     case cowboy_req:read_body(Req0, #{length => 8192, period => 5000}) of
         {ok, Data, Req} when byte_size(Data) =< 8192 ->
             Json = try jsx:decode(Data, [return_maps]) catch _:_ -> invalid end,
             case is_map(Json) of
-                true -> dispatch(Action, Json, Peer, Req);
+                true -> dispatch(Action, Json, Peer, Req, Origin);
                 false -> reply(400, #{error => <<"invalid_json">>}, Req)
             end;
         {_, _, Req} -> reply(413, #{error => <<"request_too_large">>}, Req)
     end.
 
-dispatch(login, #{<<"username">> := Email0, <<"password">> := Password}, _, Req)
+dispatch(login, #{<<"username">> := Email0, <<"password">> := Password}, _, Req, _Origin)
   when is_binary(Email0), byte_size(Email0) =< 254, is_binary(Password), byte_size(Password) =< 1024 ->
     Email = string:trim(Email0),
     case damage_accounts:check_credentials(Email, Password) of
         {ok, Account, _PrivateKey} -> finish(damage_browser_auth:issue(Account, custodial, Email), Req);
         _ -> reply(401, #{status => <<"failed">>, message => <<"Email or password is incorrect.">>}, Req)
     end;
-dispatch(signup, #{<<"email">> := E}, _, Req) when is_binary(E), byte_size(E) =< 254 ->
+dispatch(signup, #{<<"email">> := E}, _, Req, _Origin) when is_binary(E), byte_size(E) =< 254 ->
     {Code, Body} = damage_accounts:browser_action(create, #{email => string:trim(E)}),
     reply(Code, Body, Req);
-dispatch(recovery, #{<<"email">> := E}, _, Req) when is_binary(E), byte_size(E) =< 254 ->
+dispatch(recovery, #{<<"email">> := E}, _, Req, _Origin) when is_binary(E), byte_size(E) =< 254 ->
     {Code, Body} = damage_accounts:browser_action(reset_password, #{email => string:trim(E)}),
     reply(Code, Body, Req);
-dispatch(challenge, #{<<"address">> := Address}, Peer, Req0) ->
+dispatch(challenge, #{<<"address">> := Address}, Peer, Req0, Origin) ->
     {Binding, Req} = binding_cookie(Req0),
-    case damage_browser_auth:challenge(Address, configured_origin(), Binding, Peer) of
+    case damage_browser_auth:challenge(Address, Origin, Binding, Peer) of
         {ok, C} -> reply(200, C#{status => <<"ok">>}, Req);
         {error, Why} -> auth_error(Why, Req)
     end;
-dispatch(verify, #{<<"challenge_id">> := Id, <<"signature">> := Signature}, _, Req) ->
+dispatch(verify, #{<<"challenge_id">> := Id, <<"signature">> := Signature}, _, Req, Origin) ->
     Binding = cookie(<<"damage_auth_binding">>, Req),
-    finish(damage_browser_auth:verify(Id, Signature, configured_origin(), Binding), Req);
-dispatch(_, _, _, Req) -> reply(400, #{error => <<"invalid_request">>}, Req).
+    finish(damage_browser_auth:verify(Id, Signature, Origin, Binding), Req);
+dispatch(_, _, _, Req, _Origin) -> reply(400, #{error => <<"invalid_request">>}, Req).
 
 session(Req) ->
     Token = token(Req),

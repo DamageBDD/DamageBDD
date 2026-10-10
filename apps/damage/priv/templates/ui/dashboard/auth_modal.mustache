@@ -1,8 +1,9 @@
 <!-- Authentication is intentionally independent of dashboard data initialization. -->
-<div class="modal micromodal-slide" id="login-modal" aria-hidden="true" aria-busy="false">
+<div class="modal micromodal-slide" id="login-modal" aria-hidden="true" aria-busy="false" data-auth-auto-open="{{auth_auto_open}}" data-auth-callback-path="{{auth_callback_path}}">
   <div class="modal__overlay" tabindex="-1">
     <div class="modal__container auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" aria-describedby="auth-intro">
       <main class="modal__content" id="login_modal_content">
+        {{#auth_allow_guest}}<button type="button" class="auth-link auth-dismiss" data-auth-dismiss data-auth-action>Continue browsing ×</button>{{/auth_allow_guest}}
         <div class="auth-brand"><img src="{{logo_image}}" alt="" width="36" height="36"><span>DamageBDD<span class="auth-brand-label">VERIFY WHAT MATTERS</span></span></div>
         <header class="auth-heading"><h1 id="auth-modal-title">Welcome back</h1><p id="auth-intro">One workspace. Two ways to sign in.<br>Managed account or wallet proof.</p></header>
         <div class="auth-tabs" role="tablist" aria-label="Sign-in method">
@@ -38,7 +39,7 @@
         <button type="button" id="auth-keep-session" class="auth-link" data-auth-action hidden>Keep my current account</button>
         <div id="connect-status" class="auth-status" role="status" aria-live="polite" aria-atomic="true"></div>
         <button type="button" id="auth-cancel" class="auth-link" hidden>Cancel wallet sign-in</button>
-        <footer class="auth-footer"><p>By continuing, you accept the <a href="/terms" target="_blank" rel="noopener noreferrer">Terms and Conditions</a>.</p><p>Never enter your wallet seed phrase or private key here.</p><button id="open-node-wallet-btn-auth" type="button" class="auth-operator" data-auth-action>Node operator controls</button></footer>
+        <footer class="auth-footer"><p>By continuing, you accept the <a href="/terms" target="_blank" rel="noopener noreferrer">Terms and Conditions</a>.</p><p>Never enter your wallet seed phrase or private key here.</p>{{^auth_hide_node_wallet}}<button id="open-node-wallet-btn-auth" type="button" class="auth-operator" data-auth-action>Node operator controls</button>{{/auth_hide_node_wallet}}</footer>
       </main>
     </div>
   </div>

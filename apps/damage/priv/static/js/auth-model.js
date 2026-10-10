@@ -27,8 +27,10 @@ export function errorMessage(body, status) {
 export function nonce() {
   return Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, '0')).join('');
 }
-export function callbackURL(origin, state, phase, cancel = false) {
-  const url = new URL('/', origin);
+export function callbackURL(origin, state, phase, cancel = false, path = '/') {
+  // A template-owned local pathname only, not an open redirect target.
+  if (path !== '/' && path !== '/dashboard') throw new Error('Unsupported wallet return path.');
+  const url = new URL(path, origin);
   // Fragments never enter HTTP access logs or the HTTP Referer header.
   const p = new URLSearchParams({state, phase, result: cancel ? 'cancel' : 'ok'});
   if (!cancel) {
@@ -39,11 +41,11 @@ export function callbackURL(origin, state, phase, cancel = false) {
   url.hash = 'wallet-callback?' + p.toString().replace(/%7B/g, '{').replace(/%7D/g, '}');
   return url.toString();
 }
-export function walletDeepLink(phase, origin, state, message) {
+export function walletDeepLink(phase, origin, state, message, path = '/') {
   if (!['connect', 'sign'].includes(phase)) throw new Error('Unsupported wallet operation.');
   const url = new URL(phase === 'connect' ? '/address' : '/sign-message', 'https://wallet.superhero.com');
-  url.searchParams.set('x-success', callbackURL(origin, state, phase));
-  url.searchParams.set('x-cancel', callbackURL(origin, state, phase, true));
+  url.searchParams.set('x-success', callbackURL(origin, state, phase, false, path));
+  url.searchParams.set('x-cancel', callbackURL(origin, state, phase, true, path));
   if (phase === 'sign') {
     if (typeof message !== 'string' || !message) throw new Error('A sign-in challenge is required.');
     url.searchParams.set('message', message); // Plain UTF-8; do not label it hex.

@@ -5,7 +5,7 @@
 allowed(_Method, _Path, Mode) when Mode =/= wallet -> true;
 allowed(<<"GET">>, Path, wallet) ->
     lists:member(trim(Path), [<<"/">>, <<"/accounts/session">>, <<"/accounts/balance">>,
-        <<"/accounts/wallet">>, <<"/ai/bdd/catalog">>, <<"/version">>]);
+        <<"/accounts/wallet">>, <<"/ai/bdd/catalog">>, <<"/version">>, <<"/ecai/auth/session">>]);
 allowed(<<"POST">>, Path, wallet) ->
     lists:member(trim(Path), [<<"/ai/bdd/generate">>, <<"/ai/bdd/validate">>,
         <<"/ai/bdd/cancel">>, <<"/accounts/session/logout">>, <<"/accounts/logout">>]);

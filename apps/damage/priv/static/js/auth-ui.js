@@ -54,7 +54,11 @@ export function initAuthUI({request = fetch, browserConnect = authWallet.connect
       wallet: 'Sign in with your wallet', recovery: 'Reset your password'}[mode];
     status('');
     $('auth-keep-session').hidden = !TokenManager.isAuthenticated();
-    window.MicroModal?.show('login-modal', {disableFocus: true});
+    window.MicroModal?.show('login-modal', {disableFocus: true, onClose: () => {
+      // Closing during provider RPC must not allow a delayed signature to log in.
+      epoch++; aborter?.abort(); aborter = null; resetChallenge(); pending(false);
+      $('password').value = '';
+    }});
     root.querySelector(`[data-auth-panel="${mode}"] input, [data-auth-panel="${mode}"] button`)?.focus();
   }
   async function api(path, body, signal) {
@@ -119,7 +123,7 @@ export function initAuthUI({request = fetch, browserConnect = authWallet.connect
   function saveRedirect(phase) {
     const state = nonce();
     sessionStorage.setItem(PENDING, JSON.stringify({state, phase, createdAt: Date.now(), challenge}));
-    navigate(walletDeepLink(phase, location.origin, state, challenge?.message));
+    navigate(walletDeepLink(phase, location.origin, state, challenge?.message, root.dataset.authCallbackPath || '/'));
   }
 
   $('loginSignupForm').addEventListener('submit', event => {
@@ -223,6 +227,11 @@ export function initAuthUI({request = fetch, browserConnect = authWallet.connect
       button.removeAttribute('aria-busy');
     }
   })));
+  root.querySelector('[data-auth-dismiss]')?.addEventListener('click', () => {
+    if (busy) return;
+    epoch++; resetChallenge(); $('password').value = '';
+    window.MicroModal?.close('login-modal');
+  });
   window.DamageAuth = {open, api, status};
   TokenManager.ready.then(async () => {
     if (callbackError) { open('wallet'); status(callbackError, 'error'); }
@@ -237,7 +246,7 @@ export function initAuthUI({request = fetch, browserConnect = authWallet.connect
     } else if (callback?.address) {
       provider = 'mobile'; open('wallet');
       run('Preparing a sign-in message…', (signal, current) => createChallenge(callback, signal, current));
-    } else if (!TokenManager.isAuthenticated()) open('login');
+    } else if (!TokenManager.isAuthenticated() && root.dataset.authAutoOpen !== 'false') open('login');
     else window.applyWalletCapabilities?.();
   });
   return window.DamageAuth;

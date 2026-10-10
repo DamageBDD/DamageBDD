@@ -44,7 +44,7 @@ test('versioned wallet URL tracks the delivered wallet bytes', () => {
 });
 test('new HTML requests the updated auth entrypoint', async () => {
   const shell = await readFile(new URL('../../priv/templates/ui/dashboard/page_shell.mustache', import.meta.url), 'utf8');
-  assert.match(shell, /src="\/static\/js\/auth-ui\.js\?v=wallet-loader-v1"/);
+  assert.match(shell, /src="\/static\/js\/auth-ui\.js\?v=ecai-browser-v1"/);
 });
 test('loader is lazy and reuses one successful import for connect and sign', async () => {
   let loads=0, connects=0, signs=0;

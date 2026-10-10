@@ -4,6 +4,7 @@ import {normaliseSession, errorMessage} from './auth-model.js';
 let session = null;
 let expiryTimer;
 let refreshing;
+let sessionEpoch = 0;
 const obsoleteKeys = ['access_token', 'access_token_custodial', 'access_token_extension',
   'active_auth_mode', 'custodial_address', 'extension_address', 'damage_email',
   'custodial_token', 'extension_token', 'custodial_accounts', 'damage.nwc.last'];
@@ -20,27 +21,34 @@ export const TokenManager = {
   session: () => active(),
   acceptSession(data) {
     session = normaliseSession(data);
+    sessionEpoch++;
     clearTimeout(expiryTimer);
     expiryTimer = setTimeout(() => { this.logout(); window.DamageAuth?.open('login'); },
       Math.min(2147483647, Math.max(0, session.expires_at * 1000 - Date.now())));
     publish();
     return session;
   },
-  logout() { session = null; clearTimeout(expiryTimer); publish(); },
+  logout() { sessionEpoch++; session = null; clearTimeout(expiryTimer); publish(); },
   activate(mode) {
     if (mode !== this.getMode()) throw new Error('Sign in to switch accounts. Accounts are not linked automatically.');
     return this.getToken();
   },
   refreshSession() {
     if (refreshing) return refreshing;
+    const epoch = sessionEpoch;
     refreshing = (async () => {
       const response = await fetch('/accounts/session', {credentials: 'include', cache: 'no-store', mode: 'same-origin', redirect: 'error',
         headers: {'Accept': 'application/json', 'X-Damage-Auth': '1'}});
+      if (epoch !== sessionEpoch) return active();
       if (response.status === 401) { this.logout(); return null; }
       const body = await response.json();
+      if (epoch !== sessionEpoch) return active();
       if (!response.ok) throw new Error(errorMessage(body, response.status));
       return this.acceptSession(body);
-    })().finally(() => { refreshing = null; });
+    })().catch(error => {
+      if (epoch !== sessionEpoch) return active();
+      throw error;
+    }).finally(() => { refreshing = null; });
     return refreshing;
   }
 };

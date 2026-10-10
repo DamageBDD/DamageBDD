@@ -170,3 +170,20 @@ cross-check, not browser-cookie, real navigation, Selenium/Appium, server or cry
 verification. EUnit uses a mocked signature adapter; separately verify actual wallet
 signatures, origin/cookie behaviour through your proxy, replay rejection, API-token
 compatibility, and SMTP confirmation in staging before production deployment.
+
+
+## ECAI main-console integration
+
+The ECAI listener calls `damage_browser_auth_http:trails(ecai)` with a static
+router tag and requires an explicit `ecai.browser_auth_origin`. DamageBDD's
+`trails/0` keeps its original configured origin. The listener tag is never
+inferred from an incoming Host or Origin header. ECAI renders the shared auth
+modal and mounts explicit live assets, with guest dismissal and `/dashboard`
+mobile callbacks. Default DamageBDD auto-open and `/` callback behavior remain.
+
+Only `GET /ecai/auth/session` is added to wallet-only protected-read policy.
+Code-admin and funded-indexing callers must preserve server-derived wallet mode
+rather than elevating an account by address membership. They do not gain any
+wallet-only spending authority. The shared TokenManager now ignores session
+restore responses from before a successful sign-in or logout. See
+`apps/ecai/doc/browser-auth.md` for integration and deployment details.
