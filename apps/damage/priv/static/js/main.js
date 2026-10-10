@@ -2,7 +2,6 @@ import { initDashboardNavigation } from "./dashboard-navigation.js";
 import * as wallet from "/static/js/wallet.js";
 import * as nwc from "/static/js/nwc.js";
 import { showLightningQR } from '/static/js/damage-lightning-ui.js';
-import { ensureChannel } from '/static/js/ensureChannel.js';
 import { updateSchedulesTable } from '/static/js/schedules.js';
 import { initDamageBDDPicker, rememberRecentFeature } from "./featurePicker.js";
 import { createIpfsFilePicker } from "/static/js/ipfs-filepicker.js";
@@ -23,6 +22,7 @@ function bindDashboardPanelRefresh(navigation) {
 	const refresh = event => {
 		const id = event.detail?.id;
 		const task = async () => {
+			if (window.TokenManager?.getMode?.() === "extension") return;
 			if (id === "activity-tab") {
 				await window.Reports?.renderRunReports(window.TokenManager?.getAddress?.(), {limit: 10});
 			} else if (id === "schedules-tab" && window.TokenManager?.getToken?.()) {
@@ -505,6 +505,11 @@ function restoreFeatureDraftFromShareLink() {
 	});
 
 	document.addEventListener("auth:changed", async () => {
+        if (!window.TokenManager?.isAuthenticated?.()) return;
+        if (window.TokenManager.getMode() === "extension") {
+            await refreshDashboardBalances();
+            return;
+        }
 		try {
             const data = await loadNodeStatus();
 
@@ -529,7 +534,7 @@ function restoreFeatureDraftFromShareLink() {
 			console.warn("auth-changed balance refresh failed:", err);
 		}
 		try {
-			if (window.TokenManager.getToken()) {
+			if (window.TokenManager.can("schedules")) {
 				updateSchedulesTable();
 			}
 		} catch (err) {
@@ -537,119 +542,7 @@ function restoreFeatureDraftFromShareLink() {
 		}
 	});
 	document.addEventListener("DOMContentLoaded", async function() {
-		var kycForm = document.getElementById('kycForm');
-		if (kycForm){
-			kycForm.addEventListener('submit', function(event) {
-				event.preventDefault(); // Prevent default form submission
-
-				const formData = new FormData(this);
-				const jsonData = Object.fromEntries(formData.entries());
-
-				fetch('/accounts/create', {
-					method: 'POST',
-					headers: {
-						'Content-Type': 'application/json',
-						// Include CSRF Token if necessary
-						'CSRF-Token': formData.get('csrf_token')
-					},
-					body: JSON.stringify(jsonData)
-				})
-					.then(response => response.json())
-					.then(data => {
-						showNotification({
-							title: 'Success',
-							content: data.message,
-							style: 'success'
-						});
-					})
-					.catch((error) => {
-						showNotification({
-							title: 'Request Failed',
-							content: error.message,
-							style: 'error'
-						});
-					});
-			});
-		}
-
-		document.getElementById("login-modal").addEventListener("keydown", function(event){
-			if (event.keyCode === 13) {
-				submitLoginForm(event);
-			}
-		});
-		wrapApiButton(
-			document.getElementById("loginSubmitBtn"),
-			submitLoginForm
-		);
-
-		document.getElementById("loginSubmitBtn").addEventListener("click",(event) => {
-			event.preventDefault();
-			});
-
-			document.getElementById("loginResetPasswdBtn").addEventListener("click",(event) => {
-				event.preventDefault();
-			});
-
-			/*document.getElementById("signup-modal").addEventListener("keydown", function(event){
-				if (event.keyCode === 13) {
-				submitSignUpForm(event);
-				}
-				});*/
-			document.getElementById("signupForm").addEventListener("submit", (event) => {
-				event.preventDefault();
-			});
-			document.getElementById("signup-username").addEventListener("keydown", (event) => {
-				if (event.key === "Enter") {
-					submitSignUpForm(event);
-				}
-			});
-			wrapApiButton(
-				document.getElementById("signupSubmitBtn"),
-				submitSignUpForm);
-			wrapApiButton(
-				document.getElementById("loginResetPasswdBtn"),
-				submitForgotPasswordForm);
-			//document.getElementById("loginDialogBtn").addEventListener("click", (event) => {
-			//	event.preventDefault();
-			//	MicroModal.close("signup-modal");
-			//	MicroModal.show("login-modal");
-			//});
-			const logoutSubmitBtn = document.getElementById("logoutSubmitBtn");
-
-			wrapApiButton(logoutSubmitBtn, async (event) => {
-				event.preventDefault();
-
-				try {
-					if (typeof window.logoutActiveSession === "function") {
-						await window.logoutActiveSession();
-					} else {
-						window.TokenManager.logout(window.TokenManager.getMode());
-					}
-				} finally {
-					try { MicroModal.close("logout-modal"); } catch (_e) {}
-					window.location.reload();
-				}
-			});
-
-
-			const logoutBtn = document.getElementById("logoutBtn");
-
-			if (logoutBtn) {
-				logoutBtn.addEventListener("click", (event) => {
-					event.preventDefault();
-					MicroModal.show("logout-modal");
-			});
-		}
-
-		showHideLoginButton();
-
-		setTimeout(() => {
-			refreshDashboardBalances();
-			document.dispatchEvent(new CustomEvent("damage:dashboard-loaded", {
-				detail: { address: getCurrentDashboardAddress() }
-			}));
-		}, 0);
-
+        // Node setup/unlock is independent of a user dashboard or browser session.
 		Tabby('[data-node-wallet-tabs]');
 		MicroModal.init({
 			onShow: modal => {
@@ -667,7 +560,6 @@ function restoreFeatureDraftFromShareLink() {
 				}
 			}
 		});
-
 
 		const nodeUnlockForm = document.getElementById("node-unlock-password-form");
 		const nodeUnlockSubmitBtn = document.getElementById("node-unlock-password-submit-btn");
@@ -707,6 +599,135 @@ function restoreFeatureDraftFromShareLink() {
 		}
 
 
+		// Sweep wallet button handler
+		const sweepWalletBtn = document.getElementById("sweep-wallet-btn");
+		wrapApiButton(sweepWalletBtn, async (event) => {
+			event.preventDefault();
+			await sweepWallet();
+		});
+
+		// Skip sweep button handler
+		const skipSweepBtn = document.getElementById("skip-sweep-btn");
+		if (skipSweepBtn) {
+			skipSweepBtn.addEventListener("click", (event) => {
+				event.preventDefault();
+				MicroModal.close("node-set-password-modal");
+			});
+		}
+
+		// Initialize tabs for node setup
+		if (typeof Tabby !== 'undefined') {
+			const nodeSetupTabs = Tabby('[data-node-setup-tabs]');
+
+
+
+			// When seed phrase tab is shown, initialize reveal button if seed phrase is already available
+			document.addEventListener('tabby', function(event) {
+
+				if (event.detail && event.detail.content && event.detail.content.id === 'seed-phrase-backup-tab') {
+					// Check if seed phrase was already set
+					const revealBtn = document.getElementById("reveal-seed-phrase-btn");
+					if (revealBtn && revealBtn.dataset.seedPhrase) {
+						// Seed phrase already loaded, nothing to do
+					}
+				}
+				if (event.detail && event.detail.content && event.detail.content.id === 'sweep-wallet-tab') {
+					//loadWalletBalance();
+				}
+			}, false);
+		}
+
+
+		// Toggle password (UI only → no debounce)
+		document.querySelectorAll(".toggle-password").forEach((btn) => {
+			btn.addEventListener("click", () => {
+				const input = document.getElementById(btn.dataset.target) ||
+					document.querySelector(`input[name='${btn.dataset.target}']`);
+				if (!input) return;
+				if (input.type === "password") {
+					input.type = "text";
+					btn.textContent = "🙈";
+				} else {
+					input.type = "password";
+					btn.textContent = "👁️";
+				}
+			});
+		});
+
+
+        await window.TokenManager?.ready;
+        if (!document.getElementById("content")) return;
+		var kycForm = document.getElementById('kycForm');
+		if (kycForm){
+			kycForm.addEventListener('submit', function(event) {
+				event.preventDefault(); // Prevent default form submission
+
+				const formData = new FormData(this);
+				const jsonData = Object.fromEntries(formData.entries());
+
+				fetch('/accounts/create', {
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						// Include CSRF Token if necessary
+						'CSRF-Token': formData.get('csrf_token')
+					},
+					body: JSON.stringify(jsonData)
+				})
+					.then(response => response.json())
+					.then(data => {
+						showNotification({
+							title: 'Success',
+							content: data.message,
+							style: 'success'
+						});
+					})
+					.catch((error) => {
+						showNotification({
+							title: 'Request Failed',
+							content: error.message,
+							style: 'error'
+						});
+					});
+			});
+		}
+
+			const logoutSubmitBtn = document.getElementById("logoutSubmitBtn");
+
+            wrapApiButton(logoutSubmitBtn, async (event) => {
+                event.preventDefault();
+                try {
+                    await window.logoutActiveSession();
+                    window.location.reload();
+                } catch (error) {
+                    showNotification({title: "Sign-out not confirmed", content: error.message, style: "error"});
+                }
+            });
+
+
+			const logoutBtn = document.getElementById("logoutBtn");
+
+			if (logoutBtn) {
+				logoutBtn.addEventListener("click", (event) => {
+					event.preventDefault();
+					MicroModal.show("logout-modal");
+			});
+		}
+
+		showHideLoginButton();
+
+		setTimeout(() => {
+			refreshDashboardBalances();
+			document.dispatchEvent(new CustomEvent("damage:dashboard-loaded", {
+				detail: { address: getCurrentDashboardAddress() }
+			}));
+		}, 0);
+
+
+
+
+
+
 		wrapApiForm(
 			document.getElementById("invoice-form"),
 			document.getElementById("generate-invoice-btn"),
@@ -725,7 +746,7 @@ function restoreFeatureDraftFromShareLink() {
 				MicroModal.close("wallet-modal");
 			}
 		);
-        loadNodeStatus()
+        if (window.TokenManager.getMode() !== "extension") loadNodeStatus()
 			.then(data => {
 				if (data.ok === true) {
 					renderNodeFooter(data);
@@ -760,46 +781,6 @@ function restoreFeatureDraftFromShareLink() {
 			});
 		}
 
-		// Sweep wallet button handler
-		const sweepWalletBtn = document.getElementById("sweep-wallet-btn");
-		wrapApiButton(sweepWalletBtn, async (event) => {
-			event.preventDefault();
-			await sweepWallet();
-		});
-
-		// Skip sweep button handler
-		const skipSweepBtn = document.getElementById("skip-sweep-btn");
-		if (skipSweepBtn) {
-			skipSweepBtn.addEventListener("click", (event) => {
-				event.preventDefault();
-				MicroModal.close("node-set-password-modal");
-			});
-		}
-
-		// Initialize tabs for node setup
-		if (typeof Tabby !== 'undefined') {
-			const nodeSetupTabs = Tabby('[data-node-setup-tabs]');
-			
-			
-			// Auth modal tabs (Email / Sign up / Wallet)
-			if (document.querySelector('[data-auth-tabs]')) {
-				Tabby('[data-auth-tabs]');
-			}
-			// When seed phrase tab is shown, initialize reveal button if seed phrase is already available
-			document.addEventListener('tabby', function(event) {
-
-				if (event.detail && event.detail.content && event.detail.content.id === 'seed-phrase-backup-tab') {
-					// Check if seed phrase was already set
-					const revealBtn = document.getElementById("reveal-seed-phrase-btn");
-					if (revealBtn && revealBtn.dataset.seedPhrase) {
-						// Seed phrase already loaded, nothing to do
-					}
-				}
-				if (event.detail && event.detail.content && event.detail.content.id === 'sweep-wallet-tab') {
-					//loadWalletBalance();
-				}
-			}, false);
-		}
 		const openWalletModalBtn = document.getElementById("open-wallet-modal-btn");
 		if (openWalletModalBtn) {
 			openWalletModalBtn.addEventListener("click", (event) => {
@@ -837,7 +818,6 @@ function restoreFeatureDraftFromShareLink() {
 			samplesIndexUrl: "/samples/features/index.json"
 		}).catch(error => console.warn("Feature picker initialization failed:", error));
 		var tabs =Tabby('[data-token-tabs]');
-		Tabby('[data-node-wallet-tabs]');
 		document.addEventListener('tabby', function (event) {
 			var tab = event.target;
 			var content = event.detail.content;
@@ -857,21 +837,6 @@ function restoreFeatureDraftFromShareLink() {
 		});
 
 
-		// Toggle password (UI only → no debounce)
-		document.querySelectorAll(".toggle-password").forEach((btn) => {
-			btn.addEventListener("click", () => {
-				const input = document.getElementById(btn.dataset.target) ||
-					document.querySelector(`input[name='${btn.dataset.target}']`);
-				if (!input) return;
-				if (input.type === "password") {
-					input.type = "text";
-					btn.textContent = "🙈";
-				} else {
-					input.type = "password";
-					btn.textContent = "👁️";
-				}
-			});
-		});
 
 
 		// Primary navigation retains the requested URL; do not reset it to Workspace.
@@ -1281,7 +1246,7 @@ function restoreFeatureDraftFromShareLink() {
 		const background = document.getElementById("background");
 		if (background) background.style.display = "block";
 		setDashboardVisible(false);
-		MicroModal.show('login-modal');
+		window.DamageAuth?.open('login');
 	}
 	function showHideLoginButton(){
 		if (!document.getElementById("content")) return;
@@ -1684,6 +1649,10 @@ function restoreFeatureDraftFromShareLink() {
 	}
 
 	async function loadExecutionAccountContext() {
+        if (window.TokenManager?.getMode?.() === "extension") {
+            executionContextStatus("execution-account-context-status", window.TokenManager.capabilities().reason, true);
+            return;
+        }
 		executionContextStatus("execution-account-context-status", "Loading account context…");
 		try {
 			const data = await accountContextRequest("/context");
@@ -1872,6 +1841,11 @@ function restoreFeatureDraftFromShareLink() {
 
 	let executionInFlight = false;
 	async function submitDamageForm() {
+        if (window.TokenManager?.getMode?.() === "extension") {
+            showNotification({title: "Wallet execution unavailable", content:
+                window.TokenManager.capabilities().reason, style: "error"});
+            return;
+        }
 		if (executionInFlight) return;
 		executionInFlight = true;
 		const button = document.getElementById("execute-feature-btn");
@@ -2054,367 +2028,11 @@ function restoreFeatureDraftFromShareLink() {
 		}
 	}
 
-	async function handleNonCustodialExecution({ inputText, featureCid, concurrency, headers, reportElement }) {
-		const address = window.TokenManager.getAddress();
-		if (!address) {
-			reportElement.innerText = "No wallet address found. Please connect your wallet.";
-			return;
-		}
+	async function handleNonCustodialExecution({reportElement}) {
+        reportElement.textContent = window.TokenManager.capabilities().reason ||
+            "Wallet execution requires a verified payment-authorisation flow. No transaction was requested.";
+    }
 
-		var channel;
-		try {
-			channel = await ensureChannel({
-				nodeUrl: NODE_BASE,
-				mdwUrl: NODE_BASE,
-				responderId: window.nodePublicKey,
-				initiatorId: address
-			});
-		} catch (err) {
-			console.error("ensureChannel failed:", err);
-			reportElement.innerText =
-				"Failed to ensure payment channel: " + (err.message || String(err));
-			return;
-		}
-
-		const preparePayload = {
-			address,
-			concurrency,
-			channel_id: channel.channel.id,
-			context: currentRuntimeContext()
-		};
-		if (featureCid) preparePayload.feature_cid = featureCid;
-		else preparePayload.feature = inputText;
-
-		const prepareReq = {
-			method: "POST",
-			credentials: "include",
-			headers,
-			body: JSON.stringify(preparePayload)
-		};
-
-		let txPrepareResp;
-
-		try {
-			txPrepareResp = await fetch("/tx/", prepareReq);
-			try {
-				await streamResponseToDOM(txPrepareResp, reportElement);
-			} catch (err) {
-				console.error("Error streaming signed response to DOM:", err);
-				reportElement.innerText =
-					"Error while streaming execution output: " + (err.message || String(err));
-			}
-		} catch (err) {
-			console.error("Network error calling /tx/ (prepare):", err);
-			reportElement.innerText =
-				"Network error while preparing transaction: " + (err.message || String(err));
-			return;
-		}
-		return;
-
-		if (!txPrepareResp.ok) {
-			const msg = await extractErrorMessage(txPrepareResp);
-			reportElement.innerText = "Failed to prepare transaction: " + msg;
-			return;
-		}
-
-		let data;
-		try {
-			data = await txPrepareResp.json();
-		} catch (err) {
-			console.error("JSON parse error for /tx/ (prepare):", err);
-			reportElement.innerText = "Invalid JSON from server while preparing transaction.";
-			return;
-		}
-
-		if (data.status !== "ok" || !data.tx) {
-			reportElement.innerText =
-				"Failed to prepare transaction: " + (data.message || "Unknown error");
-			return;
-		}
-
-		const message = data.tx;
-
-		try {
-			await window.connectWalletUnified();
-		} catch (err) {
-			console.error("connectWalletUnified failed:", err);
-			reportElement.innerText =
-				"Failed to connect wallet: " + (err.message || String(err));
-			return;
-		}
-
-		let signature;
-		try {
-			signature = await wallet.signTransactionSmart(
-				message,
-				"ae_mainnet",
-				window.location.origin,
-				window.location.origin
-			);
-		} catch (err) {
-			console.error("signTransactionSmart threw error:", err);
-			reportElement.innerText =
-				"Failed to sign transaction: " + (err.message || String(err));
-			return;
-		}
-
-		if (!signature || !signature.ok) {
-			const errorMsg =
-						(signature && signature.error && signature.error.message) ||
-						"Unknown signing error";
-			reportElement.innerText = "Failed to sign: " + errorMsg;
-			return;
-		}
-
-		const signedTx = signature.result && signature.result.signedTransaction;
-		if (!signedTx) {
-			reportElement.innerText = "Wallet did not return a signed transaction.";
-			return;
-		}
-
-		const signedPayload = {
-			address,
-			concurrency,
-			signed_tx: signedTx,
-			context: currentRuntimeContext()
-		};
-		if (featureCid) signedPayload.feature_cid = featureCid;
-		else signedPayload.feature = inputText;
-
-		const signedRequest = {
-			method: "POST",
-			credentials: "include",
-			headers,
-			body: JSON.stringify(signedPayload)
-		};
-
-		let signedResponse;
-		try {
-			signedResponse = await fetch("/tx/", signedRequest);
-		} catch (err) {
-			console.error("Network error calling /tx/ (signed):", err);
-			reportElement.innerText =
-				"Network error after signing transaction: " + (err.message || String(err));
-			return;
-		}
-
-		if (!signedResponse.ok) {
-			const errText = await extractErrorMessage(signedResponse);
-			reportElement.innerText = "Error after signing: " + errText;
-			return;
-		}
-
-		try {
-			await streamResponseToDOM(signedResponse, reportElement);
-		} catch (err) {
-			console.error("Error streaming signed response to DOM:", err);
-			reportElement.innerText =
-				"Error while streaming execution output: " + (err.message || String(err));
-		}
-	}
-
-
-
-
-	function submitSignUpForm(event) {
-		const username = document.getElementById("signup-username").value;
-		if (!validateEmail(username)) {
-			showNotification({title:"Invalid email", content: "Please enter a valid email address for username",  style:"error"});
-			return;
-		}
-
-		const signupData = {
-			email: username
-		};
-
-		const headers = new Headers();
-		headers.append("Content-Type", "application/json");
-		fetch("/accounts/create/", {
-			method: "POST",
-			headers: headers,
-			body: JSON.stringify(signupData)
-		})
-			.then(response => {
-				return response.json();
-			})
-			.then(data => {
-				if (data.status == "ok") {
-					showNotification({
-						title: 'Success - Confirmation Required',
-						content: data.message,
-						style: 'success'
-					});
-				} else {
-					showNotification({
-						title: 'Signup Failed',
-						content: 'Signup Error.',
-						style: 'error'
-					});
-				}
-			})
-			.catch(error => {
-				console.error("Error:", error);
-			});
-		event.preventDefault();
-		return;
-	}
-	function submitLoginForm(event) {
-		const username = document.getElementById("login-username").value;
-		const password = document.getElementById("password").value;
-
-		if (!validateEmail(username)) {
-			showNotification({
-				title:"Invalid email", content: "Please enter a valid email address for username",  style:"error"});
-			return;
-		}
-
-		const signupData = {
-			grant_type: "password",
-			scope: "basic",
-			username: username,
-			password: password
-		};
-
-		const headers = new Headers();
-		headers.append("Content-Type", "application/json");
-
-		fetch("/accounts/auth/", {
-			method: "POST",
-			credentials: "include",
-			headers: headers,
-			body: JSON.stringify(signupData)
-		})
-			.then(response => response.json())
-			.then(async data => {
-				if (data.access_token) {
-					window.TokenManager.on_custodial_login(data.address, data.email, data.access_token);
-					window.TokenManager.activate("custodial");
-
-					showConnectStatus("Login Success!", "success");
-					showHideLoginButton();
-					window.location.reload();
-				} else {
-					showConnectStatus("Login Failed!", "failed");
-				}
-			});
-		event.preventDefault();
-		return;
-	}
-	async function refreshPostLoginUi() {
-		try {
-			const data = await loadNodeStatus();
-
-			if (data && data.ok === true) {
-				renderNodeFooter(data);
-				renderNodeWalletModal(data);
-				await refreshDashboardBalances();
-				return;
-			}
-
-			handleNodeUnavailableStatus(data);
-		} catch (err) {
-			if (!handleNodeUnavailableStatus(err?.payload)) {
-				console.warn("node status refresh failed:", err);
-			}
-		}
-	}
-
-	async function submitLogout() {
-		const btn = document.getElementById("logoutSubmitBtn");
-		const oldText = btn ? btn.textContent : "";
-
-		try {
-			if (btn) {
-				btn.disabled = true;
-				btn.textContent = "Logging out...";
-			}
-
-			const token = window.TokenManager?.getToken?.();
-			const headers = new Headers();
-			headers.set("Content-Type", "application/json");
-			headers.set("Accept", "application/json");
-
-			// Optional: send bearer too, though cookie clearing is the important part
-			if (token) {
-				headers.set("Authorization", "Bearer " + token);
-			}
-
-			const resp = await fetch("/accounts/logout", {
-				method: "POST",
-				credentials: "include",
-				headers,
-				body: JSON.stringify({})
-			});
-
-			let data = null;
-			try {
-				data = await resp.json();
-			} catch (_e) {
-				data = null;
-			}
-
-			// Always clear local state even if server reply is odd:
-			// user intent is logout.
-			try {
-				window.TokenManager.logout(window.TokenManager.getMode());
-			} catch (e) {
-				console.warn("TokenManager logout failed:", e);
-			}
-
-			try {
-				MicroModal.close("logout-modal");
-			} catch (_e) {}
-
-			try {
-				MicroModal.close("wallet-modal");
-			} catch (_e) {}
-
-			try {
-				MicroModal.close("node-wallet-modal");
-			} catch (_e) {}
-
-			showLoginButton();
-
-			if (!resp.ok) {
-				showNotification({
-					title: "Logged out locally",
-					content: (data && (data.message || data.error)) || "Server logout returned an unexpected response.",
-					style: "info"
-				});
-				return;
-			}
-
-			showNotification({
-				title: "Logged out",
-				content: (data && data.message) || "You have been logged out.",
-				style: "success"
-			});
-		} catch (err) {
-			console.error("Logout failed:", err);
-
-			// Still clear client-side auth as a fallback
-			try {
-				window.TokenManager.logout(window.TokenManager.getMode());
-			} catch (_e) {}
-
-			try {
-				MicroModal.close("logout-modal");
-			} catch (_e) {}
-
-			showLoginButton();
-
-			showNotification({
-				title: "Logged out locally",
-				content: "Network error while contacting the server, but local session data was cleared.",
-				style: "info"
-			});
-		} finally {
-			if (btn) {
-				btn.disabled = false;
-				btn.textContent = oldText || "Logout";
-			}
-		}
-	}
 	function resetPostLogoutUi() {
 		const damageAmount = document.getElementById("balanceAmount");
 		if (damageAmount) damageAmount.textContent = "";
@@ -2442,48 +2060,6 @@ function restoreFeatureDraftFromShareLink() {
 
 		const nodeWalletBtcTotal = document.getElementById("node-wallet-btc-total");
 		if (nodeWalletBtcTotal) nodeWalletBtcTotal.textContent = "0 sats";
-	}
-	function submitForgotPasswordForm(event) {
-		const username = document.getElementById("login-username").value;
-
-		if (!validateEmail(username)) {
-			showNotification({title:"Invalid email", content: "Please enter a valid email address.",  style:"error"});
-			return;
-		}
-
-
-		const headers = new Headers();
-		headers.append("Content-Type", "application/json");
-		headers.append("Authorization", "Bearer "+ window.TokenManager.getToken());
-
-		fetch("/accounts/reset_password/", {
-			method: "POST",
-			headers: headers,
-			body: JSON.stringify({email : username})
-		})
-			.then(response => {
-				return response.json();
-			})
-			.then(data => {
-				if (data.status === "ok") {
-					showNotification({
-						title: 'Reset Password Success',
-						content: data.message,
-						style: 'success'
-					});
-				} else {
-					showNotification({
-						title: 'Login Failed',
-						content: 'Authentication Un-Successful.',
-						style: 'error'
-					});
-				}
-			})
-			.catch(error => {
-				console.error("Error:", error);
-			});
-		event.preventDefault();
-		return;
 	}
 
 

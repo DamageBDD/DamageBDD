@@ -20,7 +20,7 @@
 -export([delete_resource/2]).
 -export([notify_user/2]).
 -export([validate_password/1]).
--export([authenticate_user/2]).
+-export([authenticate_user/2, check_credentials/2, browser_action/2]).
 -export([wallet_snapshot/1]).
 
 -include_lib("kernel/include/logger.hrl").
@@ -311,6 +311,8 @@ safe_account_authorized(Req, State) ->
     try damage_http:is_authorized(Req, State) of
         {true, Req1, State1} ->
             {true, Req1, State1};
+        {stop, Req1, State1} ->
+            {stop, Req1, State1};
         {false, Req1, State1} ->
             {{false, <<"Bearer realm=\"damage\"">>}, Req1, State1};
         {{false, _Realm} = False, Req1, State1} ->
@@ -335,12 +337,14 @@ to_json(Req, #{action := confirm} = State) ->
     to_html(Req, State);
 to_json(Req, #{action := rate} = State) ->
     {jsx:encode(#{price => price_feed:get_prices()}), Req, State};
+to_json(Req, #{action := balance, public_key := AeAccount, auth_mode := wallet} = State) ->
+    {jsx:encode(damage_balance_cache:public_snapshot(AeAccount)), no_store_req(Req), State};
 to_json(Req, #{action := balance, public_key := AeAccount} = State) ->
     Req1 = no_store_req(Req),
     {jsx:encode(balance(AeAccount)), Req1, State};
 to_json(Req, #{action := wallet, public_key := AeAccount} = State) ->
     Req1 = no_store_req(Req),
-    {jsx:encode(wallet_snapshot(AeAccount)), Req1, State};
+    {jsx:encode(wallet_snapshot_for(State, AeAccount)), Req1, State};
 to_json(Req, State) ->
     Body = #{
         status => <<"failed">>,
@@ -350,7 +354,8 @@ to_json(Req, State) ->
 
 to_html(Req, #{action := logout} = State) ->
     logout_html_response(Req, State);
-to_html(Req, #{action := reset_password} = State) ->
+to_html(Req0, #{action := reset_password} = State) ->
+    Req = no_store_req(cowboy_req:set_resp_header(<<"referrer-policy">>, <<"no-referrer">>, Req0)),
     case cowboy_req:match_qs([token], Req) of
         #{token := Token} ->
             Now = date_util:now_to_seconds(os:timestamp()),
@@ -379,7 +384,8 @@ to_html(Req, #{action := create} = State) ->
     Body =
         damage_utils:load_template("create_account.mustache", #{body => <<"Test">>}),
     {Body, Req, State};
-to_html(Req, #{action := confirm} = State) ->
+to_html(Req0, #{action := confirm} = State) ->
+    Req = no_store_req(cowboy_req:set_resp_header(<<"referrer-policy">>, <<"no-referrer">>, Req0)),
     #{token := Token} = cowboy_req:match_qs([token], Req),
     Now = date_util:now_to_seconds(os:timestamp()),
     case decrypt_token_term(Token) of
@@ -403,20 +409,29 @@ to_html(Req, #{action := confirm} = State) ->
             {<<"Invalid confirmation link. Please try again.">>, Req, State}
     end.
 
-authenticate_user(Email, Password0) ->
+authenticate_user(Email, Password) ->
+    case check_credentials(Email, Password) of
+        {ok, Account, PrivateKey} ->
+            {ok, Token} = damage_access_token:generate_access_token(
+                #{public_key => Account, private_key => PrivateKey}),
+            {ok, Account, Token};
+        Error -> Error
+    end.
+
+%% Internal credential check shared by API tokens and revocable browser sessions.
+check_credentials(Email, Password0) when is_binary(Email), is_binary(Password0) ->
     Password = secrets:salted_hash(Password0),
     case identity_server:get_account_by_email(Email) of
-        {Account, Password, PrivateKey} ->
-            {ok, Token} = damage_access_token:generate_access_token(
-                #{public_key => Account, private_key => PrivateKey}
-            ),
-            {ok, Account, Token};
-        Error = {error, notfound} ->
-            Error;
-        notfound ->
-            {error, notfound};
-        _ ->
-            {error, notauthorized}
+        {Account, Password, PrivateKey} -> {ok, Account, PrivateKey};
+        _ -> {error, notauthorized}
+    end;
+check_credentials(_, _) -> {error, notauthorized}.
+
+browser_action(create, #{email := _} = Data) -> do_post_action(create, Data);
+browser_action(reset_password, #{email := Email} = Data) ->
+    case damage_utils:is_valid_email(Email) of
+        true -> do_post_action(reset_password, Data);
+        false -> {400, #{status => <<"failed">>, message => <<"Enter a valid email address.">>}}
     end.
 
 validate_password(Password) ->
@@ -481,25 +496,9 @@ do_post_action(
         {error, Message} ->
             {400, #{status => <<"failed">>, message => Message}}
     end;
-do_post_action(
-    authenticate,
-    #{address := _Account, signature := false}
-) ->
-    {400, #{status => <<"failed">>, message => <<"Connect Failed">>}};
-do_post_action(
-    authenticate,
-    #{address := Account, signature := Signature, meta := SessionMeta}
-) ->
-    case vanillae:verify_signature(Signature, SessionMeta, Account) of
-        {ok, true} ->
-            Expiry = date_util:now_to_seconds(os:timestamp()) + 86400,
-            Token = secrets:encrypt(term_to_binary({Account, <<"wallet">>, Expiry})),
-            {200, #{
-                status => <<"ok">>, access_token => Token, address => Account, meta => SessionMeta
-            }};
-        {error, Message} ->
-            {400, #{status => <<"failed">>, message => Message}}
-    end;
+do_post_action(authenticate, _Unsupported) ->
+    {400, #{status => <<"failed">>, message =>
+        <<"Wallet sign-in requires /accounts/wallet/challenge and /accounts/wallet/verify.">>}};
 do_post_action(
     reset_password,
     #{token := Token, new_password := NewPassword, new_password_confirm := NewPasswordConfirm}
@@ -992,6 +991,22 @@ balance(AeAccount) ->
 
 %% Return atomic values as decimal strings so mobile/web clients do not lose
 %% precision when balances exceed JavaScript's safe integer range.
+wallet_snapshot_for(#{auth_mode := wallet}, AeAccount) ->
+    Public = damage_balance_cache:public_snapshot(AeAccount),
+    #{status => <<"partial">>, address => AeAccount,
+      updated_at => erlang:system_time(second),
+      balances => #{ae => public_balance(Public, ae, ?AE_DECIMALS, <<"AE">>),
+        damage => public_balance(Public, damage, ?DAMAGE_DECIMALS, <<"DAMAGE">>),
+        lightning => #{available => false, configured => false, symbol => <<"sat">>,
+          amount => null, reason => <<"Wallet-only NWC ledger lookup is not implemented without custody.">>}}};
+wallet_snapshot_for(_, AeAccount) -> wallet_snapshot(AeAccount).
+public_balance(Snapshot, Key, Decimals, Symbol) ->
+    case maps:get(Key, Snapshot, null) of
+        N when is_integer(N), N >= 0 -> wallet_atomic_balance(N, Decimals, Symbol, <<"public_chain">>);
+        _ -> #{available => false, amount => null, decimals => Decimals,
+               symbol => Symbol, source => <<"public_chain">>}
+    end.
+
 -spec wallet_snapshot(binary()) -> map().
 wallet_snapshot(AeAccount) ->
     Balances = #{

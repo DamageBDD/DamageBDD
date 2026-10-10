@@ -4,6 +4,7 @@
 
   <head>
     <meta charset="UTF-8">
+    <meta name="referrer" content="no-referrer">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
     <!-- OpenGraph (Slack / LinkedIn / Nostr / Discord) -->
@@ -66,7 +67,7 @@
     </style></noscript>
 
   </head>
-  <body class="damage-dashboard" data-logo-image="{{logo_image}}">
+  <body class="damage-dashboard" data-session-mode="{{auth_mode}}" data-logo-image="{{logo_image}}">
     {{#reset_password}}
     {{/reset_password}}
     {{{auth_modal}}}
@@ -153,6 +154,7 @@
     <script type='module' src="/static/js/pricing.js" defer></script>
 
     <script type="module" src="/static/js/dashboard-navigation.js"></script>
+    <script type='module' src="/static/js/auth-ui.js"></script>
     <script type='module' src="/static/js/main.js" defer></script>
     <script type="module" src="/static/js/billing.js"></script>
     <script type="module" src="/static/js/bdd-composer.js"></script>

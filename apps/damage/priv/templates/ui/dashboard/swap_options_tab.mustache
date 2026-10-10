@@ -1,3 +1,4 @@
+<p data-wallet-only-note hidden></p>
 <!-- -*- mode: html -*- -->
 <!-- The shell owns #swap-options-tab; keep this partial ID distinct. -->
 <section id="swap-options-panel" class="execute-container">
@@ -16,8 +17,8 @@
     </div>
 
     <div class="toolbar-items">
-      <button id="swap-refresh-btn" class="install-btn" type="button">Refresh</button>
-      <button class="install-btn" type="button" onclick="MicroModal.show('swap-create-modal')">
+      <button data-requires-capability="transfer" id="swap-refresh-btn" class="install-btn" type="button">Refresh</button>
+      <button data-requires-capability="transfer" class="install-btn" type="button" onclick="MicroModal.show('swap-create-modal')">
         Create Option
       </button>
     </div>

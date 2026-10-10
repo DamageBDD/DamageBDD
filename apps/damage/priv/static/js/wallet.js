@@ -349,3 +349,29 @@ async function connectButton() {
    : this);
 
 
+
+// Authentication adapter: connection is not authentication and never signs a transaction.
+const authLogger = Object.freeze({debug() {}, info() {}, warn() {}, error() {}, log() {}});
+const authRpcId = () => 'damage-auth-' + crypto.randomUUID();
+export async function connectBrowserForAuth() {
+    const detected = await sk.detect(7000, 'No wallet detected. Install or unlock Superhero Wallet.', authLogger);
+    if (!detected.ok) throw new Error('No browser wallet detected. Install or unlock Superhero Wallet.');
+    const connected = await sk.connect(authRpcId(), {name: location.host, version: 1}, 30000,
+        'Wallet connection timed out. Retry when your wallet is ready.', authLogger);
+    if (!connected.ok) throw new Error('The wallet declined the connection request.');
+    const selected = await sk.address(authRpcId(), {type: 'subscribe', value: 'connected'}, 30000,
+        'Wallet account request timed out.', authLogger);
+    const current = selected?.result?.address?.current;
+    const account = current && Object.keys(current)[0];
+    if (!selected.ok || !account) throw new Error('The wallet did not share an account.');
+    address = account;
+    return {address: account, networkId: connected.result?.networkId || detected.result?.networkId};
+}
+export async function signBrowserForAuth(message, expectedAddress) {
+    const selected = await sk.address(authRpcId(), {type: 'subscribe', value: 'connected'}, 10000,
+        'Reconnect your wallet before signing.', authLogger);
+    if (!selected.ok || Object.keys(selected.result?.address?.current || {})[0] !== expectedAddress)
+        throw new Error('The selected wallet account changed. Connect again.');
+    return sk.msg_sign(authRpcId(), expectedAddress, message, 60000,
+        'Wallet signature timed out. No sign-in was submitted.', authLogger);
+}

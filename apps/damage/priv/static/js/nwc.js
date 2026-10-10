@@ -1,7 +1,9 @@
 // /static/js/nwc.js
 // NWC Connect dialog glue for DamageBDD.
 // Requires: MicroModal, QRCode, TokenManager.
-const NWC_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+let lastConnection = null;
+try { localStorage.removeItem("damage.nwc.last"); } catch (_) {}
+document.addEventListener("auth:changed", () => { lastConnection = null; if (document.getElementById("nwc-modal")) clearForm(); });
 
 function authHeaders() {
 	const token = window.TokenManager && window.TokenManager.getToken ? window.TokenManager.getToken() : null;
@@ -121,61 +123,17 @@ function updateRelayCount() {
 	return relays;
 }
 
-function clearLastConnection() {
-	try {
-		localStorage.removeItem("damage.nwc.last");
-	} catch (_) {}
-}
-
+function clearLastConnection() { lastConnection = null; }
 function storeLastConnection(data) {
-	if (!data || data.status !== "ok" || data.usable !== true || !data.nwc_uri) return;
-
-	try {
-		localStorage.setItem("damage.nwc.last", JSON.stringify({
-			ts: Date.now(),
-			status: data.status,
-			usable: data.usable,
-			client_pubkey: data.client_pubkey,
-			nwc_uri: data.nwc_uri,
-			wallet_pubkey: data.wallet_pubkey,
-			relays: data.relays || []
-		}));
-	} catch (_) {}
+    if (data?.status === "ok" && data.usable === true && data.nwc_uri)
+        lastConnection = { ...data, owner: window.TokenManager?.getAddress?.() };
 }
-
 function loadLastConnection() {
-	try {
-
-		const raw = localStorage.getItem("damage.nwc.last");
-		if (!raw) return null;
-
-		const data = JSON.parse(raw);
-		if (!data) {
-			clearLastConnection();
-			return null;
-		}
-
-		const stale = !data.ts || Date.now() - data.ts > NWC_CACHE_TTL_MS;
-
-		if (
-			stale ||
-				!data ||
-				data.status !== "ok" ||
-				data.usable !== true ||
-				!data.nwc_uri
-		) {
-			clearLastConnection();
-			return null;
-		}	
-
-		return data;
-	} catch (_) {
-		clearLastConnection();
-		return null;
-	}
+    return lastConnection?.owner === window.TokenManager?.getAddress?.() ? lastConnection : null;
 }
 
 async function postJson(url, bodyObj) {
+    if (!window.TokenManager?.can?.("nwc")) throw new Error("NWC operations require a supported managed session.");
 	const resp = await fetch(url, {
 		method: "POST",
 		headers: authHeaders(),
@@ -226,6 +184,10 @@ function unlockNwcScroll() {
 }
 
 export function openNwcModal() {
+    if (!window.TokenManager?.can?.("nwc")) {
+        window.DamageAuth?.status("NWC is unavailable for wallet-only sessions.", "error");
+        return;
+    }
 	updateRelayCount();
 
 	const last = loadLastConnection();

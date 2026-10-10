@@ -7,7 +7,7 @@ const limit = 50;
 let authEpoch = 0, writeInFlight = false, invoiceReadSequence = 0, detailReadSequence = 0;
 let state = {session: null, customers: [], plans: [], invoices: [], total: 0, offset: 0, selected: null};
 const edits = {};
-const accessToken = () => window.TokenManager?.getToken?.() || localStorage.getItem("access_token") || "";
+const accessToken = () => window.TokenManager?.getToken?.() || "";
 
 function el(tag, text, className) {
     const node = document.createElement(tag);
@@ -45,6 +45,7 @@ function formError(form, message = "") {
 }
 async function api(path, {method = "GET", body, pdf = false} = {}) {
     const epoch = authEpoch, token = accessToken();
+    if (window.TokenManager?.getMode?.() === "extension") throw new Error("Billing is unavailable in this wallet-only session.");
     if (!token) throw new Error("Sign in to administer invoices.");
     const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 30000);
     try {
@@ -92,7 +93,7 @@ function clearPrivate() {
 async function authenticate() {
     clearPrivate();
     const epoch = authEpoch;
-    if (!accessToken()) return;
+    if (!accessToken() || window.TokenManager?.getMode?.() === "extension") return;
     try {
         const session = await api("/session");
         if (epoch !== authEpoch) return;

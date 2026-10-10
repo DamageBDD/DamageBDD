@@ -28,6 +28,7 @@
 ]).
 -export([
     snapshot/1,
+    public_snapshot/1,
     snapshot/2,
     damage_balance/1,
     refresh/1,
@@ -292,6 +293,31 @@ fetch_with_timeout(AeAccount, TimeoutMs, ForceTop) ->
         exit(Pid, kill),
         {error, timeout}
     end.
+
+%% Wallet-only reads never call the composite cache or NWC/identity resolvers.
+%% Do not convert an upstream failure into a displayed zero balance.
+public_snapshot(AeAccount) when is_binary(AeAccount) ->
+    Damage = try
+        Contract = token_contract(),
+        case mdw_get_json(fun(Prefix) -> Prefix ++ "v3/aex9/" ++ Contract ++
+                "/balances/" ++ binary_to_list(AeAccount) end) of
+            {ok, Json} -> extract_damage_amount(Json, Contract);
+            _ -> null
+        end
+    catch _:_ -> null end,
+    Ae = try damage_ae:get_ae_balance(AeAccount) of
+        #{balance := B} when is_integer(B), B >= 0 -> B;
+        #{<<"balance">> := B} when is_integer(B), B >= 0 -> B;
+        _ -> null
+    catch _:_ -> null end,
+    #{status => <<"ok">>, address => AeAccount, damage => Damage, ae => Ae,
+      damage_available => is_integer(Damage), ae_available => is_integer(Ae),
+      damage_display => public_units(Damage, ?DAMAGE_DECIMALS),
+      ae_display => public_units(Ae, ?AE_DECIMALS),
+      balance_msat => null, sats => null, sats_available => false,
+      source => <<"public_chain_reads">>, updated_at_ms => now_ms()}.
+public_units(null, _) -> null;
+public_units(Amount, Decimals) -> units(Amount, Decimals).
 
 fetch_snapshot(AeAccount) ->
     fetch_snapshot(AeAccount, false).

@@ -7,11 +7,11 @@
         <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
       </header>
       <main class="modal__content" id="modal-1-content">
-        <form id="scheduleForm" onsubmit="submitScheduleForm(event)">
+        <form data-requires-capability="schedules" id="scheduleForm" onsubmit="submitScheduleForm(event)">
           <div class="damage-scheduler">
             <h3>Schedule a Feature Run</h3>
             <label>Feature IPFS CID <input id="featureCid" type="text" placeholder="Qm..." /></label>
-            <button class="styled-btn" id="open-feature-picker">Pick feature…</button>
+            <button data-requires-capability="schedules" class="styled-btn" id="open-feature-picker">Pick feature…</button>
             
             <!-- Schedule Frequency -->
             <label>Frequency 

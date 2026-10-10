@@ -16,7 +16,7 @@ Feature: Real dashboard authentication
     When I fill the WebDriver element "#login-username" with "dashboard-negative-test@example.invalid"
     When I fill the WebDriver element "#password" with "not-a-real-password"
     When I click the WebDriver element "#loginSubmitBtn"
-    Then the WebDriver text in "#connect-status" should contain "Login Failed"
+    Then the WebDriver text in "#connect-status" should contain "Email or password is incorrect"
     Then the WebDriver element "[data-dashboard-shell]" should be "absent"
     Then I close the WebDriver browser
 

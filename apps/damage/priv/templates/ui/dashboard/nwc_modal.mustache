@@ -1,3 +1,4 @@
+<p data-wallet-only-note hidden></p>
 <!-- -*- mode: html -*- -->
 <div id="nwc-modal" class="modal micromodal-slide" aria-hidden="true">
   <div class="modal__overlay" tabindex="-1" data-micromodal-close>
@@ -98,8 +99,8 @@
               </div>
 
               <div class="nwc-actions">
-                <button id="nwc-mint-btn" class="nwc-btn nwc-btn-primary" type="button">Mint NWC</button>
-                <button id="nwc-clear-btn" class="nwc-btn nwc-btn-secondary" type="button">Clear</button>
+                <button data-requires-capability="nwc" id="nwc-mint-btn" class="nwc-btn nwc-btn-primary" type="button">Mint NWC</button>
+                <button data-requires-capability="nwc" id="nwc-clear-btn" class="nwc-btn nwc-btn-secondary" type="button">Clear</button>
               </div>
             </div>
           </section>
@@ -131,8 +132,8 @@
                 </div>
 
                 <div class="nwc-inline-actions">
-                  <button id="nwc-copy-btn" class="nwc-btn nwc-btn-primary" type="button">Copy URI</button>
-                  <button id="nwc-open-btn" class="nwc-btn nwc-btn-secondary" type="button">Open in app</button>
+                  <button data-requires-capability="nwc" id="nwc-copy-btn" class="nwc-btn nwc-btn-primary" type="button">Copy URI</button>
+                  <button data-requires-capability="nwc" id="nwc-open-btn" class="nwc-btn nwc-btn-secondary" type="button">Open in app</button>
                 </div>
 
                 <div class="nwc-field nwc-client-field">
@@ -151,7 +152,7 @@
                 </div>
               </div>
 
-              <button id="nwc-revoke-btn" class="nwc-btn nwc-btn-danger" type="button">Revoke</button>
+              <button data-requires-capability="nwc" id="nwc-revoke-btn" class="nwc-btn nwc-btn-danger" type="button">Revoke</button>
             </section>
           </div>
 
@@ -162,7 +163,7 @@
                 <h3 id="nwc-history-title">Session history</h3>
                 <p>Minted sessions and remaining sats allowance for this AE account.</p>
               </div>
-              <button id="nwc-history-refresh-btn" class="nwc-btn nwc-btn-secondary nwc-refresh-small" type="button">Refresh</button>
+              <button data-requires-capability="nwc" id="nwc-history-refresh-btn" class="nwc-btn nwc-btn-secondary nwc-refresh-small" type="button">Refresh</button>
             </div>
 
             <div id="nwc-session-summary" class="nwc-session-summary" aria-live="polite">
@@ -181,11 +182,11 @@
             </div>
 
             <div class="nwc-history-toolbar" role="tablist" aria-label="NWC session filters">
-              <button class="nwc-filter active" data-nwc-filter="active" type="button">Active</button>
-              <button class="nwc-filter" data-nwc-filter="all" type="button">All</button>
-              <button class="nwc-filter" data-nwc-filter="revoked" type="button">Revoked</button>
-              <button class="nwc-filter" data-nwc-filter="expired" type="button">Expired</button>
-              <button class="nwc-filter" data-nwc-filter="low" type="button">Low balance</button>
+              <button data-requires-capability="nwc" class="nwc-filter active" data-nwc-filter="active" type="button">Active</button>
+              <button data-requires-capability="nwc" class="nwc-filter" data-nwc-filter="all" type="button">All</button>
+              <button data-requires-capability="nwc" class="nwc-filter" data-nwc-filter="revoked" type="button">Revoked</button>
+              <button data-requires-capability="nwc" class="nwc-filter" data-nwc-filter="expired" type="button">Expired</button>
+              <button data-requires-capability="nwc" class="nwc-filter" data-nwc-filter="low" type="button">Low balance</button>
             </div>
 
             <div id="nwc-history-empty" class="nwc-history-empty" hidden>
@@ -749,8 +750,8 @@
         </ol>
 
         <div class="nwc-session-actions">
-          <button class="nwc-btn nwc-btn-secondary" type="button" data-copy-client="${escapeHtml(session.client_pubkey)}">Copy client pubkey</button>
-          ${session.status === 'active' ? `<button class="nwc-btn nwc-btn-danger" type="button" data-revoke-client="${escapeHtml(session.client_pubkey)}">Revoke</button>` : ''}
+          <button data-requires-capability="nwc" class="nwc-btn nwc-btn-secondary" type="button" data-copy-client="${escapeHtml(session.client_pubkey)}">Copy client pubkey</button>
+          ${session.status === 'active' ? `<button data-requires-capability="nwc" class="nwc-btn nwc-btn-danger" type="button" data-revoke-client="${escapeHtml(session.client_pubkey)}">Revoke</button>` : ''}
         </div>
       </article>`;
   }

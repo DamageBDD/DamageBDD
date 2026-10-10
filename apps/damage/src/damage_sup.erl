@@ -83,6 +83,20 @@ init([]) ->
                     modules => [damage_enterprise_invoices]
                 },
                 #{
+                    id => damage_browser_auth,
+                    start => {damage_browser_auth, start_link, []},
+                    restart => permanent, shutdown => 5000, type => worker,
+                    modules => [damage_browser_auth]
+                },
+                #{
+                    id => damage_webdriver_sup,
+                    start => {damage_webdriver_sup, start_link, []},
+                    restart => permanent,
+                    shutdown => infinity,
+                    type => supervisor,
+                    modules => [damage_webdriver_sup]
+                },
+                #{
                     id => damage_bdd_service,
                     start => {damage_bdd_service, start_link, []},
                     restart => permanent,

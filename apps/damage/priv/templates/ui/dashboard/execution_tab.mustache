@@ -1,3 +1,4 @@
+<p data-wallet-only-note hidden></p>
 <!-- -*- mode: html -*- -->
 <div class="workspace-heading">
   <div>
@@ -109,7 +110,7 @@
           </p>
           <div>
             <strong>Version:</strong> <span id="execution-account-context-version">—</span>
-            <button type="button" class="styled-btn" id="refresh-account-context-btn">Refresh</button>
+            <button type="button" class="styled-btn" id="refresh-account-context-btn" data-requires-capability="account_context">Refresh</button>
           </div>
 
           <div id="execution-account-context-status" role="status" aria-live="polite"></div>
@@ -160,7 +161,7 @@
             </select>
 
             <div>
-              <button type="button" class="styled-btn" id="save-account-context-btn">
+              <button type="button" class="styled-btn" id="save-account-context-btn" data-requires-capability="account_context">
                 Save account context
               </button>
               <button type="button" class="styled-btn" id="clear-account-context-editor-btn">
@@ -183,7 +184,7 @@
         <p id="bdd-editor-help">Check signatures without running. <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> runs the feature.</p>
         <div class="workspace-actions">
           <button type="button" class="styled-btn" id="bdd-validate">Validate</button>
-          <button type="submit" class="styled-btn workspace-primary" id="execute-feature-btn"><span aria-hidden="true">▶</span> Run feature</button>
+          <button type="submit" class="styled-btn workspace-primary" id="execute-feature-btn" data-requires-capability="execute"><span aria-hidden="true">▶</span> Run feature</button>
         </div>
       </div>
       <div class="validation-panel">

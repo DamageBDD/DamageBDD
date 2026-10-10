@@ -1,0 +1,23 @@
+%% MERGE into the existing damage application; do not replace your sys.config.
+%% A full node restart starts the new supervised browser-session service.
+[
+ {damage, [
+   {browser_auth, [
+     %% Exact PUBLIC browser origin, including a non-default port. Do not derive
+     %% it from Host/X-Forwarded-* headers. Defaults to api_url's origin.
+     {origin, "https://damage.example.invalid"},
+     {network_id, "ae_mainnet"},
+     {challenge_ttl_seconds, 180},
+     {session_ttl_seconds, 3600},
+     {max_challenges, 1000},
+     {max_sessions, 10000},
+     {attempts_per_minute, 20}
+   ]},
+   {cookie_secure, true}
+ ]}
+].
+%% For localhost development ONLY:
+%% {origin, "http://127.0.0.1:8080"} and {cookie_secure, false}.
+%% Configure the external HTTPS origin even if Cowboy sits behind a TLS proxy.
+%% Sessions/challenges are node-local. Use sticky routing in a multi-node setup.
+%% Restart invalidates browser sessions; no automatic custodial fallback occurs.

@@ -1,10 +1,11 @@
+<p data-wallet-only-note hidden></p>
 <!-- -*- mode: html -*- -->
 <h2 id="settings-title">Settings</h2>
 
-<form action="submit_settings" method="post" class="pure-form pure-form-stacked">
+<form data-requires-capability="account_context" action="submit_settings" method="post" class="pure-form pure-form-stacked">
   <fieldset>
     <legend>DNS Auth Token Settings</legend>
-    <button class="pure-button" type="button" onclick="generateToken()">Generate Token</button>
+    <button data-requires-capability="account_context" class="pure-button" type="button" onclick="generateToken()">Generate Token</button>
     <div id="generatedToken"></div>
   </fieldset>
 </form>
@@ -21,7 +22,7 @@
     <strong>Version:</strong> <span id="node-context-version">—</span>
     &nbsp;
     <strong>Root:</strong> <code id="node-context-root">—</code>
-    <button class="pure-button" type="button" id="node-context-refresh">Refresh</button>
+    <button data-requires-capability="account_context" class="pure-button" type="button" id="node-context-refresh">Refresh</button>
   </div>
 
   <div id="node-context-status" role="status" aria-live="polite"></div>
@@ -45,7 +46,7 @@
     </table>
   </div>
 
-  <form id="node-context-editor" class="pure-form pure-form-stacked">
+  <form data-requires-capability="account_context" id="node-context-editor" class="pure-form pure-form-stacked">
     <fieldset>
       <legend>Add or update node context</legend>
 
@@ -97,8 +98,8 @@
         <code>step_only</code>, <code>none</code>, and locked.
       </p>
 
-      <button class="pure-button pure-button-primary" type="submit">Save</button>
-      <button class="pure-button" type="button" id="node-context-cancel">Clear</button>
+      <button data-requires-capability="account_context" class="pure-button pure-button-primary" type="submit">Save</button>
+      <button data-requires-capability="account_context" class="pure-button" type="button" id="node-context-cancel">Clear</button>
     </fieldset>
   </form>
 </section>
@@ -458,7 +459,7 @@
 </script>
 {{/node_admin}}
 
-<form action="submit_webhook" method="post" class="pure-form pure-form-stacked">
+<form data-requires-capability="account_context" action="submit_webhook" method="post" class="pure-form pure-form-stacked">
   <fieldset id="webhook-settings-form">
     <legend>Webhooks</legend>
 
@@ -474,7 +475,7 @@
       <option value="GET">GET</option>
     </select>
 
-    <button class="pure-button" type="button" onclick="addWebhook()">Add Webhook</button>
+    <button data-requires-capability="account_context" class="pure-button" type="button" onclick="addWebhook()">Add Webhook</button>
     <div id="webhookVariables"></div>
   </fieldset>
 

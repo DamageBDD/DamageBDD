@@ -1,5 +1,11 @@
 # Dashboard BDD: Selenium and Appium
 
+> For DamageBDD-owned dependency installation and driver/fixture supervision,
+> use [Managed WebDriver](managed-webdriver.md). The external-server profiles
+> below remain supported for independently managed Selenium Grid/Appium servers.
+> Managed profiles must not also specify an `endpoint`.
+
+
 This is an additive change on top of the DamageBDD **sidebar + ECAI composer**
 implementation. It does not replace the legacy `steps_webdrv` or
 `steps_webdrv_bidi` modules, and does not change dashboard payment or invoice

@@ -32,14 +32,15 @@ is_authorized(Req, State0) ->
     Resp = damage_auth:maybe_authenticate(Req, State0),
     Resp.
 
-to_html(Req, #{action := index} = State) ->
+to_html(Req0, #{action := index} = State) ->
+    Req = cowboy_req:set_resp_header(<<"cache-control">>, <<"no-store">>, Req0),
     Ctx0 = maps:merge(base_context(Req), State),
     #{component := Comp0} = cowboy_req:match_qs([{component, [], undefined}], Req),
     case Comp0 of
         undefined ->
             {render_full_page(Ctx0), Req, State};
         _ ->
-            Comp = binary_to_atom(Comp0, utf8),
+            Comp = try binary_to_existing_atom(Comp0, utf8) catch error:badarg -> unknown end,
             {render_component(Comp, Ctx0), Req, State}
     end.
 

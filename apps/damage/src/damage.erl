@@ -552,14 +552,25 @@ fold_until_fail(Fun, Context, [Item | Rest]) ->
     end.
 
 execute_steps(Config, Context, Steps) ->
-    run_fold(
-        Config,
-        fun(Step, AccContext) ->
-            execute_step(Config, Step, AccContext)
-        end,
-        Context,
-        Steps
-    ).
+    try
+        Final = run_fold(
+            Config,
+            fun(Step, AccContext) -> execute_step(Config, Step, AccContext) end,
+            Context,
+            Steps
+        ),
+        %% A failing non-browser step can skip the feature's explicit close.
+        %% Keep scenarios/outline rows isolated and release managed capacity.
+        Cleanup = steps_webdriver:cleanup(Final),
+        Clean = maps:remove(webdriver_session, Final),
+        case {Cleanup, maps:is_key(fail, Clean)} of
+            {ok, _} -> Clean;
+            {_, true} -> Clean;
+            {_, false} -> Clean#{fail => <<"WebDriver scenario cleanup failed">>}
+        end
+    after
+        _ = steps_webdriver:cleanup_owner()
+    end.
 
 execute_scenario(Config, Context, undefined, Scenario) ->
     execute_scenario(Config, Context, {none, []}, Scenario);

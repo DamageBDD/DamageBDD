@@ -1,573 +1,64 @@
-
-.login_modal_header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 0;
-  padding: 0;
-}
-#login_modal_content {
-  background-color: #1E1E2F;
-}
-
-form{
-  min-width: 300px;
-}
-#loginSignupForm {
-  margin-top: 1rem;
-  padding: 2rem 1.5rem;
-  border-radius: 16px;
-  background-color: #fff;
-}
-
-#loginSignupForm button[type="submit"]:hover {
-  background: #0056b3;
-}
-
-.login_connect_btn {
-  margin: 1rem 0;
-}
-
-/* Flex container for alignment */
-.login-links {
-  flex-wrap: wrap;
-  margin: .5rem 0 2rem 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-}
-
-.login-links button {
-  margin: 0;
-}
-
-@media (max-width: 600px) {
-  .buttonlink {
-    padding: 10px 16px;
-    font-size: 16px;
-  }
-  .login-links {
-    flex-direction: column;
-    gap: 12px;
-  }
-}
-/* Reset basic form styling */
-#loginSignupForm {
-  display: flex;
-  flex-direction: column;
-  gap: .5rem;
-  padding: 2rem;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.05);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.1);
-  max-width: 400px;
-  font-family: 'Segoe UI', sans-serif;
-}
-#loginSignupForm p{
-     font-size: 0.85rem; text-align: center; color: #555;
-}
-
-#dont_have_wallet {
-  margin: 0;
-}
-
-.panel {
-    margin-left:0.5rem;
-  padding: 1rem;
-  border-radius: 6px;
-  color: #ccc;
-  font-family: monospace;
-}
-
-/* Input Fields */
-#login-form input {
-  padding: 12px 16px;
-  font-size: 15px;
-  border: 1px solid #ccc;
-  border-radius: 8px;
-  transition: border 0.2s;
-}
-
-#login-form input:focus {
-  border-color: #007bff;
-  outline: none;
-}
-/* Input Fields */
-#loginSignupForm input {
-  padding: 12px 16px;
-  font-size: 15px;
-  border: 1px solid #ccc;
-  border-radius: 8px;
-  transition: border 0.2s;
-}
-
-#loginSignupForm input:focus {
-  border-color: #007bff;
-  outline: none;
-}
-
-/* Login button */
-#loginSignupForm button[type="submit"] {
-  background: #007bff;
-  color: #fff;
-  border: none;
-  padding: 12px;
-  font-size: 16px;
-  font-weight: bold;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.3s ease;
-}
-
-#loginSubmitBtn {
-  margin-top: 1rem;
-}
-
-#loginDivider {
-  width: 100px;
-  margin: auto;
-  margin-top: 1rem;
-}
-
-/* Container styling */
-#signupForm {
-  display: inline-flex;
-  flex-direction: column;
-  gap: 1rem;
-  padding: 2rem 1.5rem;
-  border-radius: 16px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
-  /*width: 100%;*/
-  max-width: 400px;
-  min-width: 300px;
-  font-family: 'Segoe UI', sans-serif;
-  margin: 0 auto;
-}
-
-/* Headline */
-#signupForm h2 {
-  font-size: 20px;
-  font-weight: 600;
-  color: #004aad;
-  margin-bottom: 1rem;
-  text-align: center;
-}
-
-/* Input Field */
-#signupForm input[type="email"],
-#signupForm input[type="text"],
-#signupForm input[type="password"] {
-  padding: 12px 16px;
-  font-size: 15px;
-  border: 1px solid #ccc;
-  border-radius: 8px;
-  transition: border-color 0.2s;
-}
-
-#signupForm input:focus {
-  border-color: #007bff;
-  outline: none;
-}
-
-/* Submit Button */
-#signupForm button[type="submit"] {
-  background-color: #004aad;
-  color: white;
-  border: none;
-  padding: 12px;
-  font-size: 15px;
-  font-weight: 600;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background-color 0.3s;
-}
-
-#signupForm button[type="submit"]:hover {
-  background-color: #003380;
-}
-/*
-input[type="password"] + button,
-input[type="text"] + button {
-  margin-left: 10px;
-  font-size: 0.8em;
-  padding: 4px 8px;
-  cursor: pointer;
-}
-*/
-.password-wrapper {
-  position: relative;
-  display: flex;
-  align-items: center;
-  margin-bottom: 1rem;
-}
-
-.password-wrapper input {
-  flex: 1;
-  padding-right: 2.5rem;
-}
-
-.toggle-password {
-  position: absolute;
-  right: 20px;
-  background: none;
-  border: none;
-  font-size: 1.1rem;
-  cursor: pointer;
-  color: #555;
-}
-#connect-button.success {
-  color: green;
-}
-
-#connect-button.error {
-  color: crimson;
-}
-
-#connect-button.info {
-  color: #0052cc;
-}
-#resetPasswdForm{
-    width: 30em;
-}
-#resetPasswdForm {
-  /*display: flex;
-  flex-wrap: wrap;*/
-}
-
-/*
-.password-wrapper input[type="text"],input[type="password"], input[type="email"] {
-    margin: 8px;
-  width: 250px;
-  margin-right: 20px;
-  padding: 10px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-}
- */
-
-#resetPasswdBtn{
-    margin: 8px;
-  width: 250px;
-  margin-right: 20px;
-  padding: 10px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-}
-/* Terms section */
-.terms {
-  font-size: 12px;
-  color: #666;
-  margin-top: -0.5rem;
-  text-align: center;
-}
-
-.terms a {
-  color: #007bff;
-  text-decoration: underline;
-}
-#connect-status{
-    margin-top: 0.5rem; font-size: 0.9rem; text-align: center;
-}
-
-/* Style the Sign Up and Forgot Password buttons */
-#signupDialogBtn,
-#loginResetPasswdBtn {
-  background-color: transparent;
-  color: #00bfff;
-  border: 1px solid transparent;
-  font-size: 0.95rem;
-  font-weight: 500;
-  padding: 0.5rem 1rem;
-  margin: 0.5rem 0.5rem 0 0;
-  border-radius: 6px;
-  transition: all 0.2s ease-in-out;
-}
-
-#signupDialogBtn:hover,
-#loginResetPasswdBtn:hover {
-  background-color: rgba(0, 191, 255, 0.1);
-  color: #fff;
-  border-color: #00bfff;
-  cursor: pointer;
-  transform: scale(1.03);
-}
-
-body {
-  background: linear-gradient(to bottom right, #1e1e2f, #2a2a3d);
-  color: #fff;
-  min-height: 100vh;
-  padding: 2rem;
-  font-family: 'Inter', system-ui, sans-serif;
-}
-
-body h2 {
-  color: #fff;
-  font-size: 2rem;
-  font-weight: 600;
-  margin-bottom: 2rem;
-  text-align: center;
-  padding-bottom: 1rem;
-  border-bottom: 2px solid #007bff;
-}
-
-/* Reset Password Form Container */
-#resetPasswdForm {
-  max-width: 500px;
-  margin: 0 auto;
-  padding: 2rem;
-  background: #2a2a3d;
-  border-radius: 12px;
-  border: 1px solid #3a3a4d;
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
-}
-
-/* Password Wrapper Improvements */
-#resetPasswdForm .password-wrapper {
-  position: relative;
-  display: flex;
-  align-items: center;
-  margin-bottom: 1.5rem;
-  background: #1e1e2f;
-  border: 1px solid #3a3a4d;
-  border-radius: 6px;
-  padding: 0.5rem;
-  transition: border-color 0.3s, box-shadow 0.3s;
-}
-
-#resetPasswdForm .password-wrapper:focus-within {
-  border-color: #007bff;
-  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
-}
-
-#resetPasswdForm .password-wrapper input {
-  flex: 1;
-  padding: 0.875rem 1rem;
-  background: transparent;
-  border: none;
-  color: #fff;
-  font-size: 1rem;
-  outline: none;
-}
-
-#resetPasswdForm .password-wrapper input::placeholder {
-  color: #666;
-}
-
-#resetPasswdForm .toggle-password {
-  position: absolute;
-  right: 1rem;
-  background: none;
-  border: none;
-  font-size: 1.2rem;
-  cursor: pointer;
-  color: #aaa;
-  padding: 0.5rem;
-  transition: color 0.2s;
-  z-index: 1;
-}
-
-#resetPasswdForm .toggle-password:hover {
-  color: #fff;
-}
-
-/* Submit Button */
-#resetPasswdForm .submit-button,
-#resetPasswdForm #resetPasswdBtn {
-  width: 100%;
-  padding: 0.875rem 2rem;
-  background: linear-gradient(to right, #0052cc, #007bff);
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  font-weight: 600;
-  font-size: 1rem;
-  cursor: pointer;
-  transition: all 0.3s;
-  margin: 1.5rem 0 0 0;
-}
-
-#resetPasswdForm .submit-button:hover,
-#resetPasswdForm #resetPasswdBtn:hover {
-  background: linear-gradient(to right, #003fa6, #005ec4);
-  transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(0, 123, 255, 0.3);
-}
-
-#resetPasswdForm .submit-button:active,
-#resetPasswdForm #resetPasswdBtn:active {
-  transform: translateY(0);
-}
-
-/* Password Requirements Section */
-#resetPasswdForm h3 {
-  color: #ccc;
-  font-size: 1.1rem;
-  font-weight: 600;
-  margin: 2rem 0 1rem 0;
-  padding-top: 1.5rem;
-  border-top: 1px solid #3a3a4d;
-}
-
-#resetPasswdForm ul {
-  list-style: none;
-  padding: 0;
-  margin: 0 0 1.5rem 0;
-}
-
-#resetPasswdForm ul li {
-  color: #aaa;
-  font-size: 0.95rem;
-  padding: 0.5rem 0;
-  padding-left: 1.5rem;
-  position: relative;
-  line-height: 1.6;
-}
-
-#resetPasswdForm ul li::before {
-  content: "✓";
-  position: absolute;
-  left: 0;
-  color: #007bff;
-  font-weight: bold;
-}
-
-/* Fix nested ul */
-#resetPasswdForm ul ul {
-  margin-top: 0.5rem;
-  margin-left: 1rem;
-}
-
-/* Responsive */
-@media (max-width: 600px) {
-  body {
-    padding: 1rem;
-  }
-  
-  #resetPasswdForm {
-    padding: 1.5rem;
-  }
-  
-  body h2 {
-    font-size: 1.5rem;
-  }
-}
-
-
-
-
-/* Tabby auth tabs (Email / Sign up / Wallet) */
-.auth-chooser { margin-top: 0.75rem; margin-bottom: 1rem; }
-.auth-tabs {
-  list-style: none;
-  display: flex;
-  padding: 0;
-  margin: 0;
-  gap: 0.5rem;
-  border-radius: 999px;
-  background: rgba(255,255,255,0.06);
-  border: 1px solid rgba(255,255,255,0.10);
-  padding: 0.35rem;
-}
-.auth-tabs > li { margin: 0; flex: 1 1 0; }
-.auth-tabs a[role="tab"],
-.auth-tabs a {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  text-decoration: none;
-  padding: 0.6rem 0.75rem;
-  border-radius: 999px;
-  font-weight: 700;
-  font-size: 0.95rem;
-  color: rgba(255,255,255,0.75);
-  outline: none;
-  user-select: none;
-}
-.auth-tabs a[aria-selected="true"] {
-  color: #fff;
-  background: rgba(0, 163, 255, 0.25);
-  border: 1px solid rgba(0, 163, 255, 0.55);
-}
-.auth-tabs a:focus-visible {
-  box-shadow: 0 0 0 3px rgba(0, 163, 255, 0.25);
-}
-
-/* Ensure Tabby hidden panels actually hide on older browsers */
-[hidden] { display: none !important; }
-.auth-wallet-block {
-  margin-bottom: 18px;
-}
-
-.auth-subtitle {
-  margin: 0 0 10px 0;
-  font-size: 15px;
-  font-weight: 600;
-  opacity: 0.9;
-}
-
-.auth-divider {
-  margin: 18px 0;
-  border: none;
-  border-top: 1px solid rgba(255,255,255,0.08);
-}
-.login_modal_header {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 0;
-}
-
-/* Stack title + pubkey vertically */
-.title-stack {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-}
-
-/* Pubkey container */
-.click-copy {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 2px;
-}
-
-/* Pubkey chip */
-#auth-modal-node-public-key {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.75rem;
-  letter-spacing: 0.03em;
-
-  padding: 4px 8px;
-  border-radius: 6px;
-
-  color: rgba(255,255,255,0.65);
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.08);
-
-  max-width: 260px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Copy icon */
-.copy-icon {
-  font-size: 0.9rem;
-  cursor: pointer;
-  opacity: 0.6;
-  transition: opacity .15s;
-}
-
-.copy-icon:hover {
-  opacity: 1;
-}
-#auth-modal-node-public-key:hover {
-  color: rgba(255,255,255,0.9);
-}
-
-#auth-modal-node-public-key {
-  font-size: 0.75rem;
-  letter-spacing: 0.04em;
-}
+/* Scoped authentication surfaces. Do not change global form/panel styles. */
+#login-modal { --auth-bg:#101419; --auth-panel:#191f27; --auth-line:#343d47; --auth-text:#f1f3f5; --auth-muted:#b4bdc8; --auth-accent:#ffc875; }
+#login-modal [hidden] { display:none !important; }
+#login-modal .modal__overlay { background:rgba(7,10,14,.82); backdrop-filter:blur(12px); padding:24px 16px; overflow:auto; align-items:center; }
+#login-modal .auth-modal { width:min(100%,520px); max-width:520px; max-height:calc(100dvh - 48px); overflow:auto; border:1px solid var(--auth-line); border-radius:22px; padding:0; background:var(--auth-bg); box-shadow:0 32px 100px #0008; color:var(--auth-text); }
+#login-modal #login_modal_content { margin:0; padding:34px; background:transparent; color:inherit; font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; line-height:1.5; }
+#login-modal .auth-brand { display:flex; align-items:center; gap:12px; font-size:16px; font-weight:700; letter-spacing:.01em; }
+#login-modal .auth-brand img { object-fit:contain; border-radius:8px; }
+#login-modal .auth-brand-label { display:block; font-size:9px; letter-spacing:.14em; color:var(--auth-muted); font-weight:500; }
+#login-modal .auth-heading { margin:30px 0 24px; }
+#login-modal h1 { font-size:30px; line-height:1.2; letter-spacing:-.035em; margin:0 0 10px; color:var(--auth-text); text-align:left; }
+#login-modal p { font-size:13px; color:var(--auth-muted); margin:0; }
+#login-modal .auth-tabs { display:grid; grid-template-columns:1fr 1.25fr 1fr; border:1px solid var(--auth-line); border-radius:10px; padding:4px; gap:3px; background:#0b0f14; margin-bottom:20px; }
+#login-modal button { font:inherit; cursor:pointer; transition:background .12s; }
+#login-modal .auth-tabs button { background:transparent; color:var(--auth-muted); border:0; padding:10px 5px; margin:0; border-radius:7px; font-size:13px; min-height:42px; }
+#login-modal .auth-tabs [aria-selected="true"] { color:var(--auth-text); background:#2b333d; box-shadow:0 1px 4px #0004; }
+#login-modal .auth-mode-note { margin-bottom:20px; padding:12px 14px; border:1px solid var(--auth-line); background:var(--auth-panel); border-radius:9px; }
+#login-modal .auth-mode-note strong { color:#e3e9ef; }
+#login-modal form { display:flex; flex-direction:column; min-width:0; max-width:none; margin:0; padding:0; box-shadow:none; border:0; background:transparent; gap:8px; width:100%; font:inherit; }
+#login-modal label { color:#e3e9ef; font-size:13px; font-weight:600; text-align:left; margin:0; }
+#login-modal input { box-sizing:border-box; width:100%; min-width:0; height:46px; border:1px solid var(--auth-line); border-radius:9px; background:#0c1117; color:var(--auth-text); padding:10px 13px; margin:0 0 8px; font:inherit; font-size:16px; }
+#login-modal input::placeholder { color:#808e9e; }
+#login-modal :focus-visible { outline:2px solid var(--auth-accent); outline-offset:3px; }
+#login-modal .auth-field-heading { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+#login-modal .auth-password-field { position:relative; }
+#login-modal .auth-password-field input { padding-right:66px; }
+#login-modal .auth-password-field button { position:absolute; right:8px; top:5px; height:36px; border:0; background:transparent; color:var(--auth-muted); font-size:12px; }
+#login-modal .auth-primary { display:flex; align-items:center; justify-content:space-between; width:100%; background:var(--auth-accent); border:1px solid var(--auth-accent); color:#20180b; border-radius:9px; padding:12px 16px; min-height:46px; font-size:14px; font-weight:700; margin:8px 0 0; }
+#login-modal .auth-primary:hover:not(:disabled) { background:#ffd79c; }
+#login-modal .auth-link { border:0; background:transparent; padding:6px 0; color:var(--auth-accent); font-size:12px; text-align:left; min-height:36px; }
+#login-modal .auth-back { margin-top:12px; }
+#login-modal button:disabled { opacity:.5; cursor:wait; }
+#login-modal .auth-status { margin-top:16px; color:var(--auth-muted); font-size:13px; overflow-wrap:anywhere; }
+#login-modal .auth-status:empty { display:none; }
+#login-modal .auth-status[data-kind="error"] { color:#ffb5ad; background:#3e2428; padding:12px; border-radius:8px; }
+#login-modal .auth-status[data-kind="success"] { color:#a3e4c2; }
+#login-modal .auth-footer { margin-top:24px; padding-top:18px; border-top:1px solid var(--auth-line); text-align:center; }
+#login-modal .auth-footer p { font-size:11px; margin-bottom:8px; }
+#login-modal a { color:var(--auth-accent); }
+#login-modal .auth-operator { background:transparent; border:0; color:var(--auth-muted); font-size:11px; padding:8px; }
+#login-modal .auth-wallet-choices { display:grid; gap:10px; }
+#login-modal .auth-wallet-choice { position:relative; display:flex; flex-direction:column; align-items:start; gap:3px; width:100%; border:1px solid var(--auth-line); border-radius:10px; padding:14px 40px 14px 15px; background:var(--auth-panel); color:var(--auth-text); }
+#login-modal .auth-wallet-choice small { font-size:12px; color:var(--auth-muted); }
+#login-modal .auth-wallet-choice>span:last-child { position:absolute; top:20px; right:17px; color:var(--auth-accent); }
+#login-modal .auth-proof { margin-top:16px; border:1px solid var(--auth-line); background:var(--auth-panel); padding:14px; border-radius:10px; }
+#login-modal .auth-step-label { display:block; font-size:10px; font-weight:700; letter-spacing:.08em; color:var(--auth-accent); margin-bottom:10px; }
+#login-modal .auth-proof code { display:block; overflow-wrap:anywhere; font-size:12px; color:var(--auth-text); }
+#login-modal #wallet-proof-network { font-size:12px; color:var(--auth-muted); }
+#login-modal details { margin-top:12px; font-size:12px; }
+#login-modal summary { cursor:pointer; color:var(--auth-accent); }
+#login-modal pre { font:11px/1.55 ui-monospace,monospace; white-space:pre-wrap; overflow-wrap:anywhere; padding:10px; background:#0c1117; color:var(--auth-muted); }
+#login-modal .auth-safety, #login-modal .auth-install { margin-top:16px; font-size:12px; }
+#login-modal .auth-confirmation { margin-top:16px; padding:14px; border-radius:9px; background:#19382b; color:#a3e4c2; }
+#login-modal .auth-confirmation p { margin-top:5px; color:#b4d4c4; overflow-wrap:anywhere; }
+.damage-dashboard [data-wallet-only-note] { margin:12px 0; padding:12px 16px; background:#30291e; color:#f3d9b5; border:1px solid #635038; border-radius:9px; font:13px/1.5 system-ui,sans-serif; }
+.damage-dashboard .session-identity { display:grid; gap:8px; border:1px solid #444d59; padding:16px; border-radius:12px; margin-bottom:18px; }
+.damage-dashboard .session-identity code { overflow-wrap:anywhere; }
+@media (max-width:540px) { #login-modal .modal__overlay { padding:12px; } #login-modal .auth-modal { max-height:calc(100dvh - 24px); border-radius:16px; } #login-modal #login_modal_content { padding:24px 20px; } #login-modal h1 { font-size:26px; } #login-modal .auth-heading { margin-top:24px; } }
+@media (prefers-reduced-motion:reduce) { #login-modal * { transition:none !important; animation:none !important; } }
+.password-completion-page { margin:0; min-height:100dvh; background:#0c1015; display:grid; place-items:center; padding:24px; box-sizing:border-box; }
+#login-modal.auth-password-page { width:min(100%,520px); }
+#login-modal.auth-password-page .auth-modal { max-height:none; }
+#login-modal.auth-password-page input[type="hidden"] { display:none; }
+#login-modal.auth-password-page #password-sign-in { display:inline-block; margin-top:20px; }

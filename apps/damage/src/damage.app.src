@@ -38,6 +38,7 @@
             ]
         },
         {env, [
+            {webdriver_runtime, [{enabled, false}]},
             {ecai_log_learning_enabled, true},
             {ecai_log_capture_level, warning},
             {ecai_log_learning_level, error},

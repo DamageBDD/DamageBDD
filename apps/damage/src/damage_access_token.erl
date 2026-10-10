@@ -19,6 +19,7 @@
     message_to_sign/1,
     encode_token/2,
     verify_token/1,
+    valid_payload/2,
     generate_access_token/1,
     decode_payload/1,
     token_expiry/1,
@@ -71,6 +72,9 @@ get_access_token(Req) ->
             of
                 #{access_token := null} ->
                     {error, missing};
+                #{access_token := <<"ds1.", _/binary>>} ->
+                    %% Browser sessions must never be transported in URLs/logs.
+                    {error, query_session_forbidden};
                 #{access_token := Token} ->
                     {access_token, Token};
                 _ ->
@@ -81,34 +85,41 @@ get_access_token(Req) ->
                     end
             end
     end.
-verify_token(TokenBin) when is_binary(TokenBin) ->
-    case binary:split(TokenBin, <<".">>, [global]) of
-        [<<"ae1">>, PayloadB64, Sig] ->
-            case
-                damage_otp_compat:catch_value(fun() ->
-                    jsx:decode(base64url_decode(PayloadB64), [{labels, atom}, return_maps])
-                end)
-            of
-                #{sub := Account, exp := Exp} = Payload ->
-                    Now = date_util:now_to_seconds(os:timestamp()),
-                    case Exp > Now of
-                        false ->
-                            {error, expired};
-                        true ->
-                            Msg = <<"DamageBDD Access Token\n", PayloadB64/binary>>,
-                            %% Sig is e.g. <<"sg_....">> (pass-through)
-                            case vanillae:verify_signature(Sig, Msg, Account) of
-                                {ok, true} -> {ok, Account, Payload};
-                                {ok, false} -> {error, badsig};
-                                {error, R} -> {error, R}
-                            end
-                    end;
-                _ ->
-                    {error, badpayload}
+verify_token(TokenBin) when is_binary(TokenBin), byte_size(TokenBin) =< 16384 ->
+    case {binary:split(TokenBin, <<".">>, [global]), decode_payload(TokenBin)} of
+        {[<<"ae1">>, PayloadB64, Sig], {ok, Payload}} ->
+            case valid_payload(Payload, erlang:system_time(second)) of
+                true ->
+                    Account = maps:get(sub, Payload),
+                    try vanillae:verify_signature(Sig, message_to_sign(PayloadB64), Account) of
+                        {ok, true} -> {ok, Account, Payload};
+                        _ -> {error, badsig}
+                    catch _:_ -> {error, badsig} end;
+                false -> {error, badpayload}
             end;
-        _ ->
-            {error, badtoken}
-    end.
+        _ -> {error, badtoken}
+    end;
+verify_token(_) -> {error, badtoken}.
+
+valid_payload(#{typ := <<"damage-access">>, v := 1, sub := Account, iat := Iat,
+                exp := Exp, nonce := Nonce, aud := Aud}, Now)
+  when is_integer(Iat), is_integer(Exp), is_integer(Now), is_binary(Nonce),
+       byte_size(Nonce) >= 16, byte_size(Nonce) =< 128, is_binary(Aud) ->
+    Iat =< Now + 60 andalso Exp > Now andalso Exp > Iat andalso
+        Exp - Iat =< ?TOKEN_TIMEOUT andalso damage_browser_auth:valid_address(Account) andalso
+        valid_audience(Aud);
+valid_payload(_, _) -> false.
+valid_audience(Aud) ->
+    try
+        Url = unicode:characters_to_binary(application:get_env(damage, api_url, "")),
+        Origin = damage_browser_auth_http:origin(Url),
+        #{host := Host} = uri_string:parse(Url),
+        %% Host-only legacy browser audiences are accepted only for this configured host.
+        %% Include a port when configured; do not infer audience from an HTTP Host header.
+        HostPort = binary:part(Origin, byte_size(maps:get(scheme, uri_string:parse(Origin))) + 3,
+            byte_size(Origin) - byte_size(maps:get(scheme, uri_string:parse(Origin))) - 3),
+        byte_size(Host) > 0 andalso lists:member(Aud, [Url, Origin, HostPort])
+    catch _:_ -> false end.
 
 %% ---- base64url helpers ----
 base64url_encode(Bin) when is_binary(Bin) ->
@@ -195,19 +206,30 @@ eu(N, Size) ->
     ExtraZeros = <<<<0>> || _ <- lists:seq(1, NExtraZeros)>>,
     <<Bytes/binary, ExtraZeros/binary>>.
 -spec decode_payload(binary()) -> {ok, map()} | {error, term()}.
-decode_payload(TokenBin) when is_binary(TokenBin) ->
+decode_payload(TokenBin) when is_binary(TokenBin), byte_size(TokenBin) =< 16384 ->
     case binary:split(TokenBin, <<".">>, [global]) of
         [<<"ae1">>, PayloadB64, _Sig] ->
             try
                 PayloadBin = base64url_decode(PayloadB64),
-                Payload = jsx:decode(PayloadBin, [{labels, atom}, return_maps]),
+                Decoded = jsx:decode(PayloadBin, [return_maps]),
+                true = is_map(Decoded),
+                Payload = maps:from_list([{payload_key(K), V} || {K,V} <- maps:to_list(Decoded)]),
                 {ok, Payload}
             catch
                 _:_ -> {error, badpayload}
             end;
         _ ->
             {error, badtoken}
-    end.
+    end;
+decode_payload(_) -> {error, badtoken}.
+payload_key(<<"typ">>) -> typ;
+payload_key(<<"v">>) -> v;
+payload_key(<<"sub">>) -> sub;
+payload_key(<<"iat">>) -> iat;
+payload_key(<<"exp">>) -> exp;
+payload_key(<<"nonce">>) -> nonce;
+payload_key(<<"aud">>) -> aud;
+payload_key(Key) -> Key.
 -spec token_expiry(binary()) -> {ok, non_neg_integer()} | {error, term()}.
 token_expiry(TokenBin) ->
     case decode_payload(TokenBin) of
@@ -273,6 +295,7 @@ clear_access_cookie(Req) ->
         #{
             path => <<"/">>,
             http_only => true,
+            secure => application:get_env(damage, cookie_secure, true),
             same_site => lax,
             max_age => 0
         }

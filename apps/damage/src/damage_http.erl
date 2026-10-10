@@ -255,7 +255,11 @@ is_authorized(Req, #{action := version} = State) ->
 is_authorized(Req, #{action := node_balances} = State) ->
     {true, Req, State};
 is_authorized(Req, #{action := tx} = State) ->
-    {true, Req, State};
+    %% The legacy path does not bind payment proof to an immutable execution quote.
+    %% Do not broadcast a supplied transaction or open a channel from this endpoint.
+    {stop, cowboy_req:reply(409,
+        #{<<"content-type">> => <<"application/json">>, <<"cache-control">> => <<"no-store">>},
+        jsx:encode(damage_wallet_policy:rejection()), Req), State};
 is_authorized(Req, State0) ->
     damage_auth:require_auth(
         Req,

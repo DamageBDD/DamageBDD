@@ -7,7 +7,13 @@
          code_change/3, format_status/1]).
 -define(ELEMENT, <<"element-6066-11e4-a52e-4f735466cecf">>).
 
-start(Profile) ->
+start(Profile0) ->
+    case damage_webdriver_runtime:resolve_profile(Profile0) of
+        {ok, Profile} -> start_resolved(Profile);
+        Error -> Error
+    end.
+
+start_resolved(Profile) ->
     %% Reject malformed configuration before it can appear in a gen_server crash report.
     case options(Profile) of
         {ok, Opts} ->
@@ -48,6 +54,7 @@ options(P) when is_list(P) ->
             <<"unhandledPromptBehavior">> => <<"ignore">>},
         Wait = bounded(proplists:get_value(wait_ms, P, 15000), 100, 180000),
         Command = bounded(proplists:get_value(command_timeout_ms, P, 30000), 100, 60000),
+        StartTimeout = bounded(proplists:get_value(session_start_timeout_ms, P, 120000), 1000, 180000),
         Lifetime = bounded(proplists:get_value(session_lifetime_ms, P, 900000), 1000, 3600000),
         Idle = bounded(proplists:get_value(idle_timeout_ms, P, 120000), 1000, 900000),
         Fixture = proplists:get_value(fixture, P, false),
@@ -57,8 +64,9 @@ options(P) when is_list(P) ->
         true = lists:all(fun({K, {env, E}}) ->
             is_atom(K) andalso is_list(E) andalso E =/= []; (_) -> false end, Credentials),
         {ok, #{endpoint => Endpoint, dashboard => Dashboard, caps => Caps,
-            wait => Wait, command => Command, lifetime => Lifetime, idle => Idle,
-            fixture => Fixture, credentials => Credentials, remembered => #{}}}
+            wait => Wait, command => Command, start_timeout => StartTimeout, lifetime => Lifetime, idle => Idle,
+            fixture => Fixture, credentials => Credentials, remembered => #{},
+            managed_service => proplists:get_value(managed_service, P)}}
     catch _:_ -> {error, invalid_webdriver_profile}
     end;
 options(_) -> {error, invalid_webdriver_profile}.
@@ -94,13 +102,26 @@ init({Owner, Opts}) ->
     {ok, _} = application:ensure_all_started(ssl),
     Ref = erlang:monitor(process, Owner),
     Timer = erlang:send_after(maps:get(lifetime, Opts), self(), expired),
-    {ok, Opts#{owner => Owner, monitor => Ref, timer => Timer, session => undefined},
-        maps:get(idle, Opts)}.
+    case claim_service(maps:get(managed_service, Opts)) of
+        {ok, ServiceMonitor} ->
+            {ok, Opts#{owner => Owner, monitor => Ref, timer => Timer, session => undefined,
+                service_monitor => ServiceMonitor}, maps:get(idle, Opts)};
+        {error, Why} ->
+            erlang:cancel_timer(Timer), erlang:demonitor(Ref, [flush]), {stop, Why}
+    end.
+
+claim_service(undefined) -> {ok, undefined};
+claim_service({Backend, Service, Generation}) ->
+    case damage_webdriver_runtime:claim(Backend, {Service, Generation}) of
+        {ok, Service} -> {ok, erlang:monitor(process, Service)};
+        Error -> Error
+    end.
 
 handle_call(_, {Caller, _}, #{owner := Owner} = S) when Caller =/= Owner ->
     {reply, {error, webdriver_wrong_owner}, S, maps:get(idle, S)};
 handle_call(close, _From, S) ->
     Reply = delete_session(S),
+    case Reply of ok -> release_managed(S); _ -> invalidate_managed(S) end,
     {stop, normal, Reply, S#{session => undefined}};
 handle_call({Op, Args}, _From, S0) ->
     %% Nothing from remote error bodies, entered values or credentials is logged.
@@ -110,22 +131,42 @@ handle_call({Op, Args}, _From, S0) ->
         S1 when is_map(S1) -> {reply, ok, maps:remove(deadline, S1), maps:get(idle, S1)}
     catch
         throw:{webdriver, Reason} ->
+            maybe_uncertain_start(Op, S0),
             {reply, {error, Reason}, S0, maps:get(idle, S0)};
-        _:_ -> {reply, {error, webdriver_operation_failed}, S0, maps:get(idle, S0)}
+        _:_ ->
+            maybe_uncertain_start(Op, S0),
+            {reply, {error, webdriver_operation_failed}, S0, maps:get(idle, S0)}
     end;
 handle_call(_, _, S) -> {reply, {error, bad_call}, S, maps:get(idle, S)}.
 handle_cast(_, S) -> {noreply, S, maps:get(idle, S)}.
+handle_info({'DOWN', Ref, process, _, _}, #{service_monitor := Ref} = S) when is_reference(Ref) ->
+    {stop, normal, S#{session => undefined}};
+handle_info({webdriver_backend_lost, Service}, #{managed_service := {_, Service, _}} = S) ->
+    {stop, normal, S#{session => undefined}};
 handle_info({'DOWN', Ref, process, _, _}, #{monitor := Ref} = S) -> {stop, normal, S};
 handle_info(expired, S) -> {stop, normal, S};
 handle_info(timeout, S) -> {stop, normal, S};
 handle_info(_, S) -> {noreply, S, maps:get(idle, S)}.
 terminate(_, S) ->
     erlang:cancel_timer(maps:get(timer, S)),
-    _ = delete_session(S), ok.
+    case delete_session(S) of ok -> release_managed(S); _ -> invalidate_managed(S) end,
+    ok.
+
+%% A timed-out POST /session can leave a server-side session whose id was never
+%% received. Recycle the owned backend instead of leaking that browser/slot.
+maybe_uncertain_start(start, S) -> invalidate_managed(S);
+maybe_uncertain_start(_, _) -> ok.
+invalidate_managed(#{managed_service := {_, Service, Generation}}) ->
+    gen_server:cast(Service, {invalidate, self(), Generation});
+invalidate_managed(_) -> ok.
+release_managed(#{managed_service := {_, Service, Generation}}) ->
+    try gen_server:call(Service, {release, Generation}, 5000) catch exit:_ -> ok end;
+release_managed(_) -> ok.
 code_change(_, S, _) -> {ok, S}.
 format_status(Status) -> Status#{state => redacted_webdriver_session,
     message => redacted, reason => redacted}.
 
+operation_timeout(start, S) -> maps:get(start_timeout, S);
 operation_timeout(Op, S) ->
     case lists:member(Op, [state, text, value, unchanged, attribute, property,
             fragment, no_overflow, one_panel, layout, fixture_idle, value_contains,
@@ -135,7 +176,7 @@ operation_timeout(Op, S) ->
     end.
 
 operation(start, [], #{session := undefined} = S) ->
-    V = wire(S, post, <<"/session">>, #{<<"capabilities">> =>
+    V = wire(S#{command => maps:get(start_timeout, S)}, post, <<"/session">>, #{<<"capabilities">> =>
         #{<<"alwaysMatch">> => maps:get(caps, S), <<"firstMatch">> => [#{}]}}, false),
     case V of
         #{<<"sessionId">> := Id} when is_binary(Id), byte_size(Id) > 0 -> S#{session => Id};
@@ -393,7 +434,7 @@ wire(S, Method, Path, Body, SessionScoped) ->
         _ -> [] end,
     Timeout = erlang:min(maps:get(command, S), remaining(S)),
     HttpOpts = [{timeout, Timeout}, {connect_timeout, Timeout}, {autoredirect, false} | TLS],
-    Headers = [{"accept", "application/json"}],
+    Headers = [{"accept", "application/json"}, {"x-appium-is-sensitive", "true"}],
     Request = case Method of
         get -> {binary_to_list(URL), Headers};
         delete -> {binary_to_list(URL), Headers};

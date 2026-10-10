@@ -7,7 +7,16 @@
         <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
       </header>
       <main class="modal__content" id="modal-1-content">
-        <select id="walletSelector">
+        <section class="session-identity" aria-label="Signed-in identity">
+          <strong data-session-kind>Checking session…</strong>
+          <code data-session-address></code>
+          <p data-wallet-only-note hidden></p>
+          <button type="button" class="styled-btn" data-switch-account>Switch account</button>
+          <button type="button" class="buttonlink" data-disconnect-wallet>Disconnect and sign out</button>
+          <p data-session-feedback role="status" aria-live="polite"></p>
+          <small>Save your draft before switching. Switching signs into a separate identity; it does not link or merge accounts.</small>
+        </section>
+        <select id="walletSelector" hidden>
           <optgroup label="Wallet Type">
             <option value="custodial">Custodial (email)</option>
             <option value="extension">Browser Wallet (AE Extension)</option>
@@ -31,17 +40,17 @@
           <hr>
           <h3>Buy DAMAGE Tokens (Lightning)</h3>
 
-          <form id="invoice-form">
+          <form id="invoice-form" data-requires-capability="nwc">
             <label>Amount in Sats</label>
             <input type="number" step="10" value="1000" id="invoice-amount">
-            <button class="styled-btn" id="generate-invoice-btn">Generate Lightning Invoice</button>
+            <button class="styled-btn" id="generate-invoice-btn" data-requires-capability="nwc">Generate Lightning Invoice</button>
           </form>
 
           <hr>
 
           <h3>Transfer DAMAGE Tokens</h3>
 
-          <form id="transfer-out-form">
+          <form id="transfer-out-form" data-requires-capability="transfer">
             <input type="text"
                    id="damage-transfer-out-address"
                    placeholder="Recipient AE address (ak_...)">
@@ -51,7 +60,7 @@
                    id="damage-transfer-out-amount"
                    placeholder="Amount">
 
-            <button class="styled-btn">
+            <button class="styled-btn" id="damage-transfer-out-btn" data-requires-capability="transfer">
               Transfer Tokens
             </button>
           </form>
@@ -62,91 +71,22 @@
 
           <h3>Deposit Sats Credits</h3>
 
-          <form id="ledger-invoice-form">
+          <form id="ledger-invoice-form" data-requires-capability="nwc">
             <label>Credit Amount (Sats)</label>
             <input type="number" step="10" value="100" id="ledger-invoice-amount">
-            <button class="styled-btn" id="generate-ledger-invoice-btn">Generate Credit Invoice</button>
+            <button class="styled-btn" id="generate-ledger-invoice-btn" data-requires-capability="nwc">Generate Credit Invoice</button>
           </form>
 
           <hr>
 
           <h3>Nostr Wallet Connect (NWC)</h3>
 
-          <button id="open-nwc-modal-btn"
+          <button id="open-nwc-modal-btn" data-requires-capability="nwc"
                   class="styled-btn auth-primary">
             ⚡ Generate NWC Session
           </button>
 
         </div>
-        <!--
-        <div id="purchase-damage-tabs">
-          <ul data-token-tabs>
-            <li><a data-tabby-default href="#damage-address-tab">Address</a></li>
-            <li><a href="#lightning-invoice-tab">Damage Wallet</a></li>
-            <li><a href="#damage-transfers-tab">Transfer</a></li>
-            <li><a href="#lightning-ledger-tab">Lightning Wallet</a></li>
-          </ul>
-          <div id="damage-address-tab">
-            <div>
-              Wallet Address:
-              <div class="click-copy">
-                <input type="text" id="damage-address" readonly>
-                <span class="copy-icon" onclick="copyToClipboard('damage-address')"> ⧉</span>
-              </div>
-            </div>
-            <div id="qrcode-damage"></div>
-          </div>
-          <div id="damage-transfers-tab">
-            <div id="damage-transfer">
-              <form id="transfer-out-form">
-                <label for="totalAmt">Transfer DAMAGE tokens out to address.</label>
-                <input type="text" id="damage-transfer-out-address" placeholder="Enter recipient address">
-                <input type="number" step="1" id="damage-transfer-out-amount" placeholder="Enter amount">
-                <button class="styled-btn" id="damage-transfer-out-btn">Transfer Out!</button>
-              </form>
-            </div>
-          </div>
-          <div id="lightning-invoice-tab">
-            <p>Purchase $DAMAGE using the bitcoin lightning network.</p>
-            <p>Please read <a href="/token_tos">Token Sale Terms and Conditions</a> before purchasing tokens.</p>
-              <form id="invoice-form">
-                <label for="totalAmt">Invoice Amount in Sats</label>
-                <input type="number" step="1000" id="invoice-amount">
-                <button class="styled-btn" id="generate-invoice-btn">Generate Invoice</button>
-              </form>
-          </div>
-          <div id="lightning-ledger-tab">
-            <p>Purchase sats credits using the bitcoin lightning network.</p>
-            <p>Please read <a href="/token_tos">Token Sale Terms and Conditions</a> before depositing sats.</p>
-            <form id="ledger-invoice-form">
-              <label for="totalAmt">Credit Amount in Sats</label>
-              <input type="number" step="1000" id="ledger-invoice-amount">
-              <button class="styled-btn" id="generate-ledger-invoice-btn">Credit Sats</button>
-            </form>
-            <div class="nwc-wallet-block">
-              <h3 class="auth-subtitle">Lightning Wallet (NWC)</h3>
-
-              <button id="open-nwc-modal-btn"
-                      class="modal__btn modal__btn-primary styled-btn auth-primary"
-                      aria-label="Create NWC connection"
-                      title="Create Nostr Wallet Connect session">
-                ⚡ Generate NWC Session.
-              </button>
-
-              <p class="auth-hint">
-                Generate a secure Nostr Wallet Connect (NWC) session.
-              </p>
-
-              <p class="auth-hint">
-                Compatible with:
-                <strong>Damus</strong>,
-                <strong>Amethyst</strong>,
-                <strong>Alby Hub</strong>
-              </p>
-            </div>
-          </div>
-        </div>
-        -->
       </main>
       <footer class="modal__footer">
         <!--<button class="modal__btn modal__btn-primary" data-micromodal-close aria-label="Close this dialog window">Close</button>-->

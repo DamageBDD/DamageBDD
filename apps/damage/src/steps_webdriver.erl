@@ -3,8 +3,10 @@
 %% Public feature authors must not be able to borrow that browser or its credentials.
 -module(steps_webdriver).
 -damage_roles([node_admin]).
--export([step/6, step_dry/6, cleanup/1]).
+-export([step/6, step_dry/6, cleanup/1, cleanup_owner/0]).
 
+step(Config, Context, _Keyword, _Line, ["I use WebDriver profile", Name], _Body) ->
+    perform(Config, Context, profile, [Name]);
 step(Config, Context, _Keyword, _Line, ["I use the WebDriver sidebar action", Action], _Body) ->
     perform(Config, Context, sidebar_action, [Action]);
 step(Config, Context, _Keyword, _Line, ["the dashboard fixture response gate is", Gate], _Body) ->
@@ -85,6 +87,7 @@ step(Config, Context, _Keyword, _Line, ["I close the WebDriver browser"], _Body)
     perform(Config, Context, close, []).
 
 %% Dry runs deliberately avoid the browser, credentials, network and assertions.
+step_dry(_Config, Context, _Keyword, _Line, ["I use WebDriver profile", _Name], _Body) -> Context;
 step_dry(_Config, Context, _Keyword, _Line, ["I use the WebDriver sidebar action", _Action], _Body) -> Context;
 step_dry(_Config, Context, _Keyword, _Line, ["the dashboard fixture response gate is", _Gate], _Body) -> Context;
 step_dry(_Config, Context, _Keyword, _Line, ["I select the WebDriver dashboard section", _Panel], _Body) -> Context;
@@ -137,13 +140,24 @@ perform(Config, Context, Op, Args) ->
             end
     end.
 
+do_perform(_Config, Context, profile, [Name0]) ->
+    Name = unicode:characters_to_binary(Name0),
+    case named_profile(Name) of
+        {ok, _} -> {ok, Context#{webdriver_profile => Name}};
+        Error -> Error
+    end;
 do_perform(Config, Context, start, []) ->
     case cleanup(Context) of
         ok ->
-            Profile = proplists:get_value(webdriver, Config,
-                application:get_env(damage, webdriver, [])),
+            Profile = case maps:get(webdriver_profile, Context, undefined) of
+                undefined -> proplists:get_value(webdriver, Config,
+                    application:get_env(damage, webdriver, []));
+                Name -> {ok, Named} = named_profile(Name), Named
+            end,
             case damage_webdriver:start(Profile) of
-                {ok, Pid} -> {ok, Context#{webdriver_session => Pid}};
+                {ok, Pid} ->
+                    put({?MODULE, session}, Pid),
+                    {ok, Context#{webdriver_session => Pid}};
                 Error -> Error
             end;
         Error -> Error
@@ -163,7 +177,25 @@ do_perform(_Config, Context, Op, Args) ->
         _ -> {error, webdriver_session_missing}
     end.
 
-cleanup(Context) -> damage_webdriver:close(maps:get(webdriver_session, Context, undefined)).
+named_profile(Name) ->
+    Profiles = application:get_env(damage, webdriver_profiles, []),
+    case [P || {K,P} <- Profiles, is_atom(K), atom_to_binary(K, utf8) =:= Name] of
+        [P] when is_list(P) -> {ok, P};
+        _ -> {error, unknown_webdriver_profile}
+    end.
+
+cleanup(Context) ->
+    Pid = maps:get(webdriver_session, Context, undefined),
+    Result = damage_webdriver:close(Pid),
+    case {Result, get({?MODULE, session})} of
+        {ok, Pid} -> erase({?MODULE, session});
+        _ -> ok
+    end,
+    Result.
+
+%% Exception-safe scope cleanup for the normal Damage runner. No session data
+%% or credentials are stored here: just the current process's owned client pid.
+cleanup_owner() -> damage_webdriver:close(erase({?MODULE, session})).
 failure(Context, Op, Reason) ->
     Cleanup = cleanup(Context),
     %% Error terms have no entered text, request bodies, remote diagnostics or credentials.

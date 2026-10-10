@@ -229,18 +229,18 @@
     const result = await fetchAllBalances(resolvedPubkey, opts);
 
     if (!result.ok) {
-      if (aeEl) aeEl.textContent = '0';
-      if (damageEl) damageEl.textContent = '0';
-      if (satsEl) satsEl.textContent = '0';
+      if (aeEl) aeEl.textContent = 'Unavailable';
+      if (damageEl) damageEl.textContent = 'Unavailable';
+      if (satsEl) satsEl.textContent = 'Unavailable';
       console.warn('updateAllBalances failed:', result.error);
       return result;
     }
 
     const { value } = result;
 
-    if (aeEl) aeEl.textContent = value.ae;
-    if (damageEl) damageEl.textContent = value.damage;
-    if (satsEl) satsEl.textContent = value.sats;
+    if (aeEl) aeEl.textContent = value.raw.ae_available === false ? "Unavailable" : value.ae;
+    if (damageEl) damageEl.textContent = value.raw.damage_available === false ? "Unavailable" : value.damage;
+    if (satsEl) satsEl.textContent = value.raw.sats_available === false ? "Unavailable" : value.sats;
 
     if (pubkeyEl) {
       const full = value.pubkey;

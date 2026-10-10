@@ -55,6 +55,7 @@ get_trails() ->
             damage_invoicing,
             damage_invoice_http,
             damage_accounts,
+            damage_browser_auth_http,
             damage_tests,
             damage_analytics,
             damage_reports,
