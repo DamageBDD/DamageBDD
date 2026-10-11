@@ -63,6 +63,16 @@
       <h2 id="dashboard-group-node" class="dashboard-nav-heading">Node administration</h2>
       <ul class="dashboard-nav-list">
         <li>
+          <a id="dashboard-link-node-settings" href="/dashboard/node/settings" title="Node settings" aria-label="Node settings: DamageBDD, ECAI, Nosternity, ERM and BOP">
+            <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3"/><path d="m9 3-1 3-3 1-2 3 2 2-1 3 3 3 3-1 2 2 3-2 1-3 3-1v-4l-3-1-1-3-3-1-3 2Z"/></svg><span class="dashboard-nav-label">Node settings</span>
+          </a>
+        </li>
+        <li>
+          <a id="dashboard-link-node-context" href="#node-context-tab" data-dashboard-panel="node-context-tab" data-nav-title="Node context" data-nav-group="Node administration" data-nav-description="Manage node-wide execution context" title="Node context">
+            <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9h10M7 14h6"/></svg><span class="dashboard-nav-label">Node context</span>
+          </a>
+        </li>
+        <li>
           <a id="dashboard-link-node-transactions" href="#node-transactions-tab" data-dashboard-panel="node-transactions-tab" data-nav-title="Transactions" data-nav-group="Node administration" data-nav-description="Inspect node transaction activity" title="Transactions">
             <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 6h16M4 12h16M4 18h16M8 3v6M16 9v6M8 15v6"/></svg><span class="dashboard-nav-label">Transactions</span>
           </a>
@@ -77,6 +87,13 @@
             <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3ZM8 12l3 3 5-6"/></svg><span class="dashboard-nav-label">CLN admin</span>
           </a>
         </li>
+        {{#tax_enabled}}
+        <li>
+          <a id="dashboard-link-tax-evidence" href="/node/admin/tax" title="ATO tax evidence and reporting" aria-label="Tax evidence reports and downloads">
+            <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg><span class="dashboard-nav-label">Tax evidence</span>
+          </a>
+        </li>
+        {{/tax_enabled}}
       </ul>
     </section>
     {{/node_admin}}

@@ -49,7 +49,8 @@ base_context(Req) ->
     #{
         request_path => cowboy_req:path(Req),
         node_version => <<"v0.1">>,
-        logo_image => logo_image()
+        logo_image => logo_image(),
+        tax_enabled => application:get_env(damage, tax_enabled, false)
     }.
 
 logo_image() ->
@@ -91,6 +92,7 @@ render_full_page(Ctx) ->
     EcaiJobDetail = render_tpl(?TPL("ecai_job_detail_modal.mustache"), Ctx),
     NwcModal = render_tpl(?TPL("nwc_modal.mustache"), Ctx),
     NodeWalletModal = render_tpl(?TPL("node_wallet_modal.mustache"), Ctx),
+    NodeContextTab = render_tpl(?TPL("node_context_tab.mustache"), Ctx),
     NodeTransactionsTab = render_tpl(?TPL("node_transactions_tab.mustache"), Ctx),
     NodeChannelsTab = render_tpl(?TPL("node_channels_tab.mustache"), Ctx),
     NodeClnAdminTab = render_tpl(?TPL("node_cln_admin.mustache"), Ctx),
@@ -123,6 +125,7 @@ render_full_page(Ctx) ->
         ecai_job_detail_modal => EcaiJobDetail,
         nwc_modal => NwcModal,
         node_wallet_modal => NodeWalletModal,
+        node_context_tab => NodeContextTab,
         node_transactions_tab => NodeTransactionsTab,
         node_channels_tab => NodeChannelsTab,
         node_cln_admin_tab => NodeClnAdminTab

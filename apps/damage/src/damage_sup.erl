@@ -52,6 +52,14 @@ init([]) ->
 
     Core =
         [
+        #{
+                    id => damage_settings,
+                    start => {damage_settings, start_link, []},
+                    restart => permanent,
+                    shutdown => 5000,
+                    type => worker,
+                    modules => [damage_settings]
+                },
             #{
                 id => secrets,
                 start => {secrets, start_link, []},
@@ -278,9 +286,44 @@ init([]) ->
             ],
 
     %% 6) finally: append Poolboy pools LAST so their workers prepopulate after price_feed is up
-    AllChildren = Core ++ PoolSpecs,
+    AllChildren = Core ++ tax_children() ++ PoolSpecs,
 
     {ok, {SupFlags, AllChildren}}.
+
+%% Tax reporting is opt-in and keeps the journal on local private storage.
+%% Do not contact CLN or price APIs in supervisor child start functions.
+%% The backfill worker starts asynchronously once the node has booted.
+tax_children() ->
+    case application:get_env(damage, tax_enabled, false) of
+        true ->
+            DataDir0 = application:get_env(damage, tax_data_dir, "/var/lib/damage/tax"),
+            DataDir =
+                case DataDir0 of
+                    B when is_binary(B) -> binary_to_list(B);
+                    L when is_list(L) -> L
+                end,
+            Journal = filename:join(DataDir, "journal.jsonl"),
+            [
+                #{
+                    id => damage_tax_store,
+                    start => {damage_tax_store, start_link, [Journal]},
+                    restart => permanent,
+                    shutdown => 10000,
+                    type => worker,
+                    modules => [damage_tax_store]
+                },
+                #{
+                    id => damage_tax_jobs,
+                    start => {damage_tax_jobs, start_link, []},
+                    restart => permanent,
+                    shutdown => 10000,
+                    type => worker,
+                    modules => [damage_tax_jobs]
+                }
+            ];
+        _ ->
+            []
+    end.
 
 ecai_logging_specs() ->
     case application:get_env(damage, ecai_log_learning_enabled, true) of

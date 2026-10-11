@@ -37,6 +37,7 @@ start(_StartType, _StartArgs) ->
         {ok, Cwd} ->
             ok = file:set_cwd(Cwd)
     end,
+    ok = damage_settings:bootstrap(),
     damage_sup:start_link().
 
 get_trails() ->
@@ -66,11 +67,13 @@ get_trails() ->
             lightning_auth,
             damage_doc,
             damage_swap_options_http,
-            damage_dashboard,
+            damage_settings_http,
+        damage_dashboard,
             damage_nwc_http,
             damage_nip96_http,
             damage_liquidity_http,
             damage_node_admin_http,
+            damage_tax_http,
             %% Blossom has a root /:blob catch-all. Keep it last so all
             %% existing DamageBDD routes take precedence.
             damage_blossom_http
