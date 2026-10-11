@@ -1,140 +1,154 @@
-<p data-wallet-only-note hidden></p>
 <!-- -*- mode: html -*- -->
-<section class="workspace-page settings-workspace" aria-labelledby="settings-title">
-<div class="workspace-heading">
-  <div><p class="workspace-eyebrow">MANAGE</p><h1 id="settings-title">Settings</h1><p>Account automation, webhooks and node-level execution context.</p></div>
-</div>
-
-<form data-requires-capability="account_context" action="submit_settings" method="post" class="workspace-card workspace-form settings-card">
-  <fieldset class="workspace-fieldset">
-    <legend>DNS auth token</legend>
-    <button data-requires-capability="account_context" class="workspace-button" type="button" onclick="generateToken()">Generate Token</button>
-    <div id="generatedToken"></div>
-  </fieldset>
-</form>
-
-{{#node_admin}}
-<section id="node-context-settings" class="workspace-card settings-card" aria-labelledby="node-context-title">
-  <div class="workspace-card-body">
-  <div class="workspace-section-heading"><div><h2 id="node-context-title">Node context</h2>
-  <p>Node-level values are inherited by account runs according to their inheritance policy. Sensitive values stay encrypted and are returned redacted.</p></div></div>
-
-  <div class="node-context-meta workspace-toolbar">
-    <strong>Version:</strong> <span id="node-context-version">—</span>
-    &nbsp;
-    <strong>Root:</strong> <code id="node-context-root">—</code>
-    <button data-requires-capability="account_context" class="workspace-button" type="button" id="node-context-refresh">Refresh</button>
+<section class="workspace-page account-settings" aria-labelledby="settings-title">
+  <div class="workspace-heading account-settings-heading">
+    <div>
+      <p class="workspace-eyebrow">MANAGE</p>
+      <h1 id="settings-title">Account settings</h1>
+      <p>Identity, security, wallet access, automation and execution defaults for this account.</p>
+    </div>
+    <button class="workspace-button" id="account-settings-refresh" type="button">Refresh account</button>
   </div>
 
-  <div id="node-context-status" class="workspace-status" role="status" aria-live="polite"></div>
+  <p data-wallet-only-note class="workspace-status account-settings-notice" hidden></p>
+  <div id="account-settings-status" class="workspace-status account-settings-notice" role="status" aria-live="polite"></div>
 
-  <div class="workspace-table-wrap node-context-table-wrap">
-    <table class="workspace-table" id="node-context-table">
-      <thead>
-        <tr>
-          <th>Name</th>
-          <th>Value</th>
-          <th>Sensitive</th>
-          <th>Exposure</th>
-          <th>Inheritance</th>
-          <th>Locked</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody id="node-context-rows">
-        <tr><td colspan="7">Loading node context…</td></tr>
-      </tbody>
-    </table>
-  </div>
-
-  <form data-requires-capability="account_context" id="node-context-editor" class="workspace-form node-context-editor">
-    <fieldset class="workspace-fieldset">
-      <legend>Add or update node context</legend>
-
-      <label for="node-context-name">Name</label>
-      <input
-        type="text"
-        id="node-context-name"
-        maxlength="256"
-        autocomplete="off"
-        required
-        placeholder="default_server">
-
-      <label for="node-context-value">Value</label>
-      <textarea
-        id="node-context-value"
-        rows="3"
-        required
-        placeholder="https://api.example.com"></textarea>
-
-      <label for="node-context-type">Value type</label>
-      <select id="node-context-type">
-        <option value="string">String</option>
-        <option value="integer">Integer</option>
-        <option value="float">Float</option>
-        <option value="boolean">Boolean</option>
-        <option value="json">JSON</option>
-      </select>
-
-      <label class="workspace-check">
-        <input type="checkbox" id="node-context-sensitive">
-        Sensitive
-      </label>
-
-      <label for="node-context-exposure">Exposure</label>
-      <select id="node-context-exposure">
-        <option value="template">Template</option>
-        <option value="step_only">Step only</option>
-      </select>
-
-      <label for="node-context-inheritance">Inheritance</label>
-      <select id="node-context-inheritance">
-        <option value="default">Default</option>
-        <option value="locked">Locked</option>
-        <option value="none">None</option>
-      </select>
-
-      <p class="node-context-help">
-        Sensitive node values are normalized by the server to
-        <code>step_only</code>, <code>none</code>, and locked.
-      </p>
-
-      <div class="workspace-form-actions">
-        <button data-requires-capability="account_context" class="workspace-button workspace-primary" type="submit">Save</button>
-        <button data-requires-capability="account_context" class="workspace-button" type="button" id="node-context-cancel">Clear</button>
+  <section class="account-settings-grid" aria-label="Account overview">
+    <article class="workspace-card account-settings-card" aria-labelledby="account-identity-title">
+      <div class="workspace-card-body">
+        <div class="account-card-heading">
+          <div>
+            <p class="workspace-eyebrow">ACCOUNT</p>
+            <h2 id="account-identity-title">Identity &amp; session</h2>
+          </div>
+          <span id="account-auth-badge" class="account-pill">Checking…</span>
+        </div>
+        <dl class="account-facts">
+          <div><dt>Email</dt><dd id="account-settings-email">—</dd></div>
+          <div><dt>Aeternity account</dt><dd><code id="account-settings-address">—</code></dd></div>
+          <div><dt>Session expires</dt><dd id="account-settings-expiry">—</dd></div>
+          <div><dt>Session type</dt><dd id="account-settings-mode">—</dd></div>
+        </dl>
+        <div class="account-card-actions">
+          <button class="workspace-button" id="account-copy-address" type="button">Copy address</button>
+          <button class="workspace-button" id="account-session-refresh" type="button">Refresh session</button>
+        </div>
       </div>
-    </fieldset>
-  </form>
+    </article>
+
+    <article class="workspace-card account-settings-card" aria-labelledby="account-wallet-title">
+      <div class="workspace-card-body">
+        <div class="account-card-heading">
+          <div>
+            <p class="workspace-eyebrow">WALLET</p>
+            <h2 id="account-wallet-title">Balances &amp; connections</h2>
+          </div>
+          <span id="account-wallet-status" class="account-pill">—</span>
+        </div>
+        <div class="account-balance-grid" aria-live="polite">
+          <div><span>DAMAGE</span><strong id="account-balance-damage">—</strong></div>
+          <div><span>AE</span><strong id="account-balance-ae">—</strong></div>
+          <div><span>Lightning</span><strong id="account-balance-sats">—</strong></div>
+        </div>
+        <p class="workspace-helper"><span id="account-nwc-count">—</span> NWC connection(s) are represented by the account ledger when available.</p>
+        <div class="account-card-actions">
+          <button class="workspace-button workspace-primary" id="account-open-wallet" type="button">Open wallet</button>
+          <button data-requires-capability="nwc" class="workspace-button" id="account-manage-nwc" type="button">Manage NWC</button>
+        </div>
+      </div>
+    </article>
+
+    <article class="workspace-card account-settings-card" aria-labelledby="account-security-title">
+      <div class="workspace-card-body">
+        <div class="account-card-heading">
+          <div>
+            <p class="workspace-eyebrow">SECURITY</p>
+            <h2 id="account-security-title">Recovery &amp; sign-in</h2>
+          </div>
+        </div>
+        <p class="account-card-copy" id="account-security-copy">Managed email sessions can request a password-reset link. Wallet-authenticated sessions do not expose or create a password.</p>
+        <div class="account-card-actions">
+          <button class="workspace-button" id="account-password-recovery" type="button">Send password reset email</button>
+          <button class="workspace-button workspace-danger" id="account-sign-out" type="button">Sign out</button>
+        </div>
+        <div id="account-security-status" class="workspace-status" role="status" aria-live="polite"></div>
+      </div>
+    </article>
+
+    <article class="workspace-card account-settings-card" aria-labelledby="account-capabilities-title">
+      <div class="workspace-card-body">
+        <div class="account-card-heading">
+          <div>
+            <p class="workspace-eyebrow">ACCESS</p>
+            <h2 id="account-capabilities-title">Session capabilities</h2>
+          </div>
+        </div>
+        <p class="account-card-copy">Capabilities come from the authenticated browser session and are enforced again by the server.</p>
+        <div id="account-capabilities" class="account-capability-list" aria-live="polite"></div>
+      </div>
+    </article>
+  </section>
+
+  <div class="workspace-section-heading account-settings-section-heading">
+    <div>
+      <p class="workspace-eyebrow">AUTOMATION</p>
+      <h2>Account automation</h2>
+      <p>Domain verification and delivery hooks are stored against the authenticated account.</p>
+    </div>
   </div>
-</section>
 
+  <section class="account-settings-grid account-automation-grid" aria-label="Account automation">
+    <article data-requires-capability="account_context" class="workspace-card account-settings-card" aria-labelledby="domain-settings-title">
+      <div class="workspace-card-body">
+        <div class="account-card-heading">
+          <div>
+            <h2 id="domain-settings-title">Authorized domains</h2>
+            <p>Generate a DNS TXT token to authorize higher-concurrency verification against a domain you control.</p>
+          </div>
+        </div>
+        <form id="domain-settings-form" class="workspace-form account-inline-form">
+          <div class="workspace-field">
+            <label for="domain-settings-host">Domain</label>
+            <input class="workspace-input" id="domain-settings-host" type="text" inputmode="url" autocomplete="off" placeholder="example.com" required maxlength="253">
+          </div>
+          <button data-requires-capability="account_context" class="workspace-button workspace-primary" type="submit">Generate token</button>
+        </form>
+        <div id="domain-settings-status" class="workspace-status" role="status" aria-live="polite"></div>
+        <div id="domain-token-result" class="account-token-result" hidden>
+          <span>Publish this TXT record on the domain:</span>
+          <code id="domain-token-record"></code>
+          <button class="workspace-button" id="domain-token-copy" type="button">Copy TXT record</button>
+        </div>
+        <div id="domain-settings-list" class="account-list" aria-live="polite"></div>
+      </div>
+    </article>
 
+    <article data-requires-capability="account_context" class="workspace-card account-settings-card" aria-labelledby="webhook-settings-title">
+      <div class="workspace-card-body">
+        <div class="account-card-heading">
+          <div>
+            <h2 id="webhook-settings-title">Webhooks</h2>
+            <p>Send run events to account-owned HTTPS endpoints. Query strings are hidden in this UI because they may contain credentials.</p>
+          </div>
+        </div>
+        <form id="webhook-settings-form" class="workspace-form account-webhook-form">
+          <div class="workspace-form-grid">
+            <div class="workspace-field">
+              <label for="webhook-name">Name</label>
+              <input class="workspace-input" type="text" id="webhook-name" autocomplete="off" placeholder="ci-status" required maxlength="128">
+            </div>
+            <div class="workspace-field">
+              <label for="webhook-url">Webhook URL</label>
+              <input class="workspace-input" type="url" id="webhook-url" autocomplete="off" placeholder="https://example.com/hooks/damage" required maxlength="2048">
+            </div>
+          </div>
+          <div class="workspace-form-actions">
+            <button data-requires-capability="account_context" class="workspace-button workspace-primary" type="submit">Add webhook</button>
+          </div>
+        </form>
+        <div id="webhook-settings-status" class="workspace-status" role="status" aria-live="polite"></div>
+        <div id="webhook-settings-list" class="account-list" aria-live="polite"></div>
+      </div>
+    </article>
+  </section>
 
-
-{{/node_admin}}
-
-<form data-requires-capability="account_context" action="submit_webhook" method="post" class="workspace-card workspace-form settings-card">
-  <fieldset id="webhook-settings-form" class="workspace-fieldset">
-    <legend>Webhooks</legend>
-
-    <label for="webhook-name">Name</label>
-    <input type="text" id="webhook-name" name="variableName" placeholder="Webhook name">
-
-    <label for="webhook-url">Webhook URL</label>
-    <input type="url" id="webhook-url" name="value" placeholder="https://example.com/webhook">
-
-    <label for="webhook-method">Method</label>
-    <select id="webhook-method" name="method">
-      <option value="POST">POST</option>
-      <option value="GET">GET</option>
-    </select>
-
-    <button data-requires-capability="account_context" class="workspace-button" type="button" onclick="addWebhook()">Add Webhook</button>
-    <div id="webhookVariables"></div>
-  </fieldset>
-
-  <div class="workspace-form-actions">
-    <input class="workspace-button workspace-primary" type="submit" value="Save webhooks">
-  </div>
-</form>
 </section>

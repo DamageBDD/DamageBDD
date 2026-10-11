@@ -5,7 +5,7 @@ const source = await readFile(new URL('../../priv/static/js/dashboard-navigation
 const {panelIdFromHash, initDashboardNavigation} = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 
 test('accepts existing dashboard anchors with or without hash', () => {
-  for (const id of ['execution-tab', 'activity-tab', 'billing-tab', 'node-cln-admin-tab']) {
+  for (const id of ['execution-tab', 'activity-tab', 'billing-tab', 'node-cln-admin-tab', 'node-context-tab']) {
     assert.equal(panelIdFromHash(id), id);
     assert.equal(panelIdFromHash('#' + id), id);
   }

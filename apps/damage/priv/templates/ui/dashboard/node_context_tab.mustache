@@ -1,0 +1,96 @@
+<!-- -*- mode: html -*- -->
+<section class="workspace-page node-context-workspace" aria-labelledby="node-context-page-title">
+  <div class="workspace-heading account-settings-heading">
+    <div>
+      <p class="workspace-eyebrow">NODE ADMINISTRATION</p>
+      <h1 id="node-context-page-title">Node context</h1>
+      <p>Manage node-wide execution variables separately from account settings. Sensitive values remain encrypted and are shown only in redacted form.</p>
+    </div>
+  </div>
+
+  <section id="node-context-settings" class="workspace-card account-settings-card node-context-card" aria-labelledby="node-context-title">
+    <div class="workspace-card-body">
+      <div class="account-card-heading">
+        <div>
+          <h2 id="node-context-title">Context variables</h2>
+          <p>Sensitive values stay encrypted and are always returned redacted.</p>
+        </div>
+        <button class="workspace-button" type="button" id="node-context-refresh">Refresh</button>
+      </div>
+
+      <div class="node-context-meta account-context-meta">
+        <span><strong>Version</strong> <b id="node-context-version">—</b></span>
+        <span><strong>Root</strong> <code id="node-context-root">—</code></span>
+      </div>
+      <div id="node-context-status" class="workspace-status" role="status" aria-live="polite"></div>
+
+      <div class="workspace-table-wrap node-context-table-wrap">
+        <table class="workspace-table" id="node-context-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Value</th>
+              <th>Sensitive</th>
+              <th>Exposure</th>
+              <th>Inheritance</th>
+              <th>Locked</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="node-context-rows">
+            <tr><td colspan="7">Loading node context…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <details class="account-context-editor-wrap">
+        <summary>Add or update node context</summary>
+        <form id="node-context-editor" class="workspace-form node-context-editor">
+          <div class="workspace-form-grid">
+            <div class="workspace-field">
+              <label for="node-context-name">Name</label>
+              <input type="text" id="node-context-name" maxlength="256" autocomplete="off" required placeholder="default_server">
+            </div>
+            <div class="workspace-field">
+              <label for="node-context-type">Value type</label>
+              <select id="node-context-type">
+                <option value="string">String</option>
+                <option value="integer">Integer</option>
+                <option value="float">Float</option>
+                <option value="boolean">Boolean</option>
+                <option value="json">JSON</option>
+              </select>
+            </div>
+            <div class="workspace-field account-span-all">
+              <label for="node-context-value">Value</label>
+              <textarea id="node-context-value" rows="3" required placeholder="https://api.example.com"></textarea>
+            </div>
+            <div class="workspace-field">
+              <label for="node-context-exposure">Exposure</label>
+              <select id="node-context-exposure">
+                <option value="template">Template</option>
+                <option value="step_only">Step only</option>
+              </select>
+            </div>
+            <div class="workspace-field">
+              <label for="node-context-inheritance">Inheritance</label>
+              <select id="node-context-inheritance">
+                <option value="default">Default</option>
+                <option value="locked">Locked</option>
+                <option value="none">None</option>
+              </select>
+            </div>
+          </div>
+          <label class="workspace-check account-context-sensitive">
+            <input type="checkbox" id="node-context-sensitive">
+            Sensitive — force step-only exposure, no inheritance and a locked value
+          </label>
+          <div class="workspace-form-actions">
+            <button class="workspace-button workspace-primary" type="submit">Save context</button>
+            <button class="workspace-button" type="button" id="node-context-cancel">Clear</button>
+          </div>
+        </form>
+      </details>
+    </div>
+  </section>
+</section>

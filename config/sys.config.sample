@@ -461,6 +461,13 @@
         {allowance, 0},
         {node_admins, []},
         {strict_no_catchall, true},
+        %% Dashboard sys.config reload. The operator file stays untouched; edits
+        %% are persisted in sys.dashboard.config alongside the active sys.config.
+        %% Override the paths with DAMAGE_SYS_CONFIG / DAMAGE_SETTINGS_OVERLAY
+        %% in service environments with /etc/damage or a release-specific path.
+        {settings_poll_interval_ms, 2000},
+        %% {settings_config_path, "/etc/damage/sys.config"},
+        %% {settings_overlay_path, "/etc/damage/sys.dashboard.config"},
         {cmd_allowed, []},
 
         %% State / secrets

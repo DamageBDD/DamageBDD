@@ -55,6 +55,12 @@ export function initDashboardNavigation() {
   function visibleLinks() {
     return links.filter(link => available(link.dataset.dashboardPanel));
   }
+  function visibleNavigationLinks() {
+    return [...nav.querySelectorAll('.dashboard-nav-list a[href]')].filter(link => {
+      if (link.getAttribute('aria-disabled') === 'true' || link.closest('[hidden]')) return false;
+      return !link.dataset.dashboardPanel || available(link.dataset.dashboardPanel);
+    });
+  }
   function isFocusable(element) {
     return !!element?.isConnected && !element.closest('[hidden], [inert]') && element.getClientRects().length > 0;
   }
@@ -171,8 +177,8 @@ export function initDashboardNavigation() {
   nav.addEventListener('keydown', event => {
     if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
     if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
-    const current = event.target.closest('a[data-dashboard-panel]');
-    const entries = visibleLinks(), index = entries.indexOf(current);
+    const current = event.target.closest('.dashboard-nav-list a[href]');
+    const entries = visibleNavigationLinks(), index = entries.indexOf(current);
     if (index < 0 || !entries.length) return;
     event.preventDefault();
     const next = event.key === 'Home' ? 0 : event.key === 'End' ? entries.length - 1 :
