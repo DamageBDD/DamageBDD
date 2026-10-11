@@ -1,13 +1,17 @@
 <!-- -*- mode: html -*- -->
 {{! priv/templates/page_shell.mustache }}
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{{title}}</title>
+    <meta name="description" content="{{description}}" />
+    <meta name="theme-color" content="{{accent_color}}" />
+    {{#has_favicon}}<link rel="icon" href="{{favicon_url}}" />{{/has_favicon}}
 
     <style>
+      :root{--node-accent:{{accent_color}};}
       body{
         font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;
         max-width:920px;margin:24px auto;padding:0 14px;
@@ -23,13 +27,23 @@
       .pill{border:1px solid #eee;border-radius:999px;padding:4px 10px;font-size:.9rem;}
       pre{white-space:pre-wrap;word-break:break-word;margin:10px 0 0 0;}
       a{color:inherit;}
+      .node-header{border-bottom:2px solid var(--node-accent);padding-bottom:18px;margin-bottom:24px;}
+      .node-brand{display:inline-flex;gap:12px;align-items:center;text-decoration:none;}
+      .node-logo{width:48px;height:48px;object-fit:contain;}
+      .node-brand strong{font-size:1.2rem;color:var(--node-accent);}
+      .node-description{white-space:pre-wrap;line-height:1.6;}
+      .button{display:inline-block;border:1px solid var(--node-accent);border-radius:10px;padding:10px 14px;text-decoration:none;color:var(--node-accent);}
+      :focus-visible{outline:2px solid var(--node-accent);outline-offset:3px;}
     </style>
-
-    {{{head_extra}}}
   </head>
 
   <body>
+    <header class="node-header">
+      <a class="node-brand" href="/">
+        {{#has_logo}}<img class="node-logo" src="{{logo_url}}" alt="{{name}} logo" />{{/has_logo}}
+        <strong>{{name}}</strong>
+      </a>
+    </header>
     {{{body}}}
-    {{{tail_extra}}}
   </body>
 </html>

@@ -76,10 +76,84 @@ inference endpoint. It is separate from any provider API credential. Search,
 event publication, status, and context retrieval do not require this token.
 The WebSocket protocol has no authentication handshake in this implementation.
 
+## Node branding
+
+The operator controls branding in the `nosternity` entry of the release's
+`sys.config`. Merge these keys into that existing entry; do not add a second
+`nosternity` application entry:
+
+```erlang
+{node_name, <<"Sydney Relay">>},
+{node_title, <<"Sydney Nostr Search">>},
+{node_description, <<"Public notes indexed by the Sydney community.">>},
+{node_logo_url, <<"https://relay.example.org/branding/logo.png">>},
+{node_favicon_url, <<"/branding/favicon.png">>},
+{node_accent_color, <<"#006D77">>},
+```
+
+| Setting | Default | Where it appears |
+| --- | --- | --- |
+| `node_name` | `<<"Nosternity Search">>` | Page header, logo alternative text, NIP-11 `name`. |
+| `node_title` | `<<"Nosternity Search">>` | Dashboard Explore heading, browser title; note pages use `Nostr Note | <title>`; legacy desktop window default. |
+| `node_description` | Existing DamageBDD/ECAI relay description | Home description, HTML description metadata, NIP-11 `description`. |
+| `node_logo_url` | `<<>>` | Header image; also NIP-11 `icon` when an absolute HTTP(S) URL is configured. |
+| `node_favicon_url` | `<<>>` | Browser favicon; empty omits the icon tag. |
+| `node_accent_color` | `<<"#6750a4">>` | Dashboard accents, brand text, action links, focus outlines and browser theme colour. |
+
+Use UTF-8 binaries or Erlang Unicode strings. `node_name` allows 1–128
+characters, `node_title` 1–256 and `node_description` 0–2048; these are plain,
+single-line text values without control characters. For example, non-ASCII
+binary literals should use `<<"Café Relay"/utf8>>`. Nostr clients may truncate
+long names; [NIP-11](https://github.com/nostr-protocol/nips/blob/master/11.md)
+recommends names shorter than 30 characters. All values are escaped when
+rendered into HTML. Colours must be exactly `#RRGGBB`.
+
+Image URLs may be empty, absolute HTTP(S), or a root-relative path such as
+`/branding/logo.png`; they are limited to 2048 UTF-8 bytes. Protocol-relative
+URLs (`//host/path`), credentials, backslashes, traversal segments and active
+schemes such as `javascript:` or `data:` are rejected. Prefer HTTPS for public
+nodes. The relay does not download or proxy these URLs; visitors' browsers
+load them. Relative logo paths are intentionally omitted from NIP-11 `icon`
+so relay clients receive only URLs they can load without guessing a base.
+
+To package local images, put them in `apps/nosternity/priv/branding/` before
+building the release. Cowboy serves this directory at `/branding/`. To use
+that same local logo for Nostr discovery, configure its full public URL,
+such as `https://relay.example.org/branding/logo.png`. Other root-relative
+paths must already be served by your reverse proxy. A missing image is not
+fetched or checked during startup.
+
+Rebuild/redeploy after changing templates or packaged assets. For config-only
+changes, edit the release configuration actually used by the node and restart
+it. Merely editing the file does not reload the running application's
+environment. The HTTP pages and discovery metadata read application settings
+per request; the legacy desktop window reads its title when it starts.
+Invalid active configuration prevents startup with
+`{error, {invalid_configuration, Key}}`.
+
+These are node administrator settings managed through release config and the
+trusted Erlang environment. They are not writable through the public search
+or LLM APIs. Branding does not alter NIP support, protocol limits, software
+identity, event validation or indexed data.
+
+The dashboard at `/` and `/dashboard`, its fragments, and `/nostr/note/` use
+Nosternity-owned templates with this shared branding. With
+`dashboard_enabled = false`, `/` serves a minimal branded home page and the
+dashboard/authentication routes remain disabled. The note viewer still uses its existing upstream note-fetch
+path; adding a logo does not change it to query the local ECAI index.
+
+Run the focused branding configuration, template and HTTP tests against real
+dependencies (no ECAI NIF required):
+
+```sh
+bash apps/nosternity/test/branding/run.sh
+```
+
 ## Enabling and tuning the service
 
-The complete `sys.config` and `sys.config.sample` Nosternity entries now list
-these settings explicitly. HTTP REST, the note viewer, NIP-11 discovery, and
+Merge the app-level examples into your current release configuration; the
+latest Nosternity-only source archive does not include root `sys.config` or
+`sys.config.sample` files. HTTP REST, the note viewer, NIP-11 discovery, and
 WebSocket upgrades share the same `ip` and `port`; the Nostr WebSocket path is
 `/nostr`. With the supplied settings the address is `127.0.0.1:9001`. Change
 `ip` to a specific interface tuple or `{0,0,0,0}` to listen on all IPv4

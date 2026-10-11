@@ -31,6 +31,31 @@ Nosternity must run with the DamageBDD browser-auth worker and existing DamageBD
 
 `dashboard_enabled = false` disables dashboard, dashboard auth, browser API, and mounted DamageBDD routes and removes the authentication child. The existing relay/search routes remain. `auth_signup_enabled = false` prevents creation of new Nosternity accounts; proved existing accounts still sign in. It does not control DamageBDD's separate signup policy.
 
+## Node branding
+
+Set `node_name`, `node_title`, `node_description`, `node_logo_url`,
+`node_favicon_url` and `node_accent_color` in the `nosternity` application
+entry of `sys.config`. See [dashboard.sys.config.example](dashboard.sys.config.example)
+and the [branding reference](search-relay.md#node-branding) for formats and
+validation limits. Restart the node after changing release config.
+
+The same branding supplies the dashboard document title, sidebar, Explore
+heading/description, account labels, footer, favicon and accent colour, plus
+the note viewer and NIP-11 metadata. Navigation-specific headings still label
+the selected feature. Configured text is escaped in templates and client-side
+updates. Empty logo/favicon values omit image tags. The bundled symbol remains
+as the dashboard logo fallback.
+
+Put public local images in `priv/branding/` before building the release and
+refer to them at `/branding/<filename>`. Absolute HTTP(S) image URLs are also
+supported; the dashboard permits their configured origins in its image CSP,
+while scripts stay restricted to this node. Use HTTPS images on HTTPS nodes.
+Only absolute logo URLs are included in the relay's NIP-11 `icon` field.
+
+With `dashboard_enabled = false`, `/` displays the minimal branded home page;
+`/dashboard` and dashboard authentication routes remain disabled. Public
+branding assets, note views, discovery and search remain available.
+
 ## Where to change the UI
 
 Templates live in `apps/nosternity/priv/templates/ui/dashboard/`:

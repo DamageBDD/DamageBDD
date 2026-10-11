@@ -7,7 +7,7 @@
 
 get(Key) ->
     {Default, Check} = spec(Key),
-    Value = application:get_env(nosternity, Key, Default),
+    Value = normalize(Check, application:get_env(nosternity, Key, Default)),
     case valid(Check, Value) of
         true -> Value;
         false -> error({invalid_configuration, Key})
@@ -35,7 +35,9 @@ keys() ->
      max_total_subscriptions, max_filters, max_filter_values,
      search_default_limit, search_max_limit, search_max_events,
      websocket_messages_per_minute, subscriber_queue_max,
-     ae_event_store_hydrate_page_size, ae_event_store_retry_ms].
+     ae_event_store_hydrate_page_size, ae_event_store_retry_ms,
+     node_name, node_title, node_description, node_logo_url,
+     node_favicon_url, node_accent_color].
 
 spec(dashboard_enabled) -> {true, boolean};
 spec(auth_signup_enabled) -> {true, boolean};
@@ -67,7 +69,27 @@ spec(search_max_events) -> {10000, {integer, 1, 100000}};
 spec(websocket_messages_per_minute) -> {120, {integer, 1, 100000}};
 spec(subscriber_queue_max) -> {256, {integer, 1, 10000}};
 spec(ae_event_store_hydrate_page_size) -> {25, {integer, 1, 100}};
-spec(ae_event_store_retry_ms) -> {5000, {integer, 1000, 3600000}}.
+spec(ae_event_store_retry_ms) -> {5000, {integer, 1000, 3600000}};
+spec(node_name) -> {<<"Nosternity Search">>, {text, 1, 128}};
+spec(node_title) -> {<<"Nosternity Search">>, {text, 1, 256}};
+spec(node_description) ->
+    {<<"DamageBDD verified events with ECAI text search. Public text kinds 0, 1, 30023. Single-node bounded storage.">>,
+     {text, 0, 2048}};
+spec(node_logo_url) -> {<<>>, url};
+spec(node_favicon_url) -> {<<>>, url};
+spec(node_accent_color) -> {<<"#6750a4">>, color}.
+
+normalize({text, _, _}, Value) -> utf8(Value);
+normalize(url, Value) -> utf8(Value);
+normalize(color, Value) -> utf8(Value);
+normalize(_, Value) -> Value.
+
+utf8(Value) when is_binary(Value); is_list(Value) ->
+    try unicode:characters_to_binary(Value) of
+        Binary when is_binary(Binary) -> Binary;
+        _ -> invalid
+    catch _:_ -> invalid end;
+utf8(_) -> invalid.
 
 valid(path, Value) -> is_list(Value) andalso Value =/= [] andalso lists:all(fun(C) -> is_integer(C) andalso C > 0 end, Value);
 valid(boolean, Value) -> is_boolean(Value);
@@ -77,4 +99,62 @@ valid(ip, Value) when is_tuple(Value), tuple_size(Value) =:= 4 ->
     lists:all(fun(N) -> valid({integer, 0, 255}, N) end, tuple_to_list(Value));
 valid(ip, Value) when is_tuple(Value), tuple_size(Value) =:= 8 ->
     lists:all(fun(N) -> valid({integer, 0, 65535}, N) end, tuple_to_list(Value));
-valid(ip, _) -> false.
+valid(ip, _) -> false;
+valid({text, Min, Max}, Value) when is_binary(Value) ->
+    Characters = unicode:characters_to_list(Value),
+    Length = length(Characters),
+    Length >= Min andalso Length =< Max andalso
+        lists:all(fun printable/1, Characters);
+valid({text, _, _}, _) -> false;
+valid(url, <<>>) -> true;
+valid(url, Value) when is_binary(Value), byte_size(Value) =< 2048 ->
+    safe_url(Value);
+valid(url, _) -> false;
+valid(color, <<$#, Hex:6/binary>>) ->
+    lists:all(fun(C) -> (C >= $0 andalso C =< $9) orelse
+                        (C >= $a andalso C =< $f) orelse
+                        (C >= $A andalso C =< $F) end, binary_to_list(Hex));
+valid(color, _) -> false.
+
+printable(C) -> C >= 32 andalso not (C >= 127 andalso C =< 159).
+
+%% These values become HTML attributes. In addition to template escaping,
+%% constrain their schemes and URI structure before any listener is started.
+safe_url(Value) ->
+    try
+        true = lists:all(fun url_character/1, unicode:characters_to_list(Value)),
+        URI = uri_string:parse(Value),
+        true = is_map(URI),
+        false = maps:is_key(userinfo, URI),
+        Path = maps:get(path, URI, <<>>),
+        true = safe_path(Path),
+        case Value of
+            <<"//", _/binary>> -> false;
+            <<"/", _/binary>> ->
+                not maps:is_key(scheme, URI) andalso not maps:is_key(host, URI);
+            _ ->
+                Scheme = string:lowercase(maps:get(scheme, URI, <<>>)),
+                Host = maps:get(host, URI, <<>>),
+                Port = maps:get(port, URI, 80),
+                (Scheme =:= <<"http">> orelse Scheme =:= <<"https">>) andalso
+                    is_binary(Host) andalso byte_size(Host) > 0 andalso
+                    valid({integer, 1, 65535}, Port)
+        end
+    catch _:_ -> false end.
+
+url_character(C) ->
+    printable(C) andalso C =/= 32 andalso
+        not lists:member(C, [$\\, $<, $>, $", $`, ${, $}, $|, $^]).
+
+safe_path(Path) ->
+    %% Decode escapes before checking so /%2e%2e/ and /%5c cannot bypass the
+    %% root-relative path policy. A malformed percent escape is rejected too.
+    Decoded = uri_string:unquote(Path),
+    is_binary(Decoded) andalso
+        lists:all(fun(C) -> printable(C) andalso C =/= $\\ end,
+                  unicode:characters_to_list(Decoded)) andalso
+        case Decoded of
+            <<"//", _/binary>> -> false;
+            _ -> not lists:any(fun(S) -> S =:= <<".">> orelse S =:= <<"..">> end,
+                               binary:split(Decoded, <<"/">>, [global]))
+        end.

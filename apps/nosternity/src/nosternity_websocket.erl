@@ -24,8 +24,7 @@ init(Req, _Opts) ->
     end.
 
 relay_info() ->
-    #{name=><<"Nosternity Search">>,
-      description=><<"DamageBDD verified events with ECAI text search. Public text kinds 0, 1, 30023. Single-node bounded storage.">>,
+    (nosternity_branding:relay_info())#{
       supported_nips=>[1,9,11,40,50],
       software=><<"https://github.com/DamageBDD/DamageBDD">>,version=><<"0.2.0">>,
       limitation=>#{max_message_length=>65536,

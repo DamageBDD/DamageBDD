@@ -8,7 +8,7 @@ Feature: Nosternity search relay API
     When I make a GET request to "/nostr"
     Then the response status must be "200"
     And the response must contain text "supported_nips"
-    And the response must contain text "Nosternity Search"
+    And the response must contain text "software"
 
   Scenario: Query indexed data using NIP-50 filters
     Given I am using server "http://127.0.0.1:9001"

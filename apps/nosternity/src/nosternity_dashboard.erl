@@ -34,8 +34,30 @@ render(Part) ->
     end.
 template(Name, Context) ->
     {ok, Bytes} = file:read_file(filename:join([code:priv_dir(nosternity), "templates", "ui", "dashboard", Name ++ ".mustache"])),
-    bbmustache:render(Bytes, Context, [{key_type, binary}]).
+    Branding = maps:from_list([{atom_to_binary(K, utf8), V}
+        || {K, V} <- maps:to_list(nosternity_branding:template_vars())]),
+    bbmustache:render(Bytes, maps:merge(Branding, Context), [{key_type, binary}]).
 headers() -> #{<<"content-type">> => <<"text/html; charset=utf-8">>,
     <<"cache-control">> => <<"no-store">>, <<"referrer-policy">> => <<"no-referrer">>,
     <<"x-content-type-options">> => <<"nosniff">>, <<"x-frame-options">> => <<"DENY">>,
-    <<"content-security-policy">> => <<"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' wss:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'">>}.
+    <<"content-security-policy">> => content_security_policy()}.
+
+content_security_policy() ->
+    Origins = lists:usort(lists:append([image_origin(nosternity_config:get(K))
+        || K <- [node_logo_url, node_favicon_url]])),
+    iolist_to_binary([<<"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">>,
+        [[<<" ">>, Origin] || Origin <- Origins],
+        <<"; connect-src 'self' wss:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'">>]).
+
+%% Permit only the configured image origins, never arbitrary header text from
+%% a URL. Root-relative images already fall under 'self'. URI recomposition
+%% also brackets IPv6 hosts correctly and excludes query/path/fragment data.
+image_origin(<<>>) -> [];
+image_origin(<<"/", _/binary>>) -> [];
+image_origin(URL) ->
+    URI = uri_string:parse(URL),
+    Host = maps:get(host, URI),
+    case re:run(Host, <<"^[A-Za-z0-9.:-]+$">>, [{capture, none}]) of
+        match -> [uri_string:recompose((maps:with([scheme, host, port], URI))#{path => <<>>})];
+        nomatch -> []
+    end.

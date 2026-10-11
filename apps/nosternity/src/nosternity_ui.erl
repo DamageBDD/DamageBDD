@@ -103,7 +103,7 @@ init(Opts) ->
     Win = gs:create(window, GS, [
         {width, 920},
         {height, 680},
-        {title, maps:get(title, Opts, "Nosternity")},
+        {title, maps:get(title, Opts, default_title())},
         {map, true},
         {destroy, true},
         {configure, true}
@@ -193,7 +193,7 @@ init(Opts) ->
         relays = Relays,
         privkey = PrivKey,
         pubkey = PubKey,
-        title = maps:get(title, Opts, "Nosternity")
+        title = maps:get(title, Opts, default_title())
     },
 
     self() ! do_initial_refresh,
@@ -395,6 +395,9 @@ dedupe_posts([P = #post{id = Id} | Rest], Seen) ->
 %%%-------------------------------------------------------------------
 %%% Config + utility
 %%%-------------------------------------------------------------------
+
+default_title() ->
+    unicode:characters_to_list(nosternity_config:get(node_title)).
 
 default_relays() ->
     case application:get_env(nosternity, relays) of

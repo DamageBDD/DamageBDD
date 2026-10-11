@@ -2,6 +2,11 @@ import { escapeHTML as esc, validPubkey } from './core.js';
 import { Wallet, connectBunker, verifyEvent, deadline } from './connections.js';
 import { npubEncode, decode } from 'nostr-tools/nip19';
 const $ = s => document.querySelector(s);
+// Server-rendered attributes are escaped by Mustache; use textContent or esc()
+// when displaying these operator values after client-side navigation.
+const brand = {name:document.body.dataset.nodeName || 'Nosternity',
+ title:document.body.dataset.nodeTitle || document.title,
+ description:document.body.dataset.nodeDescription || ''};
 const state = { page:'explore', scope:'global', query:'', kind:'all', session:null, damage:null,
   signer:null, signerType:'', wallet:null, balance:null, events:[], account:null, epoch:0 };
 let dialogEpoch=0, pollTimer, toastTimer, pendingProof=null, authBusy=false;
@@ -11,7 +16,7 @@ const labels={explore:'Explore',account:'My feed',saved:'Saved notes',analytics:
 const messages={account_not_found:'No account exists for this identity yet. Choose Create account and prove your identity again.',
  invalid_proof:'The signature could not be verified. Start a new sign-in.',invalid_challenge:'This challenge expired or was already used. Start again.',
  nostr_login_required:'Sign in with Nostr to use this action.',damage_login_required:'Sign in to a managed DamageBDD account for this action.',
- origin_rejected:'Open the configured Nosternity origin. Ask your operator to check browser_auth_origin.',
+ origin_rejected:'Open the configured node origin. Ask your operator to check browser_auth_origin.',
  auth_unavailable:'Authentication is unavailable. Check the server configuration or try again.',
  unauthorized:'Your session has expired. Sign in again.',rate_limited:'Too many requests. Wait a minute and retry.',signup_unavailable:'New accounts are currently unavailable.'};
 async function api(path,body,extra={}) {
@@ -46,11 +51,12 @@ function chrome(){const s=state.session;$('.headeractions button').innerHTML=s?'
 async function fragment(name){const r=await fetch('/dashboard/fragments/'+name,{credentials:'same-origin'});if(!r.ok)throw Error('Dashboard fragment is unavailable. Deploy templates and assets together.');return r.text();}
 async function navigate(page){if(!labels[page])return;const epoch=++state.epoch;state.page=page;location.hash=page;
  $('#crumb').textContent=labels[page];document.querySelectorAll('nav button').forEach(b=>b.classList.toggle('active',b.dataset.page===page));
- const titles={explore:['A little more discovery.<br>A lot more <em>you.</em>','Find your people and follow your curiosity on the open social web.'],
- account:['Your voice.<br>Your <em>community.</em>','Your public notes and the people you choose to follow.'],saved:['Good ideas.<br>Worth <em>keeping.</em>','Bookmarks saved to your Nosternity account.'],
+ const titles={explore:['',brand.description],
+ account:['Your voice.<br>Your <em>community.</em>','Your public notes and the people you choose to follow.'],saved:['Good ideas.<br>Worth <em>keeping.</em>','Bookmarks saved to your '+brand.name+' account.'],
  analytics:['A clearer view.<br>Of your <em>network.</em>','Real index counts and dashboard activity since this node started.'],wallet:['Small payments.<br>Real <em>possibilities.</em>','A wallet connection is separate from your login.'],
  signer:['Your keys.<br>Your <em>say.</em>','Sign with your browser extension or remote nsecBunker.'],settings:['Your connections.<br>Your <em>choice.</em>','Your accounts and permissions, clearly separated.']};
- $('#title').innerHTML=titles[page][0];$('#subtitle').textContent=titles[page][1];
+ if(page==='explore')$('#title').textContent=brand.title;else $('#title').innerHTML=titles[page][0];
+ $('#subtitle').textContent=titles[page][1];
  if(['explore','account','saved'].includes(page)){state.scope=page==='account'?'account':page==='saved'?'saved':state.scope==='saved'?'global':state.scope;
   const html=await fragment('feed');if(epoch!==state.epoch)return;$('#content').innerHTML=html;$('#search').value=state.query;$('#kind').value=state.kind;await loadFeed(epoch);}
  else if(page==='settings'){settings();}
@@ -79,7 +85,7 @@ async function metrics(epoch){const m=await api('/api/nosternity/analytics');if(
 }
 function walletView(){if(!$('#walletStatus'))return;$('#walletStatus').textContent=state.wallet?'NWC connected':'Not connected';$('#walletBalance').textContent=state.balance===null?'—':state.balance.toLocaleString();$('#damageStatus').textContent=state.damage?'Signed in as '+short(state.damage.address)+' ('+state.damage.mode+').':'No DamageBDD session connected.';}
 function signerView(){if($('#identity'))$('#identity').textContent=state.session?.provider==='nostr'?npubEncode(state.session.subject)+(state.signer?' · '+state.signerType:' · reconnect your signer to publish'):'No Nostr session. Connect your signer to sign in or create an account.';}
-function settings(){const s=state.session;$('#content').innerHTML='<div class="split"><div class="card"><h2>Your Nosternity account</h2><p>'+esc(s?s.provider+' · '+short(s.subject):'Exploring as a guest')+'</p><p>One proved identity per account. Signing in with another provider switches accounts; no identity is silently linked.</p><button class="dark" data-action="login">Sign in / create account</button><button data-action="filters">Feed preferences</button><button data-action="signout">Sign out</button></div><div class="card"><h2>Connected services</h2><p>This dashboard uses the Nosternity listener at '+esc(location.origin)+'. DamageBDD authentication and NWC routes are mounted on this origin.</p><button data-action="damageLogin">Connect DamageBDD</button><button data-action="nwc">Connect Lightning wallet</button><p>No private keys, bearer tokens, or wallet connection secrets are stored in localStorage.</p></div></div>';}
+function settings(){const s=state.session;$('#content').innerHTML='<div class="split"><div class="card"><h2>Your '+esc(brand.name)+' account</h2><p>'+esc(s?s.provider+' · '+short(s.subject):'Exploring as a guest')+'</p><p>One proved identity per account. Signing in with another provider switches accounts; no identity is silently linked.</p><button class="dark" data-action="login">Sign in / create account</button><button data-action="filters">Feed preferences</button><button data-action="signout">Sign out</button></div><div class="card"><h2>Connected services</h2><p>This dashboard uses the node listener at '+esc(location.origin)+'. DamageBDD authentication and NWC routes are mounted on this origin.</p><button data-action="damageLogin">Connect DamageBDD</button><button data-action="nwc">Connect Lightning wallet</button><p>No private keys, bearer tokens, or wallet connection secrets are stored in localStorage.</p></div></div>';}
 function authDialog(){modal($('#authTemplate').innerHTML);}
 async function prepareNostr(provider,type,wantedIntent){
  const startingEpoch=dialogEpoch;const expected=await deadline(provider.getPublicKey());if(startingEpoch!==dialogEpoch){await provider.close?.();return;}if(!validPubkey(expected))throw Error('Signer returned an invalid public key.');

@@ -6740,6 +6740,11 @@ function encodeBytes(prefix, bytes) {
 
 // src/dashboard.js
 var $ = (s) => document.querySelector(s);
+var brand = {
+  name: document.body.dataset.nodeName || "Nosternity",
+  title: document.body.dataset.nodeTitle || document.title,
+  description: document.body.dataset.nodeDescription || ""
+};
 var state = {
   page: "explore",
   scope: "global",
@@ -6776,7 +6781,7 @@ var messages = {
   invalid_challenge: "This challenge expired or was already used. Start again.",
   nostr_login_required: "Sign in with Nostr to use this action.",
   damage_login_required: "Sign in to a managed DamageBDD account for this action.",
-  origin_rejected: "Open the configured Nosternity origin. Ask your operator to check browser_auth_origin.",
+  origin_rejected: "Open the configured node origin. Ask your operator to check browser_auth_origin.",
   auth_unavailable: "Authentication is unavailable. Check the server configuration or try again.",
   unauthorized: "Your session has expired. Sign in again.",
   rate_limited: "Too many requests. Wait a minute and retry.",
@@ -6885,15 +6890,16 @@ async function navigate(page) {
   $("#crumb").textContent = labels[page];
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.page === page));
   const titles = {
-    explore: ["A little more discovery.<br>A lot more <em>you.</em>", "Find your people and follow your curiosity on the open social web."],
+    explore: ["", brand.description],
     account: ["Your voice.<br>Your <em>community.</em>", "Your public notes and the people you choose to follow."],
-    saved: ["Good ideas.<br>Worth <em>keeping.</em>", "Bookmarks saved to your Nosternity account."],
+    saved: ["Good ideas.<br>Worth <em>keeping.</em>", "Bookmarks saved to your " + brand.name + " account."],
     analytics: ["A clearer view.<br>Of your <em>network.</em>", "Real index counts and dashboard activity since this node started."],
     wallet: ["Small payments.<br>Real <em>possibilities.</em>", "A wallet connection is separate from your login."],
     signer: ["Your keys.<br>Your <em>say.</em>", "Sign with your browser extension or remote nsecBunker."],
     settings: ["Your connections.<br>Your <em>choice.</em>", "Your accounts and permissions, clearly separated."]
   };
-  $("#title").innerHTML = titles[page][0];
+  if (page === "explore") $("#title").textContent = brand.title;
+  else $("#title").innerHTML = titles[page][0];
   $("#subtitle").textContent = titles[page][1];
   if (["explore", "account", "saved"].includes(page)) {
     state.scope = page === "account" ? "account" : page === "saved" ? "saved" : state.scope === "saved" ? "global" : state.scope;
@@ -6967,7 +6973,7 @@ function signerView() {
 }
 function settings() {
   const s = state.session;
-  $("#content").innerHTML = '<div class="split"><div class="card"><h2>Your Nosternity account</h2><p>' + escapeHTML(s ? s.provider + " \xB7 " + short(s.subject) : "Exploring as a guest") + '</p><p>One proved identity per account. Signing in with another provider switches accounts; no identity is silently linked.</p><button class="dark" data-action="login">Sign in / create account</button><button data-action="filters">Feed preferences</button><button data-action="signout">Sign out</button></div><div class="card"><h2>Connected services</h2><p>This dashboard uses the Nosternity listener at ' + escapeHTML(location.origin) + '. DamageBDD authentication and NWC routes are mounted on this origin.</p><button data-action="damageLogin">Connect DamageBDD</button><button data-action="nwc">Connect Lightning wallet</button><p>No private keys, bearer tokens, or wallet connection secrets are stored in localStorage.</p></div></div>';
+  $("#content").innerHTML = '<div class="split"><div class="card"><h2>Your ' + escapeHTML(brand.name) + " account</h2><p>" + escapeHTML(s ? s.provider + " \xB7 " + short(s.subject) : "Exploring as a guest") + '</p><p>One proved identity per account. Signing in with another provider switches accounts; no identity is silently linked.</p><button class="dark" data-action="login">Sign in / create account</button><button data-action="filters">Feed preferences</button><button data-action="signout">Sign out</button></div><div class="card"><h2>Connected services</h2><p>This dashboard uses the node listener at ' + escapeHTML(location.origin) + '. DamageBDD authentication and NWC routes are mounted on this origin.</p><button data-action="damageLogin">Connect DamageBDD</button><button data-action="nwc">Connect Lightning wallet</button><p>No private keys, bearer tokens, or wallet connection secrets are stored in localStorage.</p></div></div>';
 }
 function authDialog() {
   modal($("#authTemplate").innerHTML);

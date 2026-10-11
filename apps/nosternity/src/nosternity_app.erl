@@ -28,10 +28,11 @@ get_trails() ->
 
 %% Trusted router tags select each listener's auth origin.
 routes() ->
-    Base = [{"/nostr", nosternity_websocket, #{}}] ++
+    Base = [{"/nostr", nosternity_websocket, #{}},
+        {"/branding/[...]", cowboy_static, {priv_dir, nosternity, "branding"}}] ++
         trails:trails([nosternity_http, nosternity_search_http]),
     case nosternity_config:get(dashboard_enabled) of
-        false -> Base;
+        false -> [{"/", nosternity_http, #{action => home_ui}} | Base];
         true -> nosternity_dashboard:routes() ++ Base ++
             nosternity_auth_http:trails() ++ nosternity_dashboard_api:trails() ++
             nosternity_damage_http:trails() ++ damage_browser_auth_http:trails(nosternity)

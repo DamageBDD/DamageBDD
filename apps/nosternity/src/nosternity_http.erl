@@ -85,18 +85,20 @@ trails() ->
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
+content_types_provided(Req, #{action := Action} = State)
+    when Action =:= home_ui; Action =:= note_ui ->
+    {[{{<<"text">>, <<"html">>, '*'}, to_html}], Req, State};
 content_types_provided(Req, State) ->
     {
         [
-            {{<<"application">>, <<"json">>, []}, to_json},
-            {{<<"text">>, <<"html">>, '*'}, to_html}
+            {{<<"application">>, <<"json">>, []}, to_json}
         ],
         Req,
         State
     }.
 
 allowed_methods(Req, State) ->
-    {[<<"GET">>], Req, State}.
+    {[<<"GET">>, <<"HEAD">>], Req, State}.
 
 %%--------------------------------------------------------------------
 %% JSON endpoint
@@ -144,37 +146,16 @@ to_json(Req, State) ->
 %% HTML UI endpoint (minimal JS)
 %%--------------------------------------------------------------------
 
-%% damage_nostr_http.erl (replace to_html/2 for note_ui)
+to_html(Req0, #{action := home_ui} = State) ->
+    Html = nosternity_page:render("home.mustache", <<>>, #{}),
+    {Html, cowboy_req:set_resp_header(<<"cache-control">>, <<"no-store">>, Req0), State};
 to_html(Req0, #{action := note_ui} = State) ->
     Qs = cowboy_req:parse_qs(Req0),
-    Id0 = qs_get_bin(<<"id">>, Qs, <<>>),
-    Id = html_escape(Id0),
-
-    %% Render inner page (nostr_note.mustache)
-    BodyInner =
-        damage_utils:load_template(
-            damage,
-            "nostr_note.mustache",
-            #{
-                event_id => Id,
-                limit => ?DEFAULT_LIMIT
-            }
-        ),
-
-    %% Wrap with shell (page_shell.mustache)
-    Html =
-        damage_utils:load_template(
-            damage,
-            "page_shell.mustache",
-            #{
-                title => <<"Nostr Note">>,
-                body => BodyInner,
-                head_extra => <<>>,
-                tail_extra => <<>>
-            }
-        ),
-
-    {Html, Req0, State}.
+    %% Mustache escapes once at the HTML boundary, including the query value.
+    Id = qs_get_bin(<<"id">>, Qs, <<>>),
+    Html = nosternity_page:render("note.mustache", <<"Nostr Note">>,
+        #{event_id => Id, limit => ?DEFAULT_LIMIT}),
+    {Html, cowboy_req:set_resp_header(<<"cache-control">>, <<"no-store">>, Req0), State}.
 
 %%--------------------------------------------------------------------
 %% Core logic
@@ -283,13 +264,3 @@ qs_get_int(Key, Qs, Default) ->
         false ->
             Default
     end.
-
-html_escape(<<>>) ->
-    <<>>;
-html_escape(Bin0) ->
-    Bin = to_bin(Bin0),
-    %% minimal escaping for value=""
-    Bin1 = binary:replace(Bin, <<"&">>, <<"&amp;">>, [global]),
-    Bin2 = binary:replace(Bin1, <<"<">>, <<"&lt;">>, [global]),
-    Bin3 = binary:replace(Bin2, <<">">>, <<"&gt;">>, [global]),
-    binary:replace(Bin3, <<"\"">>, <<"&quot;">>, [global]).

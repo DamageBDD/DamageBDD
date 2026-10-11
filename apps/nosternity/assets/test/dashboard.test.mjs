@@ -15,9 +15,11 @@ const pub=getPublicKey(secret), origin='https://nostr.example';
 const preferences={spam:true,duplicates:true,muted:[],words:[],bookmarks:[]};
 const note=finalizeEvent({kind:1,content:'<img src=x onerror=alert(1)> A signed note',created_at:Math.floor(Date.now()/1000),tags:[]},secret);
 async function until(fn){for(let i=0;i<100;i++){if(fn())return;await new Promise(r=>setTimeout(r,5));}assert.fail('UI condition timed out');}
-async function fixture(){
+async function fixture(branding={}){
  const dom=new JSDOM(html,{url:origin+'/dashboard',runScripts:'outside-only',pretendToBeVisual:true});
  const w=dom.window, calls=[];let session=null, saved={...preferences}, signatures=0;
+ Object.assign(w.document.body.dataset,{nodeName:'Nosternity',nodeTitle:'Nosternity Search',nodeDescription:'The open network',...branding});
+ w.document.title=w.document.body.dataset.nodeTitle;
  w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;};
  Object.defineProperty(w,'crypto',{value:webcrypto});w.TextEncoder=TextEncoder;w.TextDecoder=TextDecoder;w.AbortSignal=AbortSignal;
  w.nostr={getPublicKey:async()=>pub,signEvent:async event=>{signatures++;return w.JSON.parse(JSON.stringify(finalizeEvent(JSON.parse(JSON.stringify(event)),secret)));}};
@@ -90,5 +92,24 @@ test('DamageBDD signup and recovery require email without a hidden password',asy
   f.click('#modal [data-action="damageLogin"]');f.q('#damageMode').value='recovery';f.q('#damageMode').dispatchEvent(new f.w.Event('change',{bubbles:true}));
   f.q('#email').value='person@example.test';f.submit('#damageForm');await until(()=>f.q('#modalBody').textContent.includes('Recovery email sent'));
   assert.ok(f.calls.some(c=>c.path==='/accounts/recovery'));
+ }finally{f.dom.window.close();}
+});
+
+
+test('configured branding survives navigation without becoming markup',async()=>{
+ const branding={nodeName:'Sydney <img src=x onerror=alert(1)>',nodeTitle:'Search <script>alert(1)</script>',nodeDescription:'Local <b>conversations</b> & discovery'};
+ const f=await fixture(branding);try{
+  assert.equal(f.q('#title').textContent,branding.nodeTitle);
+  assert.equal(f.q('#title script'),null);
+  assert.equal(f.q('#subtitle').textContent,branding.nodeDescription);
+  assert.equal(f.w.document.title,branding.nodeTitle);
+  f.click('nav [data-page="saved"]');await until(()=>f.q('#subtitle').textContent.includes(branding.nodeName));
+  assert.equal(f.q('#subtitle img'),null);
+  f.click('nav [data-page="settings"]');await until(()=>f.q('[data-action="signout"]'));
+  assert.equal(f.q('#content h2').textContent,'Your '+branding.nodeName+' account');
+  assert.equal(f.q('#content h2 img'),null);
+  f.click('nav [data-page="explore"]');await until(()=>f.q('#posts'));
+  assert.equal(f.q('#title').textContent,branding.nodeTitle);
+  assert.equal(f.q('#subtitle').textContent,branding.nodeDescription);
  }finally{f.dom.window.close();}
 });
