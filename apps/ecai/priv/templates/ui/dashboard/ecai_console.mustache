@@ -8,6 +8,7 @@
   <meta name="theme-color" content="#101b32">
   <title>ECAI · Control plane</title>
   <link rel="stylesheet" href="/static/css/ecai-console.css">
+  <link rel="stylesheet" href="/static/css/ecai-video.css">
   <link rel="stylesheet" href="/ecai/auth-assets/css/auth.css">
   <link rel="stylesheet" href="/static/css/ecai-auth.css">
   <link rel="stylesheet" href="/static/css/ecai-index-pool.css">
@@ -25,6 +26,7 @@
         <button type="button" data-view="overview" class="nav-link is-active" aria-current="page"><span class="nav-icon" aria-hidden="true">◫</span>Overview</button>
         <button type="button" data-view="search" class="nav-link"><span class="nav-icon" aria-hidden="true">⌕</span>Knowledge search</button>
         <button type="button" data-view="chat" class="nav-link"><span class="nav-icon" aria-hidden="true">▤</span>Conversation</button>
+        <button type="button" data-view="video" class="nav-link"><span class="nav-icon" aria-hidden="true">▸</span>Video Studio</button>
         <button type="button" data-view="indexing" class="nav-link"><span class="nav-icon" aria-hidden="true">▦</span>Index jobs</button>
         <button type="button" data-view="network" class="nav-link" id="indexPoolNav" hidden><span class="nav-icon" aria-hidden="true">ϟ</span>Funded indexing</button>
         <button type="button" data-view="wikimedia" class="nav-link"><span class="nav-icon" aria-hidden="true">◎</span>Wikimedia</button>
@@ -79,6 +81,7 @@
             </div>
             <div class="orbit-art" aria-hidden="true"><div class="orbit orbit-1"></div><div class="orbit orbit-2"></div><div class="orbit orbit-3"></div><div class="orbit-core"></div><i class="orbit-node n1"></i><i class="orbit-node n2"></i><i class="orbit-node n3"></i></div>
           </div>
+          <div class="video-overview-cta"><div><strong>Video Studio</strong><span>Bring your own model, reuse assets and verify every revision.</span></div><button type="button" class="button button-outline button-sm" data-go="video">Open Video Studio ↗</button></div>
           <div class="metric-grid" aria-label="Node statistics">
             <article class="metric-card"><div class="metric-label">Indexed documents <span aria-hidden="true">↗</span></div><div id="metricDocs" class="metric-value">—</div><div class="metric-foot">Yelp / search index</div></article>
             <article class="metric-card"><div class="metric-label">Running jobs <span aria-hidden="true">◉</span></div><div id="metricRunning" class="metric-value">—</div><div class="metric-foot">Durable indexing queue</div></article>
@@ -97,6 +100,8 @@
             </section>
           </div>
         </section>
+
+        {{{video_studio}}}
 
         <section class="view" data-panel="search" aria-labelledby="searchTitle" hidden>
           <div class="page-intro"><div class="eyebrow">RETRIEVAL</div><h1 id="searchTitle">Knowledge search</h1><p>Search indexed records and inspect returned verification material.</p></div>
@@ -329,6 +334,6 @@
   {{{browser_auth_modal}}}
   <script src="/ecai/auth-assets/js/micromodal.min.js"></script>
   <script type="module" src="/static/js/ecai-index-pool.js"></script>
-  <script type="module" src="/static/js/ecai-console.js?v=browser-auth-v1"></script>
+  <script type="module" src="/static/js/ecai-console.js?v=video-studio-v1"></script>
 </body>
 </html>

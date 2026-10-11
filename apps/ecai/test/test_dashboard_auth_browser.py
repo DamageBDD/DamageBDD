@@ -34,8 +34,10 @@ def render(text, ctx):
     return re.sub(r'{{\s*(\w+)\s*}}', lambda m: html.escape(str(ctx.get(m[1], ''))), text)
 
 def console_html():
-    ctx = dict(node_version='auth fixture', logo_image='/ecai/auth-assets/img/logo.png',
-               auth_auto_open='false', auth_callback_path='/dashboard', auth_allow_guest=True,
+    ctx = dict(node_version='auth fixture', logo_image='/static/img/ecai-brain.svg',
+               auth_brand_name='ECAI', auth_brand_label='INTELLIGENCE FABRIC',
+               auth_brand_alt='ECAI brain mark', auth_auto_open='false',
+               auth_callback_path='/dashboard', auth_allow_guest=True,
                auth_hide_node_wallet=True)
     ctx['browser_auth_modal'] = render((DAMAGE/'priv/templates/ui/dashboard/auth_modal.mustache').read_text(), ctx)
     return render((APP/'priv/templates/ui/dashboard/ecai_console.mustache').read_text(), ctx)

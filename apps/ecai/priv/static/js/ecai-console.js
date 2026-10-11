@@ -2,6 +2,7 @@
 // Wallet transport remains a lazy import inside auth-wallet-loader.js.
 import {TokenManager, logoutActiveSession} from "/ecai/auth-assets/js/wallet-switcher.js";
 import {initAuthUI} from "/ecai/auth-assets/js/auth-ui.js?v=ecai-browser-v1";
+import {initVideoStudio} from "/static/js/ecai-video.js?v=video-studio-v1";
 
 /* ECAI Control Plane. Uses only routes exported by the current ECAI Cowboy handlers. */
 (() => {
@@ -75,6 +76,15 @@ import {initAuthUI} from "/ecai/auth-assets/js/auth-ui.js?v=ecai-browser-v1";
     { group: "Funded indexing", method: "POST", path: "/ecai/admin/index-pool/jobs/:id/refund-pay", description: "Pay an explicitly confirmed refund invoice.", params: ["id"], body: {} },
     { group: "Funded indexing", method: "POST", path: "/ecai/admin/index-pool/jobs/:id/search", description: "Search the verified logical merge.", params: ["id"], body: {} },
     { group: "Funded indexing", method: "GET", path: "/ecai/admin/index-pool/jobs/:id/contract", description: "Export contract, participant consent and current accounting.", params: ["id"] },
+    { group: "Video Studio", method: "GET", path: "/ecai/video/status", description: "Video bridge configuration state (never returns secrets)." },
+    { group: "Video Studio", method: "GET", path: "/ecai/video/projects", description: "List projects belonging to the authenticated managed account." },
+    { group: "Video Studio", method: "POST", path: "/ecai/video/projects", description: "Create a video workspace.", body: {title: "Campaign", license: "all-rights-reserved", tags: ["demo"]} },
+    { group: "Video Studio", method: "GET", path: "/ecai/video/backends", description: "Video generation providers configured for this account." },
+    { group: "Video Studio", method: "GET", path: "/ecai/video/projects/:project/versions", params: ["project"], description: "Version history for a video project." },
+    { group: "Video Studio", method: "POST", path: "/ecai/video/projects/:project/generations", params: ["project"], description: "Queue a billable provider generation or a free synthetic demo.", body: {backend_id: "demo", prompt: "Cinematic presentation", parameters: {}}, confirm: "Submit video generation to the configured provider? Non-demo models can incur charges." },
+    { group: "Video Studio", method: "GET", path: "/ecai/video/projects/:project/jobs", params: ["project"], description: "List durable video generation jobs." },
+    { group: "Video Studio", method: "GET", path: "/ecai/video/versions/:id/verify", params: ["id"], description: "Verify video bytes, signature and derivation lineage." },
+    { group: "Video Studio", method: "POST", path: "/ecai/video/projects/:project/versions", params: ["project"], description: "Create a local revision without calling the model again.", body: {parent_version_id: "<32-lowercase-hex-id>", operation: "metadata", options: {note: "New locale"}} },
     { group: "Realtime", method: "WS", path: "/ecai/ws/", description: "WebSocket: ping and get_price. Connect from Operations to inspect events." }
   ];
 
@@ -85,7 +95,8 @@ import {initAuthUI} from "/ecai/auth-assets/js/auth-ui.js?v=ecai-browser-v1";
     ask: { question: "What is known about this topic?", destination: "local" }
   };
   const marketExamples = { claim: { miner_ak: "ak_..." }, submit: { miner_ak: "ak_...", attestation: "attestation", evidence_ref: "" }, pay: { admin_ak: "ak_..." } };
-  const VIEW_NAMES = { overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing" };
+  const VIEW_NAMES = { overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing" };
+  let videoStudio = null;
   const state = {
     authenticated: false, sessionMode: "anonymous", authEpoch: 0, email: "", view: "overview", jobs: [], presets: [], marketJobs: [],
     nodeAdmin: false, codeAdmin: false, codeFeatureConfigured: false, adminProbeSequence: 0, codeQueue: {}, codeRepairs: [], codeReviews: [], codeReview: null, codeReviewOpenId: "", codeReviewLoadSerial: 0, codeDiffFiles: [], codeDiffSelectedFile: "0",
@@ -419,14 +430,19 @@ import {initAuthUI} from "/ecai/auth-assets/js/auth-ui.js?v=ecai-browser-v1";
   function syncBrowserSession() {
     const session = TokenManager.session();
     const token = TokenManager.getToken();
-    if (token !== observedToken) {
+    const tokenChanged = token !== observedToken;
+    if (tokenChanged) {
       state.authEpoch++;
+      videoStudio?.reset();
       if (state.authenticated) setAuthenticated(false);
       observedToken = token;
     }
     state.sessionMode = session?.mode || "anonymous";
     state.email = session?.email || session?.address || "";
     setAuthenticated(Boolean(session), state.email);
+    videoStudio?.accountChanged();
+    if (tokenChanged && state.view === "video" && state.authenticated)
+      void task(() => videoStudio?.refresh());
   }
   function headers(extra = {}) {
     const h = { Accept: "application/json", ...extra };
@@ -576,6 +592,7 @@ import {initAuthUI} from "/ecai/auth-assets/js/auth-ui.js?v=ecai-browser-v1";
     if (location.hash !== `#${view}`) history.replaceState(null, "", `#${view}`);
     closeNav();
     window.EcaiIndexPool?.setVisible(view === "network");
+    videoStudio?.setVisible(view === "video");
     if (previous === "indexing" && view !== "indexing") stopStream();
     if (view !== "overview") refreshView().catch((error) => toast(showError(error), true));
   }
@@ -2487,6 +2504,7 @@ import {initAuthUI} from "/ecai/auth-assets/js/auth-ui.js?v=ecai-browser-v1";
       case "network": await window.EcaiIndexPool?.refresh(); break;
       case "code": await refreshCode(); break;
       case "marketplace": await refreshMarket(); break;
+      case "video": await videoStudio?.refresh(); break;
       case "operations": await yelpGet("/yelp/status", "yelpStatusOutput"); break;
       case "api": renderRoutes(); break;
       default: break; // Search and private operations only execute on user request.
@@ -2603,7 +2621,7 @@ import {initAuthUI} from "/ecai/auth-assets/js/auth-ui.js?v=ecai-browser-v1";
     $("apiCopyResponse").addEventListener("click", copyResponse);
     window.addEventListener("hashchange", () => navigate(location.hash.slice(1)));
     window.addEventListener("beforeunload", () => {
-      stopStream(); disconnectSocket(); clearInterval(state.poller);
+      stopStream(); disconnectSocket(); videoStudio?.dispose(); clearInterval(state.poller);
       clearInterval(state.telemetryPoller); clearInterval(state.clockTicker);
     });
     document.addEventListener("visibilitychange", () => {
@@ -2614,6 +2632,7 @@ import {initAuthUI} from "/ecai/auth-assets/js/auth-ui.js?v=ecai-browser-v1";
   function init() {
     if (!$("ecaiConsole")) return;
     window.EcaiIndexPool?.init({request, toast, openLogin, currentToken});
+    videoStudio = initVideoStudio({request, currentToken, managedSession, openLogin, toast});
     initAuthUI();
     bindEvents(); resetChat(); fillPrivateExample(); updateMarketActionExample();
     $("indexIdempotency").value = newKey("ecai-job");

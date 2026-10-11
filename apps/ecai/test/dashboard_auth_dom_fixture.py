@@ -41,7 +41,7 @@ window.confirm=()=>true;
         file=DAMAGE/'priv/static'/path.removeprefix('/ecai/auth-assets/') if path.startswith('/ecai/auth-assets/') else APP/'priv/static'/path.removeprefix('/static/')
         return '<style>'+file.read_text()+'</style>'
     markup=re.sub(r'<link[^>]+href="([^"]+)"[^>]*>',stylesheet,markup)
-    markup=markup.replace('src="/ecai/auth-assets/img/logo.png"','src="data:image/png;base64,'+base64.b64encode((DAMAGE/'priv/static/img/logo.png').read_bytes()).decode()+'"')
+    markup=markup.replace('src="/static/img/ecai-brain.svg"','src="data:image/svg+xml;base64,'+base64.b64encode((APP/'priv/static/img/ecai-brain.svg').read_bytes()).decode()+'"')
     model=data(env((DAMAGE/'priv/static/js/auth-model.js').read_text()))
     walletcode='export const legacy=true;' if wallet_missing else (DAMAGE/'priv/static/js/wallet.js').read_text().replace('"./sidekick.js"',repr(data(wallet)))
     walleturl=data(env(walletcode))

@@ -1,0 +1,20 @@
+services:
+  fastpath:
+    build: .
+    restart: unless-stopped
+    env_file: [.env]
+    ports:
+      - "127.0.0.1:9011:9011"
+    volumes:
+      - fastpath_data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9011/health', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 4
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+volumes:
+  fastpath_data:

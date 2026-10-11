@@ -194,7 +194,9 @@ render_dashboard_page("ecai_console.mustache", Ctx) ->
                 auth_auto_open => <<"false">>, auth_callback_path => <<"/dashboard">>,
                 auth_allow_guest => true, auth_hide_node_wallet => true},
     AuthHtml = damage_utils:load_template(damage, "ui/dashboard/auth_modal.mustache", AuthCtx),
-    render_tpl(?DASH_TPL("ecai_console.mustache"), Ctx#{browser_auth_modal => AuthHtml});
+    VideoHtml = render_tpl(?DASH_TPL("ecai_video.mustache"), Ctx),
+    render_tpl(?DASH_TPL("ecai_console.mustache"),
+        Ctx#{browser_auth_modal => AuthHtml, video_studio => VideoHtml});
 render_dashboard_page(Template, Ctx) -> render_tpl(?DASH_TPL(Template), Ctx).
 
 %% ---------------------- Rendering helper ---------------------
