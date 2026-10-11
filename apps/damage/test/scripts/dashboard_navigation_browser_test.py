@@ -167,16 +167,57 @@ def run(out: Path, chromium: str) -> None:
 
         page2 = load(context, '/admin#node-cln-admin-tab')
         active(page2, 'node-cln-admin-tab')
-        assert page2.locator('[data-dashboard-panel]').count() == 11
-        passed('server-rendered administrator navigation exposes all three existing node panels')
+        assert page2.locator('[data-dashboard-panel]').count() == 12
+        assert page2.locator('#dashboard-navigation #dashboard-group-node').count() == 1
+        assert page2.locator('#dashboard-link-node-settings').get_attribute('href') == '/dashboard/node/settings'
+        assert page2.locator('#dashboard-link-node-context').count() == 1
+        passed('one admin navigation group includes transactions, channels, context, and node settings')
+
+        page2.evaluate("() => window.dashboardNavigation.navigate('settings-tab', {focus: false})")
+        active(page2, 'settings-tab')
+        assert page2.locator('#settings-tab .account-settings-card').count() >= 6
+        assert page2.locator('#settings-tab .pure-form, #settings-tab .pure-button').count() == 0
+        assert page2.locator('#settings-tab #node-context-settings').count() == 0
+        refresh_width = page2.locator('#account-settings-refresh').bounding_box()['width']
+        panel_width = page2.locator('#settings-tab').bounding_box()['width']
+        assert refresh_width < panel_width / 2
+        assert refresh_width < 180
+        assert page2.locator('#account-copy-address').bounding_box()['width'] < 160
+        assert page2.locator('#account-settings-refresh').evaluate('(e) => getComputedStyle(e).backgroundImage') == 'none'
+        # The first style read after changing panels may precede layout.
+        # Poll the actual computed grid until it has at least two columns.
+        page2.wait_for_function("""() => getComputedStyle(
+            document.querySelector('#settings-tab .account-settings-grid')
+        ).gridTemplateColumns.split(' ').filter(Boolean).length >= 2""")
+        page2.locator('#dashboard-link-node-context').click()
+        active(page2, 'node-context-tab')
+        assert page2.locator('#node-context-tab #node-context-settings').count() == 1
+        page2.locator('#dashboard-link-node-settings').focus()
+        page2.keyboard.press('ArrowDown')
+        assert page2.locator('#dashboard-link-node-context').evaluate('(e) => e === document.activeElement')
+        page2.locator('#dashboard-link-settings').focus()
+        page2.keyboard.press('Home')
+        assert page2.locator('#dashboard-link-execution').evaluate('(e) => e === document.activeElement')
+        passed('node context is a dedicated admin panel, not part of account settings')
+
+        ordinary_settings = load(context, '/#settings-tab')
+        active(ordinary_settings, 'settings-tab')
+        assert ordinary_settings.locator('#node-context-settings').count() == 0
+        assert ordinary_settings.locator('#dashboard-group-node').count() == 0
+        assert ordinary_settings.locator('#dashboard-link-node-settings').count() == 0
+        assert ordinary_settings.locator('#node-context-tab').count() == 0
+        assert ordinary_settings.locator('#account-identity-title').is_visible()
+        assert ordinary_settings.locator('#domain-settings-title').is_visible()
+        ordinary_settings.close()
+        passed('ordinary accounts retain identity, security and automation settings without node administration controls')
 
         for width in [320, 390, 768, 900, 901, 1024, 1440]:
             page2.set_viewport_size({'width': width, 'height': 950})
             for id_ in ['execution-tab', 'activity-tab', 'analytics-tab', 'schedules-tab', 'settings-tab',
-                        'swap-options-tab', 'ecai-jobs-tab', 'node-transactions-tab', 'node-channels-tab', 'node-cln-admin-tab']:
+                        'swap-options-tab', 'ecai-jobs-tab', 'node-context-tab', 'node-transactions-tab', 'node-channels-tab', 'node-cln-admin-tab']:
                 page2.evaluate('(id) => window.dashboardNavigation.navigate(id, {focus: false})', id_)
                 assert page2.evaluate('document.documentElement.scrollWidth <= innerWidth'), (width, id_)
-            passed(f'no document horizontal overflow across ten panels at {width}px')
+            passed(f'no document horizontal overflow across eleven panels at {width}px')
         page2.close()
 
         page.locator('#dashboard-link-execution').click()
@@ -253,6 +294,8 @@ def run(out: Path, chromium: str) -> None:
         assert main_source.count('initDamageBDDPicker({') == 1
         assert 'setDashboardVisible(false)' in main_source
         shell_source = (APP / 'priv/templates/ui/dashboard/page_shell.mustache').read_text()
+        assert shell_source.count('/static/css/account-settings.css') == 1
+        assert shell_source.index('/static/css/billing.css') < shell_source.index('/static/css/account-settings.css')
         noauth = render_template(shell_source, {'authenticated': False, 'node_admin': False})
         assert 'data-dashboard-shell' not in noauth
         assert 'id="content"' not in noauth
