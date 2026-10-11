@@ -1,0 +1,46 @@
+# Replace this moving tag with the exact OTP version used in production.
+# Ideally pin it to an image digest after confirming compatibility.
+ARG ERLANG_IMAGE=docker.io/library/erlang:27
+FROM ${ERLANG_IMAGE}
+
+ARG DEV_UID=1000
+ARG DEV_GID=1000
+
+USER root
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      bash \
+      ca-certificates \
+      curl \
+      git \
+      build-essential \
+      pkg-config \
+      libssl-dev \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --gid "${DEV_GID}" damage \
+ && useradd \
+      --uid "${DEV_UID}" \
+      --gid "${DEV_GID}" \
+      --create-home \
+      --shell /bin/bash \
+      damage \
+ && install -d -o damage -g damage \
+      /workspace \
+      /home/damage/.config/rebar3 \
+      /home/damage/.cache/rebar3 \
+      /home/damage/.cache/damagebdd-build
+
+USER damage
+WORKDIR /workspace
+
+ENV HOME=/home/damage \
+    USER=damage \
+    LOGNAME=damage \
+    XDG_CONFIG_HOME=/home/damage/.config \
+    XDG_CACHE_HOME=/home/damage/.cache \
+    REBAR_GLOBAL_CONFIG_DIR=/home/damage/.config/rebar3 \
+    REBAR_CACHE_DIR=/home/damage/.cache/rebar3 \
+    REBAR_BASE_DIR=/home/damage/.cache/damagebdd-build
+
+CMD ["/bin/bash"]

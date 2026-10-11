@@ -10,6 +10,10 @@ SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 ARG TARGETARCH
 ARG TARGETOS
 ARG BUILD_JOBS=2
+# Opt in only for a build environment where pacman's download sandbox cannot run.
+# This affects the provisioning command, not pacman.conf or signature verification.
+# Use --build-arg PACMAN_DISABLE_SANDBOX=1 for the failing QEMU/Landlock environment.
+ARG PACMAN_DISABLE_SANDBOX=0
 
 # Conservative defaults for a small ARM machine. These are not a RAM limit.
 ENV LANG=C.UTF-8 \
@@ -34,6 +38,22 @@ RUN <<'PACKAGES'
 [[ "$BUILD_JOBS" =~ ^[1-9][0-9]*$ && "$BUILD_JOBS" -le 128 ]] || {
     echo 'BUILD_JOBS must be an integer from 1 to 128' >&2; exit 1;
 }
+# Do not silently weaken download isolation on an ordinary/native build.
+# --disable-sandbox disables pacman's download sandbox, NOT package signatures.
+# Keep this flag local to the package transaction; never persist DisableSandbox.
+pacman_download_options=()
+case "$PACMAN_DISABLE_SANDBOX" in
+    0) ;;
+    1)
+        pacman_download_options=(--disable-sandbox)
+        echo '[damagebdd] WARNING: pacman download sandbox disabled for this image build; signature verification is unchanged' >&2
+        ;;
+    *)
+        echo 'PACMAN_DISABLE_SANDBOX must be 0 or 1' >&2
+        exit 1
+        ;;
+esac
+
 test -r /usr/share/pacman/keyrings/archlinuxarm.gpg
 pacman-key --init
 pacman-key --populate archlinuxarm
@@ -49,7 +69,7 @@ packages=(
 # Every attempt refreshes + upgrades + installs in the SAME transaction.
 # A failed last attempt is fatal; never continue with a partially provisioned image.
 for attempt in 1 2 3; do
-    if pacman -Syu --noconfirm --needed "${packages[@]}"; then
+    if pacman -Syu "${pacman_download_options[@]}" --noconfirm --needed "${packages[@]}"; then
         break
     fi
     if [[ "$attempt" == 3 ]]; then
