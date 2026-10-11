@@ -156,7 +156,8 @@ def run(out: Path, chromium: str) -> None:
         for asset in ['/static/css/billing.css', '/static/css/dashboard-workspace.css',
                       '/static/js/billing.js', '/static/js/bdd-composer.js']:
             assert shell.count(asset) == 1, asset
-        assert shell.index('/static/css/billing.css') < shell.index('/static/css/dashboard-workspace.css')
+        assert shell.index('/static/css/dashboard-workspace.css') < shell.index('/static/css/dashboard-shell.css')
+        assert shell.index('/static/css/dashboard-shell.css') < shell.index('/static/css/billing.css')
         assert 'id="billing-tab"' in shell and '{{{billing_tab}}}' in shell
         routes = (APP / 'src/damage_app.erl').read_text()
         supervisor = (APP / 'src/damage_sup.erl').read_text()

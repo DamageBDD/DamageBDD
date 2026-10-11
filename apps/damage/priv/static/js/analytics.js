@@ -41,8 +41,14 @@
     return Date.now();
   }
 
+  function cssColor(name, fallback) {
+    const value = getComputedStyle(document.body).getPropertyValue(name).trim();
+    return value || fallback;
+  }
+
   function drawLineChart(canvas, series, opts = {}) {
     // series: [{name, values:[{xLabel, y}], stroke}]
+    if (!canvas) return;
     const ctx = canvas.getContext("2d");
     const W = canvas.width, H = canvas.height;
     ctx.clearRect(0, 0, W, H);
@@ -57,7 +63,7 @@
     const yMin = 0;
 
     // Axes
-    ctx.strokeStyle = "rgba(0,0,0,0.15)";
+    ctx.strokeStyle = "rgba(167,182,201,0.35)";
     ctx.beginPath();
     ctx.moveTo(pad.l, pad.t);
     ctx.lineTo(pad.l, pad.t + plotH);
@@ -65,13 +71,13 @@
     ctx.stroke();
 
     // Y ticks
-    ctx.fillStyle = "rgba(0,0,0,0.6)";
+    ctx.fillStyle = cssColor("--ws-muted", "#a7b6c9");
     ctx.font = "12px system-ui, sans-serif";
     const ticks = 4;
     for (let i = 0; i <= ticks; i++) {
       const y = yMax * (i / ticks);
       const py = pad.t + plotH - (y / yMax) * plotH;
-      ctx.strokeStyle = "rgba(0,0,0,0.08)";
+      ctx.strokeStyle = "rgba(167,182,201,0.14)";
       ctx.beginPath();
       ctx.moveTo(pad.l, py);
       ctx.lineTo(pad.l + plotW, py);
@@ -84,13 +90,13 @@
     labels.forEach((lab, i) => {
       if (i % stride !== 0 && i !== labels.length - 1) return;
       const px = pad.l + (i / Math.max(1, labels.length - 1)) * plotW;
-      ctx.fillStyle = "rgba(0,0,0,0.5)";
+      ctx.fillStyle = cssColor("--ws-muted", "#a7b6c9");
       ctx.fillText(lab.slice(5), px - 12, pad.t + plotH + 18); // show MM-DD
     });
 
     // Series
     for (const s of series) {
-      ctx.strokeStyle = s.stroke || "#111";
+      ctx.strokeStyle = s.stroke || cssColor("--ws-text", "#eef3fa");
       ctx.lineWidth = 2;
       ctx.beginPath();
       s.values.forEach((v, i) => {
@@ -104,21 +110,23 @@
   }
 
   function setKpis({ topHeight, totalRuns, passRate, activeDays }) {
-    const kpis = document.querySelectorAll("#kpis .card");
-	  if(kpis.length>0){
-		  const cards = [
-			  { label: "Top height", value: topHeight ?? "—" },
-			  { label: "Total runs (sample)", value: totalRuns ?? "—" },
-			  { label: "Pass rate (sample)", value: passRate ?? "—" },
-			  { label: "Active days (30d)", value: activeDays ?? "—" },
-		  ];
-		  cards.forEach((c, i) => {
-			  kpis[i].innerHTML = `
-		<div class="kpiLabel">${c.label}</div>
-		<div class="kpiValue">${c.value}</div>
-	  `;
-		  });
-	  }
+    const kpis = document.querySelectorAll("#kpis .analytics-kpi");
+    const cards = [
+      { label: "Top height", value: topHeight ?? "—" },
+      { label: "Total runs (sample)", value: totalRuns ?? "—" },
+      { label: "Pass rate (sample)", value: passRate ?? "—" },
+      { label: "Active days (30d)", value: activeDays ?? "—" },
+    ];
+    cards.forEach((card, i) => {
+      if (!kpis[i]) return;
+      const label = document.createElement("div");
+      label.className = "kpiLabel";
+      label.textContent = card.label;
+      const value = document.createElement("div");
+      value.className = "kpiValue";
+      value.textContent = String(card.value);
+      kpis[i].replaceChildren(label, value);
+    });
   }
 
   async function main() {
@@ -185,35 +193,47 @@
 
     // Recent list (top 8 rows)
     const recentEl = document.getElementById("recent");
-	  if(recentEl){
-    recentEl.innerHTML = rows.slice(0, 8).map(r => {
-      const ts = new Date(pickTimestampMs(r)).toISOString().replace("T"," ").replace(".000Z","Z");
-      const short = JSON.stringify(r).slice(0, 140);
-      return `<div style="margin-bottom:10px;">
-        <div style="color:#666; font-size:12px;">${ts}</div>
-        <div style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px;">${short}${short.length>=140?"…":""}</div>
-      </div>`;
-    }).join("");
+    if (recentEl) {
+      const items = rows.slice(0, 8).map((r) => {
+        const item = document.createElement("div");
+        item.className = "analytics-recent-item";
+        const time = document.createElement("div");
+        time.className = "analytics-recent-time";
+        time.textContent = new Date(pickTimestampMs(r)).toISOString().replace("T", " ").replace(".000Z", "Z");
+        const value = document.createElement("div");
+        value.className = "analytics-recent-value";
+        const json = JSON.stringify(r);
+        value.textContent = `${json.slice(0, 140)}${json.length > 140 ? "…" : ""}`;
+        item.append(time, value);
+        return item;
+      });
+      recentEl.replaceChildren(...items);
+    }
 
-    // Chart
     const canvas = document.getElementById("runsChart");
     drawLineChart(canvas, [
-      { name: "runs", values: seriesRuns, stroke: "#111" },
-      { name: "pass", values: seriesPass, stroke: "#2a7" },
-      { name: "fail", values: seriesFail, stroke: "#c44" },
+      { name: "runs", values: seriesRuns, stroke: cssColor("--ws-text", "#eef3fa") },
+      { name: "pass", values: seriesPass, stroke: "#b0e274" },
+      { name: "fail", values: seriesFail, stroke: "#ff8f8f" },
     ]);
 
-    document.getElementById("legend").textContent = "lines: runs (black), pass (green), fail (red)";
-    document.getElementById("lastUpdated").textContent = `updated ${new Date().toISOString().slice(0,19).replace("T"," ")}Z`;
+    const legend = document.getElementById("legend");
+    if (legend) legend.textContent = "Runs · pass · fail";
+    const updated = document.getElementById("lastUpdated");
+    if (updated) updated.textContent = `Updated ${new Date().toISOString().slice(0,19).replace("T"," ")}Z`;
   }
-	  }
 
   // Run
   main().catch(err => {
     console.error(err);
     const kpis = document.getElementById("kpis");
-	  if(kpis)
-    kpis.innerHTML = `<div class="card" style="grid-column:1/-1; border-color:#f4c;">
-      <strong>Analytics fetch failed</strong><div style="color:#666; margin-top:6px;">${err.message}</div>
-    </div>`;
+    if (!kpis) return;
+    const error = document.createElement("div");
+    error.className = "analytics-error";
+    const title = document.createElement("strong");
+    title.textContent = "Analytics fetch failed";
+    const detail = document.createElement("div");
+    detail.textContent = err.message;
+    error.append(title, detail);
+    kpis.replaceChildren(error);
   });

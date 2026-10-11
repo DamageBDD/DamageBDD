@@ -1,98 +1,76 @@
 <!-- -*- mode: html -*- -->
-<section class="pure-g admin-tab">
-  <div class="pure-u-1">
-    <h2>CLN Invoice, Account & Peer Analytics</h2>
-    <p>Admin-only views powered by read-only CLN canned queries.</p>
-  </div>
-
-  <div class="pure-u-1 pure-u-md-1-2">
-    <div class="admin-card">
-      <div class="admin-card-header">
-        <h3>Recent invoices</h3>
-        <button id="refresh-cln-invoices-recent" class="pure-button pure-button-primary">Refresh</button>
-      </div>
-
-      <label for="cln-invoices-prefix">Label prefix</label>
-      <input id="cln-invoices-prefix" class="pure-input-1" placeholder="damage:">
-
-      <label for="cln-invoices-limit">Limit</label>
-      <input id="cln-invoices-limit" class="pure-input-1" type="number" value="50">
-
-      <div id="cln-invoices-recent-json" class="admin-data">Loading...</div>
+<section class="admin-tab" aria-labelledby="cln-admin-heading">
+  <div class="admin-heading workspace-heading">
+    <div>
+      <p class="workspace-eyebrow">NODE ADMINISTRATION</p>
+      <h1 id="cln-admin-heading">CLN analytics &amp; operations</h1>
+      <p>Read-only canned-query views for invoices, accounts and peer/channel state.</p>
     </div>
   </div>
 
-  <div class="pure-u-1 pure-u-md-1-2">
-    <div class="admin-card">
-      <div class="admin-card-header">
-        <h3>Unpaid invoices</h3>
-        <button id="refresh-cln-invoices-unpaid" class="pure-button pure-button-primary">Refresh</button>
-      </div>
-
-      <label for="cln-unpaid-prefix">Label prefix</label>
-      <input id="cln-unpaid-prefix" class="pure-input-1" placeholder="damage:">
-
-      <label for="cln-unpaid-limit">Limit</label>
-      <input id="cln-unpaid-limit" class="pure-input-1" type="number" value="50">
-
-      <div id="cln-invoices-unpaid-json" class="admin-data">Loading...</div>
+  <section class="admin-card" aria-labelledby="cln-recent-heading">
+    <div class="admin-card-header">
+      <h2 id="cln-recent-heading">Recent invoices</h2>
+      <button id="refresh-cln-invoices-recent" class="workspace-button" type="button">Refresh</button>
     </div>
-  </div>
+    <label for="cln-invoices-prefix">Label prefix</label>
+    <input id="cln-invoices-prefix" placeholder="damage:" autocomplete="off">
+    <label for="cln-invoices-limit">Limit</label>
+    <input id="cln-invoices-limit" type="number" min="1" value="50">
+    <div id="cln-invoices-recent-json" class="admin-data"><div class="admin-loading">Loading…</div></div>
+  </section>
 
-  <div class="pure-u-1 pure-u-md-1-2">
-    <div class="admin-card">
-      <div class="admin-card-header">
-        <h3>Invoice status counts</h3>
-        <button id="refresh-cln-invoice-counts" class="pure-button">Refresh</button>
-      </div>
-      <div id="cln-invoice-counts-json" class="admin-data">Loading...</div>
+  <section class="admin-card" aria-labelledby="cln-unpaid-heading">
+    <div class="admin-card-header">
+      <h2 id="cln-unpaid-heading">Unpaid invoices</h2>
+      <button id="refresh-cln-invoices-unpaid" class="workspace-button" type="button">Refresh</button>
     </div>
-  </div>
+    <label for="cln-unpaid-prefix">Label prefix</label>
+    <input id="cln-unpaid-prefix" placeholder="damage:" autocomplete="off">
+    <label for="cln-unpaid-limit">Limit</label>
+    <input id="cln-unpaid-limit" type="number" min="1" value="50">
+    <div id="cln-invoices-unpaid-json" class="admin-data"><div class="admin-loading">Loading…</div></div>
+  </section>
 
-  <div class="pure-u-1 pure-u-md-1-2">
-    <div class="admin-card">
-      <div class="admin-card-header">
-        <h3>Peerchannel summary</h3>
-        <button id="refresh-cln-peerchannel-summary" class="pure-button">Refresh</button>
-      </div>
-      <div id="cln-peerchannel-summary-json" class="admin-data">Loading...</div>
+  <section class="admin-card" aria-labelledby="cln-counts-heading">
+    <div class="admin-card-header">
+      <h2 id="cln-counts-heading">Invoice status counts</h2>
+      <button id="refresh-cln-invoice-counts" class="workspace-button" type="button">Refresh</button>
     </div>
-  </div>
+    <div id="cln-invoice-counts-json" class="admin-data"><div class="admin-loading">Loading…</div></div>
+  </section>
 
-  <div class="pure-u-1 pure-u-md-1-2">
-    <div class="admin-card">
-      <div class="admin-card-header">
-        <h3>Account events</h3>
-        <button id="refresh-cln-account-events" class="pure-button pure-button-primary">Refresh</button>
-      </div>
-
-      <label for="cln-account-name">Account</label>
-      <input id="cln-account-name" class="pure-input-1" placeholder="wallet">
-
-      <label for="cln-account-tag">Tag</label>
-      <input id="cln-account-tag" class="pure-input-1" placeholder="optional tag">
-
-      <label for="cln-account-events-limit">Limit</label>
-      <input id="cln-account-events-limit" class="pure-input-1" type="number" value="100">
-
-      <div id="cln-account-events-json" class="admin-data">Loading...</div>
+  <section class="admin-card" aria-labelledby="cln-peer-summary-heading">
+    <div class="admin-card-header">
+      <h2 id="cln-peer-summary-heading">Peer/channel summary</h2>
+      <button id="refresh-cln-peerchannel-summary" class="workspace-button" type="button">Refresh</button>
     </div>
-  </div>
+    <div id="cln-peerchannel-summary-json" class="admin-data"><div class="admin-loading">Loading…</div></div>
+  </section>
 
-  <div class="pure-u-1 pure-u-md-1-2">
-    <div class="admin-card">
-      <div class="admin-card-header">
-        <h3>Account summary</h3>
-        <button id="refresh-cln-account-summary" class="pure-button">Refresh</button>
-      </div>
-
-      <label for="cln-account-summary-name">Account</label>
-      <input id="cln-account-summary-name" class="pure-input-1" placeholder="wallet">
-
-      <label for="cln-account-summary-tag">Tag</label>
-      <input id="cln-account-summary-tag" class="pure-input-1" placeholder="optional tag">
-
-      <div id="cln-account-summary-json" class="admin-data">Loading...</div>
+  <section class="admin-card" aria-labelledby="cln-account-events-heading">
+    <div class="admin-card-header">
+      <h2 id="cln-account-events-heading">Account events</h2>
+      <button id="refresh-cln-account-events" class="workspace-button" type="button">Refresh</button>
     </div>
-  </div>
+    <label for="cln-account-name">Account</label>
+    <input id="cln-account-name" placeholder="wallet" autocomplete="off">
+    <label for="cln-account-tag">Tag</label>
+    <input id="cln-account-tag" placeholder="optional tag" autocomplete="off">
+    <label for="cln-account-events-limit">Limit</label>
+    <input id="cln-account-events-limit" type="number" min="1" value="100">
+    <div id="cln-account-events-json" class="admin-data"><div class="admin-loading">Loading…</div></div>
+  </section>
+
+  <section class="admin-card" aria-labelledby="cln-account-summary-heading">
+    <div class="admin-card-header">
+      <h2 id="cln-account-summary-heading">Account summary</h2>
+      <button id="refresh-cln-account-summary" class="workspace-button" type="button">Refresh</button>
+    </div>
+    <label for="cln-account-summary-name">Account</label>
+    <input id="cln-account-summary-name" placeholder="wallet" autocomplete="off">
+    <label for="cln-account-summary-tag">Tag</label>
+    <input id="cln-account-summary-tag" placeholder="optional tag" autocomplete="off">
+    <div id="cln-account-summary-json" class="admin-data"><div class="admin-loading">Loading…</div></div>
+  </section>
 </section>

@@ -210,7 +210,7 @@ window.nodeAdmin = (() => {
 
 	function copyButton(value, label = "Copy") {
 		const encoded = encodeURIComponent(String(value ?? ""));
-		return `<button type="button" class="pure-button admin-copy-btn" data-copy="${encoded}" title="${escapeHtml(label)}">${escapeHtml(label)}</button>`;
+		return `<button type="button" class="workspace-button admin-copy-btn" data-copy="${encoded}" title="${escapeHtml(label)}">${escapeHtml(label)}</button>`;
 	}
 
 	function copyableValue(value, opts = {}) {

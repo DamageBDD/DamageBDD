@@ -1,27 +1,38 @@
 <!-- -*- mode: html -*- -->
-<div style="font-family: system-ui, sans-serif; padding: 16px; max-width: 980px;">
-  <h2 style="margin: 0 0 12px;">DamageBDD Analytics (on-chain)</h2>
-
-  <div id="kpis" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 12px;">
-    <div class="card"></div>
-    <div class="card"></div>
-    <div class="card"></div>
-    <div class="card"></div>
+<section class="workspace-page analytics-workspace" aria-labelledby="analytics-heading">
+  <div class="workspace-heading">
+    <div>
+      <p class="workspace-eyebrow">ON-CHAIN OBSERVABILITY</p>
+      <h1 id="analytics-heading">DamageBDD analytics</h1>
+      <p>Recent verification activity derived from Æternity middleware contract logs.</p>
+    </div>
+    <span id="lastUpdated" class="workspace-muted analytics-updated"></span>
   </div>
 
-  <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 12px;">
-    <div class="card" style="padding: 12px;">
-      <div style="display:flex; justify-content:space-between; align-items:baseline;">
-        <strong>Runs / day (last 30)</strong>
-        <span id="lastUpdated" style="color:#666; font-size:12px;"></span>
+  <div id="kpis" class="analytics-kpis" aria-label="Analytics summary">
+    <div class="workspace-card analytics-kpi"></div>
+    <div class="workspace-card analytics-kpi"></div>
+    <div class="workspace-card analytics-kpi"></div>
+    <div class="workspace-card analytics-kpi"></div>
+  </div>
+
+  <div class="analytics-layout">
+    <section class="workspace-card analytics-card" aria-labelledby="runs-chart-heading">
+      <div class="workspace-section-heading">
+        <div>
+          <h2 id="runs-chart-heading">Runs / day</h2>
+          <p>Last 30 days from the configured runs contract.</p>
+        </div>
       </div>
-      <canvas id="runsChart" width="800" height="220" style="width:100%; height:220px; margin-top:10px;"></canvas>
-      <div id="legend" style="margin-top:8px; color:#666; font-size:12px;"></div>
-    </div>
+      <canvas id="runsChart" width="800" height="220" aria-label="Runs, passes and failures over the last 30 days"></canvas>
+      <div id="legend" class="analytics-legend"></div>
+    </section>
 
-    <div class="card" style="padding: 12px;">
-      <strong>Recent</strong>
-      <div id="recent" style="margin-top:8px; font-size: 13px; color:#222;"></div>
-    </div>
+    <section class="workspace-card analytics-card" aria-labelledby="analytics-recent-heading">
+      <div class="workspace-section-heading">
+        <div><h2 id="analytics-recent-heading">Recent</h2><p>Latest contract log records.</p></div>
+      </div>
+      <div id="recent" class="analytics-recent"></div>
+    </section>
   </div>
-</div>
+</section>

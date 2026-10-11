@@ -36,7 +36,7 @@ pre code.language-gherkin.report {
 .report-table td {
   padding: 0.75rem 1rem;
   text-align: left;
-  border-bottom: 1px solid #ddd;
+  border-bottom: 1px solid var(--ws-line, #2d3b4e);
   white-space: nowrap;   /* remove if you want wrapping */
 }
 
@@ -45,7 +45,7 @@ pre code.language-gherkin.report {
   max-width: 100%;
   overflow-wrap: anywhere; /* allow breaking long hashes/links */
   text-decoration: none;
-  color: #007acc;
+  color: #c1d7f5;
 }
 
 .report-table td a:hover {
@@ -56,10 +56,10 @@ pre code.language-gherkin.report {
  * ----------------------------- */
 
 .activity-panel {
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
-  padding: 12px;
+  background: var(--ws-panel, #141c29);
+  border: 1px solid var(--ws-line, #2d3b4e);
+  border-radius: 14px;
+  overflow: hidden;
 }
 
 .activity-toolbar {
@@ -111,9 +111,9 @@ pre code.language-gherkin.report {
   -webkit-appearance: none;
   border-radius: 12px;
   padding: 10px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(0, 0, 0, 0.25);
-  color: inherit;
+  border: 1px solid var(--ws-line, #2d3b4e);
+  background: var(--ws-input, #0d1420);
+  color: var(--ws-text, inherit);
   font-size: 14px;
   line-height: 1;
 }
@@ -121,9 +121,9 @@ pre code.language-gherkin.report {
 .activity-btn {
   border-radius: 12px;
   padding: 10px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.06);
-  color: inherit;
+  border: 1px solid var(--ws-line, #2d3b4e);
+  background: var(--ws-raised, #1b2637);
+  color: var(--ws-text, inherit);
   font-size: 14px;
   cursor: pointer;
   transition: transform 0.05s ease;
@@ -141,9 +141,9 @@ pre code.language-gherkin.report {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.06);
-  color: inherit;
+  border: 1px solid var(--ws-line, #2d3b4e);
+  background: var(--ws-raised, #1b2637);
+  color: var(--ws-text, inherit);
   cursor: pointer;
 }
 
@@ -175,8 +175,8 @@ pre code.language-gherkin.report {
   gap: 10px;
   padding: 12px;
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--ws-input, #0d1420);
+  border: 1px solid var(--ws-line, #2d3b4e);
   margin-bottom: 10px;
 }
 
@@ -197,8 +197,8 @@ pre code.language-gherkin.report {
   font-size: 12px;
   padding: 5px 10px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--ws-line, #2d3b4e);
+  background: var(--ws-panel, #141c29);
   opacity: 0.95;
 }
 
@@ -253,7 +253,7 @@ pre code.language-gherkin.report {
 .activity-tx-table {
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px dashed rgba(255,255,255,0.12);
+  border-top: 1px dashed var(--ws-line, #2d3b4e);
   display: grid;
   gap: 6px;
 }
@@ -278,15 +278,15 @@ pre code.language-gherkin.report {
 .activity-details {
   margin-top: 8px;
   padding-top: 6px;
-  border-top: 1px dashed rgba(255,255,255,0.12);
+  border-top: 1px dashed var(--ws-line, #2d3b4e);
 }
 
 .activity-details-toggle {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--ws-line, #2d3b4e);
+  background: var(--ws-raised, #1b2637);
   padding: 8px 10px;
   border-radius: 999px;
   cursor: pointer;
@@ -458,4 +458,18 @@ pre code.language-gherkin.report {
   .activity-filters{ min-width: 100%; }
   .addr-tag__addr{ max-width: 240px; }
   .addr-add{ flex-direction: column; align-items: stretch; }
+}
+
+.damage-dashboard .activity-panel .activity-toolbar { margin: 0; }
+.damage-dashboard .activity-filters { justify-content: flex-start; width: 100%; }
+.damage-dashboard .activity-filters > strong { color: var(--ws-text); font-size: 12px; }
+.damage-dashboard .activity-filters .addr-tags { flex: 1 1 240px; }
+.damage-dashboard .activity-filters .addr-add { display: flex; gap: 8px; flex: 1 1 360px; }
+.damage-dashboard .activity-filters .addr-add__input { flex: 1 1 auto; }
+.damage-dashboard .activity-list { padding: 0 14px; }
+.damage-dashboard .activity-item { border-radius: 10px; }
+.damage-dashboard .activity-pager { padding: 0 14px 14px; }
+@media (max-width: 600px) {
+  .damage-dashboard .activity-panel { padding: 0; }
+  .damage-dashboard .activity-filters .addr-add { flex-basis: 100%; }
 }

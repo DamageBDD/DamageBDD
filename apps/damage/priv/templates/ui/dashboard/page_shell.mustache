@@ -49,17 +49,19 @@
     <link rel="stylesheet" type="text/css" href='/static/css/prism.css' />
     <link rel="stylesheet" type="text/css" href='/static/css/main.css' />
     <link rel="stylesheet" type="text/css" href='/static/css/auth.css' />
-    <link rel="stylesheet" type="text/css" href='/static/css/gallery.css' />
     <link rel="stylesheet" type="text/css" href='/static/css/ecai-jobs.css' />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs/themes/prism-tomorrow.min.css" />
-    <link rel="stylesheet" type="text/css" href='/static/css/analytics.css' />
-    <link rel="stylesheet" type="text/css" href='/static/css/reports.css' />
     <link rel="stylesheet" type="text/css" href='/static/css/topbar.css' />
     <link rel="stylesheet" type="text/css" href='/static/css/invoice-modal.css' />
     <link rel="stylesheet" href="/static/css/ipfs-filepicker.css">
     <link rel="stylesheet" href="/static/css/nwc.css">
+
+    <!-- Dashboard foundation first; feature workspaces extend these tokens below. -->
     <link rel="stylesheet" href="/static/css/dashboard-workspace.css">
     <link rel="stylesheet" href="/static/css/dashboard-shell.css">
+    <link rel="stylesheet" type="text/css" href='/static/css/reports.css' />
+    <link rel="stylesheet" type="text/css" href='/static/css/analytics.css' />
+    <link rel="stylesheet" type="text/css" href='/static/css/gallery.css' />
     <link rel="stylesheet" href="/static/css/billing.css">
     <noscript><style>
       .damage-dashboard [data-dashboard-view][hidden] { display: block !important; }
@@ -156,6 +158,7 @@
     <script type="module" src="/static/js/dashboard-navigation.js"></script>
     <script type='module' src="/static/js/auth-ui.js?v=ecai-browser-v1"></script>
     <script type='module' src="/static/js/main.js" defer></script>
+    <script type="module" src="/static/js/settings.js"></script>
     <script type="module" src="/static/js/billing.js"></script>
     <script type="module" src="/static/js/bdd-composer.js"></script>
     {{#node_admin}}

@@ -242,3 +242,329 @@
 @media (max-width: 620px) {
   .damage-dashboard #damageTextArea, .damage-dashboard #damageLineNumbers { font-size: 16px !important; }
 }
+
+/* -------------------------------------------------------------------------
+ * Shared dashboard component primitives
+ *
+ * Feature tabs should extend these instead of importing PureCSS presentation
+ * or inventing standalone light/dark palettes. These rules are intentionally
+ * scoped under .damage-dashboard so public/non-dashboard pages are unaffected.
+ * ------------------------------------------------------------------------- */
+.damage-dashboard .workspace-page {
+  width: 100%;
+  min-width: 0;
+}
+.damage-dashboard .workspace-page > .workspace-heading:first-child {
+  margin-top: 0;
+}
+.damage-dashboard .workspace-stack {
+  display: grid;
+  gap: 18px;
+}
+.damage-dashboard .workspace-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+.damage-dashboard .workspace-grid > * { min-width: 0; }
+.damage-dashboard .workspace-card-body { padding: 18px 20px; }
+.damage-dashboard .workspace-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.damage-dashboard .workspace-toolbar-group {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.damage-dashboard .workspace-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.damage-dashboard .workspace-section-heading p { margin: 4px 0 0; color: var(--ws-muted); }
+.damage-dashboard .workspace-helper { color: var(--ws-muted); font-size: 12px; }
+.damage-dashboard .workspace-empty {
+  padding: 28px 18px;
+  text-align: center;
+  color: var(--ws-muted);
+}
+.damage-dashboard .workspace-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+.damage-dashboard .workspace-status {
+  min-height: 20px;
+  color: var(--ws-muted);
+  font-size: 12px;
+}
+.damage-dashboard .workspace-status[data-tone="error"],
+.damage-dashboard .workspace-error { color: var(--ws-error); }
+.damage-dashboard .workspace-status[data-tone="success"],
+.damage-dashboard .workspace-success { color: #cfe6b9; }
+.damage-dashboard .workspace-danger {
+  border-color: #6e3e45 !important;
+  color: #ffd0d0 !important;
+}
+.damage-dashboard .workspace-danger:hover { background: #40232a !important; border-color: #98535e !important; }
+
+/* Forms */
+.damage-dashboard .workspace-form,
+.damage-dashboard .workspace-form fieldset {
+  min-width: 0;
+}
+.damage-dashboard .workspace-form fieldset,
+.damage-dashboard fieldset.workspace-fieldset {
+  margin: 0;
+  padding: 18px;
+  border: 1px solid var(--ws-line);
+  border-radius: 10px;
+  background: var(--ws-panel);
+}
+.damage-dashboard .workspace-form legend,
+.damage-dashboard .workspace-fieldset legend {
+  padding: 0 7px;
+  color: #d7e3f1;
+  font-weight: 650;
+}
+.damage-dashboard .workspace-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+.damage-dashboard .workspace-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.damage-dashboard .workspace-field > label,
+.damage-dashboard .workspace-form > label,
+.damage-dashboard .workspace-form fieldset > label {
+  color: #d6e0ec;
+  font-size: 12px;
+  font-weight: 600;
+}
+.damage-dashboard :is(.workspace-input, .workspace-select, .workspace-textarea),
+.damage-dashboard .workspace-form :is(input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]), select, textarea) {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--ws-line);
+  border-radius: 7px;
+  background: var(--ws-input);
+  color: var(--ws-text);
+  box-shadow: none;
+}
+.damage-dashboard .workspace-form textarea,
+.damage-dashboard .workspace-textarea { resize: vertical; }
+.damage-dashboard .workspace-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #d6e0ec;
+  font-size: 12px;
+}
+.damage-dashboard .workspace-check input { width: auto; margin: 0; accent-color: var(--ws-accent); }
+.damage-dashboard .workspace-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+/* Tables */
+.damage-dashboard .workspace-table-wrap {
+  width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  border: 1px solid var(--ws-line);
+  border-radius: 9px;
+  background: var(--ws-panel);
+}
+.damage-dashboard .workspace-table {
+  width: 100%;
+  min-width: 620px;
+  margin: 0;
+  border-collapse: collapse;
+  table-layout: auto;
+  background: transparent;
+  color: var(--ws-text);
+  font-size: 12px;
+}
+.damage-dashboard .workspace-table th,
+.damage-dashboard .workspace-table td {
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--ws-line);
+  text-align: left;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.damage-dashboard .workspace-table th {
+  background: #172230;
+  color: #9fb1c7;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .35px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.damage-dashboard .workspace-table tr:last-child td { border-bottom: 0; }
+.damage-dashboard .workspace-table code { font-size: 11px; }
+
+/* Admin/data panels share the same visual vocabulary. */
+.damage-dashboard .admin-tab {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+.damage-dashboard .admin-tab > .admin-heading,
+.damage-dashboard .admin-tab > .admin-span-all { grid-column: 1 / -1; }
+.damage-dashboard .admin-card {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--ws-line);
+  border-radius: 12px;
+  background: var(--ws-panel);
+}
+.damage-dashboard .admin-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.damage-dashboard .admin-card-header h3 { margin: 0; }
+.damage-dashboard .admin-card label {
+  display: block;
+  margin: 10px 0 5px;
+  color: #d6e0ec;
+  font-size: 12px;
+  font-weight: 600;
+}
+.damage-dashboard .admin-card :is(input, select, textarea) {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--ws-line);
+  border-radius: 7px;
+  background: var(--ws-input);
+  color: var(--ws-text);
+  box-shadow: none;
+}
+.damage-dashboard .admin-card > .workspace-actions { margin-top: 12px; }
+.damage-dashboard .admin-data { color: var(--ws-text); }
+.damage-dashboard .admin-table-wrap { border: 1px solid var(--ws-line); border-radius: 8px; background: var(--ws-input); }
+.damage-dashboard .admin-table { table-layout: auto; color: var(--ws-text); font-size: 12px; }
+.damage-dashboard .admin-table th,
+.damage-dashboard .admin-table td { border-bottom-color: var(--ws-line); }
+.damage-dashboard .admin-table th { position: static; background: #172230; color: #9fb1c7; }
+.damage-dashboard .admin-pre {
+  max-height: 360px;
+  overflow: auto;
+  margin: 12px 0 0;
+  padding: 12px;
+  border: 1px solid var(--ws-line);
+  border-radius: 8px;
+  background: #0b121d;
+  color: #dce7f5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.damage-dashboard .admin-empty,
+.damage-dashboard .admin-loading,
+.damage-dashboard .admin-kv { border-color: var(--ws-line); background: var(--ws-input); }
+.damage-dashboard .admin-details summary { color: #c1d7f5; }
+.damage-dashboard .admin-code { background: #1a2635; color: #dce7f5; }
+.damage-dashboard .admin-copy-btn { min-height: 28px; }
+
+@container dashboard (max-width: 760px) {
+  .damage-dashboard .workspace-grid,
+  .damage-dashboard .workspace-form-grid,
+  .damage-dashboard .admin-tab { grid-template-columns: minmax(0, 1fr); }
+  .damage-dashboard .admin-tab > .admin-heading,
+  .damage-dashboard .admin-tab > .admin-span-all { grid-column: auto; }
+}
+@media (max-width: 620px) {
+  .damage-dashboard .workspace-toolbar,
+  .damage-dashboard .workspace-section-heading { align-items: stretch; }
+  .damage-dashboard .workspace-toolbar-group { width: 100%; }
+  .damage-dashboard .workspace-toolbar-group > :is(button, a, select, input) { flex: 1 1 auto; }
+  .damage-dashboard .workspace-card-body,
+  .damage-dashboard .admin-card { padding: 14px; }
+}
+
+/* Settings */
+.damage-dashboard .settings-workspace { display: grid; gap: 18px; }
+.damage-dashboard .settings-workspace > .workspace-heading { margin-bottom: 0; }
+.damage-dashboard .settings-card { overflow: visible; }
+.damage-dashboard .settings-card > .workspace-fieldset { border: 0; border-radius: inherit; background: transparent; }
+.damage-dashboard .node-context-meta { justify-content: flex-start; align-items: center; }
+.damage-dashboard .node-context-meta code { max-width: min(100%, 520px); overflow-wrap: anywhere; }
+.damage-dashboard .node-context-table-wrap { margin: 14px 0 18px; }
+.damage-dashboard #node-context-table code { white-space: pre-wrap; word-break: break-word; }
+.damage-dashboard .node-context-editor .workspace-fieldset { background: var(--ws-input); }
+.damage-dashboard .node-context-help { color: var(--ws-muted); font-size: 12px; }
+.damage-dashboard #generatedToken,
+.damage-dashboard #webhookVariables { margin-top: 12px; overflow-wrap: anywhere; }
+
+/* Dashboard-aware MicroModal content. Keep the MicroModal positioning contract. */
+.damage-dashboard .dashboard-modal {
+  width: min(920px, calc(100vw - 32px));
+  max-width: 920px;
+  max-height: min(92vh, 980px);
+  overflow: auto;
+  border: 1px solid var(--ws-line);
+  border-radius: 14px;
+  background: var(--ws-bg);
+  color: var(--ws-text);
+  box-shadow: 0 28px 100px #0009;
+}
+.damage-dashboard .dashboard-modal .modal__header,
+.damage-dashboard .dashboard-modal .modal__footer {
+  border-color: var(--ws-line);
+  background: #101823;
+}
+.damage-dashboard .dashboard-modal .modal__content { color: var(--ws-text); }
+.damage-dashboard .dashboard-modal .modal__close { color: var(--ws-muted); }
+.damage-dashboard .install-form { display: grid; gap: 14px; }
+.damage-dashboard .install-status-row { display: grid; gap: 4px; }
+.damage-dashboard .install-section { overflow: visible; }
+.damage-dashboard .install-downloads { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.damage-dashboard .install-downloads > div { min-width: 0; }
+.damage-dashboard .install-downloads .workspace-button { width: 100%; white-space: normal; }
+.damage-dashboard .install-preview { display: none; }
+.damage-dashboard .install-command {
+  max-height: 280px;
+  overflow: auto;
+  margin: 0 0 10px;
+  padding: 12px;
+  border: 1px solid var(--ws-line);
+  border-radius: 8px;
+  background: #0b121d;
+  color: #dce7f5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.damage-dashboard .install-advanced > summary {
+  padding: 14px 16px;
+  color: #d7e3f1;
+  font-weight: 650;
+}
+.damage-dashboard .install-advanced[open] > summary { border-bottom: 1px solid var(--ws-line); }
+.damage-dashboard .install-remote-fields { display: none; }
+@media (max-width: 620px) {
+  .damage-dashboard .dashboard-modal { width: calc(100vw - 20px); }
+  .damage-dashboard .install-downloads { grid-template-columns: minmax(0, 1fr); }
+}

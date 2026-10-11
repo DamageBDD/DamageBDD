@@ -1,27 +1,26 @@
 <!-- -*- mode: html -*- -->
-<section class="pure-g admin-tab">
-  <div class="pure-u-1">
-    <h2>Node Bitcoin & Lightning Transactions</h2>
-    <p>Admin-only view of on-chain outputs and Lightning payments/invoices.</p>
-  </div>
-
-  <div class="pure-u-1 pure-u-md-1-2">
-    <div class="admin-card">
-      <div class="admin-card-header">
-        <h3>On-chain</h3>
-        <button id="refresh-node-onchain" class="pure-button pure-button-primary">Refresh</button>
-      </div>
-      <div id="node-onchain-json" class="admin-data">Loading...</div>
+<section class="admin-tab" aria-labelledby="node-transactions-heading">
+  <div class="admin-heading workspace-heading">
+    <div>
+      <p class="workspace-eyebrow">NODE ADMINISTRATION</p>
+      <h1 id="node-transactions-heading">Bitcoin &amp; Lightning transactions</h1>
+      <p>Read-only administrative view of node on-chain outputs and Lightning payments/invoices.</p>
     </div>
   </div>
 
-  <div class="pure-u-1 pure-u-md-1-2">
-    <div class="admin-card">
-      <div class="admin-card-header">
-        <h3>Lightning</h3>
-        <button id="refresh-node-lightning" class="pure-button pure-button-primary">Refresh</button>
-      </div>
-      <div id="node-lightning-json" class="admin-data">Loading...</div>
+  <section class="admin-card" aria-labelledby="node-onchain-heading">
+    <div class="admin-card-header">
+      <h2 id="node-onchain-heading">On-chain</h2>
+      <button id="refresh-node-onchain" class="workspace-button" type="button">Refresh</button>
     </div>
-  </div>
+    <div id="node-onchain-json" class="admin-data"><div class="admin-loading">Loading…</div></div>
+  </section>
+
+  <section class="admin-card" aria-labelledby="node-lightning-heading">
+    <div class="admin-card-header">
+      <h2 id="node-lightning-heading">Lightning</h2>
+      <button id="refresh-node-lightning" class="workspace-button" type="button">Refresh</button>
+    </div>
+    <div id="node-lightning-json" class="admin-data"><div class="admin-loading">Loading…</div></div>
+  </section>
 </section>

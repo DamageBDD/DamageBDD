@@ -1,50 +1,39 @@
 <!-- -*- mode: html -*- -->
-<!-- AEX-141 NFT Gallery (Mainnet) with tag-cloud filter + add-address input.
-     Assumes your site already loads main.css for general typography/buttons. -->
-
-<section id="nft-gallery" class="modal__container" style="max-width:1100px;">
-  <header class="modal__header" style="margin-bottom:1rem;">
-    <h3 class="modal__title" style="margin:0;">NFT Gallery</h3>
-    <div style="color:#c9cfdb;">Mainnet AEX-141 NFTs for selected addresses. DamageBDD settlement rewards are transferable collectibles with shareable cryptographic attestations.</div>
-  </header>
-
-  <div class="nft-filter">
-    <div class="nft-filter__row">
-      <div class="nft-filter__left">
-        <div style="font-weight:600; margin-bottom:.35rem;">Address filters</div>
-
-        <div id="addrTags" class="addr-tags" aria-label="Selected addresses">
-          <!-- tags injected by JS -->
-        </div>
-
-        <div class="addr-add">
-          <input id="addrInput" type="text" placeholder="Add address (ak_...)"
-                 spellcheck="false" autocomplete="off" inputmode="text"
-                 class="addr-add__input">
-          <button id="addrAddBtn" class="styled-btn" type="button">Add</button>
-        </div>
-
-        <div id="addrHint" style="color:#9aa3b2; font-size:.85rem; margin-top:.35rem;">
-          Click a tag to toggle it. Add addresses to expand the filter set (ak_ only).
-        </div>
-
-      </div>
-
-      <div class="nft-filter__right">
-        <button id="loadNftsBtn" class="styled-btn" type="button" style="width:100%; margin-top:0;">
-          Load NFTs
-        </button>
-        <div style="height:.5rem;"></div>
-        <button id="clearBtn" class="styled-btn" type="button" style="width:100%;">
-          Clear selection
-        </button>
-      </div>
+<section id="nft-gallery" class="workspace-page" aria-labelledby="nft-gallery-heading">
+  <div class="workspace-heading">
+    <div>
+      <p class="workspace-eyebrow">AEX-141 ASSETS</p>
+      <h1 id="nft-gallery-heading">NFT Gallery</h1>
+      <p>Mainnet NFTs for selected addresses, including transferable DamageBDD settlement rewards.</p>
     </div>
-
-    <div id="nftStatus" style="margin-top:.75rem; color:#9aa3b2; font-size:.95rem;"></div>
   </div>
 
-  <div id="nftGrid" class="nft-grid" style="margin-top:1rem;"></div>
+  <section class="workspace-card nft-filter" aria-labelledby="nft-filter-heading">
+    <div class="workspace-card-body nft-filter__row">
+      <div class="nft-filter__left">
+        <h2 id="nft-filter-heading">Address filters</h2>
+        <div id="addrTags" class="addr-tags" aria-label="Selected addresses"></div>
+
+        <div class="addr-add">
+          <label class="visually-hidden" for="addrInput">Add Aeternity account</label>
+          <input id="addrInput" type="text" placeholder="Add address (ak_...)"
+                 spellcheck="false" autocomplete="off" inputmode="text"
+                 class="addr-add__input workspace-input">
+          <button id="addrAddBtn" class="workspace-button" type="button">Add</button>
+        </div>
+
+        <p id="addrHint" class="workspace-helper">
+          Click a tag to toggle it. Add addresses to expand the filter set (ak_ only).
+        </p>
+      </div>
+
+      <div class="nft-filter__right workspace-actions">
+        <button id="loadNftsBtn" class="workspace-button workspace-primary" type="button">Load NFTs</button>
+        <button id="clearBtn" class="workspace-button" type="button">Clear selection</button>
+      </div>
+    </div>
+    <div id="nftStatus" class="workspace-status nft-status" role="status" aria-live="polite"></div>
+  </section>
+
+  <div id="nftGrid" class="nft-grid" aria-live="polite"></div>
 </section>
-
-

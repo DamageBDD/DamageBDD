@@ -1,34 +1,35 @@
 <p data-wallet-only-note hidden></p>
 <!-- -*- mode: html -*- -->
-<h2 id="settings-title">Settings</h2>
+<section class="workspace-page settings-workspace" aria-labelledby="settings-title">
+<div class="workspace-heading">
+  <div><p class="workspace-eyebrow">MANAGE</p><h1 id="settings-title">Settings</h1><p>Account automation, webhooks and node-level execution context.</p></div>
+</div>
 
-<form data-requires-capability="account_context" action="submit_settings" method="post" class="pure-form pure-form-stacked">
-  <fieldset>
-    <legend>DNS Auth Token Settings</legend>
-    <button data-requires-capability="account_context" class="pure-button" type="button" onclick="generateToken()">Generate Token</button>
+<form data-requires-capability="account_context" action="submit_settings" method="post" class="workspace-card workspace-form settings-card">
+  <fieldset class="workspace-fieldset">
+    <legend>DNS auth token</legend>
+    <button data-requires-capability="account_context" class="workspace-button" type="button" onclick="generateToken()">Generate Token</button>
     <div id="generatedToken"></div>
   </fieldset>
 </form>
 
 {{#node_admin}}
-<section id="node-context-settings" aria-labelledby="node-context-title">
-  <h3 id="node-context-title">Node Context</h3>
-  <p>
-    Node-level values are inherited by account runs according to their inheritance policy.
-    Sensitive node values are stored encrypted and are always returned redacted.
-  </p>
+<section id="node-context-settings" class="workspace-card settings-card" aria-labelledby="node-context-title">
+  <div class="workspace-card-body">
+  <div class="workspace-section-heading"><div><h2 id="node-context-title">Node context</h2>
+  <p>Node-level values are inherited by account runs according to their inheritance policy. Sensitive values stay encrypted and are returned redacted.</p></div></div>
 
-  <div class="node-context-meta">
+  <div class="node-context-meta workspace-toolbar">
     <strong>Version:</strong> <span id="node-context-version">—</span>
     &nbsp;
     <strong>Root:</strong> <code id="node-context-root">—</code>
-    <button data-requires-capability="account_context" class="pure-button" type="button" id="node-context-refresh">Refresh</button>
+    <button data-requires-capability="account_context" class="workspace-button" type="button" id="node-context-refresh">Refresh</button>
   </div>
 
-  <div id="node-context-status" role="status" aria-live="polite"></div>
+  <div id="node-context-status" class="workspace-status" role="status" aria-live="polite"></div>
 
-  <div class="node-context-table-wrap">
-    <table class="pure-table pure-table-horizontal" id="node-context-table">
+  <div class="workspace-table-wrap node-context-table-wrap">
+    <table class="workspace-table" id="node-context-table">
       <thead>
         <tr>
           <th>Name</th>
@@ -46,8 +47,8 @@
     </table>
   </div>
 
-  <form data-requires-capability="account_context" id="node-context-editor" class="pure-form pure-form-stacked">
-    <fieldset>
+  <form data-requires-capability="account_context" id="node-context-editor" class="workspace-form node-context-editor">
+    <fieldset class="workspace-fieldset">
       <legend>Add or update node context</legend>
 
       <label for="node-context-name">Name</label>
@@ -75,7 +76,7 @@
         <option value="json">JSON</option>
       </select>
 
-      <label class="pure-checkbox">
+      <label class="workspace-check">
         <input type="checkbox" id="node-context-sensitive">
         Sensitive
       </label>
@@ -98,369 +99,22 @@
         <code>step_only</code>, <code>none</code>, and locked.
       </p>
 
-      <button data-requires-capability="account_context" class="pure-button pure-button-primary" type="submit">Save</button>
-      <button data-requires-capability="account_context" class="pure-button" type="button" id="node-context-cancel">Clear</button>
+      <div class="workspace-form-actions">
+        <button data-requires-capability="account_context" class="workspace-button workspace-primary" type="submit">Save</button>
+        <button data-requires-capability="account_context" class="workspace-button" type="button" id="node-context-cancel">Clear</button>
+      </div>
     </fieldset>
   </form>
+  </div>
 </section>
 
-<style>
-  #node-context-settings {
-    margin-top: 2rem;
-  }
 
-  .node-context-meta,
-  #node-context-status {
-    margin: 0.75rem 0;
-  }
 
-  .node-context-table-wrap {
-    overflow-x: auto;
-    margin: 1rem 0;
-  }
 
-  #node-context-table {
-    width: 100%;
-  }
-
-  #node-context-table code {
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-
-  #node-context-editor textarea,
-  #node-context-editor input[type="text"],
-  #node-context-editor select {
-    max-width: 42rem;
-    width: 100%;
-  }
-
-  .node-context-help {
-    font-size: 0.9rem;
-    opacity: 0.8;
-  }
-
-  .node-context-error {
-    color: #b00020;
-  }
-
-  .node-context-success {
-    color: #0a6b2b;
-  }
-</style>
-
-<script>
-(() => {
-  const root = document.getElementById("node-context-settings");
-  if (!root || root.dataset.bound === "true") return;
-  root.dataset.bound = "true";
-
-  const endpoint = "/node/context";
-  const redacted = "XX-REDACTED-XX";
-
-  const rows = document.getElementById("node-context-rows");
-  const versionEl = document.getElementById("node-context-version");
-  const rootEl = document.getElementById("node-context-root");
-  const statusEl = document.getElementById("node-context-status");
-  const editor = document.getElementById("node-context-editor");
-  const nameEl = document.getElementById("node-context-name");
-  const valueEl = document.getElementById("node-context-value");
-  const typeEl = document.getElementById("node-context-type");
-  const sensitiveEl = document.getElementById("node-context-sensitive");
-  const exposureEl = document.getElementById("node-context-exposure");
-  const inheritanceEl = document.getElementById("node-context-inheritance");
-
-  let currentVersion = null;
-  let currentEntries = {};
-
-  function setStatus(message, kind) {
-    statusEl.textContent = message || "";
-    statusEl.className =
-      kind === "error" ? "node-context-error" :
-      kind === "success" ? "node-context-success" : "";
-  }
-
-  async function request(url, options = {}) {
-    const headers = new Headers(options.headers || {});
-    headers.set("Accept", "application/json");
-    if (options.body) headers.set("Content-Type", "application/json");
-
-    const token = window.TokenManager?.getToken?.();
-    if (token) headers.set("Authorization", `Bearer ${token}`);
-
-    const response = await fetch(url, {
-      credentials: "include",
-      cache: "no-store",
-      ...options,
-      headers
-    });
-
-    let body = {};
-    const text = await response.text();
-    if (text) {
-      try {
-        body = JSON.parse(text);
-      } catch (_) {
-        body = {message: text};
-      }
-    }
-
-    if (!response.ok) {
-      const message =
-        body.message ||
-        body.error ||
-        `Node context request failed (${response.status})`;
-      const error = new Error(
-        typeof message === "string" ? message : JSON.stringify(message)
-      );
-      error.status = response.status;
-      error.body = body;
-      throw error;
-    }
-
-    return body;
-  }
-
-  function displayValue(entry) {
-    if (!entry) return "";
-    if (entry.sensitive === true || entry.value === redacted) return redacted;
-    if (typeof entry.value === "string") return entry.value;
-    return JSON.stringify(entry.value);
-  }
-
-  function addCell(row, value, useCode = false) {
-    const td = document.createElement("td");
-    if (useCode) {
-      const code = document.createElement("code");
-      code.textContent = value == null ? "" : String(value);
-      td.appendChild(code);
-    } else {
-      td.textContent = value == null ? "" : String(value);
-    }
-    row.appendChild(td);
-    return td;
-  }
-
-  function renderEntries() {
-    rows.replaceChildren();
-    const names = Object.keys(currentEntries).sort();
-
-    if (names.length === 0) {
-      const row = document.createElement("tr");
-      const td = document.createElement("td");
-      td.colSpan = 7;
-      td.textContent = "No node context variables configured.";
-      row.appendChild(td);
-      rows.appendChild(row);
-      return;
-    }
-
-    for (const name of names) {
-      const entry = currentEntries[name] || {};
-      const row = document.createElement("tr");
-
-      addCell(row, name, true);
-      addCell(row, displayValue(entry), true);
-      addCell(row, entry.sensitive === true ? "yes" : "no");
-      addCell(row, entry.exposure || "");
-      addCell(row, entry.inheritance || "");
-      addCell(row, entry.locked === true ? "yes" : "no");
-
-      const actions = document.createElement("td");
-
-      const edit = document.createElement("button");
-      edit.type = "button";
-      edit.className = "pure-button";
-      edit.textContent = "Edit";
-      edit.addEventListener("click", () => editEntry(name, entry));
-      actions.appendChild(edit);
-
-      actions.appendChild(document.createTextNode(" "));
-
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "pure-button";
-      remove.textContent = "Delete";
-      remove.addEventListener("click", () => deleteEntry(name));
-      actions.appendChild(remove);
-
-      row.appendChild(actions);
-      rows.appendChild(row);
-    }
-  }
-
-  async function loadContext() {
-    setStatus("Loading node context…");
-    try {
-      const data = await request(endpoint);
-      currentVersion = Number.isInteger(data.version) ? data.version : null;
-      currentEntries = data.entries && typeof data.entries === "object"
-        ? data.entries
-        : {};
-
-      versionEl.textContent =
-        currentVersion === null ? "—" : String(currentVersion);
-      rootEl.textContent = data.root || "—";
-      renderEntries();
-      setStatus("");
-    } catch (error) {
-      rows.replaceChildren();
-      const row = document.createElement("tr");
-      const td = document.createElement("td");
-      td.colSpan = 7;
-      td.textContent = "Unable to load node context.";
-      row.appendChild(td);
-      rows.appendChild(row);
-      setStatus(error.message, "error");
-    }
-  }
-
-  function inferType(value) {
-    if (typeof value === "boolean") return "boolean";
-    if (Number.isInteger(value)) return "integer";
-    if (typeof value === "number") return "float";
-    if (value !== null && typeof value === "object") return "json";
-    return "string";
-  }
-
-  function editEntry(name, entry) {
-    nameEl.value = name;
-    nameEl.readOnly = true;
-    sensitiveEl.checked = entry.sensitive === true;
-    exposureEl.value = entry.exposure || "template";
-    inheritanceEl.value = entry.inheritance || "default";
-
-    if (entry.value === redacted || entry.sensitive === true) {
-      valueEl.value = "";
-      valueEl.placeholder = "Enter a replacement value for this sensitive setting";
-      typeEl.value = "string";
-    } else {
-      const value = entry.value;
-      typeEl.value = inferType(value);
-      valueEl.value =
-        typeEl.value === "json" ? JSON.stringify(value, null, 2) : String(value ?? "");
-      valueEl.placeholder = "";
-    }
-
-    valueEl.focus();
-  }
-
-  function clearEditor() {
-    editor.reset();
-    nameEl.readOnly = false;
-    valueEl.placeholder = "https://api.example.com";
-  }
-
-  function typedValue() {
-    const raw = valueEl.value;
-    switch (typeEl.value) {
-      case "integer": {
-        if (!/^-?\d+$/.test(raw.trim())) throw new Error("Value must be an integer.");
-        return Number.parseInt(raw, 10);
-      }
-      case "float": {
-        const value = Number(raw);
-        if (!Number.isFinite(value)) throw new Error("Value must be a number.");
-        return value;
-      }
-      case "boolean":
-        if (raw.trim().toLowerCase() === "true") return true;
-        if (raw.trim().toLowerCase() === "false") return false;
-        throw new Error('Boolean value must be "true" or "false".');
-      case "json":
-        return JSON.parse(raw);
-      default:
-        return raw;
-    }
-  }
-
-  async function saveEntry(event) {
-    event.preventDefault();
-    const name = nameEl.value.trim();
-    if (!name) {
-      setStatus("Name is required.", "error");
-      return;
-    }
-
-    let value;
-    try {
-      value = typedValue();
-    } catch (error) {
-      setStatus(error.message, "error");
-      return;
-    }
-
-    const spec = {
-      value,
-      sensitive: sensitiveEl.checked,
-      exposure: exposureEl.value,
-      inheritance: inheritanceEl.value
-    };
-
-    const payload = {
-      set: {[name]: spec},
-      delete: []
-    };
-    if (currentVersion !== null) payload.expected_version = currentVersion;
-
-    setStatus(`Saving ${name}…`);
-    try {
-      await request(endpoint, {
-        method: "PATCH",
-        body: JSON.stringify(payload)
-      });
-      clearEditor();
-      setStatus(`${name} saved.`, "success");
-      await loadContext();
-    } catch (error) {
-      if (error.status === 409) {
-        setStatus("Node context changed elsewhere. Reloading latest version…", "error");
-        await loadContext();
-      } else {
-        setStatus(error.message, "error");
-      }
-    }
-  }
-
-  async function deleteEntry(name) {
-    if (!window.confirm(`Delete node context "${name}"?`)) return;
-
-    const payload = {
-      set: {},
-      delete: [name]
-    };
-    if (currentVersion !== null) payload.expected_version = currentVersion;
-
-    setStatus(`Deleting ${name}…`);
-    try {
-      await request(endpoint, {
-        method: "PATCH",
-        body: JSON.stringify(payload)
-      });
-      if (nameEl.value === name) clearEditor();
-      setStatus(`${name} deleted.`, "success");
-      await loadContext();
-    } catch (error) {
-      if (error.status === 409) {
-        setStatus("Node context changed elsewhere. Reloading latest version…", "error");
-        await loadContext();
-      } else {
-        setStatus(error.message, "error");
-      }
-    }
-  }
-
-  editor.addEventListener("submit", saveEntry);
-  document.getElementById("node-context-refresh").addEventListener("click", loadContext);
-  document.getElementById("node-context-cancel").addEventListener("click", clearEditor);
-
-  loadContext();
-})();
-</script>
 {{/node_admin}}
 
-<form data-requires-capability="account_context" action="submit_webhook" method="post" class="pure-form pure-form-stacked">
-  <fieldset id="webhook-settings-form">
+<form data-requires-capability="account_context" action="submit_webhook" method="post" class="workspace-card workspace-form settings-card">
+  <fieldset id="webhook-settings-form" class="workspace-fieldset">
     <legend>Webhooks</legend>
 
     <label for="webhook-name">Name</label>
@@ -475,9 +129,12 @@
       <option value="GET">GET</option>
     </select>
 
-    <button data-requires-capability="account_context" class="pure-button" type="button" onclick="addWebhook()">Add Webhook</button>
+    <button data-requires-capability="account_context" class="workspace-button" type="button" onclick="addWebhook()">Add Webhook</button>
     <div id="webhookVariables"></div>
   </fieldset>
 
-  <input class="pure-button pure-button-primary" type="submit" value="Submit">
+  <div class="workspace-form-actions">
+    <input class="workspace-button workspace-primary" type="submit" value="Save webhooks">
+  </div>
 </form>
+</section>

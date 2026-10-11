@@ -64,16 +64,16 @@
         <span id="bdd-editor-count" class="workspace-muted">No feature yet</span>
       </div>
       <div class="feature-toolbar">
-        <button type="button" class="styled-btn" id="open-feature-picker">Open feature</button>
-        <button type="button" class="styled-btn" id="open-ipfs-feature-picker">Open from IPFS</button>
-        <button type="button" class="styled-btn" id="edit-execution-context-btn"
+        <button type="button" class="workspace-button" id="open-feature-picker">Open feature</button>
+        <button type="button" class="workspace-button" id="open-ipfs-feature-picker">Open from IPFS</button>
+        <button type="button" class="workspace-button" id="edit-execution-context-btn"
                 aria-expanded="false" aria-controls="execution-context-editor">Execution context</button>
-        <button type="button" class="styled-btn" id="bdd-download">Export .feature</button>
-        <button type="button" class="styled-btn" id="bdd-undo" hidden>Undo draft</button>
+        <button type="button" class="workspace-button" id="bdd-download">Export .feature</button>
+        <button type="button" class="workspace-button" id="bdd-undo" hidden>Undo draft</button>
       </div>
       <div id="selected-ipfs-feature" class="workspace-source-note" hidden>
         IPFS source: <code id="selected-ipfs-feature-path"></code>
-        <button type="button" class="styled-btn" id="clear-ipfs-feature">Use editor text</button>
+        <button type="button" class="workspace-button" id="clear-ipfs-feature">Use editor text</button>
       </div>
       <div id="execution-context-editor" hidden>
         <fieldset>
@@ -92,10 +92,10 @@
           <textarea id="runtime-context-json" rows="7"
                     placeholder='{"server":"https://api.example.com","region":"au"}'>{}</textarea>
           <div>
-            <button type="button" class="styled-btn" id="save-runtime-context-btn">
+            <button type="button" class="workspace-button" id="save-runtime-context-btn">
               Apply runtime context
             </button>
-            <button type="button" class="styled-btn" id="clear-runtime-context-btn">
+            <button type="button" class="workspace-button" id="clear-runtime-context-btn">
               Clear runtime context
             </button>
           </div>
@@ -110,12 +110,12 @@
           </p>
           <div>
             <strong>Version:</strong> <span id="execution-account-context-version">—</span>
-            <button type="button" class="styled-btn" id="refresh-account-context-btn" data-requires-capability="account_context">Refresh</button>
+            <button type="button" class="workspace-button" id="refresh-account-context-btn" data-requires-capability="account_context">Refresh</button>
           </div>
 
           <div id="execution-account-context-status" role="status" aria-live="polite"></div>
-          <div style="overflow-x:auto;">
-            <table class="pure-table pure-table-horizontal" style="width:100%;">
+          <div class="workspace-table-wrap">
+            <table class="workspace-table">
               <thead>
                 <tr>
                   <th>Name</th>
@@ -131,7 +131,7 @@
             </table>
           </div>
 
-          <div class="pure-form pure-form-stacked">
+          <div class="workspace-form workspace-stack">
             <label for="execution-account-context-name">Name</label>
             <input id="execution-account-context-name" type="text" maxlength="256"
                    autocomplete="off" placeholder="api_server">
@@ -149,7 +149,7 @@
               <option value="json">JSON</option>
             </select>
 
-            <label class="pure-checkbox">
+            <label class="workspace-check">
               <input id="execution-account-context-sensitive" type="checkbox">
               Sensitive
             </label>
@@ -161,10 +161,10 @@
             </select>
 
             <div>
-              <button type="button" class="styled-btn" id="save-account-context-btn" data-requires-capability="account_context">
+              <button type="button" class="workspace-button" id="save-account-context-btn" data-requires-capability="account_context">
                 Save account context
               </button>
-              <button type="button" class="styled-btn" id="clear-account-context-editor-btn">
+              <button type="button" class="workspace-button" id="clear-account-context-editor-btn">
                 Clear editor
               </button>
             </div>
@@ -183,8 +183,8 @@
       <div class="editor-actionbar">
         <p id="bdd-editor-help">Check signatures without running. <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> runs the feature.</p>
         <div class="workspace-actions">
-          <button type="button" class="styled-btn" id="bdd-validate">Validate</button>
-          <button type="submit" class="styled-btn workspace-primary" id="execute-feature-btn" data-requires-capability="execute"><span aria-hidden="true">▶</span> Run feature</button>
+          <button type="button" class="workspace-button" id="bdd-validate">Validate</button>
+          <button type="submit" class="workspace-button workspace-primary" id="execute-feature-btn" data-requires-capability="execute"><span aria-hidden="true">▶</span> Run feature</button>
         </div>
       </div>
       <div class="validation-panel">
@@ -207,7 +207,7 @@
       <span id="bdd-run-status" class="run-state" role="status">Not run</span>
     </div>
     <div class="output-toolbar"><a id="activity-link" href="#activity-tab">View run history <span aria-hidden="true">↗</span></a>
-      <button id="bdd-copy-report" type="button" class="styled-btn" disabled>Copy output</button></div>
+      <button id="bdd-copy-report" type="button" class="workspace-button" disabled>Copy output</button></div>
     <div id="bdd-report-empty" class="report-empty">
       <span class="report-empty-mark" aria-hidden="true">&gt;_</span>
       <h3>Evidence starts with a run</h3>

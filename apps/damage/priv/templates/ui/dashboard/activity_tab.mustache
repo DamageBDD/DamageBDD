@@ -1,31 +1,36 @@
 <!-- -*- mode: html -*- -->
-<div class="activity-panel">
-  <div class="activity-toolbar">
-    <div class="activity-filters">
-      <div style="font-weight:600;">Account filters</div>
-
-      <div id="activityAddrTags" class="addr-tags" aria-label="Known accounts">
-        <!-- tags injected by JS -->
-      </div>
-
-      <div class="addr-add">
-        <input id="activityAddrInput" type="text"
-               placeholder="Add account (ak_... or ct_...)"
-               spellcheck="false" autocomplete="off" inputmode="text"
-               class="addr-add__input">
-        <button id="activityAddrAddBtn" class="styled-btn" type="button">Add</button>
-      </div>
-
-      <div id="activityAddrHint" style="color:#9aa3b2; font-size:.85rem;"></div>
+<section class="workspace-page" aria-labelledby="activity-heading">
+  <div class="workspace-heading">
+    <div>
+      <p class="workspace-eyebrow">EXECUTION EVIDENCE</p>
+      <h1 id="activity-heading">Run history</h1>
+      <p>Browse recent verification reports and filter by known account.</p>
     </div>
   </div>
 
-  <ul id="run-reports-list" class="activity-list"></ul>
+  <div class="activity-panel workspace-card">
+    <div class="activity-toolbar workspace-card-body">
+      <div class="activity-filters">
+        <strong>Account filters</strong>
+        <div id="activityAddrTags" class="addr-tags" aria-label="Known accounts"></div>
+        <div class="addr-add">
+          <label class="visually-hidden" for="activityAddrInput">Add account filter</label>
+          <input id="activityAddrInput" type="text"
+                 placeholder="Add account (ak_... or ct_...)"
+                 spellcheck="false" autocomplete="off" inputmode="text"
+                 class="addr-add__input workspace-input">
+          <button id="activityAddrAddBtn" class="workspace-button" type="button">Add</button>
+        </div>
+        <div id="activityAddrHint" class="workspace-helper"></div>
+      </div>
+    </div>
 
-  <div id="run-reports-pager" class="activity-pager" aria-label="Pagination">
-    <button id="run-reports-prev" class="activity-btn" type="button">◀ Prev</button>
-    <button id="run-reports-next" class="activity-btn" type="button">Next ▶</button>
-    <span id="run-reports-info" class="activity-pagerinfo"></span>
+    <ul id="run-reports-list" class="activity-list"></ul>
+
+    <div id="run-reports-pager" class="activity-pager" aria-label="Pagination">
+      <button id="run-reports-prev" class="workspace-button" type="button">◀ Prev</button>
+      <button id="run-reports-next" class="workspace-button" type="button">Next ▶</button>
+      <span id="run-reports-info" class="activity-pagerinfo workspace-muted"></span>
+    </div>
   </div>
-</div>
-
+</section>
