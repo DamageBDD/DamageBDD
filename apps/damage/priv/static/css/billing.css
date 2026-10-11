@@ -85,3 +85,399 @@
 .billing-logo-preview-wrap img { display:block; max-width:180px; max-height:72px; object-fit:contain; border:1px solid var(--bill-line); border-radius:8px; padding:8px; background:#fff; }
 .billing code { font-size:.9em; }
 @media(max-width:700px) { .billing-settings-heading { flex-direction:column; } .billing-logo-preview-wrap { justify-content:flex-start; } }
+
+/* -------------------------------------------------------------------------
+ * Dashboard shell integration
+ *
+ * Billing is a dashboard workspace, not a standalone light modal. Keep the
+ * generic rules above as a fallback, then map the component onto the shell's
+ * design tokens when it is rendered inside .damage-dashboard.
+ * ------------------------------------------------------------------------- */
+.damage-dashboard #billing-tab {
+  overflow-x: clip;
+}
+
+.damage-dashboard .billing {
+  --bill-panel: var(--ws-panel);
+  --bill-bg: var(--ws-bg);
+  --bill-input: var(--ws-input);
+  --bill-raised: var(--ws-raised);
+  --bill-ink: var(--ws-text);
+  --bill-muted: var(--ws-muted);
+  --bill-line: var(--ws-line);
+  --bill-accent: var(--ws-accent);
+  --bill-accent-text: var(--ws-accent-text);
+
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--bill-ink);
+  color-scheme: dark;
+}
+
+.damage-dashboard .billing-header {
+  min-height: 72px;
+  margin: 0 0 18px;
+  padding: 0 0 18px;
+  border-bottom: 1px solid var(--bill-line);
+}
+.damage-dashboard .billing-header > div:first-child {
+  min-width: 0;
+}
+.damage-dashboard .billing-eyebrow {
+  margin: 0 0 5px;
+  color: #91a4bc;
+  font-size: 10px;
+  line-height: 1.4;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+.damage-dashboard .billing h2#billing-title {
+  margin: 0;
+  color: var(--bill-ink);
+  font-size: clamp(22px, 2vw, 28px);
+  font-weight: 650;
+  letter-spacing: -.5px;
+}
+.damage-dashboard .billing-header .billing-muted {
+  margin: 5px 0 0;
+  font-size: 12px;
+}
+.damage-dashboard .billing-muted {
+  color: var(--bill-muted);
+}
+
+.damage-dashboard .billing button {
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 1px solid var(--bill-line);
+  border-radius: 7px;
+  background: var(--bill-raised);
+  color: var(--bill-ink);
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 550;
+  transform: none;
+}
+.damage-dashboard .billing button:hover {
+  border-color: #697b90;
+  background: #28364a;
+  color: var(--bill-ink);
+  transform: none;
+}
+.damage-dashboard .billing button.billing-primary {
+  border-color: var(--bill-accent);
+  background: var(--bill-accent);
+  color: var(--bill-accent-text);
+  font-weight: 700;
+}
+.damage-dashboard .billing button.billing-primary:hover {
+  border-color: #c5ef95;
+  background: #c5ef95;
+  color: var(--bill-accent-text);
+}
+.damage-dashboard .billing button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.damage-dashboard .billing-overview {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0 0 14px;
+}
+.damage-dashboard .billing-stat {
+  min-height: 112px;
+  padding: 15px 16px;
+  border: 1px solid var(--bill-line);
+  border-radius: 10px;
+  background: var(--bill-panel);
+}
+.damage-dashboard .billing-stat > span {
+  color: #93a5bb;
+  font-size: 10px;
+  letter-spacing: .8px;
+}
+.damage-dashboard .billing-stat > strong {
+  margin: 7px 0 5px;
+  color: var(--bill-ink);
+  font-size: 23px;
+  font-weight: 650;
+}
+.damage-dashboard .billing-stat > small {
+  color: var(--bill-muted);
+  font-size: 11px;
+}
+
+.damage-dashboard .billing-commandbar {
+  margin: 0 0 8px;
+  padding: 13px 15px;
+  border: 1px solid var(--bill-line);
+  border-radius: 10px;
+  background: var(--bill-panel);
+}
+.damage-dashboard .billing-commandbar strong {
+  color: var(--bill-ink);
+  font-size: 13px;
+}
+.damage-dashboard #billing-clock {
+  margin: 8px 1px 0;
+  font-size: 11px;
+}
+
+.damage-dashboard .billing .billing-nav {
+  gap: 4px;
+  margin: 16px 0 14px;
+  padding: 0 0 10px;
+  border-bottom: 1px solid var(--bill-line);
+}
+.damage-dashboard .billing .billing-nav button {
+  min-height: 34px;
+  padding: 7px 10px;
+  border-color: transparent;
+  background: transparent;
+  color: #adbbce;
+}
+.damage-dashboard .billing .billing-nav button:hover {
+  border-color: var(--bill-line);
+  background: var(--bill-raised);
+  color: var(--bill-ink);
+}
+.damage-dashboard .billing .billing-nav button[aria-pressed="true"] {
+  border-color: #46573d;
+  background: #213027;
+  color: #d7efbb;
+  font-weight: 650;
+}
+
+.damage-dashboard .billing > section[data-billing-content] {
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--bill-line);
+  border-radius: 12px;
+  background: var(--bill-panel);
+}
+.damage-dashboard .billing-toolbar {
+  gap: 10px;
+  margin: 0 0 14px;
+}
+.damage-dashboard .billing label {
+  color: #c8d3e2;
+  font-size: 11px;
+  font-weight: 600;
+}
+.damage-dashboard .billing input,
+.damage-dashboard .billing select,
+.damage-dashboard .billing textarea {
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid #35455a;
+  border-radius: 7px;
+  background: var(--bill-input);
+  color: var(--bill-ink);
+  box-shadow: none;
+  font-size: 13px;
+}
+.damage-dashboard .billing textarea {
+  min-height: 84px;
+}
+.damage-dashboard .billing input::placeholder,
+.damage-dashboard .billing textarea::placeholder {
+  color: #718299;
+}
+.damage-dashboard .billing :is(input, select, textarea):hover {
+  border-color: #53647a;
+}
+.damage-dashboard .billing :is(input, select, textarea):focus {
+  border-color: #768d65;
+  outline: none;
+}
+.damage-dashboard .billing .billing-check {
+  color: var(--bill-muted);
+}
+.damage-dashboard .billing-check input {
+  min-height: 0;
+  accent-color: var(--bill-accent);
+}
+
+.damage-dashboard .billing-table-scroll {
+  max-width: 100%;
+  border: 1px solid var(--bill-line);
+  border-radius: 9px;
+  background: var(--bill-input);
+  scrollbar-color: #46566b transparent;
+}
+.damage-dashboard .billing table {
+  background: transparent;
+  color: var(--bill-ink);
+}
+.damage-dashboard .billing th {
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--bill-line);
+  background: #182231;
+  color: #9aabc0;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .25px;
+}
+.damage-dashboard .billing td {
+  padding: 12px;
+  border-bottom: 1px solid #253345;
+  background: transparent;
+  color: #dce5f1;
+  font-size: 12px;
+}
+.damage-dashboard .billing tbody tr:hover td {
+  background: #172130;
+}
+.damage-dashboard .billing-empty {
+  min-height: 106px;
+  padding: 34px !important;
+  color: #8899af !important;
+}
+.damage-dashboard .billing-pagination {
+  margin: 12px 0 0;
+  color: var(--bill-muted);
+}
+
+.damage-dashboard .billing-badge {
+  border: 1px solid #3b4b60;
+  background: #1b2737;
+  color: #c8d4e4;
+}
+.damage-dashboard .billing-badge[data-state="paid"],
+.damage-dashboard .billing-badge[data-state="sent"],
+.damage-dashboard .billing-badge[data-state="active"],
+.damage-dashboard .billing-badge[data-state="minted"] {
+  border-color: #3e604d;
+  background: #193126;
+  color: #aee0bd;
+}
+.damage-dashboard .billing-badge[data-state="unknown"],
+.damage-dashboard .billing-badge[data-state="issue_failed"],
+.damage-dashboard .billing-badge[data-state="failed"] {
+  border-color: #765235;
+  background: #392719;
+  color: #ffd0a3;
+}
+.damage-dashboard .billing-badge[data-state="void"],
+.damage-dashboard .billing-badge[data-state="paused"] {
+  border-color: #444f5e;
+  background: #252d38;
+  color: #aeb9c8;
+}
+
+.damage-dashboard .billing-notice {
+  margin: 0 0 14px;
+  border: 1px solid #40546a;
+  border-left: 3px solid var(--bill-accent);
+  background: #172232;
+  color: #d8e3f1;
+}
+.damage-dashboard .billing-notice[data-error="true"],
+.damage-dashboard .billing-form-error {
+  border: 1px solid #704844;
+  border-left: 3px solid #d17066;
+  background: #321f20;
+  color: #ffc2bd;
+}
+
+.damage-dashboard .billing-detail {
+  margin-top: 16px;
+  padding: 18px;
+  border-color: var(--bill-line);
+  background: var(--bill-input);
+}
+.damage-dashboard .billing-detail dt {
+  color: #91a4bb;
+}
+.damage-dashboard .billing-detail dd {
+  color: #dce5f1;
+}
+.damage-dashboard .billing-audit {
+  border-color: var(--bill-line);
+}
+
+.damage-dashboard .billing-settings-form fieldset {
+  border-color: var(--bill-line);
+  background: var(--bill-input);
+}
+.damage-dashboard .billing-settings-form legend {
+  color: #cfe8b3;
+}
+.damage-dashboard .billing-logo-preview-wrap img {
+  border-color: var(--bill-line);
+  background: #f7f8fa;
+}
+.damage-dashboard .billing-reward-option,
+.damage-dashboard .billing-reward-card {
+  border-color: var(--bill-line);
+  background: var(--bill-input);
+}
+
+.damage-dashboard .billing dialog {
+  width: min(900px, calc(100vw - 32px));
+  border: 1px solid #3a4a5f;
+  border-radius: 12px;
+  background: var(--bill-panel);
+  color: var(--bill-ink);
+  box-shadow: 0 24px 90px #000a;
+  color-scheme: dark;
+}
+.damage-dashboard .billing dialog::backdrop {
+  background: #050a14bf;
+  backdrop-filter: blur(2px);
+}
+.damage-dashboard .billing dialog footer {
+  border-top: 1px solid var(--bill-line);
+  margin-top: 18px;
+  padding-top: 14px;
+}
+
+@media (max-width: 1100px) {
+  .damage-dashboard .billing-overview {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 700px) {
+  .damage-dashboard .billing-header {
+    align-items: flex-start;
+  }
+  .damage-dashboard .billing > section[data-billing-content] {
+    padding: 14px;
+  }
+  .damage-dashboard .billing-overview {
+    grid-template-columns: 1fr;
+  }
+  .damage-dashboard .billing-commandbar {
+    align-items: flex-start;
+  }
+  .damage-dashboard .billing-commandbar .billing-header-actions,
+  .damage-dashboard .billing-header > .billing-header-actions {
+    width: 100%;
+  }
+  .damage-dashboard .billing-commandbar .billing-header-actions button {
+    flex: 1 1 auto;
+  }
+  .damage-dashboard .billing .billing-nav {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    scrollbar-width: thin;
+  }
+  .damage-dashboard .billing .billing-nav button {
+    flex: 0 0 auto;
+  }
+  .damage-dashboard .billing-toolbar {
+    align-items: stretch;
+  }
+  .damage-dashboard .billing-toolbar label {
+    flex: 1 1 180px;
+  }
+  .damage-dashboard .billing table {
+    min-width: 720px;
+  }
+}
