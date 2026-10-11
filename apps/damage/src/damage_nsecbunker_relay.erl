@@ -23,6 +23,10 @@
 
 -include_lib("kernel/include/logger.hrl").
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 %% Public API / MFA targets for damage_nostr_relay_client
 -export([
     start_link/0,
@@ -42,6 +46,7 @@
 -define(NIP46_KIND, 24133).
 -define(DEFAULT_CONNECT_TIMEOUT_MS, 15000).
 -define(DEFAULT_PUBLISH_TIMEOUT_MS, 15000).
+-define(DEFAULT_SUBSCRIPTION_TIMEOUT_MS, 15000).
 -define(DEFAULT_RECONNECT_MS, 5000).
 -define(DEFAULT_MAX_RECONNECT_MS, 300000).
 -define(DEFAULT_MAX_RETRIES, 8).
@@ -155,6 +160,9 @@ handle_call(
             relays => [relay_url(R) || R <- Relays],
             filter => Filter,
             connections => connection_status(Conns),
+            retry_state => maps:map(
+                fun(_Url, Retry) -> maps:without([timer], Retry) end, St#st.retry_state
+            ),
             stats => Stats,
             last_inbound_event_id => LastInbound,
             recent_inbound_event_ids => RecentInbound
@@ -214,11 +222,14 @@ handle_info({relay_opened, Worker, Relay, Filter, {ok, ConnPid, StreamRef}}, St0
                 sub_id => make_sub_id(),
                 filter => Filter,
                 owner => Worker,
+                request_sent => false,
                 subscribed => false,
+                eose_received => false,
+                auth_challenge_received => false,
                 subscribe_attempts => 0,
                 opened_at => erlang:system_time(second)
             },
-            St1 = clear_retry_state(RelayUrl, St0#st{conns = (St0#st.conns)#{ConnPid => Conn}}),
+            St1 = St0#st{conns = (St0#st.conns)#{ConnPid => Conn}},
             schedule_subscription_attempt(ConnPid, 0),
             {noreply, St1};
         false ->
@@ -271,7 +282,7 @@ handle_info({gun_response, ConnPid, StreamRef, _IsFin, Status, _Headers}, St0) -
     handle_conn_down(ConnPid, {websocket_upgrade_rejected, StreamRef, Status}, St0);
 handle_info({ensure_subscription, ConnPid}, St0) ->
     case maps:get(ConnPid, St0#st.conns, undefined) of
-        #{subscribed := true} ->
+        #{request_sent := true} ->
             {noreply, St0};
         #{stream_ref := StreamRef} = Conn ->
             case send_subscription(ConnPid, StreamRef, Conn, St0) of
@@ -283,16 +294,18 @@ handle_info({ensure_subscription, ConnPid}, St0) ->
         _ ->
             {noreply, St0}
     end;
+handle_info({subscription_timeout, ConnPid, SubId}, St0) ->
+    case maps:get(ConnPid, St0#st.conns, undefined) of
+        #{sub_id := SubId, request_sent := true, subscribed := false} ->
+            handle_conn_down(ConnPid, subscription_confirmation_timeout, St0);
+        _ ->
+            {noreply, St0}
+    end;
 handle_info({gun_ws, ConnPid, StreamRef, {text, Msg}}, St0) ->
     case maps:get(ConnPid, St0#st.conns, undefined) of
-        #{stream_ref := StreamRef, sub_id := SubId, relay_url := RelayUrl, subscribed := true} =
+        #{stream_ref := StreamRef, sub_id := SubId, relay_url := RelayUrl} =
                 Conn ->
             handle_relay_frame(ConnPid, Conn, SubId, RelayUrl, Msg, St0);
-        #{stream_ref := StreamRef, relay_url := RelayUrl} ->
-            ?LOG_DEBUG("nsecbunker relay ignored websocket frame before subscription relay=~p", [
-                RelayUrl
-            ]),
-            {noreply, St0};
         _ ->
             ?LOG_DEBUG("nsecbunker relay ignored websocket frame from unknown conn=~p", [ConnPid]),
             {noreply, St0}
@@ -444,7 +457,7 @@ await_ws_upgrade(ConnPid, StreamRef, RelayUrl, TimeoutMs) ->
 
 handle_ws_upgrade(ConnPid, StreamRef, St0) ->
     case maps:get(ConnPid, St0#st.conns, undefined) of
-        #{stream_ref := StreamRef, subscribed := true, relay_url := RelayUrl} ->
+        #{stream_ref := StreamRef, request_sent := true, relay_url := RelayUrl} ->
             ?LOG_DEBUG("nsecbunker relay duplicate websocket upgrade relay=~p", [RelayUrl]),
             {noreply, St0};
         #{stream_ref := StreamRef} = Conn ->
@@ -464,10 +477,15 @@ send_subscription(ConnPid, StreamRef, Conn, St0) ->
     Req = jsx:encode([<<"REQ">>, SubId, Filter]),
     case safe_ws_send(ConnPid, StreamRef, Req) of
         ok ->
-            ?LOG_INFO("nsecbunker NIP46 subscribed relay=~p sub_id=~p filter=~p", [
+            ?LOG_INFO("nsecbunker NIP46 REQ sent relay=~p sub_id=~p filter=~p", [
                 RelayUrl, SubId, Filter
             ]),
-            Conn1 = Conn#{subscribed => true, subscribed_at => erlang:system_time(second)},
+            Conn1 = Conn#{request_sent => true, subscribed => false},
+            erlang:send_after(
+                config_int(relay_subscription_timeout_ms, ?DEFAULT_SUBSCRIPTION_TIMEOUT_MS),
+                self(),
+                {subscription_timeout, ConnPid, SubId}
+            ),
             Conns0 = St0#st.conns,
             {ok, St0#st{conns = Conns0#{ConnPid => Conn1}}};
         {error, Reason} ->
@@ -509,31 +527,45 @@ maybe_retry_subscription(ConnPid, Reason, St0) ->
             St0
     end.
 
-handle_relay_frame(_ConnPid, _Conn, SubId, RelayUrl, Msg, St0) ->
+handle_relay_frame(ConnPid, Conn, SubId, RelayUrl, Msg, St0) ->
+    RequestSent = maps:get(request_sent, Conn, false),
     case safe_decode(Msg) of
-        [<<"EVENT">>, SubId, Event0] when is_map(Event0) ->
+        [<<"EVENT">>, SubId, Event0] when RequestSent, is_map(Event0) ->
+            Confirmed = confirm_subscription(ConnPid, Conn, event, St0),
             Event = normalize_event(Event0),
             EventId = event_id(Event),
-            case seen(EventId, St0) of
+            case seen(EventId, Confirmed) of
                 true ->
                     ?LOG_DEBUG(
                         "nsecbunker relay duplicate inbound event ignored relay=~p event_id=~p", [
                             RelayUrl, EventId
                         ]
                     ),
-                    {noreply, St0};
+                    {noreply, Confirmed};
                 false ->
                     ?LOG_INFO("nsecbunker relay inbound NIP46 event relay=~p event_id=~p", [
                         RelayUrl, EventId
                     ]),
                     dispatch_inbound(Event, RelayUrl),
-                    St1 = mark_seen(EventId, St0),
+                    St1 = mark_seen(EventId, Confirmed),
                     St2 = record_inbound_event(EventId, St1),
                     {noreply, inc_stat(inbound_events, inc_stat(dispatched_events, St2))}
             end;
-        [<<"EOSE">>, SubId] ->
+        [<<"EOSE">>, SubId] when RequestSent ->
             ?LOG_DEBUG("nsecbunker relay EOSE relay=~p sub_id=~p", [RelayUrl, SubId]),
-            {noreply, inc_stat(eose_frames, St0)};
+            St1 = confirm_subscription(ConnPid, Conn, eose, St0),
+            {noreply, inc_stat(eose_frames, St1)};
+        [<<"CLOSED">>, SubId, Reason] when RequestSent, is_binary(Reason) ->
+            ?LOG_WARNING("nsecbunker relay subscription closed relay=~p reason=~p", [
+                RelayUrl, Reason
+            ]),
+            handle_conn_down(ConnPid, {subscription_closed, Reason}, inc_stat(closed_frames, St0));
+        [<<"AUTH">>, Challenge] when is_binary(Challenge) ->
+            %% A challenge alone does not mean this subscription requires AUTH.
+            %% Record it without retaining the challenge or signing with the vault.
+            Conn1 = Conn#{auth_challenge_received => true},
+            St1 = St0#st{conns = (St0#st.conns)#{ConnPid => Conn1}},
+            {noreply, inc_stat(auth_frames, St1)};
         [<<"NOTICE">>, Notice] ->
             ?LOG_WARNING("nsecbunker relay notice relay=~p notice=~p", [RelayUrl, Notice]),
             {noreply, inc_stat(notice_frames, St0)};
@@ -546,6 +578,15 @@ handle_relay_frame(_ConnPid, _Conn, SubId, RelayUrl, Msg, St0) ->
             ]),
             {noreply, St0}
     end.
+
+confirm_subscription(ConnPid, Conn, Evidence, St0) ->
+    Conn1 = Conn#{
+        subscribed => true,
+        subscribed_at => maps:get(subscribed_at, Conn, erlang:system_time(second)),
+        eose_received => maps:get(eose_received, Conn, false) orelse Evidence =:= eose
+    },
+    St1 = St0#st{conns = (St0#st.conns)#{ConnPid => Conn1}},
+    clear_retry_state(maps:get(relay_url, Conn), St1).
 
 handle_conn_down(ConnPid, Reason, St0) ->
     case maps:take(ConnPid, St0#st.conns) of
@@ -657,6 +698,11 @@ classify_relay_failure({connect_failed, Reason}) ->
     classify_relay_failure(Reason);
 classify_relay_failure({connection_down, Reason}) ->
     classify_relay_failure(Reason);
+classify_relay_failure({subscription_closed, <<"auth-required:", _/binary>>}) -> permanent;
+classify_relay_failure({subscription_closed, <<"restricted:", _/binary>>}) -> permanent;
+classify_relay_failure({subscription_closed, <<"blocked:", _/binary>>}) -> permanent;
+classify_relay_failure({subscription_closed, <<"invalid:", _/binary>>}) -> permanent;
+classify_relay_failure({subscription_closed, <<"unsupported:", _/binary>>}) -> permanent;
 classify_relay_failure({await_up_failed, Reason}) ->
     classify_relay_failure(Reason);
 classify_relay_failure({await_up_exit, Reason}) ->
@@ -1056,6 +1102,8 @@ empty_stats() ->
         inbound_events => 0,
         dispatched_events => 0,
         eose_frames => 0,
+        closed_frames => 0,
+        auth_frames => 0,
         notice_frames => 0,
         connection_downs => 0,
         publish_ok => 0,
@@ -1124,3 +1172,101 @@ bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
 bin(L) when is_list(L) -> unicode:characters_to_binary(L);
 bin(I) when is_integer(I) -> integer_to_binary(I);
 bin(Other) -> unicode:characters_to_binary(io_lib:format("~p", [Other])).
+
+-ifdef(TEST).
+
+subscription_send_waits_for_relay_test() ->
+    meck:new(gun, [non_strict]),
+    meck:new(damage_nsecbunker, [non_strict]),
+    try
+        meck:expect(gun, ws_send, fun(_, _, _) -> ok end),
+        meck:expect(damage_nsecbunker, config, fun() -> #{} end),
+        {Pid, Conn, St0} = relay_test_state(),
+        {ok, St1} = send_subscription(Pid, test_stream, Conn#{request_sent => false}, St0),
+        {reply, Status, _} = handle_call(status, undefined, St1),
+        ?assertEqual(false, maps:get(subscribed, Status)),
+        ?assertMatch(#{request_sent := true, subscribed := false}, maps:get(Pid, St1#st.conns))
+    after
+        meck:unload(gun),
+        meck:unload(damage_nsecbunker)
+    end.
+
+subscription_matching_eose_test() ->
+    {Pid, Conn, St0} = relay_test_state(),
+    {noreply, St0} = relay_test_frame(Pid, Conn, [<<"EOSE">>, <<"other">>], St0),
+    {noreply, St1} = relay_test_frame(Pid, Conn, [<<"EOSE">>, <<"test-sub">>], St0),
+    ?assertMatch(#{subscribed := true, eose_received := true}, maps:get(Pid, St1#st.conns)),
+    ?assertEqual(1, subscribed_count(St1#st.conns)),
+    {noreply, St1} = handle_info({subscription_timeout, Pid, <<"test-sub">>}, St1).
+
+subscription_event_before_eose_test() ->
+    {Pid, Conn, St0} = relay_test_state(),
+    Event = #{id => <<"test-event">>, kind => 24133, content => <<"ciphertext">>},
+    {noreply, St1} = relay_test_frame(Pid, Conn, [<<"EVENT">>, <<"test-sub">>, Event], St0),
+    ?assertMatch(#{subscribed := true, eose_received := false}, maps:get(Pid, St1#st.conns)),
+    ?assertEqual([<<"test-event">>], St1#st.recent_inbound_event_ids).
+
+subscription_closed_invalidates_readiness_test() ->
+    {Pid, Conn0, St0} = relay_test_state(),
+    Conn = Conn0#{subscribed => true},
+    St1 = St0#st{conns = #{Pid => Conn}},
+    {noreply, St2} = relay_test_frame(
+        Pid, Conn, [<<"CLOSED">>, <<"test-sub">>, <<"error: restart">>], St1
+    ),
+    ?assertEqual(0, subscribed_count(St2#st.conns)),
+    #{attempt := 1, timer := Timer} = maps:get(<<"wss://relay.example">>, St2#st.retry_state),
+    erlang:cancel_timer(Timer),
+    ?assertEqual(1, maps:get(closed_frames, St2#st.stats)).
+
+subscription_auth_required_is_visible_test() ->
+    {Pid, Conn, St0} = relay_test_state(),
+    Reason = <<"auth-required: authenticate first">>,
+    {noreply, St1} = relay_test_frame(Pid, Conn, [<<"CLOSED">>, <<"test-sub">>, Reason], St0),
+    {reply, Status, _} = handle_call(status, undefined, St1),
+    ?assertEqual(false, maps:get(subscribed, Status)),
+    Retry = maps:get(<<"wss://relay.example">>, maps:get(retry_state, Status)),
+    ?assertMatch(#{disabled := true, last_reason := {subscription_closed, Reason}}, Retry),
+    ?assertEqual(false, maps:is_key(timer, Retry)).
+
+subscription_optional_auth_does_not_close_test() ->
+    {Pid, Conn0, St0} = relay_test_state(),
+    Conn = Conn0#{subscribed => true},
+    {noreply, St1} = relay_test_frame(
+        Pid, Conn, [<<"AUTH">>, <<"private-challenge">>], St0#st{conns = #{Pid => Conn}}
+    ),
+    ?assertMatch(#{subscribed := true, auth_challenge_received := true}, maps:get(Pid, St1#st.conns)),
+    ?assertEqual(nomatch, binary:match(term_to_binary(St1), <<"private-challenge">>)).
+
+subscription_timeout_retries_test() ->
+    {Pid, _Conn, St0} = relay_test_state(),
+    {noreply, St0} = handle_info({subscription_timeout, Pid, <<"stale-sub">>}, St0),
+    {noreply, St1} = handle_info({subscription_timeout, Pid, <<"test-sub">>}, St0),
+    ?assertEqual(#{}, St1#st.conns),
+    #{timer := Timer, last_reason := subscription_confirmation_timeout} =
+        maps:get(<<"wss://relay.example">>, St1#st.retry_state),
+    erlang:cancel_timer(Timer).
+
+subscription_retry_clears_only_on_confirmation_test() ->
+    {Pid, Conn, St0} = relay_test_state(),
+    Url = <<"wss://relay.example">>,
+    St1 = St0#st{retry_state = #{Url => #{attempt => 3}}},
+    {noreply, St2} = relay_test_frame(Pid, Conn, [<<"EOSE">>, <<"test-sub">>], St1),
+    ?assertEqual(#{}, St2#st.retry_state).
+
+relay_test_state() ->
+    Pid = relay_test_connection,
+    Conn = #{
+        relay_url => <<"wss://relay.example">>,
+        stream_ref => test_stream,
+        sub_id => <<"test-sub">>,
+        filter => #{<<"kinds">> => [24133]},
+        request_sent => true,
+        subscribed => false
+    },
+    {Pid, Conn, #st{conns = #{Pid => Conn}, stats = empty_stats()}}.
+
+relay_test_frame(Pid, Conn, Frame, St) ->
+    handle_relay_frame(
+        Pid, Conn, maps:get(sub_id, Conn), maps:get(relay_url, Conn), jsx:encode(Frame), St
+    ).
+-endif.

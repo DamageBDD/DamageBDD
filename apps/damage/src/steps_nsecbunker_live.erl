@@ -166,11 +166,9 @@ step(
     ["the live NIP-46 relay bridge is running and subscribed"],
     _Args
 ) ->
-    %% Subscribe through the existing bridge. In Option B this routes to
-    %% damage_nsecbunker_relay via relay_subscribe_mfa. Do not trust the
-    %% immediate subscribe/0 return as proof: the relay adapter only becomes
-    %% live after websocket upgrade and REQ subscription. Poll for adapter
-    %% subscribed=true so the BDD cannot false-green on a merely-open socket.
+    %% Observe the subscription established by normal service startup. This
+    %% readiness assertion must not repair missing relay_autosubscribe wiring.
+    %% The adapter confirms readiness only after a matching EOSE or EVENT.
     case wait_for_relay_bridge_subscribed(Context, ?DEFAULT_TIMEOUT_MS) of
         {ok, RelayClientStatus, RelayAdapterStatus} ->
             Filter = first_present([
@@ -1496,11 +1494,8 @@ recent_inbound_event_ids(Status) ->
     ).
 
 wait_for_relay_bridge_subscribed(Context, TimeoutMs) ->
-    %% Fire subscribe once. Use a bounded caller process so a stuck relay
-    %% implementation cannot hang the BDD step for the relay adapter's full
-    %% gen_server call timeout.
+    %% Read-only: calling subscribe here can make a broken deployment pass.
     Deadline = erlang:monotonic_time(millisecond) + TimeoutMs,
-    _ = safe_eval_timeout(fun() -> damage_nostr_relay_client:subscribe() end, min(5000, TimeoutMs)),
     wait_for_relay_bridge_subscribed_loop(Context, Deadline, undefined, undefined).
 
 wait_for_relay_bridge_subscribed_loop(Context, Deadline, LastRelayClient, LastRelayAdapter) ->
