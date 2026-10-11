@@ -81,7 +81,7 @@ catalog_contains_no_mutable_credentials_test() ->
 %% The tax owner must survive the Settings serializer as a binary, not a list.
 tax_controls_are_allowlisted_and_grouped_test() ->
     Keys = [tax_enabled, tax_cln_owner, tax_data_dir, tax_backfill_on_start,
-            tax_standard_utc_offset_minutes, tax_max_prices_per_backfill,
+            tax_jurisdiction, tax_standard_utc_offset_minutes, tax_max_prices_per_backfill,
             tax_price_pause_ms],
     [begin
         {ok, F} = damage_settings_schema:field(damage, atom_to_binary(K, utf8)),
@@ -106,6 +106,7 @@ tax_settings_preserve_runtime_types_test() ->
         <<"tax_cln_owner">> => Owner,
         <<"tax_data_dir">> => <<"/var/lib/damage/tax">>,
         <<"tax_backfill_on_start">> => false,
+        <<"tax_jurisdiction">> => <<"AU">>,
         <<"tax_standard_utc_offset_minutes">> => 600,
         <<"tax_max_prices_per_backfill">> => 200,
         <<"tax_price_pause_ms">> => 250
@@ -128,7 +129,8 @@ tax_invalid_settings_rejected_test() ->
         {<<"tax_data_dir">>, <<"/">>},
         {<<"tax_data_dir">>, <<"/tmp">>},
         {<<"tax_data_dir">>, <<"/usr/bin">>},
-        {<<"tax_standard_utc_offset_minutes">>, -600},
+        {<<"tax_jurisdiction">>, <<"ZZ">>},
+        {<<"tax_standard_utc_offset_minutes">>, -721},
         {<<"tax_max_prices_per_backfill">>, 501},
         {<<"tax_price_pause_ms">>, 5001}
     ],
@@ -150,3 +152,13 @@ tax_invalid_settings_rejected_test() ->
     ?assertMatch({error, {not_editable, <<"tax_coingecko_demo_key">>}},
         damage_settings_schema:decode_changes(damage,
             #{<<"tax_coingecko_demo_key">> => <<"secret">>})).
+
+tax_jurisdiction_country_codes_are_closed_test() ->
+    {ok, Changes} = damage_settings_schema:decode_changes(damage, #{
+        <<"tax_jurisdiction">> => <<"US">>,
+        <<"tax_standard_utc_offset_minutes">> => -300}),
+    ?assertEqual(<<"US">>, proplists:get_value(tax_jurisdiction, Changes)),
+    ?assertEqual(-300, proplists:get_value(tax_standard_utc_offset_minutes, Changes)),
+    ?assertMatch({error, {invalid_value, <<"tax_jurisdiction">>, _}},
+        damage_settings_schema:decode_changes(damage, #{
+            <<"tax_jurisdiction">> => <<"../../etc/passwd">>})).

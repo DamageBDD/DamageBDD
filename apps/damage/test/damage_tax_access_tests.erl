@@ -36,9 +36,10 @@ admin_separation_test() ->
     end.
 
 scoped_tax_settings_only_test() ->
-    ?assertEqual(7, length(damage_tax_settings:keys())),
+    ?assertEqual(8, length(damage_tax_settings:keys())),
     ?assert(damage_tax_settings:authorized_changes(#{})),
     ?assert(damage_tax_settings:authorized_changes(#{<<"tax_enabled">> => false})),
+    ?assert(damage_tax_settings:authorized_changes(#{<<"tax_jurisdiction">> => <<"US">>})),
     ?assertNot(damage_tax_settings:authorized_changes(
         #{<<"node_admins">> => [<<"intruder">>]})),
     ?assertNot(damage_tax_settings:authorized_changes(

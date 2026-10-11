@@ -26,10 +26,15 @@ prepare(Report) ->
         ok ->
             Manifest = maps:get(<<"manifest">>, Report),
             Year = maps:get(<<"tax_year_end">>, Manifest),
-            {ok, #{<<"period">> => <<"AU-FY-", (integer_to_binary(Year))/binary>>,
-                   <<"manifest_sha256">> => maps:get(<<"manifest_sha256">>, Report),
-                   <<"evidence_set_sha256">> => maps:get(<<"evidence_set_sha256">>, Report),
-                   <<"ruleset">> => maps:get(<<"ruleset">>, Manifest)}};
+            Region = maps:get(<<"jurisdiction">>, Manifest, <<"AU">>),
+            case damage_tax_regions:valid(Region) of
+                false -> {error, unsupported_tax_jurisdiction};
+                true ->
+                    {ok, #{<<"period">> => <<Region/binary, "-FY-", (integer_to_binary(Year))/binary>>,
+                           <<"manifest_sha256">> => maps:get(<<"manifest_sha256">>, Report),
+                           <<"evidence_set_sha256">> => maps:get(<<"evidence_set_sha256">>, Report),
+                           <<"ruleset">> => maps:get(<<"ruleset">>, Manifest)}}
+            end;
         Error -> Error
     end.
 

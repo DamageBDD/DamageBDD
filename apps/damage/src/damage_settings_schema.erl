@@ -64,7 +64,7 @@ base_fields(damage) ->
         %% a node restart; the supervisor reads tax_enabled only at startup.
         %% Explicit maps avoid updating compile-time literals expanded by the
         %% generic settings macros (OTP emits "expression updates a literal").
-        #{key => tax_enabled, label => <<"Enable ATO tax reporting">>,
+        #{key => tax_enabled, label => <<"Enable private tax reporting">>,
           type => boolean, apply => restart, default => false,
           help => <<"Start the private tax journal and report service after a node restart. Configure the CLN owner first.">>},
         #{key => tax_cln_owner, label => <<"CLN tax owner (AE account)">>,
@@ -77,10 +77,13 @@ base_fields(damage) ->
         #{key => tax_backfill_on_start, label => <<"Backfill CLN history on startup">>,
           type => boolean, apply => restart, default => false,
           help => <<"Import history asynchronously after a node restart. Leave off until ownership and storage have been reviewed.">>},
+        #{key => tax_jurisdiction, label => <<"Default tax reporting country">>,
+          type => tax_jurisdiction, apply => hot, default => <<"AU">>,
+          help => <<"Default workpaper country for scheduled and manual backfills. This does not establish legal tax residence.">>},
         #{key => tax_standard_utc_offset_minutes,
-          label => <<"Australian FY standard UTC offset (minutes)">>,
-          type => integer, min => 0, max => 840, apply => hot, default => 600,
-          help => <<"Default 600 (AEST, UTC+10). Used for the July 1 financial-year boundary; applies to the next report run.">>},
+          label => <<"Default reporting standard UTC offset (minutes)">>,
+          type => integer, min => -720, max => 840, apply => hot, default => 600,
+          help => <<"Fixed boundary offset for legacy AU backfills. Country-specific runs allow their own offset; does not account for daylight saving.">>},
         #{key => tax_max_prices_per_backfill,
           label => <<"Maximum historical price lookups per run">>,
           type => integer, min => 1, max => 500, apply => hot, default => 200,
@@ -264,6 +267,7 @@ public_value(#{type := parallelism}, auto) -> {ok, <<"auto">>};
 public_value(#{type := parallelism}, N) when is_integer(N) -> {ok, N};
 public_value(#{type := boolean}, B) when is_boolean(B) -> {ok, B};
 public_value(#{type := integer}, I) when is_integer(I) -> {ok, I};
+public_value(#{type := tax_jurisdiction}, B) when is_binary(B) -> {ok, B};
 public_value(#{type := ae_account}, B) when is_binary(B) -> {ok, B};
 public_value(#{type := ae_account}, L) when is_list(L) ->
     try {ok, unicode:characters_to_binary(L)} catch _:_ -> {error, not_ae_account} end;
@@ -276,6 +280,14 @@ public_value(#{type := string}, L) when is_list(L) ->
 public_value(#{type := string_list}, L) when is_list(L) ->
     try {ok, [unicode:characters_to_binary(S) || S <- L]} catch _:_ -> {error, not_string_list} end;
 public_value(_, _) -> {error, wrong_type}.
+
+%% Country codes remain binary and can only come from the built-in registry.
+decode(#{type := tax_jurisdiction}, B) when is_binary(B) ->
+    case damage_tax_regions:valid(B) of
+        true -> {ok, B};
+        false -> {error, unsupported_tax_jurisdiction}
+    end;
+decode(#{type := tax_jurisdiction}, _) -> {error, unsupported_tax_jurisdiction};
 
 %% The tax importer and report catalog use the *binary* tenant identifier.
 %% Unlike generic string fields, do not convert this one to a charlist.

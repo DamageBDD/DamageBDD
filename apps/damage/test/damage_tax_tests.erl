@@ -320,3 +320,180 @@ private_immutable_report_catalog_test_() ->
              ?assertEqual([], Others)
          end)
      end}.
+
+%% Regional reporting is a private, accountant-review workpaper workflow.
+%% These tests must not depend on a live rate provider or a tax authority API.
+regional_profiles_and_fiat_units_test() ->
+    Profiles = damage_tax_regions:all(),
+    ?assertEqual(13, length(Profiles)),
+    ?assertEqual(13, length(lists:usort([maps:get(<<"code">>, P) || P <- Profiles]))),
+    ?assertEqual(<<"AUD">>, damage_tax_regions:currency(<<"AU">>)),
+    ?assertEqual(<<"USD">>, damage_tax_regions:currency(<<"US">>)),
+    ?assertEqual(<<"INR">>, damage_tax_regions:currency(<<"IN">>)),
+    ?assertEqual(<<"AED">>, damage_tax_regions:currency(<<"AE">>)),
+    ?assertEqual(<<"SGD">>, damage_tax_regions:currency(<<"SG">>)),
+    ?assertEqual(0, damage_tax_regions:minor_digits(<<"JP">>)),
+    ?assertEqual(6, damage_tax_regions:start_day(<<"GB">>, 4)),
+    ?assertEqual(1, damage_tax_regions:start_day(<<"GB">>, 5)),
+    ?assertEqual(false, damage_tax_regions:valid(<<"ZZ">>)),
+    ?assertMatch({error, _}, damage_tax_regions:lookup(<<"../../etc">>)).
+
+country_fiscal_year_boundaries_test() ->
+    {ok, Au} = damage_tax_regions:bounds(<<"AU">>, 2026, 600, 7),
+    ?assertEqual(damage_tax_report:fy_bounds(2026, 600), Au),
+    {ok, {USStart, USEnd}} = damage_tax_regions:bounds(<<"US">>, 2026, 0, 1),
+    ?assertEqual(tax_unix({{2026, 1, 1}, {0, 0, 0}}), USStart),
+    ?assertEqual(tax_unix({{2027, 1, 1}, {0, 0, 0}}), USEnd),
+    {ok, {UKStart, UKEnd}} = damage_tax_regions:bounds(<<"GB">>, 2026, 0, 4),
+    ?assertEqual(tax_unix({{2025, 4, 6}, {0, 0, 0}}), UKStart),
+    ?assertEqual(tax_unix({{2026, 4, 6}, {0, 0, 0}}), UKEnd),
+    ?assertEqual(2026, damage_tax_regions:year(<<"GB">>, UKEnd - 1, 0, 4)),
+    ?assertEqual(2027, damage_tax_regions:year(<<"GB">>, UKEnd, 0, 4)),
+    {ok, {NZStart, _}} = damage_tax_regions:bounds(<<"NZ">>, 2026, 720, 4),
+    ?assertEqual(tax_unix({{2025, 4, 1}, {0, 0, 0}}) - 720 * 60, NZStart),
+    ?assertEqual({error, custom_tax_period_not_supported},
+                 damage_tax_regions:bounds(<<"IN">>, 2026, 330, 5)),
+    ?assertMatch({ok, {_Start, _End}},
+                 damage_tax_regions:bounds(<<"AE">>, 2026, 240, 4)),
+    ?assertEqual({error, invalid_tax_period},
+                 damage_tax_regions:bounds(<<"US">>, 2026, -721, 1)).
+
+currency_specific_quote_evidence_test() ->
+    E = witness_event(),
+    {ok, USD} = damage_tax_prices:parse_cryptocompare(
+        quote_fixture(), <<"BTC">>, ?HOUR, <<"USD">>),
+    {ok, AUD} = damage_tax_prices:parse_cryptocompare(
+        quote_fixture(), <<"BTC">>, ?HOUR, <<"AUD">>),
+    ?assertEqual(<<"USD">>, maps:get(<<"currency">>, USD)),
+    ?assertEqual(ok, damage_tax_prices:valid_quote(E, USD, <<"USD">>)),
+    ?assertMatch({error, _}, damage_tax_prices:valid_quote(E, AUD, <<"USD">>)),
+    ?assertEqual({ok, 10000000}, damage_tax_prices:fiat_minor(E, USD, <<"USD">>)),
+    ?assertMatch({error, _}, damage_tax_prices:aud_cents(E, USD)),
+    ?assertEqual({<<"BTC">>, ?HOUR, <<"USD">>}, damage_tax_prices:quote_key(E, <<"USD">>)),
+    ?assertEqual({<<"BTC">>, ?HOUR}, damage_tax_prices:quote_key(E, <<"AUD">>)),
+    {ok, {_Host, USDPath}} = damage_tax_prices:provider_url(
+        cryptocompare, <<"BTC">>, ?HOUR, <<"USD">>),
+    ?assert(binary:match(USDPath, <<"tsym=USD">>) =/= nomatch),
+    ?assertMatch({error, _}, damage_tax_prices:provider_url(
+        cryptocompare, <<"BTC">>, ?HOUR, <<"XYZ">>)).
+
+country_specific_report_is_reviewable_and_currency_safe_test() ->
+    E = witness_event(),
+    Id = maps:get(<<"id">>, E),
+    {ok, USD0} = damage_tax_prices:parse_cryptocompare(
+        quote_fixture(), <<"BTC">>, ?HOUR, <<"USD">>),
+    USD = USD0#{<<"archive_sha256">> => maps:get(<<"body_sha256">>, USD0)},
+    Decision = #{Id => #{<<"category">> => <<"ordinary_income">>,
+                         <<"approved">> => true, <<"reviewer">> => <<"CPA-01">>}},
+    {ok, USReport} = damage_tax_report:build(
+        <<"US">>, 2025, 0, [E], #{damage_tax_prices:quote_key(E, <<"USD">>) => USD}, Decision),
+    USManifest = maps:get(<<"manifest">>, USReport),
+    ?assertEqual(<<"US">>, maps:get(<<"jurisdiction">>, USManifest)),
+    ?assertEqual(<<"USD">>, maps:get(<<"currency">>, USManifest)),
+    ?assertEqual(2, maps:get(<<"schema_version">>, USManifest)),
+    [Row] = maps:get(<<"entries">>, USManifest),
+    ?assertEqual(10000000, maps:get(<<"fiat_minor_units">>, Row)),
+    ?assertEqual(null, maps:get(<<"aud_cents">>, Row)),
+    ?assertEqual(true, maps:get(<<"attestable">>, USReport)),
+    ?assert(binary:match(damage_tax_workpapers:to_csv(USReport),
+                         <<"gross_proceeds_usd_minor">>) =/= nomatch),
+    ?assert(binary:match(damage_tax_workpapers:to_csv(USReport),
+                         <<"DRAFT_REVIEW_REQUIRED">>) =/= nomatch),
+    ?assertEqual(<<"tax-US-workpaper.csv">>, damage_tax_workpapers:filename(<<"US">>)),
+    {ok, Wrong} = damage_tax_report:build(
+        <<"US">>, 2025, 0, [E], #{damage_tax_prices:quote_key(E, <<"USD">>) =>
+                                   USD#{<<"currency">> => <<"AUD">>}}, Decision),
+    ?assertEqual(false, maps:get(<<"attestable">>, Wrong)),
+    [WrongRow] = maps:get(<<"entries">>, maps:get(<<"manifest">>, Wrong)),
+    ?assertEqual(null, maps:get(<<"fiat_minor_units">>, WrongRow)),
+    ?assert(lists:member(<<"missing_or_invalid_historical_fiat_price">>,
+                         maps:get(<<"review_reasons">>, WrongRow))),
+    {ok, AUReport} = damage_tax_report:build(2026, 600, [E], #{}, #{}),
+    ?assertNotEqual(maps:get(<<"manifest_sha256">>, AUReport),
+                    maps:get(<<"manifest_sha256">>, USReport)).
+
+zero_decimal_jpy_report_test() ->
+    E = witness_event(),
+    {ok, JPY0} = damage_tax_prices:parse_cryptocompare(
+        quote_fixture(), <<"BTC">>, ?HOUR, <<"JPY">>),
+    Q = JPY0#{<<"archive_sha256">> => maps:get(<<"body_sha256">>, JPY0)},
+    {ok, Report} = damage_tax_report:build(
+        <<"JP">>, 2025, 540, [E], #{damage_tax_prices:quote_key(E, <<"JPY">>) => Q}, #{}),
+    Manifest = maps:get(<<"manifest">>, Report),
+    [Row] = maps:get(<<"entries">>, Manifest),
+    ?assertEqual(0, maps:get(<<"minor_digits">>, Manifest)),
+    ?assertEqual(100000, maps:get(<<"fiat_minor_units">>, Row)),
+    ?assertEqual(null, maps:get(<<"aud_cents">>, Row)).
+
+regional_scope_validation_test() ->
+    ?assertEqual({ok, {region, <<"US">>, -300, 1, all}},
+        damage_tax_http:parse_scope(
+          <<"{\"scope\":\"all\",\"jurisdiction\":\"US\",\"standard_utc_offset_minutes\":-300,\"period_start_month\":1}">>)),
+    ?assertEqual({ok, {region, <<"IN">>, 330, 4, {existing, 2026}}},
+        damage_tax_http:parse_scope(
+          <<"{\"year\":2026,\"source\":\"journal\",\"jurisdiction\":\"IN\"}">>)),
+    ?assertMatch({error, _}, damage_tax_http:parse_scope(
+        <<"{\"year\":2026,\"jurisdiction\":\"XX\"}">>)),
+    ?assertMatch({error, _}, damage_tax_http:parse_scope(
+        <<"{\"year\":2026,\"jurisdiction\":\"IN\",\"period_start_month\":5}">>)),
+    ?assertMatch({error, _}, damage_tax_http:parse_scope(
+        <<"{\"scope\":\"all\",\"jurisdiction\":\"AU\",\"admin\":true}">>)),
+    ?assertMatch({error, _}, damage_tax_http:parse_scope(
+        <<"{\"year\":2026,\"scope\":\"all\",\"jurisdiction\":\"AU\"}">>)).
+
+tax_unix(DateTime) ->
+    calendar:datetime_to_gregorian_seconds(DateTime) -
+        calendar:datetime_to_gregorian_seconds({{1970, 1, 1}, {0, 0, 0}}).
+
+regional_immutable_report_catalog_test_() ->
+    {setup,
+     fun() ->
+         Dir = filename:join("/tmp", "damage_tax_region_catalog_" ++
+                             integer_to_list(erlang:unique_integer([positive]))),
+         Previous = application:get_env(damage, tax_data_dir),
+         ok = application:set_env(damage, tax_data_dir, Dir),
+         {Dir, Previous}
+     end,
+     fun({Dir, Previous}) ->
+         case Previous of
+             {ok, V} -> application:set_env(damage, tax_data_dir, V);
+             undefined -> application:unset_env(damage, tax_data_dir)
+         end,
+         _ = file:del_dir_r(Dir),
+         ok
+     end,
+     fun({_Dir, _Previous}) ->
+         ?_test(begin
+             E = witness_event(),
+             {ok, AU} = damage_tax_report:build(2026, 600, [E], #{}, #{}),
+             {ok, US} = damage_tax_report:build(<<"US">>, 2025, 0, [E], #{}, #{}),
+             {ok, AUMeta} = damage_tax_catalog:save_report(?TENANT, AU),
+             {ok, USMeta} = damage_tax_catalog:save_report(?TENANT, US),
+             ?assertEqual(<<"AU">>, maps:get(<<"jurisdiction">>, AUMeta)),
+             ?assertEqual(<<"USD">>, maps:get(<<"currency">>, USMeta)),
+             ?assertNotEqual(maps:get(<<"manifest_sha256">>, AUMeta),
+                             maps:get(<<"manifest_sha256">>, USMeta)),
+             {ok, Rows} = damage_tax_catalog:list_reports(?TENANT),
+             ?assertEqual(2, length(Rows)),
+             Digest = maps:get(<<"manifest_sha256">>, US),
+             {ok, CSV, <<"text/csv; charset=utf-8">>, <<"tax-US-workpaper.csv">>} =
+                 damage_tax_catalog:download(?TENANT, 2025, Digest, worksheet),
+             ?assert(binary:match(CSV, <<"jurisdiction">>) =/= nomatch),
+             ?assert(binary:match(CSV, <<"gross_proceeds_usd_minor">>) =/= nomatch),
+             ?assert(binary:match(CSV, <<"DRAFT_REVIEW_REQUIRED">>) =/= nomatch),
+             ?assertMatch({error, _}, damage_tax_catalog:download(
+                 <<"ak_other_tenant">>, 2025, Digest, worksheet)),
+             ?assertMatch({error, invalid_price_quote}, damage_tax_catalog:save_quote(
+                 {<<"BTC">>, 1, <<"../../etc">>}, #{}))
+         end)
+     end}.
+
+workpaper_csv_does_not_execute_formula_cells_test() ->
+    Suspicious = <<" \t=HYPERLINK(\"\"https://bad.invalid\"\",\"\"click\"\")">>,
+    R = #{<<"manifest">> => #{<<"jurisdiction">> => <<"US">>,
+                               <<"currency">> => <<"USD">>,
+                               <<"entries">> => [#{<<"source_ref">> => Suspicious}] }},
+    Csv = damage_tax_workpapers:to_csv(R),
+    ?assert(binary:match(Csv, <<"' \t=HYPERLINK">>) =/= nomatch),
+    TxCsv = damage_tax_report:to_csv(R),
+    ?assert(binary:match(TxCsv, <<"' \t=HYPERLINK">>) =/= nomatch).

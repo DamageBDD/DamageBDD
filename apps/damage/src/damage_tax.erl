@@ -1,7 +1,7 @@
 %%% Small orchestration API. The journal is intentionally distinct from NWC balances.
 -module(damage_tax).
 -export([start_link/1, ingest_cln/1, import_chain/2, import_nwc/2,
-         fetch_and_archive_quote/3, records/1]).
+         fetch_and_archive_quote/3, fetch_and_archive_quote/4, records/1]).
 
 start_link(JournalPath) -> damage_tax_store:start_link(JournalPath).
 
@@ -55,7 +55,10 @@ append_witnesses([{Event, Witness} | Rest], N) ->
 -spec fetch_and_archive_quote(cryptocompare | coingecko, binary(), integer()) ->
     {ok, map()} | {error, term()}.
 fetch_and_archive_quote(Provider, Asset, Ts) ->
-    case damage_tax_prices:fetch(Provider, Asset, Ts) of
+    fetch_and_archive_quote(Provider, Asset, Ts, <<"AUD">>).
+
+fetch_and_archive_quote(Provider, Asset, Ts, Currency) ->
+    case damage_tax_prices:fetch(Provider, Asset, Ts, Currency) of
         {ok, #{quote := Quote, evidence_body := Body}} ->
             SHA = maps:get(<<"body_sha256">>, Quote),
             case damage_tax_store:archive_evidence(Body) of

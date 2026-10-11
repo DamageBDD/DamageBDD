@@ -242,6 +242,7 @@
     "tax_cryptocompare_key",
     "tax_data_dir",
     "tax_enabled",
+    "tax_jurisdiction",
     "tax_max_prices_per_backfill",
     "tax_price_pause_ms",
     "tax_standard_utc_offset_minutes",

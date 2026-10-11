@@ -1,8 +1,8 @@
-%%% Australian FY transaction valuation + accountant review pack.
-%%% This is NOT a calculation of final taxable income, CGT discount or GST.
+%%% Jurisdiction-aware transaction valuation + accountant review workpapers.
+%%% NOT a determination of tax residence, taxable income, tax liability or filing.
 -module(damage_tax_report).
--export([build/5, fy_bounds/2, required_prices/2, required_prices/3,
-         to_csv/1, export_private/2]).
+-export([build/5, build/6, build/7, fy_bounds/2, required_prices/2,
+         required_prices/3, required_prices/5, to_csv/1, export_private/2]).
 
 -spec fy_bounds(integer(), integer()) -> {integer(), integer()}.
 fy_bounds(EndYear, StdUtcOffsetMinutes) when is_integer(EndYear), EndYear > 1970,
@@ -22,52 +22,88 @@ required_prices(Events, EndYear, OffsetMinutes) ->
         in_range(E, Start, End),
         maps:get(<<"kind">>, E, <<>>) =/= <<"allocation">>]).
 
+%%% Jurisdiction-aware price keys, which contain fiat currency for non-AUD
+%%% profiles. Legacy Australian keys retain their two-element shape.
+required_prices(Events, Region, EndYear, OffsetMinutes, StartMonth) ->
+    case damage_tax_regions:bounds(Region, EndYear, OffsetMinutes, StartMonth) of
+        {ok, {Start, End}} ->
+            Currency = damage_tax_regions:currency(Region),
+            {ok, lists:usort([damage_tax_prices:quote_key(E, Currency) || E <- Events,
+                in_range(E, Start, End),
+                maps:get(<<"kind">>, E, <<>>) =/= <<"allocation">>])};
+        Error -> Error
+    end.
+
 %%% Quotes: #{ {<<"BTC">>, HourUtc} => PriceQuote } or #{ EventId => PriceQuote }.
 %%% Decisions: #{ EventId => #{<<"category">> => <<"ordinary_income">>,
 %%%                             <<"reviewer">> => <<"auditor-id">>,
 %%%                             <<"approved">> => true }}.
 %%% Classifications are independently reviewed; directions never imply deductibility.
 -spec build(integer(), integer(), [map()], map(), map()) -> {ok, map()} | {error, term()}.
-build(FYEndYear, OffsetMinutes, AllEvents, Quotes, Decisions) when
-        is_list(AllEvents), is_map(Quotes), is_map(Decisions) ->
-    {Start, End} = fy_bounds(FYEndYear, OffsetMinutes),
-    Events = lists:sort(fun(A, B) -> sort_key(A) =< sort_key(B) end,
-                        [E || E <- AllEvents, in_range(E, Start, End)]),
-    case unique_valid_events(Events) of
-        ok ->
-            Entries = [evaluate(E, Quotes, Decisions) || E <- Events],
-            Review = [#{<<"event_id">> => maps:get(<<"id">>, E),
-                        <<"reasons">> => maps:get(<<"review_reasons">>, E)}
-                      || E <- Entries, maps:get(<<"review_reasons">>, E) =/= []],
-            Leaves = [damage_tax_canonical:commitment(E) || E <- Entries],
-            EvidenceSet = lists:usort(lists:flatten([
-                [V || V <- [maps:get(<<"snapshot_sha256">>, E, <<>>),
-                          maps:get(<<"price_archive_sha256">>, E, <<>>)],
-                      V =/= <<>>] || E <- Entries])),
-            Summary = summarize(Entries),
-            Manifest = #{
-                <<"schema_version">> => 1,
-                <<"jurisdiction">> => <<"AU">>,
-                <<"currency">> => <<"AUD">>,
-                <<"tax_year_end">> => FYEndYear,
-                <<"start_utc">> => Start,
-                <<"end_utc_exclusive">> => End,
-                <<"standard_utc_offset_minutes">> => OffsetMinutes,
-                <<"ruleset">> => <<"damage_tax_au_review_v1">>,
-                <<"entries">> => Entries,
-                <<"entry_merkle_root_sha256">> => merkle(Leaves),
-                <<"evidence_hashes">> => EvidenceSet,
-                <<"evidence_set_sha256">> => damage_tax_canonical:commitment(EvidenceSet),
-                <<"summary">> => Summary,
-                <<"review_required">> => Review},
-            {ok, #{<<"manifest">> => Manifest,
-                   <<"manifest_sha256">> => damage_tax_canonical:commitment(Manifest),
-                   <<"evidence_set_sha256">> => maps:get(<<"evidence_set_sha256">>, Manifest),
-                   <<"attestable">> => Review =:= [] andalso Entries =/= [],
-                   <<"generated_at">> => erlang:system_time(second)}};
+build(FYEndYear, OffsetMinutes, AllEvents, Quotes, Decisions) ->
+    build(<<"AU">>, FYEndYear, OffsetMinutes, AllEvents, Quotes, Decisions).
+
+build(Region, FYEndYear, OffsetMinutes, AllEvents, Quotes, Decisions) ->
+    case damage_tax_regions:lookup(Region) of
+        {ok, Profile} ->
+            build(Region, FYEndYear, OffsetMinutes,
+                  maps:get(<<"start_month">>, Profile), AllEvents, Quotes, Decisions);
+        Error -> Error
+    end.
+
+%% A report is bound to its period, fiat currency and jurisdiction in the
+%% content-addressed manifest. Never reuse AUD figures as a foreign fiat value.
+-spec build(binary(), integer(), integer(), integer(), [map()], map(), map()) ->
+    {ok, map()} | {error, term()}.
+build(Region, FYEndYear, OffsetMinutes, StartMonth, AllEvents, Quotes, Decisions)
+        when is_list(AllEvents), is_map(Quotes), is_map(Decisions) ->
+    case damage_tax_regions:bounds(Region, FYEndYear, OffsetMinutes, StartMonth) of
+        {ok, {Start, End}} ->
+            Currency = damage_tax_regions:currency(Region),
+            {ok, Profile} = damage_tax_regions:lookup(Region),
+            Entries0 = [E || E <- AllEvents, in_range(E, Start, End)],
+            Events = lists:sort(fun(A, B) -> sort_key(A) =< sort_key(B) end, Entries0),
+            case unique_valid_events(Events) of
+                ok ->
+                    Entries = [evaluate(E, Quotes, Decisions, Currency) || E <- Events],
+                    Review = [#{<<"event_id">> => maps:get(<<"id">>, E),
+                                <<"reasons">> => maps:get(<<"review_reasons">>, E)}
+                              || E <- Entries, maps:get(<<"review_reasons">>, E) =/= []],
+                    Leaves = [damage_tax_canonical:commitment(E) || E <- Entries],
+                    EvidenceSet = lists:usort(lists:flatten([
+                        [V || V <- [maps:get(<<"snapshot_sha256">>, E, <<>>),
+                                  maps:get(<<"price_archive_sha256">>, E, <<>>)],
+                              V =/= <<>>] || E <- Entries])),
+                    Manifest = #{
+                        <<"schema_version">> => 2,
+                        <<"jurisdiction">> => Region,
+                        <<"currency">> => Currency,
+                        <<"minor_digits">> => damage_tax_regions:minor_digits(Region),
+                        <<"tax_year_end">> => FYEndYear,
+                        <<"period_start_month">> => StartMonth,
+                        <<"period_start_day">> => damage_tax_regions:start_day(Region, StartMonth),
+                        <<"start_utc">> => Start,
+                        <<"end_utc_exclusive">> => End,
+                        <<"standard_utc_offset_minutes">> => OffsetMinutes,
+                        <<"ruleset">> => <<"damage_tax_workpaper_v2">>,
+                        <<"workpaper">> => maps:get(<<"workpaper">>, Profile),
+                        <<"accountant_review_required">> => true,
+                        <<"entries">> => Entries,
+                        <<"entry_merkle_root_sha256">> => merkle(Leaves),
+                        <<"evidence_hashes">> => EvidenceSet,
+                        <<"evidence_set_sha256">> => damage_tax_canonical:commitment(EvidenceSet),
+                        <<"summary">> => summarize(Entries, Currency),
+                        <<"review_required">> => Review},
+                    {ok, #{<<"manifest">> => Manifest,
+                           <<"manifest_sha256">> => damage_tax_canonical:commitment(Manifest),
+                           <<"evidence_set_sha256">> => maps:get(<<"evidence_set_sha256">>, Manifest),
+                           <<"attestable">> => Review =:= [] andalso Entries =/= [],
+                           <<"generated_at">> => erlang:system_time(second)}};
+                Error -> Error
+            end;
         Error -> Error
     end;
-build(_, _, _, _, _) -> {error, invalid_tax_report_parameters}.
+build(_, _, _, _, _, _, _) -> {error, invalid_tax_report_parameters}.
 
 unique_valid_events(Events) ->
     case lists:usort([maps:get(<<"tenant">>, E, undefined) || E <- Events]) of
@@ -87,7 +123,7 @@ unique_valid_events([E | Rest], Seen) ->
         Error -> Error
     end.
 
-evaluate(Event, Quotes, Decisions) ->
+evaluate(Event, Quotes, Decisions, Currency) ->
     Id = maps:get(<<"id">>, Event),
     Decision = maps:get(Id, Decisions, #{}),
     Category = maps:get(<<"category">>, Decision,
@@ -95,11 +131,11 @@ evaluate(Event, Quotes, Decisions) ->
     Allocation = maps:get(<<"kind">>, Event, undefined) =:= <<"allocation">>,
     Quote = case Allocation of
         true -> undefined;
-        false -> choose_quote(Event, Quotes)
+        false -> choose_quote(Event, Quotes, Currency)
     end,
     Valued = case Quote of
         undefined -> {error, no_quote};
-        Q -> damage_tax_prices:aud_cents(Event, Q)
+        Q -> damage_tax_prices:fiat_minor(Event, Q, Currency)
     end,
     Value = case Valued of {ok, V} -> V; _ -> null end,
     QuoteBody = case Quote of
@@ -113,7 +149,7 @@ evaluate(Event, Quotes, Decisions) ->
     Reasons0 = case {Allocation, Valued} of
         {true, _} -> [];
         {false, {ok, _}} -> [];
-        {false, _} -> [<<"missing_or_invalid_historical_aud_price">>]
+        {false, _} -> [<<"missing_or_invalid_historical_fiat_price">>]
     end,
     Reasons1 = case {Quote, Allocation} of
         {undefined, _} -> Reasons0;
@@ -135,7 +171,7 @@ evaluate(Event, Quotes, Decisions) ->
         64 -> Reasons2;
         _ -> [<<"missing_original_source_snapshot">> | Reasons2]
     end,
-    Reasons4 = classification_reasons(Category, Decision, Allocation, Reasons3),
+    Reasons4 = classification_reasons(Category, Decision, Allocation, Reasons3, Currency),
     Direction = maps:get(<<"direction">>, Event),
     Reasons5 = case {Category, Direction} of
         {<<"ordinary_income">>, <<"out">>} ->
@@ -144,7 +180,8 @@ evaluate(Event, Quotes, Decisions) ->
             [<<"expense_direction_conflict_requires_adjustment">> | Reasons4];
         _ -> Reasons4
     end,
-    CGTCents = case {Category, Value, maps:get(<<"cost_base_cents">>, Decision, null)} of
+    CostBase = basis_minor(Decision, Currency),
+    CGTMinor = case {Category, Value, CostBase} of
         {<<"cgt_disposal">>, V0, Cost} when is_integer(V0), is_integer(Cost), Cost >= 0 ->
             V0 - Cost;
         _ -> null
@@ -159,9 +196,13 @@ evaluate(Event, Quotes, Decisions) ->
       <<"amount_atomic">> => maps:get(<<"amount_atomic">>, Event),
       <<"scale">> => maps:get(<<"scale">>, Event),
       <<"category">> => Category,
-      <<"aud_cents">> => Value,
-      <<"cgt_raw_gain_loss_cents">> => CGTCents,
-      <<"cost_base_cents">> => maps:get(<<"cost_base_cents">>, Decision, null),
+      <<"fiat_currency">> => Currency,
+      <<"fiat_minor_units">> => Value,
+      <<"cgt_raw_gain_loss_minor_units">> => CGTMinor,
+      <<"cost_base_minor_units">> => CostBase,
+      <<"aud_cents">> => case Currency of <<"AUD">> -> Value; _ -> null end,
+      <<"cgt_raw_gain_loss_cents">> => case Currency of <<"AUD">> -> CGTMinor; _ -> null end,
+      <<"cost_base_cents">> => case Currency of <<"AUD">> -> CostBase; _ -> null end,
       <<"acquired_at">> => maps:get(<<"acquired_at">>, Decision, null),
       <<"cost_basis_reference">> => maps:get(<<"cost_basis_reference">>, Decision, <<>>),
       <<"reviewer">> => maps:get(<<"reviewer">>, Decision, <<>>),
@@ -173,19 +214,27 @@ evaluate(Event, Quotes, Decisions) ->
       <<"price_precision_seconds">> => quote_field(Quote, <<"precision_seconds">>),
       <<"price_conversion_type">> => quote_field(Quote, <<"conversion_type">>),
       <<"price_at">> => quote_field(Quote, <<"at">>),
-      <<"price_micro_aud">> => quote_field(Quote, <<"price_micro_aud">>),
+      <<"price_micro_fiat">> => quote_field(Quote, <<"price_micro_fiat">>),
+      <<"price_micro_aud">> => case Currency of
+          <<"AUD">> -> quote_field(Quote, <<"price_micro_aud">>);
+          _ -> null
+      end,
       <<"price_body_sha256">> => QuoteBody,
       <<"price_archive_sha256">> => QuoteArchived,
       <<"snapshot_sha256">> => Snapshot,
       <<"source_sha256">> => maps:get(<<"source_sha256">>, Event),
       <<"review_reasons">> => lists:usort(Reasons5)}.
 
-classification_reasons(<<"non_tax_event">>, _Decision, true, R) -> R;
-classification_reasons(_Category, _Decision, true, R) ->
+basis_minor(Decision, <<"AUD">>) -> maps:get(<<"cost_base_minor_units">>, Decision,
+                                                  maps:get(<<"cost_base_cents">>, Decision, null));
+basis_minor(Decision, _) -> maps:get(<<"cost_base_minor_units">>, Decision, null).
+
+classification_reasons(<<"non_tax_event">>, _Decision, true, R, _Currency) -> R;
+classification_reasons(_Category, _Decision, true, R, _Currency) ->
     [<<"nwc_allocation_is_not_independent_crypto_payment">> | R];
-classification_reasons(<<"review">>, _Decision, false, R) ->
+classification_reasons(<<"review">>, _Decision, false, R, _Currency) ->
     [<<"unclassified_tax_treatment">> | R];
-classification_reasons(Category, Decision, false, R) ->
+classification_reasons(Category, Decision, false, R, Currency) ->
     Valid = lists:member(Category, [<<"ordinary_income">>, <<"business_expense">>,
                                     <<"cgt_disposal">>, <<"cost_basis_acquisition">>,
                                     <<"internal_transfer">>, <<"non_tax_event">>]),
@@ -198,7 +247,7 @@ classification_reasons(Category, Decision, false, R) ->
     end,
     case Category of
         <<"cgt_disposal">> ->
-            Cost = maps:get(<<"cost_base_cents">>, Decision, undefined),
+            Cost = basis_minor(Decision, Currency),
             Acquired = maps:get(<<"acquired_at">>, Decision, undefined),
             Ref = maps:get(<<"cost_basis_reference">>, Decision, <<>>),
             case is_integer(Cost) andalso Cost >= 0 andalso
@@ -209,34 +258,43 @@ classification_reasons(Category, Decision, false, R) ->
         _ -> R2
     end.
 
-choose_quote(Event, Quotes) ->
+choose_quote(Event, Quotes, Currency) ->
     Id = maps:get(<<"id">>, Event),
-    maps:get(Id, Quotes, maps:get(damage_tax_prices:quote_key(Event), Quotes, undefined)).
+    maps:get(Id, Quotes, maps:get(damage_tax_prices:quote_key(Event, Currency), Quotes, undefined)).
 
 quote_field(undefined, _) -> null;
 quote_field(Quote, Key) -> maps:get(Key, Quote, null).
 
-summarize(Entries) ->
-    lists:foldl(fun(E, Acc) ->
+summarize(Entries, Currency) ->
+    Base = #{<<"total_events">> => 0, <<"ordinary_income_minor">> => 0,
+             <<"expense_candidates_minor">> => 0,
+             <<"cgt_raw_gains_minor">> => 0, <<"cgt_raw_losses_minor">> => 0},
+    Total = lists:foldl(fun(E, Acc) ->
         Category = maps:get(<<"category">>, E),
-        Value = maps:get(<<"aud_cents">>, E),
-        CGT = maps:get(<<"cgt_raw_gain_loss_cents">>, E),
-        Acc1 = Acc#{<<"total_events">> => maps:get(<<"total_events">>, Acc) + 1},
-        Acc2 = case {Category, Value} of
+        Value = maps:get(<<"fiat_minor_units">>, E),
+        CGT = maps:get(<<"cgt_raw_gain_loss_minor_units">>, E),
+        A1 = Acc#{<<"total_events">> => maps:get(<<"total_events">>, Acc) + 1},
+        A2 = case {Category, Value} of
             {<<"ordinary_income">>, V} when is_integer(V) ->
-                sum(Acc1, <<"ordinary_income_cents">>, V);
+                sum(A1, <<"ordinary_income_minor">>, V);
             {<<"business_expense">>, V} when is_integer(V) ->
-                sum(Acc1, <<"expense_candidates_cents">>, V);
-            _ -> Acc1
+                sum(A1, <<"expense_candidates_minor">>, V);
+            _ -> A1
         end,
         case CGT of
-            C when is_integer(C), C >= 0 -> sum(Acc2, <<"cgt_raw_gains_cents">>, C);
-            C when is_integer(C), C < 0 -> sum(Acc2, <<"cgt_raw_losses_cents">>, -C);
-            _ -> Acc2
+            C when is_integer(C), C >= 0 -> sum(A2, <<"cgt_raw_gains_minor">>, C);
+            C when is_integer(C), C < 0 -> sum(A2, <<"cgt_raw_losses_minor">>, -C);
+            _ -> A2
         end
-    end, #{<<"total_events">> => 0, <<"ordinary_income_cents">> => 0,
-           <<"expense_candidates_cents">> => 0,
-           <<"cgt_raw_gains_cents">> => 0, <<"cgt_raw_losses_cents">> => 0}, Entries).
+    end, Base, Entries),
+    case Currency of
+        <<"AUD">> -> Total#{
+            <<"ordinary_income_cents">> => maps:get(<<"ordinary_income_minor">>, Total),
+            <<"expense_candidates_cents">> => maps:get(<<"expense_candidates_minor">>, Total),
+            <<"cgt_raw_gains_cents">> => maps:get(<<"cgt_raw_gains_minor">>, Total),
+            <<"cgt_raw_losses_cents">> => maps:get(<<"cgt_raw_losses_minor">>, Total)};
+        _ -> Total
+    end.
 
 sum(M, K, V) -> maps:put(K, maps:get(K, M, 0) + V, M).
 
@@ -261,33 +319,46 @@ unix(DT) -> calendar:datetime_to_gregorian_seconds(DT) -
 
 %%% Spreadsheet-safe CSV; only report entries, never raw secret-bearing RPCs.
 -spec to_csv(map()) -> binary().
-to_csv(#{<<"manifest">> := #{<<"entries">> := Entries}}) ->
-    Header = [<<"event_id">>, <<"occurred_at_utc">>, <<"source">>,
-              <<"source_ref">>, <<"kind">>, <<"direction">>, <<"asset">>,
-              <<"amount_atomic">>, <<"scale">>, <<"category">>,
-              <<"aud_cents">>, <<"cgt_raw_gain_loss_cents">>,
-              <<"price_provider">>, <<"price_body_sha256">>, <<"reviewer">>],
-    Rows = [[maps:get(K, E, null) || K <-
-        [<<"id">>, <<"occurred_at">>, <<"source">>, <<"source_ref">>,
-         <<"kind">>, <<"direction">>, <<"asset">>, <<"amount_atomic">>,
-         <<"scale">>, <<"category">>, <<"aud_cents">>,
-         <<"cgt_raw_gain_loss_cents">>, <<"price_provider">>,
-         <<"price_body_sha256">>, <<"reviewer">>]] || E <- Entries],
+to_csv(#{<<"manifest">> := #{<<"entries">> := Entries} = Manifest}) ->
+    Currency = maps:get(<<"currency">>, Manifest, <<"AUD">>),
+    Region = maps:get(<<"jurisdiction">>, Manifest, <<"AU">>),
+    Keys = [<<"id">>, <<"occurred_at">>, <<"source">>, <<"source_ref">>,
+            <<"kind">>, <<"direction">>, <<"asset">>, <<"amount_atomic">>,
+            <<"scale">>, <<"category">>, <<"fiat_minor_units">>,
+            <<"cgt_raw_gain_loss_minor_units">>, <<"cost_base_minor_units">>,
+            <<"acquired_at">>, <<"cost_basis_reference">>, <<"reviewer">>,
+            <<"price_provider">>, <<"price_body_sha256">>, <<"review_reasons">>],
+    Header = [<<"jurisdiction">>, <<"fiat_currency">> | Keys],
+    Rows = [[Region, Currency | [csv_value(K, maps:get(K, E, null)) || K <- Keys]]
+            || E <- Entries],
     iolist_to_binary([csv_row(Header) | [csv_row(Row) || Row <- Rows]]).
+
+csv_value(<<"review_reasons">>, Values) when is_list(Values) ->
+    iolist_to_binary(lists:join(<<";">>, Values));
+csv_value(_, Value) -> Value.
 
 csv_row(Cells) -> [lists:join(<<",">>, [csv_cell(C) || C <- Cells]), <<"\r\n">>].
 csv_cell(null) -> <<"\"\"">>;
 csv_cell(V) when is_integer(V) -> integer_to_binary(V);
 csv_cell(V) when is_binary(V) ->
     %% Prevent Excel/Calc formula execution from attacker-controlled text.
-    Safe = case V of
-        <<C, _/binary>> when C =:= $=; C =:= $+; C =:= $-; C =:= $@;
-                            C =:= $\t; C =:= $\r -> <<"'", V/binary>>;
-        _ -> V
+    Safe = case needs_csv_prefix(V) of
+        true -> <<"'", V/binary>>;
+        false -> V
     end,
     Escaped = binary:replace(Safe, <<"\"">>, <<"\"\"">>, [global]),
     <<"\"", Escaped/binary, "\"">>;
 csv_cell(_) -> <<"\"\"">>.
+
+%% Excel and similar software can interpret even whitespace-prefixed strings
+%% as formulas after CSV import. Never export an executable user-supplied cell.
+needs_csv_prefix(<<C, Rest/binary>>)
+        when C =:= $\s; C =:= $\t; C =:= $\r; C =:= $\n ->
+    needs_csv_prefix(Rest);
+needs_csv_prefix(<<C, _/binary>>)
+        when C =:= $=; C =:= $+; C =:= $-; C =:= $@ -> true;
+needs_csv_prefix(_) -> false.
+
 
 %%% Private export; don't put CSV, manifest or evidence into public IPFS.
 -spec export_private(map(), string()) -> ok | {error, term()}.

@@ -5,7 +5,7 @@
 
 -include_lib("kernel/include/logger.hrl").
 
--export([start_link/0, backfill/1, status/0, execute/1, years/2]).
+-export([start_link/0, backfill/1, status/0, execute/1, years/2, years/4]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
@@ -82,7 +82,11 @@ start_job(Scope, State) ->
                 end,
                 Parent ! {tax_backfill_result, self(), Result}
             end),
+            {Region, Offset, Month, _} = scope_context(Scope),
             Job = #{status => <<"running">>, scope => scope_binary(Scope),
+                    jurisdiction => Region,
+                    currency => damage_tax_regions:currency(Region),
+                    period_start_month => Month, standard_utc_offset_minutes => Offset,
                     started_at => erlang:system_time(second),
                     owner_hash => damage_tax_canonical:sha256_hex(Tenant)},
             {ok, State#{worker => Pid, monitor => Ref, job => Job}};
@@ -92,8 +96,9 @@ start_job(Scope, State) ->
 %% execute/1 is exported for operator-driven CLI and test invocations.
 execute(Scope) ->
     Tenant = application:get_env(damage, tax_cln_owner, undefined),
-    Ingest = case Scope of
-        {existing, _YearScope} -> {ok, 0};
+    {Region, Offset, Month, OriginalScope} = scope_context(Scope),
+    Ingest = case OriginalScope of
+        {existing, _} -> {ok, 0};
         _ -> damage_tax:ingest_cln(Tenant)
     end,
     case Ingest of
@@ -101,19 +106,19 @@ execute(Scope) ->
             case damage_tax:records(Tenant) of
                 {ok, []} -> {error, no_settled_cln_transactions};
                 {ok, Events} ->
-                    Offset = standard_offset(),
-                    AllYears = years(Events, Offset),
-                    Selected = case unwrap_scope(Scope) of
+                    AllYears = years(Events, Region, Offset, Month),
+                    Selected = case unwrap_scope(OriginalScope) of
                         all -> AllYears;
                         Year when is_integer(Year) -> [Year]
                     end,
                     Budget = limit(tax_max_prices_per_backfill, 200, 1, 500),
                     Result = lists:foldl(fun(Year, Acc) ->
-                        prepare_year(Tenant, Year, Offset, Events, Acc)
+                        prepare_year(Tenant, Region, Year, Offset, Month, Events, Acc)
                     end, #{remaining_budget => Budget, reports => [],
                            quote_failures => [], price_requests => 0}, Selected),
                     {ok, #{imported_new_events => NewlyImported,
-                           source_events => length(Events),
+                           source_events => length(Events), jurisdiction => Region,
+                           currency => damage_tax_regions:currency(Region),
                            reports => lists:reverse(maps:get(reports, Result)),
                            quote_failures => lists:reverse(maps:get(quote_failures, Result)),
                            price_requests => maps:get(price_requests, Result),
@@ -123,28 +128,27 @@ execute(Scope) ->
         Error -> Error
     end.
 
-prepare_year(Tenant, Year, Offset, Events, Acc0) ->
-    {Start, End} = damage_tax_report:fy_bounds(Year, Offset),
+prepare_year(Tenant, Region, Year, Offset, Month, Events, Acc0) ->
+    {ok, {Start, End}} = damage_tax_regions:bounds(Region, Year, Offset, Month),
     Selected = [E || E <- Events,
                  maps:get(<<"occurred_at">>, E) >= Start,
                  maps:get(<<"occurred_at">>, E) < End],
     case Selected of
         [] -> Acc0;
         _ ->
-            Keys = damage_tax_report:required_prices(Selected, Year, Offset),
+            {ok, Keys} = damage_tax_report:required_prices(
+                            Selected, Region, Year, Offset, Month),
             {Quotes, Acc1} = lists:foldl(fun(Key, {QAcc, A}) ->
                 quote_for(Key, QAcc, A)
             end, {#{}, Acc0}, Keys),
-            %% Never silently infer income, expenses, CGT, GST or tax advice.
-            case damage_tax_report:build(Year, Offset, Selected, Quotes, #{}) of
+            %% No inference of taxable income, cost basis, CGT, VAT or GST.
+            case damage_tax_report:build(Region, Year, Offset, Month, Selected, Quotes, #{}) of
                 {ok, Report} ->
                     case damage_tax_catalog:save_report(Tenant, Report) of
-                        {ok, Meta} ->
-                            Acc1#{reports => [Meta | maps:get(reports, Acc1)]};
-                        {error, Why} ->
-                            add_failure(Acc1, {report_save, Year, Why})
+                        {ok, Meta} -> Acc1#{reports => [Meta | maps:get(reports, Acc1)]};
+                        {error, Why} -> add_failure(Acc1, {report_save, Region, Year, Why})
                     end;
-                {error, Why} -> add_failure(Acc1, {report_build, Year, Why})
+                {error, Why} -> add_failure(Acc1, {report_build, Region, Year, Why})
             end
     end.
 
@@ -157,10 +161,11 @@ quote_for(Key, Quotes, Acc) ->
 
 fetch_if_budget(Key, Quotes, #{remaining_budget := 0} = Acc) ->
     {Quotes, add_failure(Acc, {price_budget_exhausted, Key})};
-fetch_if_budget({Asset, Hour} = Key, Quotes, Acc) ->
+fetch_if_budget(Key, Quotes, Acc) ->
+    {Asset, Hour, Currency} = quote_parts(Key),
     A1 = Acc#{remaining_budget => maps:get(remaining_budget, Acc) - 1,
               price_requests => maps:get(price_requests, Acc) + 1},
-    Reply = damage_tax:fetch_and_archive_quote(cryptocompare, Asset, Hour),
+    Reply = damage_tax:fetch_and_archive_quote(cryptocompare, Asset, Hour, Currency),
     case Reply of
         {ok, Quote} ->
             case damage_tax_catalog:save_quote(Key, Quote) of
@@ -174,34 +179,54 @@ fetch_if_budget({Asset, Hour} = Key, Quotes, Acc) ->
             {Quotes, add_failure(A1, {fetch_quote, Key, Reason})}
     end.
 
+%% Preserve the existing AU fiscal-year helper used by older callers/tests.
 -spec years([map()], integer()) -> [integer()].
-years(Events, OffsetMinutes) ->
-    lists:usort([fiscal_year(maps:get(<<"occurred_at">>, E), OffsetMinutes)
-                 || E <- Events]).
+years(Events, OffsetMinutes) -> years(Events, <<"AU">>, OffsetMinutes, 7).
 
-fiscal_year(Ts, OffsetMinutes) ->
-    Epoch = calendar:datetime_to_gregorian_seconds({{1970, 1, 1}, {0, 0, 0}}),
-    {{Year, Month, _Day}, _} = calendar:gregorian_seconds_to_datetime(
-        Epoch + Ts + OffsetMinutes * 60),
-    case Month >= 7 of true -> Year + 1; false -> Year end.
+years(Events, Region, OffsetMinutes, Month) ->
+    lists:usort([damage_tax_regions:year(
+        Region, maps:get(<<"occurred_at">>, E), OffsetMinutes, Month) || E <- Events]).
 
-standard_offset() ->
-    limit(tax_standard_utc_offset_minutes, 600, 0, 840).
-limit(Key, Default, Min, Max) ->
-    V = application:get_env(damage, Key, Default),
-    case is_integer(V) andalso V >= Min andalso V =< Max of
-        true -> V;
-        false -> Default
-    end.
+quote_parts({Asset, Hour}) -> {Asset, Hour, <<"AUD">>};
+quote_parts({Asset, Hour, Currency}) -> {Asset, Hour, Currency}.
+
+scope_context({region, Region, Offset, Month, Scope}) -> {Region, Offset, Month, Scope};
+scope_context(Scope) ->
+    Code0 = application:get_env(damage, tax_jurisdiction, <<"AU">>),
+    Region = case damage_tax_regions:valid(Code0) of
+        true -> Code0;
+        false -> <<"AU">>
+    end,
+    Offset = case Region of
+        <<"AU">> -> limit(tax_standard_utc_offset_minutes, 600, -720, 840);
+        _ -> damage_tax_regions:default_offset(Region)
+    end,
+    {Region, Offset, damage_tax_regions:default_month(Region), Scope}.
+
+valid_scope({region, Region, Offset, Month, Scope}) ->
+    valid_scope(Scope) andalso
+    case damage_tax_regions:bounds(Region, 2026, Offset, Month) of
+        {ok, _} -> true;
+        _ -> false
+    end;
 valid_scope({existing, Scope}) -> valid_scope(Scope);
 valid_scope(all) -> true;
 valid_scope(Y) when is_integer(Y) -> Y >= 2009 andalso Y =< 2200;
 valid_scope(_) -> false.
 unwrap_scope({existing, Scope}) -> Scope;
 unwrap_scope(Scope) -> Scope.
+scope_binary({region, Region, _Offset, _Month, Scope}) ->
+    <<Region/binary, ":", (scope_binary(Scope))/binary>>;
 scope_binary({existing, Scope}) -> <<"journal:", (scope_binary(Scope))/binary>>;
 scope_binary(all) -> <<"all">>;
 scope_binary(Y) -> integer_to_binary(Y).
+limit(Key, Default, Min, Max) ->
+    V = application:get_env(damage, Key, Default),
+    case is_integer(V) andalso V >= Min andalso V =< Max of
+        true -> V;
+        false -> Default
+    end.
+
 add_failure(Acc, Reason) ->
     Failures = maps:get(quote_failures, Acc),
     case length(Failures) >= 100 of

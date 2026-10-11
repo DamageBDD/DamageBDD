@@ -71,6 +71,10 @@ download(Tenant, Year, Digest, Format) when is_binary(Tenant),
                          <<"application/json; charset=utf-8">>, <<"tax-manifest.json">>};
                 csv -> {ok, damage_tax_report:to_csv(Report),
                         <<"text/csv; charset=utf-8">>, <<"tax-transactions.csv">>};
+                worksheet ->
+                    Region = maps:get(<<"jurisdiction">>, Manifest, <<"AU">>),
+                    {ok, damage_tax_workpapers:to_csv(Report),
+                     <<"text/csv; charset=utf-8">>, damage_tax_workpapers:filename(Region)};
                 sha256 -> {ok, <<Digest/binary, "  tax-manifest.json\n">>,
                            <<"text/plain; charset=utf-8">>, <<"tax-manifest.sha256">>};
                 _ -> {error, unsupported_report_format}
@@ -81,12 +85,21 @@ download(_, _, _, _) -> {error, invalid_report_identifier}.
 
 %% Persist an exact price quote only after the raw HTTP witness is in the tax
 %% evidence store. No keys or bearer headers appear in either file.
--spec save_quote({binary(), integer()}, map()) -> ok | {error, term()}.
-save_quote({Asset, _Hour} = Key, Quote) when is_map(Quote) ->
+-spec save_quote(tuple(), map()) -> ok | {error, term()}.
+save_quote(Key, Quote) when is_map(Quote), is_tuple(Key) ->
+    case valid_quote_key(Key) of
+        false -> {error, invalid_price_quote};
+        true -> save_verified_quote(Key, Quote)
+    end;
+save_quote(_, _) -> {error, invalid_price_quote}.
+
+save_verified_quote(Key, Quote) ->
+    {Asset, _Hour, Currency} = normalized_key(Key),
     Sha = maps:get(<<"archive_sha256">>, Quote, <<>>),
     case valid_quote_key(Key) andalso valid_digest(Sha) andalso
          Sha =:= maps:get(<<"body_sha256">>, Quote, undefined) andalso
          maps:get(<<"asset">>, Quote, undefined) =:= Asset andalso
+         maps:get(<<"currency">>, Quote, undefined) =:= Currency andalso
          lists:member(maps:get(<<"method">>, Quote, undefined),
                       [<<"hour_open">>, <<"daily_historical_snapshot">>]) andalso
          damage_tax_store:evidence_exists(Sha) of
@@ -109,10 +122,9 @@ save_quote({Asset, _Hour} = Key, Quote) when is_map(Quote) ->
                     end;
                 Error -> Error
             end
-    end;
-save_quote(_, _) -> {error, invalid_price_quote}.
+    end.
 
--spec load_quote({binary(), integer()}) -> {ok, map()} | not_found | {error, term()}.
+-spec load_quote(tuple()) -> {ok, map()} | not_found | {error, term()}.
 load_quote(Key) ->
     case valid_quote_key(Key) of
         false -> {error, invalid_price_key};
@@ -125,8 +137,9 @@ load_quote(Key) ->
                         true = valid_digest(Sha) andalso
                                Sha =:= maps:get(<<"body_sha256">>, Q) andalso
                                damage_tax_store:evidence_exists(Sha),
-                        {Asset, _Hour} = Key,
+                        {Asset, _Hour, Currency} = normalized_key(Key),
                         true = maps:get(<<"asset">>, Q) =:= Asset,
+                        true = maps:get(<<"currency">>, Q) =:= Currency,
                         {ok, Q}
                     catch _:_ -> {error, price_cache_corrupt} end;
                 {error, enoent} -> not_found;
@@ -171,6 +184,10 @@ load_report(Tenant, Year, Digest) ->
                                 (Review =:= [])),
                         true = (maps:get(<<"evidence_set_sha256">>, Manifest) =:=
                                 maps:get(<<"evidence_set_sha256">>, Report)),
+                        Region = maps:get(<<"jurisdiction">>, Manifest, <<"AU">>),
+                        true = damage_tax_regions:valid(Region),
+                        true = maps:get(<<"currency">>, Manifest, <<"AUD">>) =:=
+                               damage_tax_regions:currency(Region),
                         {ok, Report}
                     catch _:_ -> {error, invalid_report_integrity} end;
                 Error -> Error
@@ -182,6 +199,12 @@ metadata(Report) ->
     Summary = maps:get(<<"summary">>, Manifest),
     NeedsReview = length(maps:get(<<"review_required">>, Manifest, [])),
     #{<<"tax_year_end">> => maps:get(<<"tax_year_end">>, Manifest),
+      <<"jurisdiction">> => maps:get(<<"jurisdiction">>, Manifest, <<"AU">>),
+      <<"currency">> => maps:get(<<"currency">>, Manifest, <<"AUD">>),
+      <<"minor_digits">> => maps:get(<<"minor_digits">>, Manifest, 2),
+      <<"start_utc">> => maps:get(<<"start_utc">>, Manifest, 0),
+      <<"end_utc_exclusive">> => maps:get(<<"end_utc_exclusive">>, Manifest, 0),
+      <<"period_start_month">> => maps:get(<<"period_start_month">>, Manifest, 7),
       <<"manifest_sha256">> => maps:get(<<"manifest_sha256">>, Report),
       <<"evidence_set_sha256">> => maps:get(<<"evidence_set_sha256">>, Report),
       <<"generated_at">> => maps:get(<<"generated_at">>, Report, 0),
@@ -196,10 +219,19 @@ tenant_dir(Tenant) ->
     filename:join(root(), binary_to_list(damage_tax_canonical:sha256_hex(Tenant))).
 quote_path({Asset, Hour}) ->
     filename:join([root(), "quotes", binary_to_list(Asset) ++ "-" ++
-                   integer_to_list(Hour) ++ ".json"]).
+                   integer_to_list(Hour) ++ ".json"]);
+quote_path({Asset, Hour, Currency}) ->
+    filename:join([root(), "quotes", binary_to_list(Asset) ++ "-" ++
+                   binary_to_list(Currency) ++ "-" ++ integer_to_list(Hour) ++ ".json"]).
 
-valid_quote_key({Asset, Hour}) ->
+normalized_key({Asset, Hour}) -> {Asset, Hour, <<"AUD">>};
+normalized_key({Asset, Hour, Currency}) -> {Asset, Hour, Currency}.
+
+valid_quote_key({Asset, Hour}) -> valid_quote_key({Asset, Hour, <<"AUD">>});
+valid_quote_key({Asset, Hour, Currency}) ->
     lists:member(Asset, [<<"BTC">>, <<"ETH">>, <<"AE">>]) andalso
+    lists:any(fun(#{<<"currency">> := V}) -> V =:= Currency end,
+              damage_tax_regions:all()) andalso
     is_integer(Hour) andalso Hour > 0 andalso Hour rem 3600 =:= 0;
 valid_quote_key(_) -> false.
 

@@ -14,6 +14,8 @@ trails() ->
       trails:trail("/api/node/tax/settings", ?MODULE, #{action => settings},
                    #{get => #{tags => ["Tax Administration"]},
                      post => #{tags => ["Tax Administration"]}}),
+      trails:trail("/api/node/tax/jurisdictions", ?MODULE, #{action => jurisdictions},
+                   #{get => #{tags => ["Tax Administration"]}}),
       trails:trail("/api/node/tax/reports", ?MODULE, #{action => reports},
                    #{get => #{tags => ["Node Administration"]}}),
       trails:trail("/api/node/tax/jobs", ?MODULE, #{action => jobs},
@@ -60,8 +62,21 @@ execute(page, Req) ->
             end;
         _ -> method_not_allowed(Req)
     end;
-%% Configuration must remain reachable before the tax service is enabled.
+%% Configuration and country profiles remain reachable before enablement.
 execute(settings, Req) -> settings_action(Req);
+execute(jurisdictions, Req) ->
+    case cowboy_req:method(Req) of
+        <<"GET">> ->
+            Default0 = application:get_env(damage, tax_jurisdiction, <<"AU">>),
+            Default = case damage_tax_regions:valid(Default0) of
+                true -> Default0;
+                false -> <<"AU">>
+            end,
+            reply_json(200, #{jurisdictions => damage_tax_regions:all(),
+                              default_jurisdiction => Default,
+                              notice => <<"Accountant-review workpapers, not official tax filings">>}, Req);
+        _ -> method_not_allowed(Req)
+    end;
 execute(Action, Req) ->
     case application:get_env(damage, tax_enabled, false) of
         true -> enabled_action(Action, Req);
@@ -218,22 +233,68 @@ origin_matches_host(Req) ->
 to_bin(B) when is_binary(B) -> B;
 to_bin(L) when is_list(L) -> unicode:characters_to_binary(L).
 
+%% Country, local fixed offset and optional financial-year start are part of
+%% each immutable report. A request cannot change tax residency, ownership or
+%% service settings; it only selects an accountant workpaper profile.
 parse_scope(Bytes) when is_binary(Bytes), byte_size(Bytes) =< 16384 ->
     try
         Body = jsx:decode(Bytes, [return_maps]),
-        case Body of
-            #{<<"source">> := <<"journal">>, <<"scope">> := <<"all">>} ->
-                {ok, {existing, all}};
-            #{<<"source">> := <<"journal">>, <<"year">> := Year}
-                when is_integer(Year), Year >= 2009, Year =< 2200 ->
-                {ok, {existing, Year}};
-            #{<<"scope">> := <<"all">>} -> {ok, all};
-            #{<<"year">> := Year} when is_integer(Year), Year >= 2009, Year =< 2200 ->
-                {ok, Year};
-            _ -> {error, invalid_scope}
+        case is_map(Body) andalso map_size(Body) =< 5 of
+            true -> parse_scope_map(Body);
+            false -> {error, invalid_scope}
         end
     catch _:_ -> {error, invalid_json} end;
 parse_scope(_) -> {error, invalid_json}.
+
+parse_scope_map(Body) ->
+    Keys = maps:keys(Body),
+    Allowed = [<<"source">>, <<"scope">>, <<"year">>, <<"jurisdiction">>,
+               <<"standard_utc_offset_minutes">>, <<"period_start_month">>],
+    case lists:all(fun(K) -> lists:member(K, Allowed) end, Keys) of
+        false -> {error, invalid_scope};
+        true ->
+            case scope_part(Body) of
+                {ok, Scope} -> scope_region(Body, Scope);
+                Error -> Error
+            end
+    end.
+
+scope_part(Body) ->
+    Source = maps:get(<<"source">>, Body, <<"cln">>),
+    Value = case {maps:find(<<"scope">>, Body), maps:find(<<"year">>, Body)} of
+        {{ok, <<"all">>}, error} -> {ok, all};
+        {error, {ok, Year}} when is_integer(Year), Year >= 2009,
+                                   Year =< 2200 -> {ok, Year};
+        _ -> {error, invalid_scope}
+    end,
+    case {Source, Value} of
+        {<<"cln">>, {ok, V}} -> {ok, V};
+        {<<"journal">>, {ok, V}} -> {ok, {existing, V}};
+        _ -> {error, invalid_scope}
+    end.
+
+scope_region(Body, Scope) ->
+    case maps:find(<<"jurisdiction">>, Body) of
+        error ->
+            case maps:is_key(<<"standard_utc_offset_minutes">>, Body) orelse
+                 maps:is_key(<<"period_start_month">>, Body) of
+                true -> {error, jurisdiction_required};
+                false -> {ok, Scope}
+            end;
+        {ok, Region} ->
+            case damage_tax_regions:lookup(Region) of
+                {ok, Profile} ->
+                    Offset = maps:get(<<"standard_utc_offset_minutes">>, Body,
+                                      maps:get(<<"default_offset_minutes">>, Profile)),
+                    Month = maps:get(<<"period_start_month">>, Body,
+                                     maps:get(<<"start_month">>, Profile)),
+                    case damage_tax_regions:bounds(Region, 2026, Offset, Month) of
+                        {ok, _} -> {ok, {region, Region, Offset, Month, Scope}};
+                        Error -> Error
+                    end;
+                Error -> Error
+            end
+    end.
 
 do_download(Req) ->
     YearBin = cowboy_req:binding(year, Req, <<>>),
@@ -268,6 +329,7 @@ year(_) -> error.
 format(<<"json">>) -> {ok, json};
 format(<<"csv">>) -> {ok, csv};
 format(<<"sha256">>) -> {ok, sha256};
+format(<<"worksheet">>) -> {ok, worksheet};
 format(_) -> error.
 
 valid_hash(B) when is_binary(B), byte_size(B) =:= 64 ->

@@ -363,6 +363,9 @@ view_field(App, F, Override, Effective) ->
     case maps:get(type, F) of
         integer -> BaseField#{min => maps:get(min, F), max => maps:get(max, F)};
         parallelism -> BaseField#{min => maps:get(min, F), max => maps:get(max, F)};
+        tax_jurisdiction -> BaseField#{options => [
+            #{value => maps:get(<<"code">>, P), label => maps:get(<<"name">>, P)}
+            || P <- damage_tax_regions:all()]};
         _ -> BaseField
     end.
 
