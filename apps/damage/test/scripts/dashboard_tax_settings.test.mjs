@@ -12,8 +12,8 @@ const fields = [
   {name: 'tax_max_prices_per_backfill', label: 'Maximum', type: 'integer', min: 1, max: 500, value: 200}
 ];
 
-test('only the seven tax fields are editable', () => {
-  assert.equal(TAX_KEYS.length, 7);
+test('only the eight tax fields are editable', () => {
+  assert.equal(TAX_KEYS.length, 8);
   assert.deepEqual(allowedTaxFields([{name: 'tax_admins', type: 'string'},
     {name: 'node_admins', type: 'string'}, fields[2], fields[2], ...fields.slice(0, 2)]).map(x => x.name),
   ['tax_enabled', 'tax_cln_owner', 'tax_max_prices_per_backfill']);
@@ -36,4 +36,14 @@ test('diffs only changed values including an initially absent owner', () => {
   ]);
   assert.deepEqual(changedTaxSettings(fields, controls),
     {tax_enabled: true, tax_cln_owner: owner});
+});
+
+test('country selection validates against server supplied allowed options', () => {
+  const region = {name: 'tax_jurisdiction', label: 'Country', type: 'tax_jurisdiction',
+    value: 'AU', options: [{value: 'AU', label: 'Australia'}, {value: 'US', label: 'United States'}]};
+  assert.equal(readTaxControl(region, {value: 'US'}), 'US');
+  assert.throws(() => readTaxControl(region, {value: 'ZZ'}));
+  assert.throws(() => readTaxControl(region, {value: 'tax_admins'}));
+  assert.deepEqual(changedTaxSettings([region], new Map([['tax_jurisdiction', {value: 'US'}]])),
+    {tax_jurisdiction: 'US'});
 });

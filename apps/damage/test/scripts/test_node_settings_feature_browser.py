@@ -77,6 +77,10 @@ class FeatureSettingsBrowserTests(unittest.TestCase):
                 {'name': 'tax_cln_owner', 'group': 'tax', 'label': 'CLN tax owner',
                  'type': 'ae_account', 'apply': 'restart', 'source': 'unset',
                  'value': None, 'overridden': False, 'help': 'Legal owner of CLN history.'},
+                {'name': 'tax_jurisdiction', 'group': 'tax', 'label': 'Tax country',
+                 'type': 'tax_jurisdiction', 'apply': 'hot', 'source': 'default',
+                 'value': 'AU', 'overridden': False, 'options': [
+                    {'value': 'AU', 'label': 'Australia'}, {'value': 'US', 'label': 'United States'}]},
             ],
             'discovered': [{'name': 'tax_cryptocompare_key', 'group': 'tax',
                             'restriction': 'protected'}]
@@ -86,6 +90,9 @@ class FeatureSettingsBrowserTests(unittest.TestCase):
         self.assertEqual('Restart required', self.page.locator('#settings-runtime-status').inner_text())
         self.assertEqual('checkbox', self.page.locator('#setting-tax_enabled').get_attribute('type'))
         self.assertEqual('text', self.page.locator('#setting-tax_cln_owner').get_attribute('type'))
+        self.assertEqual('select', self.page.locator('#setting-tax_jurisdiction').evaluate('(el) => el.tagName.toLowerCase()'))
+        self.page.locator('#setting-tax_jurisdiction').select_option('US')
+        self.assertEqual('US', self.page.locator('#setting-tax_jurisdiction').input_value())
         self.assertEqual(0, self.page.locator('.settings-tax-reports-link').count())
         self.assertIn('Restart the node', self.page.locator('.settings-tax-not-ready').inner_text())
         self.page.locator('#setting-tax_enabled').check()

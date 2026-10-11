@@ -30,13 +30,14 @@ class AdminTaxDashboardTest(unittest.TestCase):
 
     def test_enabled_admin_panel_filters_exports_and_backfill(self):
         tab = render('node_tax_reports_tab.mustache', tax_enabled=True)
-        for marker in ['tax-reports-enabled', 'tax-filter-year', 'tax-filter-status',
+        for marker in ['tax-reports-enabled', 'tax-filter-jurisdiction', 'tax-backfill-jurisdiction',
+                       'tax-backfill-offset', 'tax-backfill-month', 'tax-filter-year', 'tax-filter-status',
                        'tax-filter-revisions', 'tax-filter-search', 'tax-export-csv',
                        'tax-export-json', 'tax-backfill-form', 'tax-reports-rows']:
             self.assertIn('id="' + marker + '"', tab)
         self.assertNotIn('Tax reporting is disabled', tab)
         self.assertIn('tax-settings-save', tab)
-        self.assertIn('not lodged ATO returns', tab)
+        self.assertIn('not tax returns', tab)
 
     def test_non_admin_cannot_navigate_or_receive_embedded_panel(self):
         sidebar = render('sidebar.mustache', node_admin=False, tax_enabled=True)

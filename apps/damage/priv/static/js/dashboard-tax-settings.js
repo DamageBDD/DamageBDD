@@ -1,11 +1,11 @@
 /* Dedicated tax-only settings editor. The server, not the browser, enforces
- * node_admin/tax_admin authorization and the seven-field mutation allowlist.
+ * node_admin/tax_admin authorization and the tax-only mutation allowlist.
  * No API credentials or other node settings are exposed here.
  */
 const SETTINGS_URL = '/api/node/tax/settings';
 export const TAX_KEYS = Object.freeze([
   'tax_enabled', 'tax_cln_owner', 'tax_data_dir', 'tax_backfill_on_start',
-  'tax_standard_utc_offset_minutes', 'tax_max_prices_per_backfill', 'tax_price_pause_ms'
+  'tax_jurisdiction', 'tax_standard_utc_offset_minutes', 'tax_max_prices_per_backfill', 'tax_price_pause_ms'
 ]);
 const TAX_SET = new Set(TAX_KEYS);
 const AE_ACCOUNT = /^ak_[1-9A-HJ-NP-Za-km-z]{13,125}$/;
@@ -15,7 +15,7 @@ export function allowedTaxFields(fields) {
   const seen = new Set();
   return fields.filter(f => {
     if (!f || typeof f !== 'object' || !TAX_SET.has(f.name) || seen.has(f.name)) return false;
-    if (!['boolean', 'integer', 'ae_account', 'absolute_path'].includes(f.type)) return false;
+    if (!['boolean', 'integer', 'ae_account', 'absolute_path', 'tax_jurisdiction'].includes(f.type)) return false;
     seen.add(f.name);
     return true;
   }).sort((a, b) => TAX_KEYS.indexOf(a.name) - TAX_KEYS.indexOf(b.name));
@@ -31,6 +31,12 @@ export function readTaxControl(field, input) {
       throw Error(`${field.label}: enter a number from ${field.min} to ${field.max}`);
     }
     return n;
+  }
+  if (field.type === 'tax_jurisdiction') {
+    if (!Array.isArray(field.options) || !field.options.some(o => o.value === text)) {
+      throw Error('Select a supported tax reporting country');
+    }
+    return text;
   }
   if (field.type === 'ae_account') {
     if (!AE_ACCOUNT.test(text)) throw Error(`${field.label}: enter a valid ak_ account`);
@@ -68,10 +74,18 @@ function makeField(field) {
   label.textContent = field.label;
   const id = `tax-setting-${field.name}`;
   label.htmlFor = id;
-  const input = document.createElement('input');
+  const input = document.createElement(field.type === 'tax_jurisdiction' ? 'select' : 'input');
   input.id = id;
   input.name = field.name;
-  if (field.type === 'boolean') {
+  if (field.type === 'tax_jurisdiction') {
+    for (const option of (field.options || [])) {
+      const el = document.createElement('option');
+      el.value = option.value;
+      el.textContent = option.label;
+      input.appendChild(el);
+    }
+    input.value = field.value ?? 'AU';
+  } else if (field.type === 'boolean') {
     input.type = 'checkbox';
     input.checked = field.value === true;
   } else if (field.type === 'integer') {

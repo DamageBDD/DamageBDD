@@ -1,15 +1,16 @@
-# ATO tax evidence — node and tax administration
+# Multi-jurisdiction tax evidence — node and tax administration
 
-The original tax provenance implementation is a prerequisite: the deployed
-source must include `damage_tax_store`, `damage_tax_report`, `damage_tax`,
-`damage_tax_cln`, `damage_tax_prices`, and `steps_tax`. This incremental patch
-adds the report catalog, background import jobs, API and dashboard.
+The tax service includes `damage_tax_store`, `damage_tax_report`,
+`damage_tax_cln`, `damage_tax_prices`, `damage_tax_catalog`, `damage_tax_jobs`,
+`damage_tax_http` and `steps_tax`. Multi-jurisdiction reporting adds
+`damage_tax_regions` and `damage_tax_workpapers`, and extends the existing
+private admin dashboard.
 
 ## Roles and configuring through the dashboard
 
 Node administrators (configured by `node_admins`) and delegated tax administrators
 (configured by a **separate operator-controlled allowlist**) may view private
-tax evidence and edit the **seven** tax settings. Only node administrators can
+tax evidence and edit the **eight** tax settings. Only node administrators can
 access the general Node Settings API, node context, CLN administration, or
 other privileged node controls.
 
@@ -33,7 +34,7 @@ even if tax reporting is currently disabled. The settings are stored in the
 versioned XDG managed `damage.config` overlay by `damage_settings`; the editor
 submits only tax-specific changes to `GET/POST /api/node/tax/settings`.
 
-`GET` exposes only seven tax field records, an optimistic-concurrency version
+`GET` exposes only eight tax field records, an optimistic-concurrency version
 and tax-only pending-restart metadata. `POST` requires
 `Content-Type: application/json`, `X-Damage-Tax-Request: 1`, an authorized
 session and a valid version. For example:
@@ -51,7 +52,7 @@ Node administrators can **also** use the existing Node Settings interface at
 `/dashboard/node/settings/damage#settings-feature-tax`. Tax-only administrators
 cannot use `/api/admin/settings/damage` or that general settings page.
 
-Configure the **CLN tax owner (AE account)** (`ak_...`) and **Enable ATO tax
+Configure the **CLN tax owner (AE account)** (`ak_...`) and **Enable private tax
 reporting** together, then Save changes. The service will not enable without
 an explicit owner. The owner is stored as an Erlang **binary**; directory
 paths are absolute Erlang strings, and every field is type-checked. Settings
@@ -66,7 +67,8 @@ shown in Settings.
 | `tax_cln_owner` | **Required to enable**; no default | Restart |
 | `tax_data_dir` | `/var/lib/damage/tax` | Restart |
 | `tax_backfill_on_start` | `false` | Restart |
-| `tax_standard_utc_offset_minutes` | `600` (AEST, +10h) | Live for next report |
+| `tax_jurisdiction` | `AU` (choose country in Tax settings) | Live for subsequent reports |
+| `tax_standard_utc_offset_minutes` | `600` (legacy AU default; country runs override) | Live for next report |
 | `tax_max_prices_per_backfill` | `200` | Live for next backfill |
 | `tax_price_pause_ms` | `250` | Live for subsequent requests |
 
@@ -87,6 +89,7 @@ The equivalent manual `sys.config` tuples (for unattended provisioning) are:
 {tax_data_dir, "/var/lib/damage/tax"},
 {tax_cln_owner, <<"ak_REPLACE_WITH_ACTUAL_NODE_OPERATOR">>},
 {tax_backfill_on_start, false},
+{tax_jurisdiction, <<"AU">>},
 {tax_standard_utc_offset_minutes, 600},
 {tax_max_prices_per_backfill, 200},
 {tax_price_pause_ms, 250}
@@ -95,10 +98,10 @@ The equivalent manual `sys.config` tuples (for unattended provisioning) are:
 Use a real, correctly attributed account, not the placeholder. A private,
 service-owned directory and private backups are required. Changing the owner
 must not silently reassign previous transactions; the report catalog partitions
-tenants by owner hash. Tax classification, GST, AUD pricing, CGT and transaction
+tenants by owner hash. Classification, GST/VAT, gains, expenses and transaction
 completeness require accounting review. Reports are **drafts**, not lodged
-returns. The standard-time offset controls FY boundaries, not civil timezone
-rendering; it deliberately uses AEST (no summer daylight saving).
+returns. Reports use a configured *fixed* UTC offset for financial-period
+boundaries, not a civil timezone database; the AU default is AEST (+10h, no DST).
 
 `tax_backfill_on_start=true` triggers an asynchronous import on the *next*
 start. Manual backfill remains available on the private tax dashboard when
@@ -113,16 +116,19 @@ only the Tax administration sidebar group, not node settings or CLN controls.
 
 When enabled, the dashboard lists immutable financial-year revisions and provides:
 
-- financial-year, review-status and report-revision filters, plus a manifest/evidence
-  SHA-256 search; by default only the latest revision per financial year is listed
+- jurisdiction, financial-year, review-status and report-revision filters, plus
+  manifest/evidence SHA-256 search; by default only the latest revision for each
+  distinct jurisdiction and time window is listed
 - paging (20 reports per page); summary counters always count latest revisions only
-- per-report **Transactions CSV**, **Manifest JSON** and **SHA-256** downloads,
+- per-report **Transactions CSV**, **Regional workpaper CSV**, **Manifest JSON**
+  and **SHA-256** downloads,
   served by the existing authenticated private tax API
 - **Export filtered CSV index** and **Export filtered JSON index**; these browser-
   generated files include *catalog metadata only*, across all filtered pages,
   not transaction details or invoice secrets
-- an admin-triggered CLN history backfill, journal-only regeneration, live job
-  status and manual refresh
+- a selectable report country, local fixed UTC offset, financial-year start month
+  (for custom-period profiles), admin-triggered CLN backfill, journal-only
+  regeneration, live job status and manual refresh
 
 The standalone `/node/admin/tax` view remains available for compatibility, but
 `/#node-tax-reports-tab` is the primary integrated admin reporting interface.
@@ -134,6 +140,7 @@ Routes:
 
 - `GET /node/admin/tax`
 - `GET /api/node/tax/settings` (only scoped tax fields)
+- `GET /api/node/tax/jurisdictions` (authenticated ISO country profiles)
 - `POST /api/node/tax/settings` (save/reset, optimistic concurrency)
 - `GET /api/node/tax/reports`
 - `GET /api/node/tax/jobs`
@@ -141,6 +148,7 @@ Routes:
 - `POST /api/node/tax/backfill` JSON `{"year":2026}`
 - `POST /api/node/tax/backfill` JSON `{"scope":"all","source":"journal"}`
 - `GET /api/node/tax/download/2026/<manifest_sha256>/csv`
+- `GET /api/node/tax/download/2026/<manifest_sha256>/worksheet`
 - `GET /api/node/tax/download/2026/<manifest_sha256>/json`
 - `GET /api/node/tax/download/2026/<manifest_sha256>/sha256`
 
@@ -162,13 +170,99 @@ this node's private tax journal and does not query CLN again. Running the
 full backfill fetches settled CLN invoices/payments via `damage_cln`, archives
 historical price evidence when available, and produces draft FY reports.
 
+## Country profiles and accountant workpapers
+
+Tax reporting is a private accounting workflow. Selecting a country changes **the
+financial-year boundary**, **fiat quote currency** and **workpaper columns** for
+that report run; it does not establish the legal tax residence of an individual
+or business and does not decide tax liability. **Backfill API calls** without a
+country use the configured `tax_jurisdiction` (AU by default); low-level
+`damage_tax_report:build/5` remains AU/AUD for existing integrations.
+Previously saved Australian reports remain addressable by the same year and
+SHA-256 digest.
+
+Supported initial profiles (ISO country codes):
+
+| Country | ISO | Fiat | Standard report start | Workpaper emphasis |
+|---|---|---|---|---|
+| Australia | `AU` | AUD | 1 July | Income and CGT review |
+| United States | `US` | USD | 1 January | Form 8949 *supporting* worksheet |
+| New Zealand | `NZ` | NZD | 1 April | Cryptoasset business income |
+| India | `IN` | INR | 1 April | Schedule VDA *supporting* worksheet |
+| Singapore | `SG` | SGD | 1 January | Digital-token business records |
+| United Arab Emirates | `AE` | AED | 1 January (configurable) | Corporate-tax accounting records |
+| United Kingdom | `GB` | GBP | 6 April (configurable) | Income / capital-gain records |
+| Switzerland | `CH` | CHF | 1 January (configurable) | Income / holdings |
+| Hong Kong | `HK` | HKD | 1 January (configurable) | Profits-tax records |
+| Canada | `CA` | CAD | 1 January (configurable) | Income / capital gains |
+| Portugal | `PT` | EUR | 1 January (configurable) | Crypto income and disposals |
+| Japan | `JP` | JPY | 1 January (configurable) | Whole-yen valuation |
+| Germany | `DE` | EUR | 1 January (configurable) | Income and disposals |
+
+These are **report presets**, not definitive accounting year rules for every
+entity. For profiles supporting a custom period, the dashboard lets an operator
+set the **start month**, with day 1 for overridden months. The GB default remains
+6 April when using April. AU, NZ and IN currently fix the preset start month;
+entity-specific exceptions must be handled separately. The UAE profile permits
+selecting the actual corporate reporting period.
+
+To start a country-specific report, select a country under
+**Dashboard → Tax reports → Generate or refresh reports**, verify its fixed
+UTC offset, choose the reporting year and submit. The authenticated endpoint is:
+
+```http
+POST /api/node/tax/backfill
+Content-Type: application/json
+X-Damage-Tax-Request: 1
+
+{"jurisdiction":"US","standard_utc_offset_minutes":-300,"period_start_month":1,"year":2026,"source":"journal"}
+```
+
+`source:"journal"` reuses the private, already-imported records and does not
+query CLN. Remove `source` to import settled CLN history. `scope:"all"` is an
+alternative to `year`. Inputs are validated against the fixed server registry;
+unknown ISO codes, unsupported financial-year changes and invalid offsets are
+rejected. A **tax-admin** (or node-admin) session is required for this endpoint,
+for listing reports and for every file download; there are no public exports.
+
+Each report manifest includes the country, fiat currency, minor-unit precision,
+year/period bounds, fixed offset, evidence hashes and review reasons. Historical
+prices must be fetched in **the selected fiat currency**; an AUD price quote is
+never renamed USD or INR. Archived price keys include the currency, so separate
+jurisdictions can use the same source transaction without overwriting each
+other's historical valuation evidence. Japan's JPY report uses zero minor
+fractional digits, while other current profiles use two.
+
+The `worksheet` endpoint returns a jurisdiction-oriented **draft** CSV,
+including classification, evidence, and transaction-reference columns. US and
+India workpapers have relevant Form 8949 / Schedule VDA headings, but **are not
+those official forms**, and do not calculate TDS, corporate income tax, VAT,
+GST, tax rates or automatically file returns. Transfer treatment, missing lots,
+price availability and jurisdiction-specific rules require accountant review.
+
+### Compatibility and privacy
+
+- The existing `build/5`, `fy_bounds/2`, `required_prices/2,3`, `aud_cents/2`
+  and default `fetch_and_archive_quote/3` interfaces remain Australian/AUD.
+- New country-aware exports have **schema version 2**; historical schema v1
+  manifests can still be downloaded. The report digest changes when the country,
+  year period or price evidence changes.
+- Only administrative sessions with `tax_admin` permission see the country
+  picker and per-report workpapers; no tax private journal records are published
+  to IPFS by the report service. On-chain attestations remain separate.
+- Country reports operate at a national workpaper level. Sub-national US state,
+  Canadian provincial, Indian state GST and similar local tax calculation is
+  not included in this release.
+
 ## Tests
 
 ```sh
 rebar3 compile
 rebar3 eunit --module=damage_tax_tests
+rebar3 eunit --module=damage_tax_access_tests
+rebar3 eunit --module=damage_settings_schema_tests
 node --check apps/damage/priv/static/js/tax-admin.js
-node --test apps/damage/test/scripts/dashboard_tax_reports.test.mjs
+node --test apps/damage/test/scripts/dashboard_tax_reports.test.mjs apps/damage/test/scripts/dashboard_tax_settings.test.mjs
 python3 -m unittest discover -s apps/damage/test/scripts -p test_tax_dashboard_navigation.py
 python3 -m unittest discover -s apps/damage/test/scripts -p test_tax_dashboard_browser.py
 python3 apps/damage/test/scripts/dashboard_navigation_browser_test.py --out /tmp/damage-tax-nav

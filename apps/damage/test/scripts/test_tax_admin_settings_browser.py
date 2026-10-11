@@ -22,8 +22,11 @@ FIELD_DATA = [
      'apply': 'restart', 'help': '', 'value': '/var/lib/damage/tax'},
     {'name': 'tax_backfill_on_start', 'label': 'Backfill on startup', 'type': 'boolean',
      'apply': 'restart', 'help': '', 'value': False},
+    {'name': 'tax_jurisdiction', 'label': 'Country', 'type': 'tax_jurisdiction',
+     'apply': 'hot', 'value': 'AU', 'options': [
+         {'value': 'AU', 'label': 'Australia'}, {'value': 'US', 'label': 'United States'}]},
     {'name': 'tax_standard_utc_offset_minutes', 'label': 'Offset', 'type': 'integer',
-     'min': 0, 'max': 840, 'apply': 'hot', 'value': 600},
+     'min': -720, 'max': 840, 'apply': 'hot', 'value': 600},
     {'name': 'tax_max_prices_per_backfill', 'label': 'Price budget', 'type': 'integer',
      'min': 1, 'max': 500, 'apply': 'hot', 'value': 200},
     {'name': 'tax_price_pause_ms', 'label': 'Price request delay', 'type': 'integer',
@@ -53,6 +56,7 @@ class TaxRoleBrowser(unittest.TestCase):
 
     def setUp(self):
         self.page = self.browser.new_page()
+        self.page.set_default_timeout(5000)
         self.addCleanup(self.page.close)
         tpl = render_template(HTML.read_text(), {'tax_enabled': False})
         self.page.set_content('<div id="node-tax-reports-tab">' + tpl + '</div>')
@@ -80,6 +84,7 @@ class TaxRoleBrowser(unittest.TestCase):
     def test_disabled_service_allows_tax_only_configuration(self):
         self.assertTrue(self.page.locator('#tax-configuration').is_visible())
         self.assertEqual(7, self.page.locator('#tax-settings-fields input').count())
+        self.assertEqual(1, self.page.locator('#tax-settings-fields select').count())
         self.assertEqual(0, self.page.locator('#tax-reports-enabled').count())
         self.page.locator('#tax-setting-tax_cln_owner').fill(OWNER)
         self.page.locator('#tax-setting-tax_enabled').check()

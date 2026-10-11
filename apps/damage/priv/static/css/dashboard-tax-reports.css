@@ -30,14 +30,15 @@
 .damage-dashboard .tax-reports-workspace .tax-action:hover { filter: brightness(1.11); }
 .damage-dashboard .tax-reports-workspace button.tax-action:disabled { opacity: .48; cursor: not-allowed; }
 .damage-dashboard .tax-reports-workspace .tax-filters {
-  display: grid; grid-template-columns: repeat(3, minmax(135px, 1fr)) minmax(160px, 1.6fr);
+  display: grid; grid-template-columns: repeat(4, minmax(115px, 1fr)) minmax(160px, 1.6fr);
   gap: 13px; margin: 16px 0;
 }
 .damage-dashboard .tax-reports-workspace .tax-filters label,
 .damage-dashboard .tax-reports-workspace .tax-backfill-form > label:not(.tax-check) { display: grid; gap: 7px; font-size: 12px; font-weight: 650; color: var(--ws-muted,#a5b6ce); }
 .damage-dashboard .tax-reports-workspace .tax-filters select,
 .damage-dashboard .tax-reports-workspace .tax-filters input,
-.damage-dashboard .tax-reports-workspace .tax-backfill-form select {
+.damage-dashboard .tax-reports-workspace .tax-backfill-form select,
+.damage-dashboard .tax-reports-workspace .tax-backfill-form input[type=number] {
   width: 100%; min-width: 0; border: 1px solid var(--ws-line,#304258); background: #111e2b;
   color: var(--ws-text,#e9f0fa); border-radius: 8px; min-height: 40px; padding: 9px 10px; font: 13px system-ui,sans-serif;
 }
@@ -45,7 +46,7 @@
 .damage-dashboard .tax-reports-workspace .tax-results-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; font-size: 12px; margin: 16px 0 12px; }
 .damage-dashboard .tax-reports-workspace .tax-export-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .damage-dashboard .tax-reports-workspace .tax-table-scroll { max-width: 100%; overflow-x: auto; }
-.damage-dashboard .tax-reports-workspace .tax-reports-table { width: 100%; min-width: 850px; border-collapse: collapse; text-align: left; font-size: 12px; }
+.damage-dashboard .tax-reports-workspace .tax-reports-table { width: 100%; min-width: 1030px; border-collapse: collapse; text-align: left; font-size: 12px; }
 .damage-dashboard .tax-reports-workspace .tax-reports-table th { color: var(--ws-muted,#a5b6ce); padding: 11px 10px; border-bottom: 1px solid var(--ws-line,#304258); font-weight: 650; white-space: nowrap; }
 .damage-dashboard .tax-reports-workspace .tax-reports-table td { padding: 13px 10px; border-bottom: 1px solid var(--ws-line,#304258); vertical-align: top; }
 .damage-dashboard .tax-reports-workspace .tax-reports-table td.tax-digest { font: 11px/1.5 ui-monospace, monospace; overflow-wrap: anywhere; max-width: 200px; }
@@ -55,7 +56,7 @@
 .damage-dashboard .tax-reports-workspace .tax-download-links a { display: inline-block; margin: 0 5px 7px 0; font-size: 11px; color: #bad1ff; text-decoration: underline; }
 .damage-dashboard .tax-reports-workspace .tax-pagination { display: flex; gap: 14px; justify-content: flex-end; align-items: center; font-size: 12px; padding: 16px 0 4px; }
 .damage-dashboard .tax-reports-workspace .tax-backfill-form { display: flex; flex-wrap: wrap; align-items: end; gap: 14px; margin: 12px 0 16px; }
-.damage-dashboard .tax-reports-workspace .tax-backfill-form > label:not(.tax-check) { min-width: 200px; }
+.damage-dashboard .tax-reports-workspace .tax-backfill-form > label:not(.tax-check) { min-width: 155px; }
 .damage-dashboard .tax-reports-workspace .tax-check { display: flex; gap: 8px; align-items: center; min-height: 40px; font-size: 12px; }
 .damage-dashboard .tax-reports-workspace .tax-backfill-status { font-size: 13px; color: var(--ws-text,#e9f0fa); }
 .damage-dashboard .tax-reports-workspace .tax-visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; border: 0; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
@@ -71,7 +72,8 @@
 .damage-dashboard .tax-settings-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; margin: 12px 0 18px; }
 .damage-dashboard .tax-settings-field { display: grid; grid-template-rows: auto 1fr auto; gap: 6px; padding: 13px; background: #111e2b; border: 1px solid var(--ws-line,#304258); border-radius: 9px; min-width: 0; }
 .damage-dashboard .tax-settings-field label { font-weight: 650; font-size: 13px; color: var(--ws-text,#e9f0fa); }
-.damage-dashboard .tax-settings-field input:not([type=checkbox]) { border: 1px solid var(--ws-line,#304258); border-radius: 7px; background: #0d1824; min-height: 39px; padding: 9px 10px; color: var(--ws-text,#e9f0fa); width: 100%; box-sizing: border-box; }
+.damage-dashboard .tax-settings-field input:not([type=checkbox]),
+.damage-dashboard .tax-settings-field select { border: 1px solid var(--ws-line,#304258); border-radius: 7px; background: #0d1824; min-height: 39px; padding: 9px 10px; color: var(--ws-text,#e9f0fa); width: 100%; box-sizing: border-box; }
 .damage-dashboard .tax-settings-field input[type=checkbox] { width: 20px; height: 20px; }
 .damage-dashboard .tax-settings-field small { color: var(--ws-muted,#a5b6ce); font-size: 11px; }
 .damage-dashboard .tax-settings-status { padding-top: 12px; font-weight: 500; }

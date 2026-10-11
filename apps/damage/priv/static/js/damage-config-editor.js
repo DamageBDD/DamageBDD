@@ -70,6 +70,13 @@ function readValue(field, input) {
     }
     return n;
   }
+  if (field.type === 'tax_jurisdiction') {
+    const value = input.value;
+    if (!Array.isArray(field.options) || !field.options.some(option => option.value === value)) {
+      throw new Error(`${field.label}: choose a supported tax reporting country`);
+    }
+    return value;
+  }
   if (field.type === 'string_list') {
     return input.value.split(/\r?\n/).map(v => v.trim()).filter(Boolean);
   }
@@ -132,7 +139,15 @@ function makeField(field) {
   const editor = document.createElement('div');
   editor.className = 'settings-field-edit';
   let input;
-  if (field.type === 'string_list') {
+  if (field.type === 'tax_jurisdiction') {
+    input = document.createElement('select');
+    for (const option of (field.options || [])) {
+      const item = document.createElement('option');
+      item.value = option.value;
+      item.textContent = option.label;
+      input.appendChild(item);
+    }
+  } else if (field.type === 'string_list') {
     input = document.createElement('textarea');
     input.rows = 3;
     input.placeholder = 'One host or suffix per line';
