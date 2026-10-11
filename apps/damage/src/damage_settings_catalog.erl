@@ -68,6 +68,7 @@ groups(damage) ->
     [g(<<"verification">>, <<"BDD & execution">>, <<"Runners, execution and generation limits">>),
      g(<<"aeternity">>, <<"Aeternity & contracts">>, <<"Chain connectivity, fees, caches and transaction tuning">>),
      g(<<"lightning">>, <<"Lightning & payments">>, <<"CLN, LND, NWC and L402 behaviour">>),
+     g(<<"tax">>, <<"Tax & provenance">>, <<"Australian FY evidence, CLN ownership, historical AUD pricing and private reports">>),
      g(<<"nostr">>, <<"Nostr & identities">>, <<"Relays, Nostr protocol and bunker services">>),
      g(<<"storage">>, <<"IPFS, Blossom & NIP-96">>, <<"Storage, gateways, uploads and retention limits">>),
      g(<<"release">>, <<"Builds & releases">>, <<"Release creation and artifact publishing">>),
@@ -126,6 +127,7 @@ group_key(damage, K) ->
             first_prefix(K, [
                 {<<"ae_">>, <<"aeternity">>}, {<<"balance_cache_">>, <<"aeternity">>},
                 {<<"account_registry_">>, <<"aeternity">>}, {<<"node_registry_">>, <<"aeternity">>},
+                {<<"tax_">>, <<"tax">>},
                 {<<"l402_">>, <<"lightning">>}, {<<"cln_">>, <<"lightning">>},
                 {<<"lnd_">>, <<"lightning">>}, {<<"nwc_">>, <<"lightning">>},
                 {<<"nostr_">>, <<"nostr">>}, {<<"nip98_">>, <<"nostr">>},

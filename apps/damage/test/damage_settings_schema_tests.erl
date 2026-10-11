@@ -76,3 +76,77 @@ catalog_contains_no_mutable_credentials_test() ->
     ?assertMatch({error, {not_editable, <<"node_admins">>}},
                  damage_settings_schema:decode_changes(damage,
                    #{<<"node_admins">> => [<<"ak_forbidden">>]})).
+
+%% Managed ATO tax settings are public *configuration* but not public reports.
+%% The tax owner must survive the Settings serializer as a binary, not a list.
+tax_controls_are_allowlisted_and_grouped_test() ->
+    Keys = [tax_enabled, tax_cln_owner, tax_data_dir, tax_backfill_on_start,
+            tax_standard_utc_offset_minutes, tax_max_prices_per_backfill,
+            tax_price_pause_ms],
+    [begin
+        {ok, F} = damage_settings_schema:field(damage, atom_to_binary(K, utf8)),
+        ?assertEqual(<<"tax">>, maps:get(group, F))
+     end || K <- Keys],
+    ?assert(lists:any(fun(G) -> maps:get(id, G) =:= <<"tax">> end,
+                      damage_settings_catalog:groups(damage))),
+    {ok, OwnerField} = damage_settings_schema:field(damage, <<"tax_cln_owner">>),
+    ?assertEqual(ae_account, maps:get(type, OwnerField)),
+    ?assertEqual(restart, maps:get(apply, OwnerField)),
+    {ok, Enabled} = damage_settings_schema:field(damage, <<"tax_enabled">>),
+    ?assertEqual(false, maps:get(default, Enabled)),
+    ?assertEqual(restart, maps:get(apply, Enabled)),
+    {ok, Budget} = damage_settings_schema:field(damage, <<"tax_max_prices_per_backfill">>),
+    ?assertEqual(hot, maps:get(apply, Budget)),
+    ?assertEqual(200, maps:get(default, Budget)).
+
+tax_settings_preserve_runtime_types_test() ->
+    Owner = <<"ak_22222222222222222222222222222222222222222222222222222">>,
+    {ok, Changes} = damage_settings_schema:decode_changes(damage, #{
+        <<"tax_enabled">> => true,
+        <<"tax_cln_owner">> => Owner,
+        <<"tax_data_dir">> => <<"/var/lib/damage/tax">>,
+        <<"tax_backfill_on_start">> => false,
+        <<"tax_standard_utc_offset_minutes">> => 600,
+        <<"tax_max_prices_per_backfill">> => 200,
+        <<"tax_price_pause_ms">> => 250
+    }),
+    ?assertEqual(Owner, proplists:get_value(tax_cln_owner, Changes)),
+    ?assert(is_binary(proplists:get_value(tax_cln_owner, Changes))),
+    ?assertEqual("/var/lib/damage/tax", proplists:get_value(tax_data_dir, Changes)),
+    ?assertEqual(ok, damage_settings_schema:validate_effective(
+        #{damage => maps:from_list(Changes)})),
+    ?assertEqual({ok, Owner}, damage_settings_schema:decode_existing(
+        damage, tax_cln_owner, binary_to_list(Owner))).
+
+tax_invalid_settings_rejected_test() ->
+    Invalid = [
+        {<<"tax_enabled">>, <<"true">>},
+        {<<"tax_cln_owner">>, <<"invalid-owner">>},
+        {<<"tax_cln_owner">>, <<"ak_11O0Iillegal">>},
+        {<<"tax_data_dir">>, <<"relative/path">>},
+        {<<"tax_data_dir">>, <<"/var/lib/damage/../tax">>},
+        {<<"tax_data_dir">>, <<"/">>},
+        {<<"tax_data_dir">>, <<"/tmp">>},
+        {<<"tax_data_dir">>, <<"/usr/bin">>},
+        {<<"tax_standard_utc_offset_minutes">>, -600},
+        {<<"tax_max_prices_per_backfill">>, 501},
+        {<<"tax_price_pause_ms">>, 5001}
+    ],
+    [ ?assertMatch({error, {invalid_value, _, _}},
+          damage_settings_schema:decode_changes(damage, #{Key => Bad}))
+      || {Key, Bad} <- Invalid ],
+    ?assertMatch({error, {invalid_setting_combination, damage,
+                           tax_enabled, tax_cln_owner}},
+        damage_settings_schema:validate_effective(
+            #{damage => #{tax_enabled => true}})),
+    ?assertEqual(ok, damage_settings_schema:validate_effective(
+        #{damage => #{tax_enabled => false}})),
+    %% Provider API tokens remain operator-managed secrets: names-only.
+    ?assertEqual(<<"protected">>, damage_settings_catalog:restriction(
+        damage, <<"tax_cryptocompare_key">>)),
+    ?assertMatch({error, {not_editable, <<"tax_cryptocompare_key">>}},
+        damage_settings_schema:decode_changes(damage,
+            #{<<"tax_cryptocompare_key">> => <<"secret">>})),
+    ?assertMatch({error, {not_editable, <<"tax_coingecko_demo_key">>}},
+        damage_settings_schema:decode_changes(damage,
+            #{<<"tax_coingecko_demo_key">> => <<"secret">>})).

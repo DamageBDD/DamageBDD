@@ -66,3 +66,9 @@ button:disabled{opacity:.5;cursor:wait}button:focus-visible,input:focus-visible,
 .settings-discovered-status{font-size:10px;white-space:nowrap;color:var(--muted)}
 .settings-discovered-status.protected{color:var(--warning)}
 @media(max-width:700px){.settings-feature-header{flex-direction:column;align-items:flex-start}.settings-feature-counts{white-space:normal}.settings-discovered-list{grid-template-columns:1fr}}
+
+/* Tax provenance help in node-admin Settings. */
+.settings-field-help { margin: .35rem 0 0; font-size: .83rem; line-height: 1.45; opacity: .78; max-width: 44rem; }
+.settings-tax-guidance { margin: .5rem 0 .8rem; max-width: 62rem; font-size: .9rem; line-height: 1.5; }
+.settings-tax-reports-link { display: inline-block; margin: 0 0 .9rem; text-decoration: underline; text-underline-offset: .15em; }
+.settings-tax-not-ready { margin: 0 0 .9rem; font-size: .83rem; opacity: .78; }

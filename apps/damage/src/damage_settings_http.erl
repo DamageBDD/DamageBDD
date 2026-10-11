@@ -1,8 +1,8 @@
 %%%-------------------------------------------------------------------
 %%% Node-admin-only node configuration routes, separate from account settings.
 %%% Plain Cowboy handler (not cowboy_rest).
-%%% Bearer, Nostr, or cookie identity is checked via damage_http, with the
-%%% existing steps_utils:is_admin/1 node_admin role enforced independently.
+%%% Resolve authentication through damage_auth. Wallet-mode sessions never
+%%% receive node_admin, even if their AE address is on the node-admin allowlist.
 %%%-------------------------------------------------------------------
 -module(damage_settings_http).
 
@@ -43,14 +43,15 @@ init(Req0, Opts) ->
     {ok, Req, Opts}.
 
 authorize(Req) ->
-    %% No route action that damage_http:is_authorized/2 automatically bypasses.
-    try damage_http:is_authorized(Req, #{action => admin_settings}) of
-        {true, Req1, #{public_key := PublicKey}} ->
+    %% Do not derive elevated permissions from an account address alone.
+    %% This must stay in sync with damage_tax_http's node-admin policy.
+    try damage_auth:authenticate(Req, #{action => admin_settings}) of
+        {ok, #{authenticated := true, node_admin := true,
+               public_key := PublicKey}} ->
             case steps_utils:is_admin(PublicKey) of
-                true -> {ok, Req1};
-                _ -> {error, Req1}
+                true -> {ok, Req};
+                _ -> {error, Req}
             end;
-        {_Denied, Req1, _State} -> {error, Req1};
         _ -> {error, Req}
     catch _:_ -> {error, Req} end.
 

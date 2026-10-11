@@ -196,6 +196,16 @@ should_publish(App, Key, New, Old, false) ->
         maps:get(Key, maps:get(App, Old, #{}), '$unset').
 
 publish_tasks([], _Undo, Changes, _Boot) -> {ok, lists:reverse(Changes)};
+%% Private financial evidence must never switch owner, storage root or service
+%% lifecycle while the supervised journal/backfill workers are still running.
+%% Save these settings to the XDG overlay and report a pending restart, but
+%% keep the actual application env unchanged until damage_app:bootstrap/0 on
+%% the next node start (Boot=true). Numeric report/job knobs are genuinely hot.
+publish_tasks([{damage, Key, _NewValue, restart} | Rest], Undo, Changes, false)
+  when Key =:= tax_enabled; Key =:= tax_cln_owner;
+       Key =:= tax_data_dir; Key =:= tax_backfill_on_start ->
+    Change = {damage, atom_to_binary(Key, utf8), restart},
+    publish_tasks(Rest, Undo, [Change | Changes], false);
 publish_tasks([{App, Key, NewValue, Apply} | Rest], Undo, Changes, Boot) ->
     OldEnv = application:get_env(App, Key),
     Result = case NewValue of
@@ -328,7 +338,11 @@ view_field(App, F, Override, Effective) ->
         error ->
             case application:get_env(App, Key) of
                 {ok, EnvVal} -> {EnvVal, <<"application">>};
-                undefined -> {undefined, <<"unset">>}
+                undefined ->
+                    case maps:find(default, F) of
+                        {ok, Default} -> {Default, <<"default">>};
+                        error -> {undefined, <<"unset">>}
+                    end
             end
     end,
     Public = case Value of
@@ -342,6 +356,7 @@ view_field(App, F, Override, Effective) ->
     BaseField = #{name => atom_to_binary(Key, utf8), label => maps:get(label, F),
                   group => maps:get(group, F),
                   type => atom_to_binary(maps:get(type, F), utf8),
+                  help => maps:get(help, F, <<>>),
                   apply => atom_to_binary(maps:get(apply, F), utf8),
                   value => Public, source => Source,
                   overridden => maps:is_key(Key, Override)},

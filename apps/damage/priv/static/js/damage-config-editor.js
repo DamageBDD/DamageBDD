@@ -45,7 +45,8 @@ async function jsonRequest(url, method = 'GET', payload = null) {
   let data;
   try { data = await response.json(); } catch { data = { error: `HTTP ${response.status}` }; }
   if (!response.ok) {
-    const error = new Error(typeof data.error === 'string' ? data.error : `HTTP ${response.status}`);
+    const message = typeof data.error === 'string' ? data.error : `HTTP ${response.status}`;
+    const error = new Error(data.reason ? `${message}: ${data.reason}` : message);
     error.httpStatus = response.status;
     throw error;
   }
@@ -122,6 +123,12 @@ function makeField(field) {
   policy.textContent = field.apply === 'hot' ? 'Live' : 'Restart';
   meta.append(source, policy);
   title.append(titleEl, keyEl, meta);
+  if (field.help) {
+    const help = document.createElement('p');
+    help.className = 'settings-field-help';
+    help.textContent = field.help;
+    title.append(help);
+  }
   const editor = document.createElement('div');
   editor.className = 'settings-field-edit';
   let input;
@@ -185,6 +192,28 @@ function makeFeature(group, fields, discovered) {
   counts.textContent = `${fields.length} editable · ${discovered.length} discovered`;
   header.append(heading, counts);
   section.append(header);
+  if (group.id === 'tax') {
+    const guidance = document.createElement('p');
+    guidance.className = 'settings-tax-guidance';
+    guidance.textContent = 'Tax evidence uses a local private ledger. Enable it with a CLN owner address, save, and restart the node before starting a backfill. Reports require accounting review.';
+    section.append(guidance);
+    const isEnabled = fields.some(field => field.name === 'tax_enabled' && field.value === true);
+    const pendingTaxRestart = (config?.pending_restart || []).some(name => name.startsWith('damage.tax_'));
+    if (isEnabled && !pendingTaxRestart) {
+      const reportsLink = document.createElement('a');
+      reportsLink.className = 'settings-tax-reports-link';
+      reportsLink.href = '/node/admin/tax';
+      reportsLink.textContent = 'Open tax reports';
+      section.append(reportsLink);
+    } else {
+      const notReady = document.createElement('p');
+      notReady.className = 'settings-tax-not-ready';
+      notReady.textContent = pendingTaxRestart
+        ? 'Tax settings saved. Restart the node before accessing tax reports.'
+        : 'Enable tax reporting, configure its owner and restart to access reports.';
+      section.append(notReady);
+    }
+  }
 
   if (fields.length) {
     const rows = document.createElement('div');
@@ -243,6 +272,10 @@ function render(data) {
   touched = new Set();
   renderFeatures(data);
   filterSettings();
+  // Sidebar deep-links to Tax & provenance before the async fields exist.
+  if (window.location.hash === '#settings-feature-tax') {
+    document.getElementById('settings-feature-tax')?.scrollIntoView({block: 'start'});
+  }
   document.querySelector('#settings-app-name').textContent = {
     damage: 'DamageBDD', ecai: 'ECAI', nosternity: 'Nosternity', erm: 'ERM', bop: 'BOP'
   }[app];

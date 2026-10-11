@@ -15,6 +15,10 @@
 -define(P(K, L, Min, Max, A), #{key => K, label => L, type => parallelism,
                                 min => Min, max => Max, apply => A}).
 -define(SL(K, L, A), #{key => K, label => L, type => string_list, apply => A}).
+%% Preserve the binary public AE account type that CLN tax ingest requires.
+-define(AE(K, L, A), #{key => K, label => L, type => ae_account, apply => A}).
+%% Filesystem paths are privileged configuration and must be absolute.
+-define(AP(K, L, A), #{key => K, label => L, type => absolute_path, apply => A}).
 
 apps() -> [damage, ecai, nosternity, erm, bop].
 
@@ -56,6 +60,34 @@ base_fields(damage) ->
         ?I(l402_min_sats, <<"L402 minimum sats">>, 0, 1000000000, restart),
         ?I(l402_invoice_expiry, <<"L402 invoice expiry (seconds)">>, 1, 604800, restart),
         ?I(l402_uses, <<"L402 token uses">>, 1, 100000, restart),
+        %% Financial evidence is opt-in. Lifecycle/identity/path changes require
+        %% a node restart; the supervisor reads tax_enabled only at startup.
+        %% Explicit maps avoid updating compile-time literals expanded by the
+        %% generic settings macros (OTP emits "expression updates a literal").
+        #{key => tax_enabled, label => <<"Enable ATO tax reporting">>,
+          type => boolean, apply => restart, default => false,
+          help => <<"Start the private tax journal and report service after a node restart. Configure the CLN owner first.">>},
+        #{key => tax_cln_owner, label => <<"CLN tax owner (AE account)">>,
+          type => ae_account, apply => restart,
+          help => <<"Legal owner of this node's CLN transaction history. Must be an ak_ account; changing owner requires reconciliation and a restart.">>},
+        #{key => tax_data_dir, label => <<"Private tax evidence directory">>,
+          type => absolute_path, apply => restart,
+          default => <<"/var/lib/damage/tax">>,
+          help => <<"Absolute private directory owned by the DamageBDD service. Restart before changing this path; do not use shared or public storage.">>},
+        #{key => tax_backfill_on_start, label => <<"Backfill CLN history on startup">>,
+          type => boolean, apply => restart, default => false,
+          help => <<"Import history asynchronously after a node restart. Leave off until ownership and storage have been reviewed.">>},
+        #{key => tax_standard_utc_offset_minutes,
+          label => <<"Australian FY standard UTC offset (minutes)">>,
+          type => integer, min => 0, max => 840, apply => hot, default => 600,
+          help => <<"Default 600 (AEST, UTC+10). Used for the July 1 financial-year boundary; applies to the next report run.">>},
+        #{key => tax_max_prices_per_backfill,
+          label => <<"Maximum historical price lookups per run">>,
+          type => integer, min => 1, max => 500, apply => hot, default => 200,
+          help => <<"Maximum public price requests per backfill. Missing quotes remain review-required, never estimated.">>},
+        #{key => tax_price_pause_ms, label => <<"Delay between price requests (ms)">>,
+          type => integer, min => 0, max => 5000, apply => hot, default => 250,
+          help => <<"Throttle requests to public historical pricing sources. Applies during subsequent lookups.">>},
         ?B(cln_enabled, <<"Core Lightning integration">>, restart),
         ?B(cln_websocket_enabled, <<"CLN WebSocket connection">>, restart),
         ?I(cln_restart_backoff_ms, <<"CLN restart backoff (ms)">>, 100, 3600000, restart),
@@ -232,6 +264,12 @@ public_value(#{type := parallelism}, auto) -> {ok, <<"auto">>};
 public_value(#{type := parallelism}, N) when is_integer(N) -> {ok, N};
 public_value(#{type := boolean}, B) when is_boolean(B) -> {ok, B};
 public_value(#{type := integer}, I) when is_integer(I) -> {ok, I};
+public_value(#{type := ae_account}, B) when is_binary(B) -> {ok, B};
+public_value(#{type := ae_account}, L) when is_list(L) ->
+    try {ok, unicode:characters_to_binary(L)} catch _:_ -> {error, not_ae_account} end;
+public_value(#{type := absolute_path}, B) when is_binary(B) -> {ok, B};
+public_value(#{type := absolute_path}, L) when is_list(L) ->
+    try {ok, unicode:characters_to_binary(L)} catch _:_ -> {error, not_path} end;
 public_value(#{type := string}, B) when is_binary(B) -> {ok, B};
 public_value(#{type := string}, L) when is_list(L) ->
     try {ok, unicode:characters_to_binary(L)} catch _:_ -> {error, not_string} end;
@@ -239,6 +277,36 @@ public_value(#{type := string_list}, L) when is_list(L) ->
     try {ok, [unicode:characters_to_binary(S) || S <- L]} catch _:_ -> {error, not_string_list} end;
 public_value(_, _) -> {error, wrong_type}.
 
+%% The tax importer and report catalog use the *binary* tenant identifier.
+%% Unlike generic string fields, do not convert this one to a charlist.
+decode(#{type := ae_account}, B) when is_binary(B),
+                                      byte_size(B) >= 16, byte_size(B) =< 128 ->
+    case re:run(B, <<"^ak_[1-9A-HJ-NP-Za-km-z]+$">>, [{capture, none}]) of
+        match -> {ok, B};
+        nomatch -> {error, invalid_ae_account}
+    end;
+decode(#{type := ae_account}, _) -> {error, invalid_ae_account};
+decode(#{type := absolute_path}, B) when is_binary(B),
+                                         byte_size(B) > 1, byte_size(B) =< 512 ->
+    case decode(#{type => string}, B) of
+        {ok, Path} ->
+            Parts = [P || P <- filename:split(Path), P =/= "/", P =/= ""],
+            %% Never chmod a top-level system folder as the tax evidence root.
+            %% /tmp/<dedicated-folder> is permitted for tests/dev only.
+            Dedicated = case Parts of
+                ["tmp", _Subdir | _] -> true;
+                [_First, _Second, _Third | _] -> true;
+                _ -> false
+            end,
+            case filename:pathtype(Path) =:= absolute andalso Dedicated andalso
+                 not lists:any(fun(P) -> P =:= ".." orelse P =:= "." end,
+                               Parts) of
+                true -> {ok, Path};
+                false -> {error, expected_safe_absolute_directory}
+            end;
+        Error -> Error
+    end;
+decode(#{type := absolute_path}, _) -> {error, expected_safe_absolute_directory};
 decode(#{type := parallelism}, <<"auto">>) -> {ok, auto};
 decode(#{type := parallelism, min := Min, max := Max}, N)
   when is_integer(N), N >= Min, N =< Max -> {ok, N};
@@ -279,8 +347,19 @@ validate_effective(All) when is_map(All) ->
     Default = maps:get(search_default_limit, N, 50),
     Max = maps:get(search_max_limit, N, 200),
     case Default =< Max of
-        true -> ok;
+        true -> validate_tax_effective(maps:get(damage, All, #{}));
         false -> {error, {invalid_setting_combination, nosternity,
                           search_default_limit, search_max_limit}}
     end;
 validate_effective(_) -> {error, invalid_configuration}.
+
+%% Enabling before assigning the legal CLN owner would create an apparently
+%% functional service that can never import transactions. Require both values
+%% in the same versioned Settings save (or in the startup configuration).
+validate_tax_effective(#{tax_enabled := true} = Damage) ->
+    case maps:get(tax_cln_owner, Damage, undefined) of
+        <<"ak_", _/binary>> -> ok;
+        _ -> {error, {invalid_setting_combination, damage,
+                      tax_enabled, tax_cln_owner}}
+    end;
+validate_tax_effective(_) -> ok.

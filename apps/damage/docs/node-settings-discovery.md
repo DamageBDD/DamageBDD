@@ -20,7 +20,7 @@ The catalog is a static snapshot, not an assertion that every key is currently a
 
 Node administration → Node settings → app tab → feature group → settings. The existing account settings and node context navigation are untouched.
 
-- **DamageBDD:** BDD & execution; Aeternity & contracts; Lightning & payments; Nostr & identities; IPFS, Blossom & NIP-96; builds & releases; integrations & messaging; HTTP & network; observability & lifecycle; security & access policies.
+- **DamageBDD:** BDD & execution; Aeternity & contracts; Lightning & payments; Tax & provenance; Nostr & identities; IPFS, Blossom & NIP-96; builds & releases; integrations & messaging; HTTP & network; observability & lifecycle; security & access policies.
 - **ECAI:** indexing & ingestion; code learning & repair; models & inference; chat & retrieval; content & publishing; marketplace & rewards; HTTP & node services; security & permissions.
 - **Nosternity:** listeners & connections; relays & subscriptions; search & LLM; Aeternity event store; identity & authentication.
 - **ERM:** node services; display & GTK; media & playback; voice & TTS; lens, maps & anatomy; logging & diagnostics.
@@ -30,9 +30,10 @@ Every feature section shows editable typed controls and a collapsible **Other di
 
 ## Security and reload behaviour
 
-- Authorization remains on `damage_settings_http` via `damage_http:is_authorized/2` and `steps_utils:is_admin/1`; no account user can access node settings.
+- Authorization uses `damage_auth:authenticate/2` with explicit `node_admin=true` and `steps_utils:is_admin/1` checks. Wallet-mode browser sessions are not elevated even if their AE address appears in the node-admin allowlist.
 - Editing is limited to `damage_settings_schema:fields/1`. Catalog membership never grants read-value or write access.
 - Secrets, signing materials, admin allowlists, execution commands, nested unvalidated maps and private policies are not editable and their values are never rendered.
+- Tax reporting can be enabled and configured in the **Tax & provenance** group. Owner identity is stored as a binary; tax lifecycle and private storage changes are **Restart** settings, while historical price budgets and financial-year offset are **Live** for future report jobs.
 - Controls are tagged **Live** only where the implementation reads runtime application environment. All other changes are **Restart** (no automatic service restart).
 - The dashboard persists approved changes in **`$XDG_CONFIG_HOME/damage/damage.config`** (fallback `$HOME/.config/damage/damage.config`; packaged service: `/var/lib/damage/.config/damage/damage.config`). The operator-managed `-config` file remains read-only. An explicit `DAMAGE_CONFIG_FILE` or legacy `DAMAGE_SETTINGS_OVERLAY` / `settings_overlay_path` override takes precedence.
 - An existing adjacent `sys.dashboard.config` is imported once into the XDG file on first launch (only if the new file is absent), after the same schema/combination checks. The legacy file is preserved. Future edits target the XDG file.

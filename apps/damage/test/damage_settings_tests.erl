@@ -22,7 +22,10 @@ with_isolated_config(Fun) ->
     OriginalEnv = [{Name, os:getenv(Name)} || Name <- EnvNames],
     Original = [{damage, Key, application:get_env(damage, Key)} ||
                 Key <- [settings_config_path, settings_overlay_path,
-                        settings_poll_interval_ms, ae_fee_multiplier, l402_price_msat]] ++
+                        settings_poll_interval_ms, ae_fee_multiplier, l402_price_msat,
+                        tax_enabled, tax_cln_owner, tax_data_dir,
+                        tax_backfill_on_start, tax_standard_utc_offset_minutes,
+                        tax_max_prices_per_backfill, tax_price_pause_ms]] ++
                [{erm, media_enabled, application:get_env(erm, media_enabled)},
                 {bop, port, application:get_env(bop, port)}],
     try
@@ -98,7 +101,59 @@ check_settings(Base, Overlay) ->
         damage_settings:save(nosternity, #{<<"search_default_limit">> => 300},
                              maps:get(version, N0))),
     {ok, N1} = damage_settings:get(nosternity),
-    ?assertEqual(maps:get(version, N0), maps:get(version, N1)).
+    ?assertEqual(maps:get(version, N0), maps:get(version, N1)),
+
+    %% The UI must be able to enable and configure tax in ONE versioned save.
+    %% Enabling without an explicit owner is refused before writing the file.
+    {ok, Tax0} = damage_settings:get(damage),
+    TaxVersion = maps:get(version, Tax0),
+    ?assertMatch({error, {invalid_setting_combination, damage,
+                           tax_enabled, tax_cln_owner}},
+        damage_settings:save(damage, #{<<"tax_enabled">> => true}, TaxVersion)),
+    {ok, TaxUnchanged} = damage_settings:get(damage),
+    ?assertEqual(TaxVersion, maps:get(version, TaxUnchanged)),
+    TaxOwner = <<"ak_22222222222222222222222222222222222222222222222222222">>,
+    BeforeEnable = application:get_env(damage, tax_enabled),
+    BeforeOwner = application:get_env(damage, tax_cln_owner),
+    BeforeDir = application:get_env(damage, tax_data_dir),
+    {ok, _} = damage_settings:save(damage, #{
+        <<"tax_enabled">> => true,
+        <<"tax_cln_owner">> => TaxOwner,
+        <<"tax_data_dir">> => <<"/tmp/damage-tax-private">>,
+        <<"tax_backfill_on_start">> => false,
+        <<"tax_standard_utc_offset_minutes">> => 600,
+        <<"tax_max_prices_per_backfill">> => 125,
+        <<"tax_price_pause_ms">> => 100
+    }, TaxVersion),
+    %% Lifecycle fields are persisted but not hot-published over a running
+    %% journal; this also keeps the tax link hidden until the restart.
+    ?assertEqual(BeforeEnable, application:get_env(damage, tax_enabled)),
+    ?assertEqual(BeforeOwner, application:get_env(damage, tax_cln_owner)),
+    ?assertEqual(BeforeDir, application:get_env(damage, tax_data_dir)),
+    %% Price budgets are safe to publish while the node is running.
+    ?assertEqual({ok, 125}, application:get_env(damage, tax_max_prices_per_backfill)),
+    {ok, TaxSaved} = damage_settings:get(damage),
+    ?assert(lists:member(<<"damage.tax_enabled">>, maps:get(pending_restart, TaxSaved))),
+    ?assert(lists:member(<<"damage.tax_cln_owner">>, maps:get(pending_restart, TaxSaved))),
+    [TaxField] = [F || F <- maps:get(fields, TaxSaved),
+                      maps:get(name, F) =:= <<"tax_cln_owner">>],
+    ?assertEqual(TaxOwner, maps:get(value, TaxField)),
+    ?assertEqual(<<"damage.config">>, maps:get(source, TaxField)),
+    {ok, [AppTerms]} = file:consult(Overlay),
+    TaxProps = proplists:get_value(damage, AppTerms),
+    ?assertEqual(TaxOwner, proplists:get_value(tax_cln_owner, TaxProps)),
+    ?assert(is_binary(proplists:get_value(tax_cln_owner, TaxProps))),
+    %% Simulate the next node start: bootstrap applies the saved restart
+    %% fields before damage_sup creates the tax journal and jobs children.
+    ok = damage_settings:bootstrap(),
+    ?assertEqual({ok, true}, application:get_env(damage, tax_enabled)),
+    ?assertEqual({ok, TaxOwner}, application:get_env(damage, tax_cln_owner)),
+    ?assertEqual({ok, "/tmp/damage-tax-private"}, application:get_env(damage, tax_data_dir)),
+    %% An enabled tax service may not lose its CLN ownership binding.
+    ?assertMatch({error, {invalid_setting_combination, damage,
+                           tax_enabled, tax_cln_owner}},
+        damage_settings:reset(damage, [<<"tax_cln_owner">>], maps:get(version, TaxSaved))),
+    ?assertEqual({ok, TaxOwner}, application:get_env(damage, tax_cln_owner)).
 
 restore(App, Key, {ok, Value}) -> application:set_env(App, Key, Value);
 restore(App, Key, undefined) -> application:unset_env(App, Key).

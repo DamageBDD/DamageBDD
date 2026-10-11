@@ -99,6 +99,13 @@
           </a>
         </li>
         {{/tax_enabled}}
+        {{^tax_enabled}}
+        <li>
+          <a id="dashboard-link-tax-setup" href="/dashboard/node/settings/damage#settings-feature-tax" title="Configure ATO tax reporting">
+            <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg><span class="dashboard-nav-label">Tax evidence setup</span>
+          </a>
+        </li>
+        {{/tax_enabled}}
       </ul>
     </section>
     {{/node_admin}}
