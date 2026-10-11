@@ -1,0 +1,9 @@
+{
+  "engine": "espeak 1.48.15 (installed)",
+  "channels": 1,
+  "sample_width": 2,
+  "sample_rate": 22050,
+  "frames": 112278,
+  "seconds": 5.091972789115646,
+  "scope": "real offline synthesis only; no physical playback or capture"
+}

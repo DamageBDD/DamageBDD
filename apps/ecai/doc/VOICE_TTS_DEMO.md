@@ -109,6 +109,27 @@ rounds use alternate passages. A `.script.txt` sidecar accompanies each
 accepted development take. TTS syntheses use *different* phrases from human
 recordings and never share byte-identical enrollment and calibration WAVs.
 
+## One-shot TTS WAV smoke test (no microphone)
+
+From the running Erlang shell after hot-loading the fixed session module:
+
+```erlang
+c("apps/ecai/src/ecai_voice_session.erl").
+ok = ecai_voice_session:synthesize_take(
+    "/tmp/ecai-synthetic-check.wav",
+    "A copper lantern glowed softly beside the old wooden bridge.",
+    #{tts_voice => "en+f3", tts_speed => 155, seconds => 8}
+).
+{ok, Audio} = ecai_voice_wav:read("/tmp/ecai-synthetic-check.wav").
+maps:with([sample_rate, channels, seconds], Audio).
+file:delete("/tmp/ecai-synthetic-check.wav").
+```
+
+The file path must not already exist. A successful call returns `ok` and
+produces 16 kHz mono PCM16 WAV without changing enrollment or calibration.
+The EUnit suite now runs the same production synthesis path when eSpeak is
+installed; no microphone is required.
+
 ## Troubleshooting
 
 - `invalid_tts_voice`: pass an eSpeak-compatible voice name; see
@@ -134,7 +155,8 @@ bash apps/ecai/test/run_voice_poc.sh test
 
 The new `ecai_voice_tts_tests` verify script uniqueness, 22.05 kHz-to-16 kHz
 normalization, padding, invalid formats, overflow rejection, and options.
-No physical microphone or eSpeak command is needed for these pure tests.
+The pure normalization tests do not require eSpeak; an additional real eSpeak
+round-trip test runs automatically when the executable is available.
 
 The Erlang-native tests must be run on your Erlang node; they were not run by
 the authoring environment when this patch was produced. The synthetic audio

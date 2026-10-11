@@ -28,6 +28,9 @@
         ]},
         {env, [
             {marketplace_enabled, false},
+            %% Safe default: account settings enabled, but remote spending and mint
+            %% requests are both disabled until each account explicitly opts in.
+            {compute_settings_enabled, true},
             {index_rewards_enabled, false},
             {index_pool_enabled, false},
             {index_pool_participant_enabled, false},

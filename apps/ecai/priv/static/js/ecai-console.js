@@ -72,6 +72,12 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     { group: "Code administration", method: "POST", path: "/ecai/admin/code/reviews/:id/publish", params: ["id"], description: "Two-stage approval gate: publish verified commit to origin review branch (not main).", body: { patch_sha256: "<review SHA-256>", revision: 2, confirm: "push to origin" }, confirm: "Create a remote review branch in origin?" },
     { group: "Funded indexing", method: "GET", path: "/ecai/admin/index-pool/status", description: "Funded jobs, registered nodes, plans and read-only budget accounting." },
     { group: "Funded indexing", method: "POST", path: "/ecai/admin/index-pool/nodes", description: "Enroll an operator-allowlisted private-cluster node with a Lightning identity proof.", body: {} },
+    { group: "Compute & NFTs", method: "GET", path: "/ecai/compute/settings", description: "Managed-account provider and budget settings; cloud dispatch not active." },
+    { group: "Compute & NFTs", method: "GET", path: "/ecai/compute/eligible-sources", description: "Owned shard index jobs suitable for bounded remote reservation." },
+    { group: "Compute & NFTs", method: "GET", path: "/ecai/compute/mintable", description: "Completed verified index artifacts eligible for NFT review." },
+    { group: "Compute & NFTs", method: "POST", path: "/ecai/compute/policy", description: "Save compute and NFT reservation limits. Does not launch compute or mint.", body: { budget: {remote_enabled: false, monthly_cents: 0, per_job_cents: 0, mint_monthly_cents: 0}, mint: {enabled: false, recipient: "", chain: "aeternity"}} },
+    { group: "Compute & NFTs", method: "POST", path: "/ecai/compute/quote", description: "Quote operator-defined upper estimate for a supported owned source job.", body: {source_job_id:"",provider:"cloud_run",vcpus:1,memory_mb:2048,max_seconds:1800,max_attempts:1} },
+    { group: "Compute & NFTs", method: "POST", path: "/ecai/compute/reservations", description: "Reserve monthly allowance after provider identity check. No job submission.", body: {source_job_id:"",provider:"cloud_run",vcpus:1,memory_mb:2048,max_seconds:1800,max_attempts:1}, key: true },
     { group: "Funded indexing", method: "POST", path: "/ecai/admin/index-pool/prepare", description: "Prepare bounded segments from a stopped or completed local source job.", body: {} },
     { group: "Funded indexing", method: "POST", path: "/ecai/admin/index-pool/channels", description: "Refresh advisory CLN channel observations. Does not open channels.", body: {} },
     { group: "Funded indexing", method: "POST", path: "/ecai/admin/index-pool/quote", description: "Calculate a fixed source-byte weighted reward split.", body: {} },
@@ -102,7 +108,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     ask: { question: "What is known about this topic?", destination: "local" }
   };
   const marketExamples = { claim: { miner_ak: "ak_..." }, submit: { miner_ak: "ak_...", attestation: "attestation", evidence_ref: "" }, pay: { admin_ak: "ak_..." } };
-  const VIEW_NAMES = { overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing" };
+  const VIEW_NAMES = { overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing", compute: "Compute & NFTs" };
   let videoStudio = null;
   let marketMaker = null;
   const state = {
@@ -513,6 +519,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
       setCodeActionsEnabled(false);
       if (["code", "network"].includes(state.view)) navigate("overview");
       marketMaker?.reset();
+      window.EcaiComputeSettings?.clear();
       put("codeReviewDetail", "Select a validated repair from the review queue.");
       put("codeReviewDiff", "No patch selected.");
       codeReviewButtons();
@@ -577,6 +584,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
       if (state.nodeAdmin) await probeCodeAccess();
       if (state.view === "network" && state.nodeAdmin) await window.EcaiIndexPool?.refresh();
       if (state.view === "code" && state.nodeAdmin) await refreshCode();
+      if (state.view === "compute" && managedSession()) await window.EcaiComputeSettings?.refresh();
       const result = await request("/ecai/index-jobs/status", { ignoreAuth: true });
       state.services.queue = "online";
       updateQueueMetrics(result.status || {});
@@ -2517,6 +2525,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
       case "indexing": await refreshIndexing(); break;
       case "wikimedia": await refreshWikiProjects(); break;
       case "network": await window.EcaiIndexPool?.refresh(); break;
+      case "compute": if (managedSession()) await window.EcaiComputeSettings?.refresh(); else window.EcaiComputeSettings?.clear(); break;
       case "code": await refreshCode(); break;
       case "marketplace": await refreshMarket(); break;
       case "video": await videoStudio?.refresh(); break;
@@ -2550,6 +2559,11 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     });
     $("newChatBtn").addEventListener("click", resetChat);
     $("refreshJobs").addEventListener("click", () => task(refreshIndexing));
+    $("indexOpenCompute").addEventListener("click", () => {
+      const selected = state.selectedIndexId;
+      navigate("compute");
+      if (selected) window.EcaiComputeSettings?.setSourceJob(selected);
+    });
     $("indexState").addEventListener("change", () => task(refreshJobs));
     $("reloadPresets").addEventListener("click", () => task(refreshIndexing));
     $("customJobForm").addEventListener("submit", customJob);
@@ -2648,6 +2662,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
   function init() {
     if (!$("ecaiConsole")) return;
     window.EcaiIndexPool?.init({request, toast, openLogin, currentToken});
+    window.EcaiComputeSettings?.init({request, toast, openLogin, currentToken});
     videoStudio = initVideoStudio({request, currentToken, managedSession, openLogin, toast});
     marketMaker = initMarketMaker({request, canManage: () => managedSession() && state.nodeAdmin, openLogin});
     initAuthUI();

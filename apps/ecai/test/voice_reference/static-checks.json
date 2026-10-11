@@ -1,0 +1,77 @@
+{
+  "scope": "lexical delimiter/export/reference checks, NOT Erlang compilation",
+  "files": [
+    {
+      "path": "apps/ecai/src/ecai_voice.erl",
+      "sha256": "83ba5f620bdc5320e60e581d7da43fb5fe156ce391415d7353bb1999e4346443",
+      "export_count": 15,
+      "function_count": 42,
+      "lexical_checks": "passed"
+    },
+    {
+      "path": "apps/ecai/src/ecai_voice_curve.erl",
+      "sha256": "09be2a51b1ecd576eab4387835c8d136bf82b08bc2b523431b0092f7a964c7f1",
+      "export_count": 5,
+      "function_count": 15,
+      "lexical_checks": "passed"
+    },
+    {
+      "path": "apps/ecai/src/ecai_voice_demo.erl",
+      "sha256": "b383d2b8f54cec1f0012908210e12c9d3d10fe90f4a0a48a835faec99e913bcb",
+      "export_count": 4,
+      "function_count": 10,
+      "lexical_checks": "passed"
+    },
+    {
+      "path": "apps/ecai/src/ecai_voice_dsp.erl",
+      "sha256": "3567896427b5c8545303e35e064036ef1f465cdce513ada29ba776a5b3168b48",
+      "export_count": 6,
+      "function_count": 13,
+      "lexical_checks": "passed"
+    },
+    {
+      "path": "apps/ecai/src/ecai_voice_features.erl",
+      "sha256": "295877f0d40373ebcbf788101abd8a429f7c7e56d95d622e37810b59cfe526f4",
+      "export_count": 3,
+      "function_count": 8,
+      "lexical_checks": "passed"
+    },
+    {
+      "path": "apps/ecai/src/ecai_voice_wav.erl",
+      "sha256": "4eb269188e85e23bb06f528a9dd8837d5960b478928a4db18ad4e4558d8a8997",
+      "export_count": 7,
+      "function_count": 12,
+      "lexical_checks": "passed"
+    },
+    {
+      "path": "apps/ecai/test/ecai_voice_curve_tests.erl",
+      "sha256": "3be358ddfd766e0f32ae922eba85e74a7facbb9fbf9d4b5cdc895eac492b7184",
+      "export_count": 0,
+      "function_count": 2,
+      "lexical_checks": "passed"
+    },
+    {
+      "path": "apps/ecai/test/ecai_voice_features_tests.erl",
+      "sha256": "8ea14fb562b049050e5734a95b0951bf93599452911386dafaf7fd5eb8bf4976",
+      "export_count": 0,
+      "function_count": 10,
+      "lexical_checks": "passed"
+    },
+    {
+      "path": "apps/ecai/test/ecai_voice_tests.erl",
+      "sha256": "d1a8cdf9aae04e767cdf6fbe261714126af2524fa4d5156fa2261ffcce1382da",
+      "export_count": 0,
+      "function_count": 7,
+      "lexical_checks": "passed"
+    },
+    {
+      "path": "apps/ecai/test/ecai_voice_wav_tests.erl",
+      "sha256": "8a6942b98182881fe2876fe6caa380398d2783154aaf1ba9d946bb71a327b496",
+      "export_count": 0,
+      "function_count": 10,
+      "lexical_checks": "passed"
+    }
+  ],
+  "golden_vectors_match_independent_reference": true,
+  "eunit_entry_points": 19
+}

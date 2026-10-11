@@ -117,3 +117,29 @@ PYTHONPATH=. pytest -q
 The ECAI archive alone cannot compile because it relies on the rest of the
 DamageBDD workspace. Browser tests may skip when Chromium is deliberately
 locked down by `URLBlocklist: ["*"]` enterprise policy.
+
+
+### Video Studio template mount (October 2026 fix)
+
+The main dashboard template includes the Video Studio controls directly,
+including `#videoRefresh` and `#videoProjectForm`. Previously it relied on a
+`{{{video_studio}}}` interpolation supplied by `ecai_dashboard.erl`; when the
+BEAM module or template rendering context was out of date, the panel was blank
+while its JavaScript attempted to attach listeners to missing elements.
+
+`ecai_video.mustache` remains a matching source fragment for editing; the
+contract test asserts its content is present in `ecai_console.mustache`.
+Update both together. The controller now presents a dashboard diagnostic if the
+mount is unexpectedly incomplete rather than terminating all dashboard setup.
+Cache-busted `video-studio-v3` URLs avoid executing a stale Video Studio module.
+
+To validate the served page from an operator machine:
+
+```js
+console.log(document.querySelector('[data-panel="video"]'));
+console.log(document.getElementById('videoRefresh'));
+```
+
+Both must be non-null on `/dashboard`, even before selecting the Video tab.
+Remember that ECAI's Erlang route module still requires build/reload when
+changing API routing, independently of this template-only fix.

@@ -51,7 +51,7 @@ init([]) ->
     ok = ecai_paths:ensure_parent(SnapPath),
     Interval = application:get_env(ecai, index_snapshot_ms, 60000),
     PoolSpecs0 =
-        maybe_ingest_specs() ++
+        maybe_compute_specs() ++ maybe_ingest_specs() ++
             [
                 #{
                     id => ecai_index_snapshot,
@@ -170,6 +170,17 @@ vulnerability_monitor_specs() ->
         })
      || App <- [damage, ecai, erm]
     ].
+
+maybe_compute_specs() ->
+    case application:get_env(ecai, compute_settings_enabled, true) of
+        true ->
+            [#{id => ecai_compute_settings,
+               start => {ecai_compute_settings, start_link, []},
+               restart => permanent, shutdown => 30000,
+               type => worker, modules => [ecai_compute_settings]}];
+        false -> [];
+        Invalid -> erlang:error({invalid_configuration, compute_settings_enabled, Invalid})
+    end.
 
 maybe_ingest_specs() ->
     case application:get_env(ecai, ingest_wal_enabled, false) of

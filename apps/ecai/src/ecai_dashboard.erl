@@ -197,9 +197,11 @@ render_dashboard_page("ecai_console.mustache", Ctx) ->
     %% The Video Studio markup lives in the console template itself. Older
     %% running ecai_dashboard beams therefore cannot omit it accidentally.
     MarketMaker = render_tpl(?DASH_TPL("ecai_market_maker.mustache"), Ctx),
+    ComputeSettings = render_tpl(?DASH_TPL("compute_settings.mustache"), Ctx),
     render_tpl(?DASH_TPL("ecai_console.mustache"),
                Ctx#{browser_auth_modal => AuthHtml,
-                    market_maker_panel => MarketMaker});
+                    market_maker_panel => MarketMaker,
+                    compute_settings_panel => ComputeSettings});
 render_dashboard_page(Template, Ctx) -> render_tpl(?DASH_TPL(Template), Ctx).
 
 %% ---------------------- Rendering helper ---------------------

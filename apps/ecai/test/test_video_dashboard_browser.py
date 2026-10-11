@@ -39,8 +39,11 @@ POOL = 'window.EcaiIndexPool={init(){},setVisible(){},refresh:async()=>{}};\n'
 def template() -> str:
     shell = (ROOT/'priv/templates/ui/dashboard/ecai_console.mustache').read_text()
     video = (ROOT/'priv/templates/ui/dashboard/ecai_video.mustache').read_text()
-    return (shell.replace('{{{video_studio}}}', video)
-             .replace('{{{browser_auth_modal}}}', '')
+    # Render the *actual* dashboard shell, without help from the Erlang
+    # video_studio context variable. That dependency caused the reported crash.
+    compact = lambda s: "\n".join(line.strip() for line in s.strip().splitlines())
+    assert compact(video) in compact(shell), "Video fragment missing from dashboard shell"
+    return (shell.replace('{{{browser_auth_modal}}}', '')
              .replace('{{node_version}}', 'video-fixture'))
 
 

@@ -1,5 +1,42 @@
 /* ECAI Video Studio: same-origin Fastpath bridge; no provider secrets in browser storage. */
 export function initVideoStudio({request, currentToken, managedSession, openLogin, toast}) {
+  // The shell can be deployed without an updated Erlang beam. Validate that
+  // its Video Studio fragment actually mounted before binding any events.
+  // Otherwise provide an actionable in-dashboard error, not an uncaught TypeError.
+  const panel = document.querySelector('#consoleMain [data-panel="video"]');
+  const requiredIds = [
+    "videoBackendAuthScheme", "videoBackendForm", "videoBackendHosts", "videoBackendId",
+    "videoBackendKey", "videoBackendKind", "videoBackendResultPath", "videoBackendSelect",
+    "videoBackendUrl", "videoCid", "videoConnectorDetails", "videoDownloadBtn",
+    "videoGenerateForm", "videoGraphBtn", "videoImportFile", "videoImportForm",
+    "videoJobArea", "videoLicense", "videoManifestBtn", "videoNftForm",
+    "videoNotice", "videoOperation", "videoPlayer", "videoPreviewBtn",
+    "videoPreviewEmpty", "videoProjectForm", "videoProjectSection", "videoProjectSelect",
+    "videoProjectTitle", "videoPrompt", "videoRefresh", "videoReloadVersions",
+    "videoRevisionForm", "videoRevisionText", "videoRevisionTextLabel", "videoStartProject",
+    "videoStatusDot", "videoTags", "videoTrimEnd", "videoTrimFields",
+    "videoTrimStart", "videoVerifyBtn", "videoVerifyResult", "videoVersions"
+  ];
+  const missingIds = requiredIds.filter((id) => !panel?.querySelector(`[id="${id}"]`));
+  if (missingIds.length) {
+    const fallback = panel || document.createElement("section");
+    if (!panel) {
+      fallback.className = "view";
+      fallback.dataset.panel = "video";
+      fallback.hidden = true;
+      document.getElementById("consoleMain")?.append(fallback);
+    }
+    const heading = document.createElement("h2");
+    heading.textContent = "Video Studio template unavailable";
+    const details = document.createElement("p");
+    details.textContent = "The dashboard served without the Video Studio controls. " +
+      "Deploy the updated ecai_console.mustache and ecai-video.js files, " +
+      "then hard-refresh this page. The video backend is not responsible.";
+    fallback.replaceChildren(heading, details);
+    console.error("ECAI Video Studio DOM mount incomplete; missing IDs:", missingIds);
+    return {refresh: async () => {}, setVisible: () => {}, reset: () => {},
+      accountChanged: () => {}, dispose: () => {}};
+  }
   // ES modules are strict by default; strict directives are invalid with destructured parameters.
   const $ = (id) => document.getElementById(id);
   const ids = (object) => Object.entries(object).filter(([, value]) => value !== undefined);

@@ -6,7 +6,7 @@
 -module(ecai_voice_session).
 -license("Apache-2.0").
 -include_lib("kernel/include/file.hrl").
--export([run/0, run/1, options/1, inspect/1]).
+-export([run/0, run/1, options/1, inspect/1, synthesize_take/3]).
 
 
 %% The default is persistent per-node operator state, not a volatile /tmp dir.
@@ -515,6 +515,8 @@ maybe_feedback(Path, {ok, R}, O) ->
 %% Direct file-level loopback: generate a genuine second source without
 %% speaker playback bleeding into microphone input. The resulting WAV is
 %% validated by the same ecai_voice_loop:check/2 as microphone recordings.
+%% Also exposed as a one-shot operator probe for the real eSpeak -> WAV path;
+%% it creates a private WAV but does not enroll a voice or modify a profile.
 synthesize_take(Path, Text, O) ->
     Raw = Path ++ ".espeak-raw.wav",
     try
@@ -527,7 +529,8 @@ synthesize_take(Path, Text, O) ->
             _ -> fail(invalid_synthetic_wav_size)
         end,
         {ok, Original} = file:read_file(Raw),
-        {ok, Converted} = value(ecai_voice_tts:normalize(Original, maps:get(seconds, O))),
+        %% value/1 unwraps {ok, WAV} to WAV; it does not return a tuple.
+        Converted = value(ecai_voice_tts:normalize(Original, maps:get(seconds, O))),
         write_private_exclusive(Path, Converted)
     catch
         throw:{voice_session_error, SynthesisError} -> {error, SynthesisError};

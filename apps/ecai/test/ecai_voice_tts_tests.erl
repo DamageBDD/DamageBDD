@@ -52,6 +52,36 @@ tts_options_test() ->
     ?assertEqual({error, {invalid_option, tts_speed}},
                  ecai_voice_session:options(#{tts_speed => 99})).
 
+%% Exercise the production session synthesis path rather than just normalize/2.
+%% Skip only when eSpeak is absent; there is no microphone dependency.
+real_espeak_session_roundtrip_test_() ->
+    case os:find_executable("espeak-ng") of
+        false -> [];
+        _ -> {timeout, 45, fun real_espeak_session_roundtrip/0}
+    end.
+
+real_espeak_session_roundtrip() ->
+    {ok, _} = application:ensure_all_started(crypto),
+    TempRoot = case os:getenv("TMPDIR") of false -> "/tmp"; T -> T end,
+    Unique = binary_to_list(binary:encode_hex(crypto:strong_rand_bytes(8))),
+    Dir = filename:join(TempRoot, "ecai-voice-tts-test-" ++ Unique),
+    ok = file:make_dir(Dir),
+    Path = filename:join(Dir, "voice.wav"),
+    try
+        Options = #{tts_voice => "en+f3", tts_speed => 155, seconds => 8},
+        Text = ecai_voice_tts:script(synthetic, enroll, 1),
+        ?assertEqual(ok, ecai_voice_session:synthesize_take(Path, Text, Options)),
+        {ok, Audio} = ecai_voice_wav:read(Path),
+        ?assertEqual(16000, maps:get(sample_rate, Audio)),
+        ?assertEqual(1, maps:get(channels, Audio)),
+        ?assertEqual(8.0, maps:get(seconds, Audio)),
+        ?assertEqual(8 * 32000, byte_size(maps:get(pcm, Audio)))
+    after
+        _ = file:delete(Path),
+        _ = file:delete(Path ++ ".espeak-raw.wav"),
+        _ = file:del_dir(Dir)
+    end.
+
 tone(Rate, Freq, Seconds) ->
     list_to_binary([begin
         Value = round(10000 * math:sin(2 * math:pi() * Freq * N / Rate)),

@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="/ecai/auth-assets/css/auth.css">
   <link rel="stylesheet" href="/static/css/ecai-auth.css">
   <link rel="stylesheet" href="/static/css/ecai-index-pool.css">
+  <link rel="stylesheet" href="/static/css/ecai-compute-settings.css">
 </head>
 <body>
   <div class="console-shell" id="ecaiConsole" data-node-version="{{node_version}}">
@@ -29,6 +30,7 @@
         <button type="button" data-view="chat" class="nav-link"><span class="nav-icon" aria-hidden="true">▤</span>Conversation</button>
         <button type="button" data-view="video" class="nav-link"><span class="nav-icon" aria-hidden="true">▸</span>Video Studio</button>
         <button type="button" data-view="indexing" class="nav-link"><span class="nav-icon" aria-hidden="true">▦</span>Index jobs</button>
+        <button type="button" data-view="compute" class="nav-link"><span class="nav-icon" aria-hidden="true">⌁</span>Compute &amp; NFTs</button>
         <button type="button" data-view="network" class="nav-link" id="indexPoolNav" hidden><span class="nav-icon" aria-hidden="true">ϟ</span>Funded indexing</button>
         <button type="button" data-view="wikimedia" class="nav-link"><span class="nav-icon" aria-hidden="true">◎</span>Wikimedia</button>
         <button type="button" data-view="knowledge" class="nav-link"><span class="nav-icon" aria-hidden="true">⌘</span>Knowledge &amp; privacy</button>
@@ -238,7 +240,7 @@
         </section>
 
         <section class="view" data-panel="indexing" data-ecai-managed aria-labelledby="indexTitle" hidden>
-          <div class="page-intro page-intro-actions"><div><div class="eyebrow">DURABLE PIPELINE</div><h1 id="indexTitle">Index jobs</h1><p>Enqueue curated sources, inspect persisted jobs and follow execution events.</p></div><a class="button button-outline" href="/indexer/advanced">Advanced builder ↗</a></div>
+          <div class="page-intro page-intro-actions"><div><div class="eyebrow">DURABLE PIPELINE</div><h1 id="indexTitle">Index jobs</h1><p>Enqueue curated sources, inspect persisted jobs and follow execution events.</p></div><div class="inline-actions wrap-actions"><button type="button" class="button button-outline" id="indexOpenCompute">Compute budget &amp; NFT settings ↗</button><a class="button button-outline" href="/indexer/advanced">Advanced builder ↗</a></div></div>
           <div class="three-stats"><div class="surface mini-stat"><span>Running</span><strong id="queueRunning">—</strong></div><div class="surface mini-stat"><span>Queued</span><strong id="queueQueued">—</strong></div><div class="surface mini-stat"><span>Concurrency</span><strong id="queueWorkers">—</strong></div></div>
           <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">QUICK START</div><h2>Wikimedia presets</h2></div><button type="button" id="reloadPresets" class="text-button">Reload presets ↻</button></div><div id="indexPresets" class="preset-grid"><div class="empty-state">Sign in to load available presets.</div></div></section>
           <section class="surface panel-pad">
@@ -437,6 +439,8 @@
 
         {{{market_maker_panel}}}
 
+        {{{compute_settings_panel}}}
+
         <section class="view" data-panel="api" aria-labelledby="apiTitle" hidden>
           <div class="page-intro"><div class="eyebrow">REFERENCE &amp; EXECUTION</div><h1 id="apiTitle">API explorer</h1><p>Browse the routes exported by this ECAI node and make authenticated same-origin requests.</p></div>
           <div class="api-explorer"><section class="surface api-list-panel"><label for="apiFilter" class="sr-only">Filter endpoints</label><input id="apiFilter" class="api-filter" type="search" placeholder="⌕  Filter endpoints"><div id="apiRoutes" class="api-route-list" aria-label="API endpoints"></div></section><section class="surface panel-pad api-request-panel"><div class="panel-heading"><div><div class="eyebrow">REQUEST</div><h2 id="apiRequestTitle">Choose an endpoint</h2></div><span class="status-tag" id="apiMethodTag">REST</span></div><p id="apiRequestDescription" class="context-hint">Select a route on the left to inspect its parameters.</p><form id="apiRequestForm" class="stack-form"><div id="apiPathParams"></div><div id="apiQueryParams"></div><div id="apiRequestBodyWrapper" hidden><label for="apiRequestBody">JSON body</label><textarea id="apiRequestBody" class="code-input" rows="9" spellcheck="false"></textarea></div><div class="inline-actions"><button type="submit" id="apiRequestSubmit" class="button button-primary" disabled>Send request ↗</button><button type="button" id="apiCopyResponse" class="button button-outline" disabled>Copy response</button></div></form><div class="form-meta"><span id="apiResponseMeta" role="status">No request sent.</span></div><pre id="apiResponse" class="code-display">Select an endpoint to get started.</pre></section></div>
@@ -450,6 +454,7 @@
   {{{browser_auth_modal}}}
   <script src="/ecai/auth-assets/js/micromodal.min.js"></script>
   <script type="module" src="/static/js/ecai-index-pool.js"></script>
-  <script type="module" src="/static/js/ecai-console.js?v=video-studio-v4-mm-v1"></script>
+  <script type="module" src="/static/js/ecai-compute-settings.js"></script>
+  <script type="module" src="/static/js/ecai-console.js?v=video-studio-v4-mm-v1-compute-v2"></script>
 </body>
 </html>
