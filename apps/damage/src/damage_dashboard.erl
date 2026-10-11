@@ -76,7 +76,15 @@ render_full_page(Ctx) ->
     Sets = render_tpl(?TPL("settings_tab.mustache"), Ctx),
     InvM = render_tpl(?TPL("invoice_modal.mustache"), Ctx),
     WalletM = render_tpl(?TPL("wallet_modal.mustache"), Ctx),
-    AuthM = render_tpl(?TPL("auth_modal.mustache"), Ctx),
+    %% A guest sees the public onboarding experience immediately, rather than an
+    %% auto-open sign-in dialog covering an otherwise empty dashboard.  The
+    %% sign-in modal remains available via the guest actions.
+    AuthCtx = case maps:get(authenticated, Ctx, false) of
+        true -> Ctx;
+        _ -> Ctx#{auth_auto_open => <<"false">>, auth_allow_guest => true}
+    end,
+    AuthM = render_tpl(?TPL("auth_modal.mustache"), AuthCtx),
+    GuestLanding = render_tpl(?TPL("guest_landing.mustache"), Ctx),
     LogOutM = render_tpl(?TPL("logout_modal.mustache"), Ctx),
     SchM = render_tpl(?TPL("schedule_modal.mustache"), Ctx),
     InstM = render_tpl(?TPL("install_modal.mustache"), Ctx),
@@ -110,6 +118,7 @@ render_full_page(Ctx) ->
         invoice_modal => InvM,
         wallet_modal => WalletM,
         auth_modal => AuthM,
+        guest_landing => GuestLanding,
         logout_modal => LogOutM,
         schedule_modal => SchM,
         install_modal => InstM,

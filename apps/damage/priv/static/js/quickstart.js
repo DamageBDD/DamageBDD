@@ -96,3 +96,14 @@ $('schedule').addEventListener('click', async () => {
   } catch (error) { status(error.message, true); }
   finally { busy($('schedule'), false); }
 });
+
+// The dashboard hero submits an ordinary GET to /try?url=... . Only generate
+// the draft on arrival: never run a live request without an explicit click.
+function prefillFromDashboard() {
+  if (typeof window === 'undefined') return;
+  const value = new URLSearchParams(window.location?.search || '').get('url');
+  if (!value || value.length > 2048) return;
+  $('target').value = value;
+  $('connect-form').requestSubmit();
+}
+prefillFromDashboard();

@@ -1,0 +1,65 @@
+<!-- Public landing: intentionally excluded from authenticated workspace rendering. -->
+<div class="guest-page" id="guest-landing">
+  <header class="guest-topbar">
+    <a class="guest-brand" href="/" aria-label="DamageBDD home">
+      <img src="{{logo_image}}" width="36" height="36" alt="" />
+      <span><strong>DamageBDD</strong><small>Behaviour verification at planetary scale</small></span>
+    </a>
+    <nav class="guest-topnav" aria-label="Public navigation">
+      <a class="guest-topnav-link" href="/try">Quickstart</a>
+      <a class="guest-topnav-link guest-docs" href="https://damagebdd.com/manual.html">Documentation ↗</a>
+      <button type="button" class="guest-signin" data-guest-auth="login">Sign in</button>
+    </nav>
+  </header>
+
+  <main id="guest-main" class="guest-content" tabindex="-1">
+    <section class="guest-hero" aria-labelledby="guest-hero-title">
+      <div class="guest-intro">
+        <p class="guest-eyebrow"><span class="guest-live-dot" aria-hidden="true"></span> START WITH A SINGLE HTTPS URL</p>
+        <h1 id="guest-hero-title">Know what works.<br /><em>Prove what changed.</em></h1>
+        <p class="guest-lead">Turn a public API URL into an executable, human-readable test. Review the Gherkin, optionally run a bounded first check, and share the result. No account is needed to generate a test.</p>
+
+        <form class="guest-url-form" action="/try" method="get" aria-label="Generate your first acceptance test">
+          <label for="guest-target-url">Your API endpoint</label>
+          <div class="guest-url-row">
+            <input id="guest-target-url" type="url" name="url" inputmode="url" autocomplete="url"
+                   placeholder="https://example.com/health" maxlength="2048" pattern="https://.*" required />
+            <button type="submit" class="guest-primary">Generate a test <span aria-hidden="true">→</span></button>
+          </div>
+          <p class="guest-form-note">Generation is network-free. Only public HTTPS URLs without credentials or query parameters are supported. Free execution is limited to explicitly approved targets.</p>
+        </form>
+
+        <div class="guest-intro-actions">
+          <a href="/try" class="guest-text-link">Explore quickstart <span aria-hidden="true">↗</span></a>
+          <button type="button" class="guest-text-button" data-guest-auth="signup">Create an account <span aria-hidden="true">→</span></button>
+        </div>
+      </div>
+
+      <aside class="guest-example" aria-label="Example DamageBDD feature">
+        <div class="guest-example-top"><span class="guest-example-marker" aria-hidden="true"></span><span>first-verification.feature</span><span class="guest-example-label">EXAMPLE</span></div>
+        <pre><code>Feature: First API verification
+
+  Scenario: GET endpoint returns HTTP 200
+    Given I am using server "https://example.com"
+    When I make a GET request to "/health"
+    Then the response status must be "200"</code></pre>
+        <div class="guest-example-bottom"><span>Human-readable &amp; executable</span><span>Not executed</span></div>
+      </aside>
+    </section>
+
+    <section class="guest-how" aria-labelledby="guest-how-heading">
+      <div class="guest-how-heading"><span class="guest-overline">YOUR PATH TO EVIDENCE</span><h2 id="guest-how-heading">Go from a URL to repeatable checks.</h2></div>
+      <ol class="guest-step-list">
+        <li><span class="guest-step-count">01</span><h3>Generate</h3><p>Produce and download a DamageBDD Gherkin scenario from a supported URL.</p></li>
+        <li><span class="guest-step-count">02</span><h3>Verify</h3><p>Run one free, read-only status check where a trial target is approved. Inspect a time-limited report.</p></li>
+        <li><span class="guest-step-count">03</span><h3>Keep verifying</h3><p>Sign in to schedule repeat execution using your normal account and credits.</p></li>
+      </ol>
+    </section>
+
+    <section class="guest-participate" aria-label="Contribute verification capacity">
+      <div><h2>Want to participate in the verification network?</h2><p>Install a Damage node or explore the open-source project.</p></div>
+      <div class="guest-participate-actions"><a href="/install">Install a node ↗</a><a href="https://github.com/DamageBDD/DamageBDD">View source ↗</a></div>
+    </section>
+  </main>
+  <footer class="guest-footer"><span>DamageBDD · Behaviour verification at planetary scale</span><a href="/terms">Terms</a></footer>
+</div>

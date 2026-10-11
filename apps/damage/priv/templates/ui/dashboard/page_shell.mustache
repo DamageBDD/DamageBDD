@@ -63,6 +63,8 @@
     <link rel="stylesheet" type="text/css" href='/static/css/analytics.css' />
     <link rel="stylesheet" type="text/css" href='/static/css/gallery.css' />
     <link rel="stylesheet" href="/static/css/billing.css">
+    <link rel="stylesheet" href="/static/css/account-settings.css">
+    <link rel="stylesheet" href="/static/css/dashboard-guest.css">
     <noscript><style>
       .damage-dashboard [data-dashboard-view][hidden] { display: block !important; }
       .damage-dashboard #dashboard-nav-toggle, .damage-dashboard #dashboard-nav-close { display: none; }
@@ -89,6 +91,7 @@
     {{{nwc_modal}}}
     <div id="background" aria-hidden="true"></div>
     {{#authenticated}}<a class="workspace-skip" href="#dashboard-main">Skip to main content</a>{{/authenticated}}
+    {{^authenticated}}<a class="workspace-skip" href="#guest-main">Skip to main content</a>{{/authenticated}}
 {{#authenticated}}
     <div class="dashboard-app" data-dashboard-shell>
       {{{sidebar}}}
@@ -121,6 +124,9 @@
             {{{gallery_tab}}}
           </div>
           {{#node_admin}}
+          <div id="node-context-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-node-context" hidden>
+            {{{node_context_tab}}}
+          </div>
           <div id="node-transactions-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-node-transactions" hidden>
             {{{node_transactions_tab}}}
           </div>
@@ -135,6 +141,9 @@
       </div>
       <div id="dashboard-nav-backdrop" class="dashboard-nav-backdrop" aria-hidden="true" hidden></div>
     </div>
+{{/authenticated}}
+{{^authenticated}}
+    {{{guest_landing}}}
 {{/authenticated}}
 
     <script src="https://cdn.jsdelivr.net/npm/prismjs/prism.min.js"></script>
@@ -156,6 +165,7 @@
     <script type='module' src="/static/js/pricing.js" defer></script>
 
     <script type="module" src="/static/js/dashboard-navigation.js"></script>
+    {{^authenticated}}<script type="module" src="/static/js/dashboard-guest.js"></script>{{/authenticated}}
     <script type='module' src="/static/js/auth-ui.js?v=ecai-browser-v1"></script>
     <script type='module' src="/static/js/main.js" defer></script>
     <script type="module" src="/static/js/settings.js"></script>
