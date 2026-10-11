@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Static contract checks usable without Erlang, DamageBDD or Chromium."""
 import re
+import shutil
+import subprocess
 import unittest
 from html.parser import HTMLParser
 from pathlib import Path
@@ -41,6 +43,24 @@ class VideoContract(unittest.TestCase):
         self.assertIn('currentToken()',src)
         self.assertIn('Video Studio',page)
         self.assertIn('NFT metadata',page)
+
+    def test_video_esm_syntax_and_cache_version(self):
+        # Parsing as a CommonJS script can miss strict-mode grammar errors in browser ES modules.
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node.js is required for the video ESM syntax regression check")
+        video = (APP/'priv/static/js/ecai-video.js').read_text()
+        console = (APP/'priv/static/js/ecai-console.js').read_text()
+        for module, script in (("ecai-video.js", video), ("ecai-console.js", console)):
+            result = subprocess.run([node, "--input-type=module", "--check"],
+                                    input=script, text=True, capture_output=True, check=False)
+            self.assertEqual(result.returncode, 0, f"{module}: {result.stderr}")
+        shell = (APP/'priv/templates/ui/dashboard/ecai_console.mustache').read_text()
+        console_version = re.search(r'/static/js/ecai-console\.js\?v=([^"\s]+)', shell)
+        video_version = re.search(r'/static/js/ecai-video\.js\?v=([^"\s]+)', console)
+        self.assertIsNotNone(console_version)
+        self.assertIsNotNone(video_version)
+        self.assertEqual(console_version.group(1), video_version.group(1))
 
     def test_router_and_authenticated_fixed_upstreams(self):
         app=(APP/'src/ecai_app.erl').read_text()

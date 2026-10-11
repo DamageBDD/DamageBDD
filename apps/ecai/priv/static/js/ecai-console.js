@@ -2,7 +2,7 @@
 // Wallet transport remains a lazy import inside auth-wallet-loader.js.
 import {TokenManager, logoutActiveSession} from "/ecai/auth-assets/js/wallet-switcher.js";
 import {initAuthUI} from "/ecai/auth-assets/js/auth-ui.js?v=ecai-browser-v1";
-import {initVideoStudio} from "/static/js/ecai-video.js?v=video-studio-v1";
+import {initVideoStudio} from "/static/js/ecai-video.js?v=video-studio-v2";
 
 /* ECAI Control Plane. Uses only routes exported by the current ECAI Cowboy handlers. */
 (() => {

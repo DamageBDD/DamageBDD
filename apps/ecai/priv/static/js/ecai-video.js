@@ -1,6 +1,6 @@
 /* ECAI Video Studio: same-origin Fastpath bridge; no provider secrets in browser storage. */
 export function initVideoStudio({request, currentToken, managedSession, openLogin, toast}) {
-  "use strict";
+  // ES modules are strict by default; strict directives are invalid with destructured parameters.
   const $ = (id) => document.getElementById(id);
   const ids = (object) => Object.entries(object).filter(([, value]) => value !== undefined);
   const state = {active: false, enabled: false, projects: [], backends: [], versions: [], project: "", version: "", job: null,
