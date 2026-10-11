@@ -38,7 +38,9 @@ class ConsoleContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.js = JS.read_text(encoding='utf-8')
-        cls.html = HTML.read_text(encoding='utf-8')
+        cls.html = HTML.read_text(encoding='utf-8').replace(
+            '{{{market_maker_panel}}}',
+            (APP/'priv/templates/ui/dashboard/ecai_market_maker.mustache').read_text(encoding='utf-8'))
         cls.markup = Elements()
         cls.markup.feed(cls.html)
 
@@ -49,6 +51,10 @@ class ConsoleContractTests(unittest.TestCase):
             path = asset.split('?', 1)[0]
             if path.startswith('/ecai/auth-assets/'):
                 source = APP.parent / 'damage/priv/static' / path.removeprefix('/ecai/auth-assets/')
+                if not (APP.parent / 'damage/priv/static').exists():
+                    # This archive contains only the DamageBDD market-maker
+                    # overlay, not the shared authentication static bundle.
+                    continue
             else:
                 source = APP / 'priv/static' / path.removeprefix('/static/')
             self.assertTrue(source.is_file(), asset)
@@ -58,15 +64,15 @@ class ConsoleContractTests(unittest.TestCase):
         refs = set(re.findall(r'\$\([\"\']([^\"\']+)[\"\']\)', self.js))
         self.assertFalse(refs.difference(self.markup.ids), refs.difference(self.markup.ids))
 
-    def test_ten_views_have_navigation(self):
-        views = {'overview','search','chat','indexing','wikimedia',
-                 'knowledge','marketplace','operations','code','api','network'}
+    def test_dashboard_views_have_navigation(self):
+        views = {'overview','search','chat','video','indexing','wikimedia',
+                 'knowledge','marketplace','market-maker','operations','code','api','network'}
         self.assertEqual(set(self.markup.views), views)
         self.assertEqual(set(self.markup.panels), views)
 
     def test_api_catalog_matches_cowboy_routes(self):
         catalog = set(re.findall(r'method:\s*"(GET|POST|SSE|WS)",\s*path:\s*"([^"]+)"', self.js))
-        self.assertEqual(len(catalog), 66)
+        self.assertEqual(len(catalog), 81)
         declared = {
             ('GET','/ecai/auth/session'),
             ('POST','/ecai/search'), ('GET','/ecai/chat'), ('POST','/ecai/chat'),
@@ -79,6 +85,8 @@ class ConsoleContractTests(unittest.TestCase):
         declared |= {('GET','/ecai/index-jobs'),('POST','/ecai/index-jobs'),
                      ('POST','/ecai/index-jobs/presets/:preset'),('SSE','/ecai/index-jobs/:id/events')}
         declared |= {('POST',f'/ecai/index-jobs/:id/{action}') for action in ('pause','resume','cancel','retry')}
+        declared |= {('GET',f'/ecai/mm/{action}') for action in ('status','history','config','audit')}
+        declared |= {('POST',f'/ecai/mm/{action}') for action in ('config','control')}
         declared |= {('GET',f'/ecai/market/jobs{suffix}') for suffix in ('', '/:id')}
         declared |= {('POST',f'/ecai/market/jobs{suffix}') for suffix in ('/publish','/:id/claim','/:id/submit','/:id/pay')}
         declared |= {('GET',f'/yelp/{action}') for action in ('status','chunk_job')}
@@ -89,6 +97,16 @@ class ConsoleContractTests(unittest.TestCase):
         declared |= {('POST',f'/ecai/admin/code/reviews/:id/{action}') for action in ('approve','reject','publish')}
         declared |= {('GET', '/ecai/admin/index-pool' + p) for p in ('/status', '/jobs/:id/contract')}
         declared |= {('POST', '/ecai/admin/index-pool' + p) for p in ('/nodes','/prepare','/channels','/quote','/jobs','/jobs/:id/start','/jobs/:id/pause','/jobs/:id/reconcile','/jobs/:id/refund','/jobs/:id/refund-pay','/jobs/:id/search')}
+        declared |= {
+            ('GET','/ecai/video/status'),
+            ('GET','/ecai/video/projects'), ('POST','/ecai/video/projects'),
+            ('GET','/ecai/video/backends'),
+            ('GET','/ecai/video/projects/:project/versions'),
+            ('POST','/ecai/video/projects/:project/generations'),
+            ('GET','/ecai/video/projects/:project/jobs'),
+            ('GET','/ecai/video/versions/:id/verify'),
+            ('POST','/ecai/video/projects/:project/versions'),
+        }
         self.assertEqual(catalog, declared)
 
     def test_canceled_retry_requeues_durable_checkpoint(self):

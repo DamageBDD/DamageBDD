@@ -194,9 +194,12 @@ render_dashboard_page("ecai_console.mustache", Ctx) ->
                 auth_auto_open => <<"false">>, auth_callback_path => <<"/dashboard">>,
                 auth_allow_guest => true, auth_hide_node_wallet => true},
     AuthHtml = damage_utils:load_template(damage, "ui/dashboard/auth_modal.mustache", AuthCtx),
-    VideoHtml = render_tpl(?DASH_TPL("ecai_video.mustache"), Ctx),
+    %% The Video Studio markup lives in the console template itself. Older
+    %% running ecai_dashboard beams therefore cannot omit it accidentally.
+    MarketMaker = render_tpl(?DASH_TPL("ecai_market_maker.mustache"), Ctx),
     render_tpl(?DASH_TPL("ecai_console.mustache"),
-        Ctx#{browser_auth_modal => AuthHtml, video_studio => VideoHtml});
+               Ctx#{browser_auth_modal => AuthHtml,
+                    market_maker_panel => MarketMaker});
 render_dashboard_page(Template, Ctx) -> render_tpl(?DASH_TPL(Template), Ctx).
 
 %% ---------------------- Rendering helper ---------------------

@@ -1,0 +1,114 @@
+<section class="view mm-view" data-panel="market-maker" data-ecai-managed aria-labelledby="mmTitle" hidden>
+  <div class="page-intro page-intro-actions">
+    <div>
+      <div class="eyebrow">ECAI · DETERMINISTIC MARKET-MAKING</div>
+      <h1 id="mmTitle">Market Maker</h1>
+      <p>Coinstore DAMAGE/USDT and BTC/USDT · inventory-aware geometric quoting · restart-safe paper performance.</p>
+    </div>
+    <div class="mm-hero-actions">
+      <span id="mmMode" class="mm-mode">PAPER ONLY · EXCHANGE TRADING DISABLED</span>
+      <button id="mmRefresh" type="button" class="button button-outline button-sm">Refresh now ↻</button>
+    </div>
+  </div>
+  <div id="mmNotice" class="mm-notice" role="status" aria-live="polite">Node-admin managed sign-in required. No market data has been loaded.</div>
+  <div class="mm-status-strip" aria-label="Market maker service state">
+    <span><i id="mmFeedDot" class="mm-dot"></i><strong id="mmFeedState">Feed not checked</strong></span>
+    <span>Engine <strong id="mmEngineState">—</strong></span>
+    <span>Source <strong>Coinstore · DamageBDD</strong></span>
+    <span>Last observation <strong id="mmLastObservation">—</strong></span>
+    <span>Updated <strong id="mmLastRefresh">—</strong></span>
+  </div>
+  <div class="mm-tabs" role="tablist" aria-label="Market maker subsections">
+    <button type="button" role="tab" id="mmTabMonitor" data-mm-tab="monitor" aria-selected="true" aria-controls="mmPanelMonitor" class="mm-tab is-active">Live market</button>
+    <button type="button" role="tab" id="mmTabConfigure" data-mm-tab="configure" aria-selected="false" aria-controls="mmPanelConfigure" class="mm-tab">Strategy &amp; risk</button>
+    <button type="button" role="tab" id="mmTabPerformance" data-mm-tab="performance" aria-selected="false" aria-controls="mmPanelPerformance" class="mm-tab">Performance</button>
+    <button type="button" role="tab" id="mmTabAudit" data-mm-tab="audit" aria-selected="false" aria-controls="mmPanelAudit" class="mm-tab">State &amp; audit</button>
+  </div>
+
+  <section class="mm-subpanel" id="mmPanelMonitor" role="tabpanel" aria-labelledby="mmTabMonitor" data-mm-section="monitor">
+    <div class="mm-kpis" aria-label="Market metrics">
+      <article class="surface mm-kpi"><span>DAMAGE / USDT</span><strong id="mmDamagePrice">—</strong><small>Coinstore bid/ask midpoint</small></article>
+      <article class="surface mm-kpi"><span>BTC / USDT</span><strong id="mmBtcPrice">—</strong><small>Reference asset</small></article>
+      <article class="surface mm-kpi"><span>Exchange spread</span><strong id="mmMarketSpread">—</strong><small>Top-of-book basis points</small></article>
+      <article class="surface mm-kpi"><span>Quote count</span><strong id="mmQuoteCount">—</strong><small>Active paper ladder</small></article>
+      <article class="surface mm-kpi"><span>Inventory ratio</span><strong id="mmInventoryRatio">—</strong><small>DAMAGE share of paper equity</small></article>
+      <article class="surface mm-kpi"><span>Volatility EWMA</span><strong id="mmVolatility">—</strong><small>Observed return, bps</small></article>
+    </div>
+    <section class="surface panel-pad">
+      <div class="panel-heading"><div><div class="eyebrow">LIVE PRICE OBSERVATIONS</div><h2>DAMAGE vs BTC movement</h2></div><span class="status-tag">Rebased to 100 · actual samples</span></div>
+      <div class="mm-chart-legend"><span><i class="mm-swatch mm-damage"></i>DAMAGE</span><span><i class="mm-swatch mm-btc"></i>BTC</span></div>
+      <div id="mmPriceChart" class="mm-chart" role="img" aria-label="DAMAGE and BTC relative price movement chart"><div class="empty-state">No historical observations collected yet.</div></div>
+      <p class="context-hint" id="mmSampleCount">Samples recorded by the node since the market maker started. No synthetic price history.</p>
+    </section>
+    <section class="surface panel-pad">
+      <div class="panel-heading"><div><div class="eyebrow">INVENTORY-AWARE QUOTING</div><h2>Current bid and ask ladders</h2></div><span id="mmQuoteStamp" class="muted small">No quotes</span></div>
+      <div class="mm-book">
+        <div><h3>Bid · buy DAMAGE</h3><div class="table-scroll"><table class="data-table"><thead><tr><th>Price (USDT)</th><th>Qty DAMAGE</th><th>Notional</th></tr></thead><tbody id="mmBids"><tr><td colspan="3" class="empty-cell">No active bids</td></tr></tbody></table></div></div>
+        <div><h3>Ask · sell DAMAGE</h3><div class="table-scroll"><table class="data-table"><thead><tr><th>Price (USDT)</th><th>Qty DAMAGE</th><th>Notional</th></tr></thead><tbody id="mmAsks"><tr><td colspan="3" class="empty-cell">No active asks</td></tr></tbody></table></div></div>
+      </div>
+    </section>
+  </section>
+
+  <section class="mm-subpanel" id="mmPanelConfigure" role="tabpanel" aria-labelledby="mmTabConfigure" data-mm-section="configure" hidden>
+    <div class="mm-layout">
+      <section class="surface panel-pad">
+        <div class="panel-heading"><div><div class="eyebrow">RUNTIME · PERSISTENT</div><h2>Configure quote engine</h2></div><span id="mmConfigRevision" class="status-tag">Revision —</span></div>
+        <p class="context-hint">Edits are checked by the Erlang worker, persisted to DETS and applied to the next fresh quote cycle. They cannot enable real exchange execution or alter starting balances.</p>
+        <form id="mmConfigForm" class="stack-form">
+          <fieldset id="mmConfigFields" class="mm-fields" disabled>
+            <h3>Quote strategy</h3>
+            <div class="mm-field-grid">
+              <label for="mmLevels">Levels per side<input id="mmLevels" name="levels" type="number" min="1" max="16" step="1" required></label>
+              <label for="mmBaseSpread">Minimum half spread (bps)<input id="mmBaseSpread" name="base_half_spread_bps" type="number" min="0.1" max="1500" step="0.1" required></label>
+              <label for="mmStep">Ladder step (bps)<input id="mmStep" name="level_step_bps" type="number" min="0.1" max="1000" step="0.1" required></label>
+              <label for="mmVolWeight">Volatility weight<input id="mmVolWeight" name="volatility_weight" type="number" min="0" max="5" step="0.05" required></label>
+              <label for="mmInventoryTarget">Target inventory (%)<input id="mmInventoryTarget" name="target_inventory_ratio" data-mm-percent="true" type="number" min="1" max="95" step="0.5" required></label>
+              <label for="mmInventoryMax">Maximum inventory (%)<input id="mmInventoryMax" name="max_inventory_ratio" data-mm-percent="true" type="number" min="5" max="99" step="0.5" required></label>
+              <label for="mmSkew">Maximum skew (bps)<input id="mmSkew" name="max_skew_bps" type="number" min="0" max="1500" step="1" required></label>
+              <label for="mmRefreshInterval">Feed poll interval (ms)<input id="mmRefreshInterval" name="poll_interval_ms" type="number" min="2000" max="120000" step="1000" required></label>
+            </div>
+            <h3>Order sizing &amp; risk</h3>
+            <div class="mm-field-grid">
+              <label for="mmOrderNotional">Max order (USDT)<input id="mmOrderNotional" name="max_order_notional" type="number" min="5" max="10000" step="1" required></label>
+              <label for="mmSideNotional">Max per side (USDT)<input id="mmSideNotional" name="max_side_notional" type="number" min="5" max="100000" step="1" required></label>
+              <label for="mmMakerFee">Maker fee estimate (bps)<input id="mmMakerFee" name="maker_fee_bps" type="number" min="0" max="250" step="0.1" required></label>
+              <label for="mmFeeBuffer">Fee buffer (bps)<input id="mmFeeBuffer" name="fee_buffer_bps" type="number" min="0" max="250" step="0.1" required></label>
+              <label for="mmJump">Max price jump (%)<input id="mmJump" name="max_price_jump_pct" type="number" min="0.1" max="100" step="any" required></label>
+              <label for="mmDrawdown">Max drawdown (%)<input id="mmDrawdown" name="max_drawdown_pct" type="number" min="0.1" max="50" step="any" required></label>
+              <label for="mmMaxAge">Max feed age (ms)<input id="mmMaxAge" name="max_feed_age_ms" type="number" min="2000" max="300000" step="1000" required></label>
+            </div>
+            <div class="inline-actions mm-config-actions"><button id="mmSaveConfig" type="submit" class="button button-primary">Save &amp; re-quote ↗</button><button id="mmResetConfig" type="button" class="button button-outline">Discard edits</button></div>
+          </fieldset>
+        </form>
+        <div class="mm-config-notice" id="mmConfigNotice" role="status" aria-live="polite">Load the current configuration to edit parameters.</div>
+      </section>
+      <div>
+        <section class="surface panel-pad">
+          <div class="panel-heading"><div><div class="eyebrow">OPERATOR CONTROLS</div><h2>Engine state</h2></div></div>
+          <p class="context-hint">Pausing removes paper quotes, but continues tracking market data and P&amp;L. Resume is rejected when the drawdown limit is breached.</p>
+          <div class="mm-operator-actions"><button id="mmPause" class="button button-outline danger-outline" type="button" disabled>Pause quoting</button><button id="mmResume" class="button button-primary" type="button" disabled>Resume quoting</button><button id="mmPoll" class="button button-outline" type="button" disabled>Poll Coinstore now</button></div>
+          <dl class="mm-status-list"><div><dt>Current halt reason</dt><dd id="mmHaltReason">—</dd></div><div><dt>Feed age</dt><dd id="mmFeedAge">—</dd></div><div><dt>Feed errors</dt><dd id="mmFeedErrors">—</dd></div><div><dt>Execution</dt><dd>Disabled · paper only</dd></div></dl>
+        </section>
+        <section class="surface panel-pad"><div class="eyebrow">SAFETY BOUNDARY</div><h2>Live trading is not configured</h2><p>These controls alter only deterministic paper quotes. No Coinstore private order API, real balances, exchange keys or live order placement are exposed.</p><p class="context-hint">All operator changes require a managed DamageBDD node-admin account and explicit bearer authentication.</p></section>
+      </div>
+    </div>
+  </section>
+
+  <section class="mm-subpanel" id="mmPanelPerformance" role="tabpanel" aria-labelledby="mmTabPerformance" data-mm-section="performance" hidden>
+    <div class="mm-kpis" aria-label="Paper-trading performance">
+      <article class="surface mm-kpi"><span>Paper equity</span><strong id="mmEquity">—</strong><small>USDT mark-to-market</small></article>
+      <article class="surface mm-kpi"><span>Total paper P&amp;L</span><strong id="mmPnl">—</strong><small id="mmPnlPct">Since first observation</small></article>
+      <article class="surface mm-kpi"><span>Max drawdown</span><strong id="mmDrawdownStat">—</strong><small>Peak-to-trough (%)</small></article>
+      <article class="surface mm-kpi"><span>Paper fees</span><strong id="mmFees">—</strong><small>Estimated USDT</small></article>
+      <article class="surface mm-kpi"><span>Turnover</span><strong id="mmTurnover">—</strong><small>USDT</small></article>
+      <article class="surface mm-kpi"><span>Paper fills</span><strong id="mmFillCount">—</strong><small>Operator/replay confirmed</small></article>
+    </div>
+    <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">PORTFOLIO PERFORMANCE</div><h2>Paper equity vs BTC benchmark</h2></div><span class="status-tag">USDT · no live fills</span></div><div class="mm-chart-legend"><span><i class="mm-swatch mm-equity"></i>Paper equity</span><span><i class="mm-swatch mm-benchmark"></i>BTC buy-and-hold benchmark</span></div><div id="mmPerformanceChart" class="mm-chart" role="img" aria-label="Paper equity and hypothetical BTC benchmark comparison"><div class="empty-state">No P&amp;L observations collected yet.</div></div><p class="context-hint">The BTC benchmark assumes holding the starting equity entirely in BTC. Paper fills occur only when explicitly supplied to the engine; prices alone do not imply fills.</p></section>
+    <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">EXECUTION LEDGER</div><h2>Recent paper fills</h2></div><span class="status-tag">No simulated executions inferred</span></div><div class="table-scroll"><table class="data-table"><thead><tr><th>When</th><th>Side</th><th>Qty</th><th>Price</th><th>Notional</th><th>Fee</th></tr></thead><tbody id="mmFills"><tr><td colspan="6" class="empty-cell">No confirmed paper fills</td></tr></tbody></table></div></section>
+  </section>
+
+  <section class="mm-subpanel" id="mmPanelAudit" role="tabpanel" aria-labelledby="mmTabAudit" data-mm-section="audit" hidden>
+    <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">DETERMINISTIC STATE</div><h2>Elliptic-curve audit chain</h2></div><button id="mmVerify" type="button" class="button button-outline button-sm" disabled>Verify retained events ↗</button></div><p>Each accepted state transition is chained with SHA-256 and mapped to a P-256 point. The point proves consistency with its canonical input; it does not validate external market feeds or predict prices.</p><dl class="mm-status-list"><div><dt>Retained event count</dt><dd id="mmEventCount">—</dd></div><div><dt>Last digest</dt><dd id="mmAuditHash" class="mm-long">—</dd></div><div><dt>Curve state point</dt><dd id="mmStatePoint" class="mm-long">—</dd></div></dl><div id="mmVerifyResult" class="mm-config-notice" role="status" aria-live="polite">Verification has not been requested.</div></section>
+    <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">CHANGE HISTORY</div><h2>Recent state transitions</h2></div><span class="status-tag">Persistent local DETS history</span></div><div class="table-scroll"><table class="data-table"><thead><tr><th>When</th><th>Kind</th><th>Hash</th></tr></thead><tbody id="mmEvents"><tr><td colspan="3" class="empty-cell">No events recorded yet</td></tr></tbody></table></div></section>
+  </section>
+</section>

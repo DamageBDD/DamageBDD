@@ -2,7 +2,8 @@
 // Wallet transport remains a lazy import inside auth-wallet-loader.js.
 import {TokenManager, logoutActiveSession} from "/ecai/auth-assets/js/wallet-switcher.js";
 import {initAuthUI} from "/ecai/auth-assets/js/auth-ui.js?v=ecai-browser-v1";
-import {initVideoStudio} from "/static/js/ecai-video.js?v=video-studio-v2";
+import {initVideoStudio} from "/static/js/ecai-video.js?v=video-studio-v4-mm-v1";
+import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1";
 
 /* ECAI Control Plane. Uses only routes exported by the current ECAI Cowboy handlers. */
 (() => {
@@ -37,6 +38,12 @@ import {initVideoStudio} from "/static/js/ecai-video.js?v=video-studio-v2";
     { group: "Wikimedia", method: "GET", path: "/ecai/wikimedia/plan", description: "Compute read-only ingestion plan.", query: { project: "enwiki", limit: "10000" } },
     { group: "Wikimedia", method: "GET", path: "/ecai/wikimedia/search", description: "Search Wikimedia index.", query: { q: "elliptic curve", limit: "25", language: "" } },
     { group: "Wikimedia", method: "GET", path: "/ecai/wikimedia/doctor", description: "Diagnostic checks for Wikimedia pipeline." },
+    { group: "Market Maker", method: "GET", path: "/ecai/mm/status", description: "Managed node-admin: current Coinstore feed, paper quotes, P&L and risk state." },
+    { group: "Market Maker", method: "GET", path: "/ecai/mm/history", description: "Persisted observed prices, equity and audit events.", query: {limit: "500"} },
+    { group: "Market Maker", method: "GET", path: "/ecai/mm/config", description: "Read bounded strategy configuration and revision." },
+    { group: "Market Maker", method: "POST", path: "/ecai/mm/config", description: "Apply version-checked paper strategy parameters (node admin only).", body: {expected_revision: 0, changes: {levels: 4}}, confirm: "Change the paper market-making strategy?" },
+    { group: "Market Maker", method: "POST", path: "/ecai/mm/control", description: "Pause, resume or poll the paper engine.", body: {action: "pause"}, confirm: "Change paper-engine state?" },
+    { group: "Market Maker", method: "GET", path: "/ecai/mm/audit", description: "Verify the retained local hash/curve audit chain." },
     { group: "Marketplace", method: "GET", path: "/ecai/market/jobs", description: "List marketplace jobs.", query: { status: "any" } },
     { group: "Marketplace", method: "GET", path: "/ecai/market/jobs/:id", description: "Inspect marketplace job (numeric ID).", params: ["id"] },
     { group: "Marketplace", method: "POST", path: "/ecai/market/jobs/publish", description: "Publish marketplace chunk jobs.", body: { owner_ak: "ak_...", market_ct: "ct_...", paths: [], reward_damage: 1, ttl_blocks: 100 } },
@@ -95,8 +102,9 @@ import {initVideoStudio} from "/static/js/ecai-video.js?v=video-studio-v2";
     ask: { question: "What is known about this topic?", destination: "local" }
   };
   const marketExamples = { claim: { miner_ak: "ak_..." }, submit: { miner_ak: "ak_...", attestation: "attestation", evidence_ref: "" }, pay: { admin_ak: "ak_..." } };
-  const VIEW_NAMES = { overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing" };
+  const VIEW_NAMES = { overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing" };
   let videoStudio = null;
+  let marketMaker = null;
   const state = {
     authenticated: false, sessionMode: "anonymous", authEpoch: 0, email: "", view: "overview", jobs: [], presets: [], marketJobs: [],
     nodeAdmin: false, codeAdmin: false, codeFeatureConfigured: false, adminProbeSequence: 0, codeQueue: {}, codeRepairs: [], codeReviews: [], codeReview: null, codeReviewOpenId: "", codeReviewLoadSerial: 0, codeDiffFiles: [], codeDiffSelectedFile: "0",
@@ -434,6 +442,7 @@ import {initVideoStudio} from "/static/js/ecai-video.js?v=video-studio-v2";
     if (tokenChanged) {
       state.authEpoch++;
       videoStudio?.reset();
+      marketMaker?.reset();
       if (state.authenticated) setAuthenticated(false);
       observedToken = token;
     }
@@ -441,6 +450,7 @@ import {initVideoStudio} from "/static/js/ecai-video.js?v=video-studio-v2";
     state.email = session?.email || session?.address || "";
     setAuthenticated(Boolean(session), state.email);
     videoStudio?.accountChanged();
+    marketMaker?.accessChanged();
     if (tokenChanged && state.view === "video" && state.authenticated)
       void task(() => videoStudio?.refresh());
   }
@@ -502,6 +512,7 @@ import {initVideoStudio} from "/static/js/ecai-video.js?v=video-studio-v2";
       showCodeAdminNavigation();
       setCodeActionsEnabled(false);
       if (["code", "network"].includes(state.view)) navigate("overview");
+      marketMaker?.reset();
       put("codeReviewDetail", "Select a validated repair from the review queue.");
       put("codeReviewDiff", "No patch selected.");
       codeReviewButtons();
@@ -554,6 +565,9 @@ import {initVideoStudio} from "/static/js/ecai-video.js?v=video-studio-v2";
         throw new Error("Session identity changed. Sign in again.");
       }
       applyCodeSession(session);
+      marketMaker?.accessChanged();
+      if (state.view === "market-maker" && state.nodeAdmin)
+        void task(() => marketMaker?.refresh(true));
       put("consoleAuthStatus", "");
       if (state.sessionMode === "wallet") {
         state.services.queue = "restricted";
@@ -593,6 +607,7 @@ import {initVideoStudio} from "/static/js/ecai-video.js?v=video-studio-v2";
     closeNav();
     window.EcaiIndexPool?.setVisible(view === "network");
     videoStudio?.setVisible(view === "video");
+    marketMaker?.setVisible(view === "market-maker");
     if (previous === "indexing" && view !== "indexing") stopStream();
     if (view !== "overview") refreshView().catch((error) => toast(showError(error), true));
   }
@@ -2505,6 +2520,7 @@ import {initVideoStudio} from "/static/js/ecai-video.js?v=video-studio-v2";
       case "code": await refreshCode(); break;
       case "marketplace": await refreshMarket(); break;
       case "video": await videoStudio?.refresh(); break;
+      case "market-maker": await marketMaker?.refresh(true); break;
       case "operations": await yelpGet("/yelp/status", "yelpStatusOutput"); break;
       case "api": renderRoutes(); break;
       default: break; // Search and private operations only execute on user request.
@@ -2621,7 +2637,7 @@ import {initVideoStudio} from "/static/js/ecai-video.js?v=video-studio-v2";
     $("apiCopyResponse").addEventListener("click", copyResponse);
     window.addEventListener("hashchange", () => navigate(location.hash.slice(1)));
     window.addEventListener("beforeunload", () => {
-      stopStream(); disconnectSocket(); videoStudio?.dispose(); clearInterval(state.poller);
+      stopStream(); disconnectSocket(); videoStudio?.dispose(); marketMaker?.dispose(); clearInterval(state.poller);
       clearInterval(state.telemetryPoller); clearInterval(state.clockTicker);
     });
     document.addEventListener("visibilitychange", () => {
@@ -2633,6 +2649,7 @@ import {initVideoStudio} from "/static/js/ecai-video.js?v=video-studio-v2";
     if (!$("ecaiConsole")) return;
     window.EcaiIndexPool?.init({request, toast, openLogin, currentToken});
     videoStudio = initVideoStudio({request, currentToken, managedSession, openLogin, toast});
+    marketMaker = initMarketMaker({request, canManage: () => managedSession() && state.nodeAdmin, openLogin});
     initAuthUI();
     bindEvents(); resetChat(); fillPrivateExample(); updateMarketActionExample();
     $("indexIdempotency").value = newKey("ecai-job");

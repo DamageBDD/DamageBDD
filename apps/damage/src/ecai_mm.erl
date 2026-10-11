@@ -3,7 +3,8 @@
 -module(ecai_mm).
 -behaviour(gen_server).
 -export([start_link/0, start_link/1, status/0, quotes/0, history/1,
-         ingest/1, poll/0, pause/0, resume/0, paper_fill/2, verify_audit/0]).
+         ingest/1, poll/0, pause/0, resume/0, paper_fill/2, verify_audit/0,
+         config/0, configure/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
          terminate/2, code_change/3]).
 
@@ -25,6 +26,9 @@ pause() -> gen_server:call(?MODULE, pause).
 resume() -> gen_server:call(?MODULE, resume).
 paper_fill(Id, Qty) -> gen_server:call(?MODULE, {paper_fill, Id, Qty}, 15000).
 verify_audit() -> gen_server:call(?MODULE, verify_audit, 30000).
+config() -> gen_server:call(?MODULE, config).
+configure(Patch, ExpectedRevision) ->
+    gen_server:call(?MODULE, {configure, Patch, ExpectedRevision}, 30000).
 
 init(Cfg) when is_map(Cfg) ->
     %% Deliberate hard safety boundary. A separate, audited exchange execution
@@ -55,25 +59,65 @@ init_paper(Cfg) ->
                     maps:merge(Base, Persisted);
                 _ -> Base
             end,
+            %% Only the strictly bounded operator-tunable subset can survive a
+            %% restart. Corrupt persisted configuration must fail closed.
+            EffectiveCfg = case dets:lookup(Tab, runtime_config) of
+                [{runtime_config, Values}] when is_map(Values) ->
+                    case ecai_mm_config:validate(Values, Cfg) of
+                        {ok, Safe} -> maps:merge(Cfg, Safe);
+                        _ -> Cfg
+                    end;
+                _ -> Cfg
+            end,
             %% Restart invalidates paper quotes; a newly verified feed poll is
             %% required before any quote IDs can accept fills.
             RestoredLedger = maps:get(ledger, Restored),
             Snapshot = Restored#{
                 ledger => ecai_mm_ledger:replace_quotes(RestoredLedger, []),
                 feed_error => awaiting_fresh_market},
-            PollMs = max(2000, maps:get(poll_interval_ms, Cfg, 10000)),
-            State = #{tab => Tab, config => Cfg, poll_ms => PollMs,
-                      snapshot => Snapshot},
-            case maps:get(auto_poll, Cfg, true) of
-                true -> erlang:send_after(1000, self(), poll);
-                false -> ok
-            end,
-            {ok, State};
+            PollMs = max(2000, maps:get(poll_interval_ms, EffectiveCfg, 10000)),
+            State = #{tab => Tab, config => EffectiveCfg, poll_ms => PollMs,
+                      poll_timer => undefined, snapshot => Snapshot},
+            {ok, schedule_poll(State, 1000)};
         {error, E} -> {stop, {dets_open_failed, E}}
     end.
 
 handle_call(status, _, State) ->
     {reply, public_snapshot(State), State};
+handle_call(config, _, State) ->
+    {reply, public_config(State), State};
+handle_call({configure, Patch, ExpectedRevision}, _, State) ->
+    S = maps:get(snapshot, State),
+    Revision = maps:get(config_revision, S, 0),
+    case ExpectedRevision =:= Revision of
+        false -> {reply, {error, stale_config_revision}, State};
+        true ->
+            case ecai_mm_config:validate(Patch, maps:get(config, State)) of
+                {error, Why} -> {reply, {error, Why}, State};
+                {ok, Allowed} ->
+                    Cfg = maps:merge(maps:get(config, State), Allowed),
+                    Tab = maps:get(tab, State),
+                    %% Store config before an audit event; on failure the worker
+                    %% crashes rather than acknowledging an unpersisted write.
+                    ok = dets:insert(Tab, {runtime_config,
+                                           ecai_mm_config:public(Cfg)}),
+                    ok = dets:sync(Tab),
+                    L = maps:get(ledger, S),
+                    S0 = S#{config_revision => Revision + 1,
+                            feed_error => awaiting_fresh_market,
+                            ledger => ecai_mm_ledger:replace_quotes(L, [])},
+                    S1 = State#{config => Cfg,
+                                poll_ms => maps:get(poll_interval_ms, Cfg, 10000)},
+                    Updated = save_event(S1, S0, config_change,
+                                         #{ts_ms => erlang:system_time(millisecond),
+                                           revision => Revision + 1,
+                                           changes => Allowed}),
+                    %% Cancel/re-arm exactly one polling timer: do not spawn a
+                    %% second periodic loop when refreshing from the dashboard.
+                    NewState = schedule_poll(Updated, 0),
+                    {reply, {ok, public_config(NewState)}, NewState}
+            end
+    end;
 handle_call(verify_audit, _, State) ->
     {reply, verify_chain(State), State};
 handle_call(quotes, _, State) ->
@@ -129,12 +173,12 @@ handle_cast(poll, State) -> {noreply, run_feed(State)};
 handle_cast(_, State) -> {noreply, State}.
 
 handle_info(poll, State) ->
-    Updated = run_feed(State),
-    erlang:send_after(maps:get(poll_ms, State), self(), poll),
-    {noreply, Updated};
+    Updated = run_feed(State#{poll_timer => undefined}),
+    {noreply, schedule_poll(Updated, maps:get(poll_ms, Updated))};
 handle_info(_, State) -> {noreply, State}.
 
 terminate(_, State) ->
+    cancel_poll(State),
     case maps:find(tab, State) of
         {ok, Tab} -> dets:sync(Tab), dets:close(Tab);
         error -> ok
@@ -311,6 +355,25 @@ read_history(State, N) ->
         end
     end, lists:seq(Start, Seq)).
 
+public_config(State) ->
+    S = maps:get(snapshot, State),
+    #{revision => maps:get(config_revision, S, 0),
+      mode => paper, execution_enabled => false,
+      values => ecai_mm_config:public(maps:get(config, State))}.
+
+schedule_poll(State, Delay) ->
+    cancel_poll(State),
+    case maps:get(auto_poll, maps:get(config, State), true) of
+        true -> State#{poll_timer => erlang:send_after(Delay, self(), poll)};
+        false -> State#{poll_timer => undefined}
+    end.
+
+cancel_poll(State) ->
+    case maps:get(poll_timer, State, undefined) of
+        Ref when is_reference(Ref) -> erlang:cancel_timer(Ref);
+        _ -> ok
+    end.
+
 public_snapshot(State) ->
     S = maps:get(snapshot, State),
     L = maps:get(ledger, S),
@@ -331,7 +394,8 @@ public_snapshot(State) ->
       quotes => maps:get(quotes, L),
       performance => ecai_mm_ledger:public(L),
       audit => maps:get(audit, S), events => maps:get(seq, S),
-      poll_interval_ms => maps:get(poll_ms, State)}.
+      poll_interval_ms => maps:get(poll_ms, State),
+      config_revision => maps:get(config_revision, S, 0)}.
 
 %% Verify the retained audit segment against its anchored predecessor and
 %% the persisted latest tip. Export/share the tip externally to detect wholesale
