@@ -105,10 +105,18 @@ if [ "$CREATE_USER" = "true" ] && [ -n "$PKG_USER" ] && [ -n "$PKG_GROUP" ]; the
     ensure_user
 fi
 
-# Configuration remains root-managed. Runtime and log directories are writable
-# by the service account.
+# Startup configuration remains root-managed. XDG dashboard settings live
+# separately under the service account's state/home directory.
 install -d -m 0755 "$ETC_DIR"
 install -d -m 0755 "$VAR_DIR" "$LOG_DIR"
+# Writable, service-user-owned XDG configuration for dashboard-managed
+# node settings.  Startup /etc/${APP}/${APP}.config stays operator-managed.
+for _xdg_component in "${VAR_DIR%/}/.config" "${VAR_DIR%/}/.config/damage"; do
+    if [ -L "$_xdg_component" ]; then
+        fatal "XDG config path must not be a symlink: $_xdg_component"
+    fi
+done
+install -d -m 0700 "${VAR_DIR%/}/.config" "${VAR_DIR%/}/.config/damage"
 
 if [ "$CREATE_USER" = "true" ] && id -u "$PKG_USER" >/dev/null 2>&1; then
     chown -R "$PKG_USER:$PKG_GROUP" "$VAR_DIR" "$LOG_DIR"

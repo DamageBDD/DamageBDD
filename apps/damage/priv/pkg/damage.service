@@ -5,8 +5,9 @@
 #
 # Expected layout:
 #   release: /opt/damage
-#   config:  /etc/damage/damage.config
-#   state:   /var/lib/damage
+#   startup config: /etc/damage/damage.config (operator-managed, read-only)
+#   dashboard:     /var/lib/damage/.config/damage/damage.config (XDG overlay)
+#   state:         /var/lib/damage
 #   logs:    /var/log/damage
 
 [Unit]
@@ -24,6 +25,9 @@ Group=damage
 
 # Release and application configuration.
 WorkingDirectory=/opt/damage
+# Follow XDG Base Directory rules even though the package account has no login.
+Environment=HOME=/var/lib/damage
+Environment=XDG_CONFIG_HOME=/var/lib/damage/.config
 ExecStart=/opt/damage/bin/damage foreground -config /etc/damage/damage.config
 
 # Optional environment overrides. The leading "-" means a missing file is OK.

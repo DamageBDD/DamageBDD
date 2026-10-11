@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Node settings · DamageBDD</title>
+  <link rel="stylesheet" href="/static/css/settings.css">
+  <script src="/static/js/damage-config-editor.js" type="module"></script>
+</head>
+<body data-settings-app="__APP__">
+  <main class="settings-layout">
+    <nav class="settings-crumbs" aria-label="Breadcrumb"><a href="/dashboard">Dashboard</a><span aria-hidden="true">/</span><span>Node administration</span><span aria-hidden="true">/</span><span>Settings</span></nav>
+    <header class="settings-heading">
+      <div>
+        <p class="settings-eyebrow">DAMAGEBDD / NODE ADMINISTRATION</p>
+        <h1>Node settings</h1>
+        <p class="settings-subtitle">Configure node-wide DamageBDD, ECAI, Nosternity, ERM and BOP services. Changes are saved to your node's XDG damage.config file, separate from the operator-managed startup configuration and your account settings.</p>
+      </div>
+      <button id="settings-refresh" type="button" class="settings-secondary">Reload from disk</button>
+    </header>
+    <nav class="settings-tabs" aria-label="Choose application">
+      <a href="/dashboard/node/settings/damage" data-app-tab="damage">DamageBDD</a>
+      <a href="/dashboard/node/settings/ecai" data-app-tab="ecai">ECAI</a>
+      <a href="/dashboard/node/settings/nosternity" data-app-tab="nosternity">Nosternity</a>
+      <a href="/dashboard/node/settings/erm" data-app-tab="erm">ERM</a>
+      <a href="/dashboard/node/settings/bop" data-app-tab="bop">BOP</a>
+    </nav>
+    <p class="settings-scope-note"><strong>Node administration</strong> · Changes affect the server, not the signed-in account. Saved to <code id="settings-config-path">$XDG_CONFIG_HOME/damage/damage.config</code>.</p>
+    <div id="settings-notice" role="status" aria-live="polite" hidden></div>
+    <section class="settings-summary" aria-live="polite">
+      <div><span class="settings-meta-label">Application</span><strong id="settings-app-name">—</strong></div>
+      <div><span class="settings-meta-label">Editable settings</span><strong id="settings-field-count">—</strong><small class="settings-meta-detail" id="settings-discovered-count"></small></div>
+      <div><span class="settings-meta-label">Status</span><strong id="settings-runtime-status">Loading…</strong></div>
+    </section>
+    <form id="settings-form">
+      <div class="settings-section-header">
+        <div><h2>Configuration</h2><p>Editable controls are reviewed and typed. Other discovered keys are listed without values.</p></div>
+        <span class="settings-muted">Changes marked Restart take effect only when affected services restart. Other catalog entries are not editable.</span>
+      </div>
+      <label class="settings-search-label" for="settings-search">Find a setting or feature</label>
+      <input id="settings-search" type="search" placeholder="Search by name or key" autocomplete="off">
+      <nav id="settings-feature-nav" class="settings-feature-nav" aria-label="Feature groups"></nav>
+      <div id="settings-fields" class="settings-feature-groups" aria-live="polite"></div>
+      <p id="settings-no-results" class="settings-empty" hidden>No settings match your search.</p>
+      <footer class="settings-actions">
+        <p id="settings-pending">No unsaved changes</p>
+        <div class="settings-buttons">
+          <button id="settings-discard" type="button" class="settings-secondary">Discard</button>
+          <button id="settings-save" type="submit" class="settings-primary">Save changes</button>
+        </div>
+      </footer>
+    </form>
+  </main>
+</body>
+</html>

@@ -11,6 +11,15 @@ INSTALL_DIR="${INSTALL_DIR:-${PREFIX%/}/${APP}}"
 SERVICE_NAME="${SERVICE_NAME:-$APP}"
 SERVICE_FILE="${SERVICE_FILE:-/etc/systemd/system/${SERVICE_NAME}.service}"
 CONFIG_FILE="${CONFIG_FILE:-/etc/${APP}/${APP}.config}"
+VAR_DIR="${VAR_DIR:-/var/lib/${APP}}"
+# Use the *service user's* XDG home, never the package manager's inherited
+# HOME/XDG_CONFIG_HOME (which may point at root's or a sudo caller's files).
+# This matches the packaged systemd unit. Per-node overrides may be configured
+# separately for the service; the runtime creates them if needed.
+NODE_XDG_HOME="${VAR_DIR%/}/.config"
+NODE_CONFIG_FILE="${NODE_XDG_HOME%/}/damage/damage.config"
+PKG_USER="${PKG_USER:-${SERVICE_USER:-${APP}}}"
+PKG_GROUP="${PKG_GROUP:-${SERVICE_GROUP:-${PKG_USER}}}"
 LOG_DIR="${LOG_DIR:-/var/log/${APP}}"
 INSTALL_LOG="${INSTALL_LOG:-${LOG_DIR}/install.log}"
 AUTO_START="${AUTO_START:-true}"
@@ -95,6 +104,73 @@ EOF_CONFIG
     chmod 0644 "$CONFIG_FILE"
 }
 
+# Package-created, service-writable dashboard overlay, deliberately NOT the
+# operator's /etc/damage/damage.config passed to the VM by systemd.
+# Idempotent: preserve config and legacy overrides on package upgrades.
+write_node_xdg_config() {
+    if [ "$NODE_CONFIG_FILE" = "$CONFIG_FILE" ]; then
+        log "ERROR: XDG dashboard config must be separate from the VM startup config"
+        return 1
+    fi
+    case "$NODE_CONFIG_FILE" in
+        /*) ;;
+        *) log "ERROR: dashboard config path must be absolute: $NODE_CONFIG_FILE"; return 1 ;;
+    esac
+    _dir="$(dirname "$NODE_CONFIG_FILE")"
+    # Do not follow attacker-provided symlinks or replace an existing file.
+    for _p in "$NODE_XDG_HOME" "$_dir" "$NODE_CONFIG_FILE"; do
+        if [ -L "$_p" ]; then
+            log "ERROR: symlink in dashboard config path: $_p"
+            return 1
+        fi
+    done
+    if ! id -u "$PKG_USER" >/dev/null 2>&1; then
+        log "ERROR: missing service user for dashboard settings: $PKG_USER"
+        return 1
+    fi
+    install -d -m 0700 "$NODE_XDG_HOME" "$_dir"
+    chown "$PKG_USER:$PKG_GROUP" "$NODE_XDG_HOME" "$_dir"
+
+    if [ -e "$NODE_CONFIG_FILE" ]; then
+        if [ ! -f "$NODE_CONFIG_FILE" ]; then
+            log "ERROR: dashboard config is not a regular file: $NODE_CONFIG_FILE"
+            return 1
+        fi
+        log "Keeping existing dashboard config: $NODE_CONFIG_FILE"
+        return 0
+    fi
+
+    # Legacy dashboard writes used an adjacent *.dashboard.config file. On
+    # upgrade copy it *before* creating the new empty XDG file. The Erlang
+    # loader validates it; the original is always kept as a rollback source.
+    _legacy="${CONFIG_FILE%.config}.dashboard.config"
+    if [ -L "$_legacy" ]; then
+        log "ERROR: legacy dashboard config must not be a symlink: $_legacy"
+        return 1
+    fi
+    if [ -f "$_legacy" ]; then
+        log "Importing existing dashboard settings into XDG config: $NODE_CONFIG_FILE"
+        (umask 077; set -C; cat "$_legacy" >"$NODE_CONFIG_FILE")
+    else
+        log "Creating initial dashboard settings: $NODE_CONFIG_FILE"
+        (umask 077; set -C; cat >"$NODE_CONFIG_FILE" <<'EOF_XDG_CONFIG'
+%% Dashboard-managed node settings. Only schema-allowlisted keys belong here.
+%% The operator's /etc/damage/damage.config is not modified by this file.
+[
+    {damage, []},
+    {ecai, []},
+    {nosternity, []},
+    {erm, []},
+    {bop, []}
+].
+EOF_XDG_CONFIG
+        )
+    fi
+    chmod 0600 "$NODE_CONFIG_FILE"
+    chown "$PKG_USER:$PKG_GROUP" "$NODE_CONFIG_FILE"
+    log "Dashboard settings ready: $NODE_CONFIG_FILE"
+}
+
 verify_unit() {
     if [ ! -f "$SERVICE_FILE" ]; then
         log "ERROR: canonical systemd unit missing from package: $SERVICE_FILE"
@@ -109,6 +185,7 @@ log "Starting service configuration for $SERVICE_NAME"
 # Configuration is useful even in containers/chroots and must not depend on a
 # running systemd instance.
 write_default_config
+write_node_xdg_config
 verify_unit
 
 if is_container; then
