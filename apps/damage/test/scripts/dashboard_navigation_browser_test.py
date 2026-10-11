@@ -167,11 +167,29 @@ def run(out: Path, chromium: str) -> None:
 
         page2 = load(context, '/admin#node-cln-admin-tab')
         active(page2, 'node-cln-admin-tab')
-        assert page2.locator('[data-dashboard-panel]').count() == 12
+        assert page2.locator('[data-dashboard-panel]').count() == 13
         assert page2.locator('#dashboard-navigation #dashboard-group-node').count() == 1
         assert page2.locator('#dashboard-link-node-settings').get_attribute('href') == '/dashboard/node/settings'
         assert page2.locator('#dashboard-link-node-context').count() == 1
-        passed('one admin navigation group includes transactions, channels, context, and node settings')
+        assert page2.locator('#dashboard-link-node-tax-reports').count() == 1
+        page2.locator('#dashboard-link-node-tax-reports').click()
+        active(page2, 'node-tax-reports-tab')
+        assert page2.locator('#tax-setup-heading').is_visible()
+        passed('admin dashboard includes a tax reports panel with setup state')
+
+        # A delegated tax admin receives one finance-only destination, without
+        # node settings, ledger controls, or CLN administration in the DOM.
+        tax_only = build_preview(tax_admin=True)
+        tax_page = context.new_page()
+        tax_page.goto('about:blank#node-tax-reports-tab')
+        install_fixture(tax_page, tax_only)
+        active(tax_page, 'node-tax-reports-tab')
+        assert tax_page.locator('#dashboard-link-node-tax-reports').count() == 1
+        assert tax_page.locator('#dashboard-link-node-settings').count() == 0
+        assert tax_page.locator('#node-cln-admin-tab').count() == 0
+        assert tax_page.locator('#tax-settings-form').count() == 1
+        tax_page.close()
+        passed('tax-only admin sees scoped configuration without node admin controls')
 
         page2.evaluate("() => window.dashboardNavigation.navigate('settings-tab', {focus: false})")
         active(page2, 'settings-tab')
@@ -214,7 +232,7 @@ def run(out: Path, chromium: str) -> None:
         for width in [320, 390, 768, 900, 901, 1024, 1440]:
             page2.set_viewport_size({'width': width, 'height': 950})
             for id_ in ['execution-tab', 'activity-tab', 'analytics-tab', 'schedules-tab', 'settings-tab',
-                        'swap-options-tab', 'ecai-jobs-tab', 'node-context-tab', 'node-transactions-tab', 'node-channels-tab', 'node-cln-admin-tab']:
+                        'swap-options-tab', 'ecai-jobs-tab', 'node-context-tab', 'node-transactions-tab', 'node-channels-tab', 'node-cln-admin-tab', 'node-tax-reports-tab']:
                 page2.evaluate('(id) => window.dashboardNavigation.navigate(id, {focus: false})', id_)
                 assert page2.evaluate('document.documentElement.scrollWidth <= innerWidth'), (width, id_)
             passed(f'no document horizontal overflow across eleven panels at {width}px')

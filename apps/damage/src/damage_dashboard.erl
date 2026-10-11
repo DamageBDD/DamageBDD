@@ -34,7 +34,9 @@ is_authorized(Req, State0) ->
 
 to_html(Req0, #{action := index} = State) ->
     Req = cowboy_req:set_resp_header(<<"cache-control">>, <<"no-store">>, Req0),
-    Ctx0 = maps:merge(base_context(Req), State),
+    AuthCtx = maps:merge(base_context(Req), State),
+    Ctx0 = AuthCtx#{tax_only_admin => maps:get(tax_admin, AuthCtx, false) =:= true
+                       andalso maps:get(node_admin, AuthCtx, false) =/= true},
     #{component := Comp0} = cowboy_req:match_qs([{component, [], undefined}], Req),
     case Comp0 of
         undefined ->
@@ -104,6 +106,10 @@ render_full_page(Ctx) ->
     NodeTransactionsTab = render_tpl(?TPL("node_transactions_tab.mustache"), Ctx),
     NodeChannelsTab = render_tpl(?TPL("node_channels_tab.mustache"), Ctx),
     NodeClnAdminTab = render_tpl(?TPL("node_cln_admin.mustache"), Ctx),
+    NodeTaxReportsTab = case maps:get(tax_admin, Ctx, false) of
+        true -> render_tpl(?TPL("node_tax_reports_tab.mustache"), Ctx);
+        _ -> <<>>
+    end,
 
     %% pass the assembled parts into the shell
     PageCtx = Ctx#{
@@ -137,7 +143,8 @@ render_full_page(Ctx) ->
         node_context_tab => NodeContextTab,
         node_transactions_tab => NodeTransactionsTab,
         node_channels_tab => NodeChannelsTab,
-        node_cln_admin_tab => NodeClnAdminTab
+        node_cln_admin_tab => NodeClnAdminTab,
+        node_tax_reports_tab => NodeTaxReportsTab
     },
     render_tpl(?TPL("page_shell.mustache"), PageCtx).
 
@@ -164,6 +171,10 @@ render_component(billing_tab, Ctx) ->
     render_tpl(?TPL("billing_tab.mustache"), Ctx);
 render_component(settings_tab, Ctx) ->
     render_tpl(?TPL("settings_tab.mustache"), Ctx);
+render_component(node_tax_reports_tab, #{tax_admin := true} = Ctx) ->
+    render_tpl(?TPL("node_tax_reports_tab.mustache"), Ctx);
+render_component(node_tax_reports_tab, _Ctx) ->
+    <<>>;
 render_component(invoice_modal, Ctx) ->
     render_tpl(?TPL("invoice_modal.mustache"), Ctx);
 render_component(login_modal, Ctx) ->

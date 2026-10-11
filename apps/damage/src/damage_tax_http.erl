@@ -1,4 +1,4 @@
-%%% Node administrator only, private tax reports UI + backfill JSON endpoints.
+%%% Node and delegated tax administrators: private tax records and settings.
 %%% Standalone Cowboy handler registered using trails; no public IPFS uploads.
 -module(damage_tax_http).
 
@@ -11,6 +11,9 @@ trails() ->
       trails:trail("/node/admin/tax", ?MODULE, #{action => page},
                    #{get => #{tags => ["Node Administration"],
                              description => "Private tax reporting dashboard"}}),
+      trails:trail("/api/node/tax/settings", ?MODULE, #{action => settings},
+                   #{get => #{tags => ["Tax Administration"]},
+                     post => #{tags => ["Tax Administration"]}}),
       trails:trail("/api/node/tax/reports", ?MODULE, #{action => reports},
                    #{get => #{tags => ["Node Administration"]}}),
       trails:trail("/api/node/tax/jobs", ?MODULE, #{action => jobs},
@@ -29,20 +32,17 @@ init(Req0, #{action := Action} = Opts) ->
             {ok, reply_json(Status, #{error => <<"permission_denied">>}, Req), Opts}
     end.
 
-%% Use the normal Damage session resolver, not the L402 execution gate.
-%% A principal with a matching account is not sufficient: wallet-mode browser
-%% sessions explicitly have node_admin=false, even for an admin account.
-%% Never accept a caller-supplied principal/role/tenant from query or JSON.
+%% Always resolve roles from the authenticated request, then recheck the
+%% operator-controlled allowlist. Wallet-mode and L402 sessions are forbidden.
+%% Client-supplied role/tenant hints cannot grant financial admin privileges.
 authorized(Req, Opts) ->
     try
         case damage_auth:authenticate(Req, Opts) of
-            {ok, #{authenticated := true, node_admin := true,
-                   public_key := Key}} ->
-                case steps_utils:is_admin(Key) of
+            {ok, State} ->
+                case damage_tax_access:allowed(State) of
                     true -> {ok, Req};
                     false -> {error, 403, Req}
                 end;
-            {ok, _State} -> {error, 403, Req};
             {anonymous, _State} -> {error, 401, Req};
             {error, _Reason, _State} -> {error, 401, Req}
         end
@@ -60,6 +60,8 @@ execute(page, Req) ->
             end;
         _ -> method_not_allowed(Req)
     end;
+%% Configuration must remain reachable before the tax service is enabled.
+execute(settings, Req) -> settings_action(Req);
 execute(Action, Req) ->
     case application:get_env(damage, tax_enabled, false) of
         true -> enabled_action(Action, Req);
@@ -101,6 +103,70 @@ enabled_action(download, Req) ->
         <<"GET">> -> do_download(Req);
         _ -> method_not_allowed(Req)
     end.
+
+%% Tax-only settings projection. Never call the general-purpose admin
+%% settings endpoint on behalf of a tax administrator.
+settings_action(Req) ->
+    case cowboy_req:method(Req) of
+        <<"GET">> ->
+            settings_view(Req);
+        <<"POST">> ->
+            settings_mutation(Req);
+        _ -> method_not_allowed(Req)
+    end.
+
+settings_view(Req) ->
+    try damage_tax_settings:read_view() of
+        {ok, View} -> reply_json(200, View, Req);
+        {error, _} -> reply_json(503, #{error => <<"tax_settings_unavailable">>}, Req)
+    catch _:_ -> reply_json(503, #{error => <<"tax_settings_unavailable">>}, Req) end.
+
+settings_mutation(Req0) ->
+    case post_authorized(Req0) of
+        false -> reply_json(403, #{error => <<"request_origin_not_allowed">>}, Req0);
+        true ->
+            case cowboy_req:read_body(Req0, #{length => 8192, period => 3000,
+                                                timeout => 5000}) of
+                {ok, Body, Req} ->
+                    try jsx:decode(Body, [return_maps]) of
+                        Json when is_map(Json), map_size(Json) =< 3 ->
+                            settings_change(Json, Req);
+                        _ -> reply_json(400, #{error => <<"invalid_tax_settings_request">>}, Req)
+                    catch _:_ -> reply_json(400, #{error => <<"invalid_json">>}, Req) end;
+                {more, _, Req} -> reply_json(413, #{error => <<"request_too_large">>}, Req);
+                {error, _, Req} -> reply_json(400, #{error => <<"invalid_body">>}, Req)
+            end
+    end.
+
+settings_change(#{<<"action">> := <<"save">>, <<"version">> := Version,
+                  <<"changes">> := Changes}, Req) when is_binary(Version) ->
+    case damage_tax_settings:authorized_changes(Changes) of
+        true -> settings_mutation_result(fun() -> damage_settings:save(damage, Changes, Version) end, Req);
+        false -> reply_json(403, #{error => <<"tax_fields_only">>}, Req)
+    end;
+settings_change(#{<<"action">> := <<"reset">>, <<"version">> := Version,
+                  <<"keys">> := Keys}, Req) when is_binary(Version) ->
+    case damage_tax_settings:authorized_resets(Keys) of
+        true -> settings_mutation_result(fun() -> damage_settings:reset(damage, Keys, Version) end, Req);
+        false -> reply_json(403, #{error => <<"tax_fields_only">>}, Req)
+    end;
+settings_change(_, Req) ->
+    reply_json(400, #{error => <<"invalid_tax_settings_request">>}, Req).
+
+settings_mutation_result(Fun, Req) ->
+    try Fun() of
+        {ok, _Status} -> settings_view(Req);
+        {error, {conflict, _Version}} ->
+            reply_json(409, #{error => <<"config_changed_reload_required">>}, Req);
+        {error, {invalid_value, Name, _Reason}} ->
+            reply_json(422, #{error => <<"invalid_tax_value">>, field => Name}, Req);
+        {error, {invalid_setting_combination, _, _, _}} ->
+            reply_json(422, #{error => <<"tax_owner_required_when_enabled">>}, Req);
+        {error, {not_editable, _Name}} ->
+            reply_json(403, #{error => <<"tax_fields_only">>}, Req);
+        {error, _Reason} ->
+            reply_json(422, #{error => <<"tax_settings_save_rejected">>}, Req)
+    catch _:_ -> reply_json(503, #{error => <<"tax_settings_unavailable">>}, Req) end.
 
 do_backfill(Req0) ->
     case post_authorized(Req0) of

@@ -15,7 +15,7 @@ TPL = ROOT / 'priv/templates/ui/dashboard'
 
 
 def fragment(name, admin):
-    return render_template((TPL / name).read_text(), {'node_admin': admin, 'authenticated': True})
+    return render_template((TPL / name).read_text(), {'node_admin': admin, 'tax_admin': admin, 'authenticated': True})
 
 
 class NodeAdminNavigationTest(unittest.TestCase):

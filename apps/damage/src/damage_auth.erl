@@ -8,6 +8,7 @@
 -export([
     build_auth_state/2,
     is_node_admin_account/1,
+    is_tax_admin_account/1,
     auth_success_state/3,
     with_identity_account/3,
     resolve_oauth/2,
@@ -28,7 +29,8 @@ build_auth_state(Req, State0) ->
     State0#{
         ip => damage_utils:get_ip(Req),
         useragent => cowboy_req:header(<<"user-agent">>, Req, ""),
-        node_admin => false
+        node_admin => false,
+        tax_admin => false
     }.
 
 %% ------------------------------------------------------------------
@@ -44,6 +46,19 @@ is_node_admin_account(AeAccount0) ->
             false
     end.
 
+%% Tax administrators are a separate operator-controlled allowlist. Node
+%% administrators are always tax administrators, but not the other way around.
+%% This list is never editable through the dashboard or public settings API.
+is_tax_admin_account(undefined) -> false;
+is_tax_admin_account(AeAccount0) ->
+    AeAccount = to_bin(AeAccount0),
+    is_node_admin_account(AeAccount) orelse
+        case application:get_env(damage, tax_admins, []) of
+            Admins when is_list(Admins) ->
+                lists:member(AeAccount, [to_bin(A) || A <- Admins]);
+            _ -> false
+        end.
+
 %% ------------------------------------------------------------------
 %% Authenticated state enrichment
 %% ------------------------------------------------------------------
@@ -54,7 +69,8 @@ auth_success_state(State, AeAccount, Extra) ->
         Extra#{
             public_key => to_bin(AeAccount),
             authenticated => true,
-            node_admin => is_node_admin_account(AeAccount)
+            node_admin => is_node_admin_account(AeAccount),
+            tax_admin => is_tax_admin_account(AeAccount)
         }
     ),
     %?LOG_DEBUG("auth_success_state ~p ~p", [Resp, is_node_admin_account(AeAccount)]),
@@ -80,7 +96,7 @@ resolve_oauth(<<"ds1.", _/binary>> = Token, State) ->
             %% Never call identity_server or hydrate a signing key for this path.
             WalletState = auth_success_state(maps:without([private_key, username], State), Account,
                 #{access_token => Token, auth_type => browser_session, auth_mode => wallet}),
-            {ok, WalletState#{node_admin => false}};
+            {ok, WalletState#{node_admin => false, tax_admin => false}};
         {ok, #{address := Account, mode := custodial, email := Email}} ->
             with_identity_account(Account, State,
                 #{access_token => Token, username => Email,
@@ -134,11 +150,14 @@ resolve_l402(AuthHeader, Req, State) ->
             case application:get_env(damage, l402_account) of
                 {ok, AeAccount0} ->
                     AeAccount = to_bin(AeAccount0),
-                    case is_node_admin_account(AeAccount) of
-                        true ->
+                    case {is_node_admin_account(AeAccount), is_tax_admin_account(AeAccount)} of
+                        {true, _} ->
                             ?LOG_ERROR("Refusing L402 auth for node admin account ~p", [AeAccount]),
                             {error, l402_account_cannot_be_node_admin};
-                        false ->
+                        {false, true} ->
+                            ?LOG_ERROR("Refusing L402 auth for tax admin account ~p", [AeAccount]),
+                            {error, l402_account_cannot_be_tax_admin};
+                        {false, false} ->
                             with_identity_account(
                                 AeAccount,
                                 State,

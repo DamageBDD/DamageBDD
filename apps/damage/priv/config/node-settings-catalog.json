@@ -235,6 +235,7 @@
     "state_dir",
     "strict_no_catchall",
     "systemd",
+    "tax_admins",
     "tax_backfill_on_start",
     "tax_cln_owner",
     "tax_coingecko_demo_key",

@@ -65,6 +65,7 @@
     <link rel="stylesheet" href="/static/css/billing.css">
     <link rel="stylesheet" href="/static/css/account-settings.css">
     <link rel="stylesheet" href="/static/css/dashboard-guest.css">
+    <link rel="stylesheet" href="/static/css/dashboard-tax-reports.css">
     <noscript><style>
       .damage-dashboard [data-dashboard-view][hidden] { display: block !important; }
       .damage-dashboard #dashboard-nav-toggle, .damage-dashboard #dashboard-nav-close { display: none; }
@@ -137,6 +138,11 @@
             {{{node_cln_admin_tab}}}
           </div>
           {{/node_admin}}
+          {{#tax_admin}}
+          <div id="node-tax-reports-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-node-tax-reports" hidden>
+            {{{node_tax_reports_tab}}}
+          </div>
+          {{/tax_admin}}
         </main>
       </div>
       <div id="dashboard-nav-backdrop" class="dashboard-nav-backdrop" aria-hidden="true" hidden></div>
@@ -165,6 +171,8 @@
     <script type='module' src="/static/js/pricing.js" defer></script>
 
     <script type="module" src="/static/js/dashboard-navigation.js"></script>
+    {{#tax_admin}}<script type="module" src="/static/js/dashboard-tax-reports.js"></script>
+    <script type="module" src="/static/js/dashboard-tax-settings.js"></script>{{/tax_admin}}
     {{^authenticated}}<script type="module" src="/static/js/dashboard-guest.js"></script>{{/authenticated}}
     <script type='module' src="/static/js/auth-ui.js?v=ecai-browser-v1"></script>
     <script type='module' src="/static/js/main.js" defer></script>

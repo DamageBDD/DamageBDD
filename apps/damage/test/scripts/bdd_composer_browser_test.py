@@ -20,7 +20,7 @@ def render_template(text: str, context: dict) -> str:
     text = re.sub(r'{{{\s*(\w+)\s*}}}', lambda m: str(context.get(m[1], '')), text)
     return re.sub(r'{{\s*(\w+)\s*}}', lambda m: html.escape(str(context.get(m[1], ''))), text)
 
-def build_preview(node_admin: bool = False) -> str:
+def build_preview(node_admin: bool = False, tax_admin: bool = False) -> str:
     templates = APP / 'priv/templates/ui/dashboard'
     static = APP / 'priv/static'
     shell = (templates / 'page_shell.mustache').read_text()
@@ -28,7 +28,8 @@ def build_preview(node_admin: bool = False) -> str:
     css = '\n'.join((static / path.removeprefix('/static/')).read_text() for path in css_paths)
     logo = base64.b64encode((static / 'img/logo.png').read_bytes()).decode()
     context = {'logo_image': 'data:image/png;base64,' + logo, 'authenticated': True,
-               'node_admin': node_admin, 'node_version': 'fixture'}
+               'node_admin': node_admin, 'tax_admin': tax_admin or node_admin,
+               'tax_only_admin': tax_admin and not node_admin, 'node_version': 'fixture'}
     context['footer'] = render_template((templates / 'footer.mustache').read_text(), context)
     context['sidebar'] = render_template((templates / 'sidebar.mustache').read_text(), context)
     # Use the production shell and server-rendered panels, not an alternate DOM.

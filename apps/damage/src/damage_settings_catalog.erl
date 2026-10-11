@@ -118,7 +118,7 @@ group(App, Key0) ->
 %% Damage: prefix-order matters for payment and networking keys.
 group_key(damage, K) ->
     case true of
-        _ when K =:= <<"node_admins">>; K =:= <<"cookie_secure">>;
+        _ when K =:= <<"node_admins">>; K =:= <<"tax_admins">>; K =:= <<"cookie_secure">>;
                K =:= <<"quickstart_quota_secret">>; K =:= <<"nsecbunker">> -> <<"security">>;
         _ when K =:= <<"l402_account">>; K =:= <<"lnpay_host">> -> <<"lightning">>;
         _ when K =:= <<"ipfs">>; K =:= <<"ipfs_runtime">> -> <<"storage">>;

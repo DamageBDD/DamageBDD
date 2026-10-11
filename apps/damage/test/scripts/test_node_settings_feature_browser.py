@@ -133,24 +133,25 @@ class FeatureSettingsBrowserTests(unittest.TestCase):
         }
         self.render('damage', fixture=fixture)
         self.assertTrue(self.page.locator('#setting-tax_enabled').is_checked())
-        self.assertEqual('/node/admin/tax',
+        self.assertEqual('/#node-tax-reports-tab',
                          self.page.locator('.settings-tax-reports-link').get_attribute('href'))
 
-    def test_sidebar_exposes_setup_and_reports_for_admins(self):
+    def test_sidebar_exposes_integrated_tax_reports_for_admins(self):
         sidebar = (DAMAGE / 'priv' / 'templates' / 'ui' / 'dashboard' /
                    'sidebar.mustache').read_text()
         self.assertIn('{{#node_admin}}', sidebar)
-        enabled = re.search(r'\{\{#tax_enabled\}\}(.*?)\{\{/tax_enabled\}\}',
-                            sidebar, re.S)
-        disabled = re.search(r'\{\{\^tax_enabled\}\}(.*?)\{\{/tax_enabled\}\}',
-                             sidebar, re.S)
-        self.assertIsNotNone(enabled)
-        self.assertIsNotNone(disabled)
-        self.assertIn('id="dashboard-link-tax-evidence"', enabled.group(1))
-        self.assertIn('href="/node/admin/tax"', enabled.group(1))
-        self.assertIn('id="dashboard-link-tax-setup"', disabled.group(1))
-        self.assertIn('href="/dashboard/node/settings/damage#settings-feature-tax"',
-                      disabled.group(1))
+        self.assertIn('id="dashboard-link-node-tax-reports"', sidebar)
+        self.assertIn('href="#node-tax-reports-tab"', sidebar)
+        from bdd_composer_browser_test import render_template
+        rendered_admin = render_template(sidebar, {'node_admin': True,
+                                                    'tax_only_admin': False})
+        self.assertEqual(1, rendered_admin.count('dashboard-link-node-tax-reports'))
+        # Disabled tax remains discoverable in the admin panel with a setup link.
+        tab = (DAMAGE / 'priv' / 'templates' / 'ui' / 'dashboard' /
+               'node_tax_reports_tab.mustache').read_text()
+        self.assertIn('{{^tax_enabled}}', tab)
+        self.assertIn('href="#tax-settings-heading"', tab)
+        self.assertIn('{{#tax_enabled}}', tab)
 
     def test_groups_and_five_apps(self):
         self.render()

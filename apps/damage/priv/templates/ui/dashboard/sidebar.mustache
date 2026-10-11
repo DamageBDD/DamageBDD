@@ -92,23 +92,26 @@
             <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3ZM8 12l3 3 5-6"/></svg><span class="dashboard-nav-label">CLN admin</span>
           </a>
         </li>
-        {{#tax_enabled}}
         <li>
-          <a id="dashboard-link-tax-evidence" href="/node/admin/tax" title="ATO tax evidence and reporting" aria-label="Tax evidence reports and downloads">
-            <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg><span class="dashboard-nav-label">Tax evidence</span>
+          <a id="dashboard-link-node-tax-reports" href="#node-tax-reports-tab" data-dashboard-panel="node-tax-reports-tab" data-nav-title="Tax reports" data-nav-group="Node administration" data-nav-description="Audit financial-year reports and export evidence" title="Tax reports">
+            <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg><span class="dashboard-nav-label">Tax reports</span>
           </a>
         </li>
-        {{/tax_enabled}}
-        {{^tax_enabled}}
-        <li>
-          <a id="dashboard-link-tax-setup" href="/dashboard/node/settings/damage#settings-feature-tax" title="Configure ATO tax reporting">
-            <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg><span class="dashboard-nav-label">Tax evidence setup</span>
-          </a>
-        </li>
-        {{/tax_enabled}}
       </ul>
     </section>
     {{/node_admin}}
+    {{#tax_only_admin}}
+    <section class="dashboard-nav-group" aria-labelledby="dashboard-group-tax">
+      <h2 id="dashboard-group-tax" class="dashboard-nav-heading">Tax administration</h2>
+      <ul class="dashboard-nav-list">
+        <li>
+          <a id="dashboard-link-node-tax-reports" href="#node-tax-reports-tab" data-dashboard-panel="node-tax-reports-tab" data-nav-title="Tax reports" data-nav-group="Tax administration" data-nav-description="Manage private tax reporting and configuration" title="Tax reports">
+            <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></svg><span class="dashboard-nav-label">Tax reports</span>
+          </a>
+        </li>
+      </ul>
+    </section>
+    {{/tax_only_admin}}
     <section class="dashboard-nav-group" aria-labelledby="dashboard-group-manage">
       <h2 id="dashboard-group-manage" class="dashboard-nav-heading">Manage</h2>
       <ul class="dashboard-nav-list">

@@ -202,7 +202,7 @@ function makeFeature(group, fields, discovered) {
     if (isEnabled && !pendingTaxRestart) {
       const reportsLink = document.createElement('a');
       reportsLink.className = 'settings-tax-reports-link';
-      reportsLink.href = '/node/admin/tax';
+      reportsLink.href = '/#node-tax-reports-tab';
       reportsLink.textContent = 'Open tax reports';
       section.append(reportsLink);
     } else {
