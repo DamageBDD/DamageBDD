@@ -89,17 +89,17 @@ main contract DamageScheduleV2 =
     | TokenMigrationFinished(address, address, int)
 
   entrypoint init(token_contract : address, executor : address) =
-    { owner                     = Call.caller
-    , executor                  = executor
-    , token_contract            = token_contract
-    , token_mode                = 1
-    , legacy_self_allowance_set = false
-    , schedules                 = {}
-    , reservations              = {}
-    , settlements               = {}
-    , total_reserved            = 0
-    , migration_target          = None
-    , migration_amount          = 0 }
+    { owner                     = Call.caller,
+      executor                  = executor,
+      token_contract            = token_contract,
+      token_mode                = 1,
+      legacy_self_allowance_set = false,
+      schedules                 = {},
+      reservations              = {},
+      settlements               = {},
+      total_reserved            = 0,
+      migration_target          = None,
+      migration_amount          = 0 }
 
   entrypoint owner() : address = state.owner
   entrypoint executor() : address = state.executor
@@ -145,21 +145,21 @@ main contract DamageScheduleV2 =
     require(concurrency > 0, "INVALID_CONCURRENCY")
     require(max_cost_per_run > 0, "INVALID_MAX_COST")
     let s =
-      { owner            = Call.caller
-      , feature_hash     = feature_hash
-      , feature_title    = feature_title
-      , cron_spec        = cron_spec
-      , start_at         = start_at
-      , end_at           = end_at
-      , concurrency      = concurrency
-      , max_cost_per_run = max_cost_per_run
-      , funded           = 0
-      , spent            = 0
-      , reserved         = 0
-      , refunded         = 0
-      , status           = 0
-      , run_count        = 0
-      , created_at       = Chain.timestamp }
+      { owner            = Call.caller,
+        feature_hash     = feature_hash,
+        feature_title    = feature_title,
+        cron_spec        = cron_spec,
+        start_at         = start_at,
+        end_at           = end_at,
+        concurrency      = concurrency,
+        max_cost_per_run = max_cost_per_run,
+        funded           = 0,
+        spent            = 0,
+        reserved         = 0,
+        refunded         = 0,
+        status           = 0,
+        run_count        = 0,
+        created_at       = Chain.timestamp }
     put(state{ schedules[schedule_id] = s })
     Chain.event(ScheduleCreated(Call.caller, schedule_id))
 
@@ -219,15 +219,13 @@ main contract DamageScheduleV2 =
     require(amount > 0, "INVALID_AMOUNT")
     let s = require_schedule(schedule_id)
     require(s.status == 0, "SCHEDULE_NOT_ACTIVE")
-    require(amount <= s.max_cost_per_run, "RUN_COST_CAP_EXCEEDED")
+    require(amount =< s.max_cost_per_run, "RUN_COST_CAP_EXCEEDED")
     require(schedule_remaining(s) >= amount, "SCHEDULE_BUDGET_EXHAUSTED")
     let r = { schedule_id = schedule_id, amount = amount, created_at = Chain.timestamp }
     let s1 = s{ reserved = s.reserved + amount }
-    put(state{
-      schedules[schedule_id] = s1,
-      reservations[run_id] = r,
-      total_reserved = state.total_reserved + amount
-    })
+    let schedules1 = state.schedules{ [schedule_id] = s1 }
+    let reservations1 = state.reservations{ [run_id] = r }
+    put(state{ schedules = schedules1, reservations = reservations1, total_reserved = state.total_reserved + amount })
     Chain.event(RunReserved(amount, run_id))
 
   stateful entrypoint settle_run(
@@ -244,31 +242,25 @@ main contract DamageScheduleV2 =
     require(r.schedule_id == schedule_id, "RUN_SCHEDULE_MISMATCH")
     require(!Map.member(run_id, state.settlements), "RUN_ALREADY_SETTLED")
     require(actual_amount >= 0, "INVALID_AMOUNT")
-    require(actual_amount <= r.amount, "RUN_RESERVATION_EXCEEDED")
-    require(actual_amount <= s.max_cost_per_run, "RUN_COST_CAP_EXCEEDED")
+    require(actual_amount =< r.amount, "RUN_RESERVATION_EXCEEDED")
+    require(actual_amount =< s.max_cost_per_run, "RUN_COST_CAP_EXCEEDED")
     require(feature_hash == s.feature_hash, "FEATURE_HASH_MISMATCH")
 
     if(actual_amount > 0)
       token_send(node, actual_amount)
 
     let settlement =
-      { schedule_id  = schedule_id
-      , node         = node
-      , amount       = actual_amount
-      , feature_hash = feature_hash
-      , report_hash  = report_hash
-      , settled_at   = Chain.timestamp }
-    let s1 = s{
-      reserved = s.reserved - r.amount,
-      spent = s.spent + actual_amount,
-      run_count = s.run_count + 1
-    }
-    put(state{
-      schedules[schedule_id] = s1,
-      reservations = Map.delete(run_id, state.reservations),
-      settlements[run_id] = settlement,
-      total_reserved = state.total_reserved - r.amount
-    })
+      { schedule_id  = schedule_id,
+        node         = node,
+        amount       = actual_amount,
+        feature_hash = feature_hash,
+        report_hash  = report_hash,
+        settled_at   = Chain.timestamp }
+    let s1 = s{ reserved = s.reserved - r.amount, spent = s.spent + actual_amount, run_count = s.run_count + 1 }
+    let schedules1 = state.schedules{ [schedule_id] = s1 }
+    let reservations1 = Map.delete(run_id, state.reservations)
+    let settlements1 = state.settlements{ [run_id] = settlement }
+    put(state{ schedules = schedules1, reservations = reservations1, settlements = settlements1, total_reserved = state.total_reserved - r.amount })
     Chain.event(RunSettled(node, actual_amount, run_id))
 
   stateful entrypoint release_run(schedule_id : string, run_id : string) =
@@ -277,11 +269,9 @@ main contract DamageScheduleV2 =
     let r = require_reservation(run_id)
     require(r.schedule_id == schedule_id, "RUN_SCHEDULE_MISMATCH")
     let s1 = s{ reserved = s.reserved - r.amount }
-    put(state{
-      schedules[schedule_id] = s1,
-      reservations = Map.delete(run_id, state.reservations),
-      total_reserved = state.total_reserved - r.amount
-    })
+    let schedules1 = state.schedules{ [schedule_id] = s1 }
+    let reservations1 = Map.delete(run_id, state.reservations)
+    put(state{ schedules = schedules1, reservations = reservations1, total_reserved = state.total_reserved - r.amount })
     Chain.event(RunReleased(r.amount, run_id))
 
   stateful entrypoint mark_exhausted(schedule_id : string) =
@@ -300,12 +290,7 @@ main contract DamageScheduleV2 =
     let old_token : DamageTokenV1 = Address.to_contract(state.token_contract)
     let amount = Option.default(0, old_token.balance(Contract.address))
     old_token.swap()
-    put(state{
-      token_mode = 3,
-      migration_target = Some(new_token),
-      migration_amount = amount,
-      legacy_self_allowance_set = false
-    })
+    put(state{ token_mode = 3, migration_target = Some(new_token), migration_amount = amount, legacy_self_allowance_set = false })
     Chain.event(TokenMigrationPrepared(state.token_contract, new_token, amount))
 
   stateful entrypoint claim_token_upgrade() : int =
@@ -325,12 +310,7 @@ main contract DamageScheduleV2 =
     let new_token : DamageTokenV2 = Address.to_contract(new_token_addr)
     let balance = Option.default(0, new_token.balance(Contract.address))
     require(balance == state.migration_amount, "NEW_TOKEN_BALANCE_MISMATCH")
-    put(state{
-      token_contract = new_token_addr,
-      token_mode = 2,
-      migration_target = None,
-      migration_amount = 0
-    })
+    put(state{ token_contract = new_token_addr, token_mode = 2, migration_target = None, migration_amount = 0 })
     Chain.event(TokenMigrationFinished(old_token, new_token_addr, balance))
 
   // ----- internal -----------------------------------------------------------
@@ -376,11 +356,12 @@ main contract DamageScheduleV2 =
       ()
 
   stateful function token_send(to : address, amount : int) =
-    if(state.token_mode == 1)
-      let token : DamageTokenV1 = Address.to_contract(state.token_contract)
-      token.transfer_allowance(Contract.address, to, amount)
-    else if(state.token_mode == 2)
-      let token : DamageTokenV2 = Address.to_contract(state.token_contract)
-      token.transfer(to, amount)
-    else
-      abort("TOKEN_MIGRATION_IN_PROGRESS")
+    switch(state.token_mode)
+      1 =>
+        let token : DamageTokenV1 = Address.to_contract(state.token_contract)
+        token.transfer_allowance(Contract.address, to, amount)
+      2 =>
+        let token : DamageTokenV2 = Address.to_contract(state.token_contract)
+        token.transfer(to, amount)
+      _ =>
+        abort("TOKEN_MIGRATION_IN_PROGRESS")

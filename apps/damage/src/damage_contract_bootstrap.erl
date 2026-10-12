@@ -425,10 +425,61 @@ local_contract_candidate(NameBin, EnvKey) ->
             {error, Reason}
     end.
 
+activate_registered_contract(?SCHEDULE_VAULT_NAME, ?SCHEDULE_VAULT_ENV, CtId) ->
+    %% The AccountRegistry entry is the durable on-chain source of truth for
+    %% the node schedule vault. A previous bootstrap attempt may have deployed
+    %% a replacement vault and persisted it locally before discovering that a
+    %% valid registry entry already existed. Do not fail startup forever in
+    %% that state: the caller has already validated CtId, so converge the
+    %% encrypted local secret and runtime application env back to the registry
+    %% contract and leave the duplicate deployment orphaned/unused.
+    reconcile_registered_schedule_vault(CtId);
 activate_registered_contract(NameBin, EnvKey, CtId) ->
     case ensure_local_contract_sources(NameBin, EnvKey, CtId) of
         ok -> {ok, CtId};
         {error, _} = Error -> Error
+    end.
+
+reconcile_registered_schedule_vault(CtId) ->
+    Secret = contract_secret_status(?SCHEDULE_VAULT_ENV),
+    Configured = configured_contract_status(?SCHEDULE_VAULT_ENV),
+    case ensure_source_matches(?SCHEDULE_VAULT_NAME, CtId, Secret, Configured) of
+        ok ->
+            case persist_ct(?SCHEDULE_VAULT_ENV, CtId) of
+                ok ->
+                    application:set_env(damage, ?SCHEDULE_VAULT_ENV, CtId),
+                    {ok, CtId};
+                {error, _} = Error ->
+                    Error
+            end;
+        {error, {contract_id_conflict, ?SCHEDULE_VAULT_NAME, _}} ->
+            ?LOG_WARNING(
+                "Schedule vault contract sources disagree; registry contract is valid and will be used registry=~p secret=~p configured=~p",
+                [CtId, source_value(Secret), source_value(Configured)]
+            ),
+            case replace_contract_secret(?SCHEDULE_VAULT_ENV, CtId) of
+                ok ->
+                    application:set_env(damage, ?SCHEDULE_VAULT_ENV, CtId),
+                    {ok, CtId};
+                {error, _} = Error ->
+                    Error
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+replace_contract_secret(Key, CtId) ->
+    try secrets:encrypt_store(Key, CtId) of
+        ok -> ok;
+        {error, _} = Error -> Error;
+        Other -> {error, {contract_secret_replace_failed, Key, Other}}
+    catch
+        Class:Reason:Stacktrace ->
+            ?LOG_ERROR(
+                "Contract secret replacement failed key=~p class=~p reason=~p stack=~p",
+                [Key, Class, Reason, Stacktrace]
+            ),
+            {error, {contract_secret_replace_failed, Key, Class, Reason}}
     end.
 
 ensure_local_contract_sources(NameBin, EnvKey, CtId) ->
