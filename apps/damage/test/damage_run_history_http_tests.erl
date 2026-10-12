@@ -9,6 +9,12 @@ public_contract_scan_test() ->
                             "&direction=backward&limit=50"]),
     ?assertMatch({ok, _}, damage_run_history_http:validate_activity_path(Path)).
 
+
+public_token_transaction_scan_test() ->
+    Path = iolist_to_binary(["/v3/transactions?contract=", ?CONTRACT,
+                            "&type=contract_call&type=paying_for&direction=backward&limit=50"]),
+    ?assertMatch({ok, _}, damage_run_history_http:validate_activity_path(Path)).
+
 middleware_page_path_test() ->
     Path = iolist_to_binary(["/mdw/v3/accounts/", ?NODE,
                             "/activities?owned_only=false&type=transactions&direction=backward&limit=20&cursor=next_123"]),

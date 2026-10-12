@@ -1,14 +1,14 @@
 /* DamageBDD Run history — public, read-only, on-chain evidence.
- * Sources: AEMDW token-contract calls and node/account activities;
- * optional recent NodeRegistry contract-call discovery; immutable IPFS
- * feature source, run.meta, and reports. No new DamageBDD API is required.
+ * Sources: AEMDW token transactions and node/account activities;
+ * optional recent NodeRegistry discovery; feature source, run.meta and report
+ * files are served by this DamageBDD node via its existing IPFS-backed APIs.
  * Nothing here reads an auth token, signing key or private run context.
  */
 import {
-  aeAddress, isCid, txHashOf, normalizeSpend, parseFeature, normalizeRunMeta,
+  aeAddress, isCid, txHashOf, normalizeSpend, plausibleRunTransaction, parseFeature, normalizeRunMeta,
   parseLegacyStatus, parseTagFilter, rangeBounds, matchesRun, middlewareUrl,
   registryRegistration, DEFAULT_REGISTRY_CONTRACT,
-  DEFAULT_TOKEN_CONTRACT, DEFAULT_MDW, DEFAULT_GATEWAY
+  DEFAULT_TOKEN_CONTRACT, DEFAULT_MDW
 } from './run-history-model.js';
 import {TokenManager} from './wallet-switcher.js';
 
@@ -42,23 +42,19 @@ const REGISTRY_DETAIL_LIMIT = 24;
 const TX_PARALLEL = 8;
 const EVIDENCE_PARALLEL = 6;
 const MAX_BYTES = 128 * 1024;
+const AUTO_SCAN_PAGES = 3; // Continue beyond empty first pages; Load more for older history.
 const DEFAULT_SCOPE = 'node';
 
 function localPreferences() {
-  return {scope: DEFAULT_SCOPE, range: '7d'};
+  return {scope: DEFAULT_SCOPE, range: 'all'};
 }
 function config() {
   return {
     mdw: window.DamageActivity?.mdwBase || DEFAULT_MDW,
-    ipfs: window.DamageActivity?.ipfsGateway || DEFAULT_GATEWAY,
     token: window.DamageActivity?.damageTokenContract || DEFAULT_TOKEN_CONTRACT,
     registry: aeAddress($('run-history-workspace')?.dataset.registry, ['ct_']) ||
       aeAddress(window.DamageActivity?.nodeRegistryContract, ['ct_']) || DEFAULT_REGISTRY_CONTRACT
   };
-}
-function ipfsUrl(cid, path = '') {
-  const root = config().ipfs.replace(/\/+$/, '') + '/' + encodeURIComponent(cid);
-  return path ? root + '/' + path.split('/').map(encodeURIComponent).join('/') : root;
 }
 function reportUrl(cid) { return `/reports/${encodeURIComponent(cid)}/`; }
 function featureUrl(cid) { return `/features/${encodeURIComponent(cid)}/`; }
@@ -88,13 +84,6 @@ async function fetchPublic(url, {as = 'json', timeout = 11000, accept = null} = 
     } finally { await reader.cancel().catch(() => {}); }
     return out + decoder.decode();
   } finally { clearTimeout(timer); }
-}
-async function firstSuccessful(loaders) {
-  let error;
-  for (const run of loaders) {
-    try { return await run(); } catch (e) { error = e; }
-  }
-  throw error || new Error('No evidence source available');
 }
 const taskQueue = async (items, count, process) => {
   let idx = 0;
@@ -128,6 +117,7 @@ function createState(host) {
     sources: [], rows: [], seen: new Set(), txCache: new Map(),
     metaCache: new Map(), featureCache: new Map(), statusCache: new Map(),
     version: 0, loading: false, ready: false, range: prefs.range, explicitScope: false,
+    scannedTransactions: 0, undecodedCalls: 0,
     registryScan: null, registryScanPromise: null
   };
   if (localNode) state.registryNodes.set(localNode, {id: localNode, name: 'This node', registered: false});
@@ -236,7 +226,7 @@ function renderRegistryNodes(state) {
     actions.append(open, toggle); li.append(actions); ul.append(li);
   }
 }
-// Node discovery reads historical registration calls directly from public
+// Node discovery reads historical registration transactions directly from
 // AEMDW; it never depends on a /api/run-history/nodes application route.
 // NodeRegistry v2 lacks an enumerable global state API, so these results are
 // explicitly recent *observations*, not a current/complete registry snapshot.
@@ -247,15 +237,17 @@ async function scanRegistry(state) {
     if (!aeAddress(registry, ['ct_'])) throw new Error('NodeRegistry contract not configured');
     const results = new Map();
     let scanned = 0, pages = 0, next =
-      `/v3/contracts/calls?contract_id=${encodeURIComponent(registry)}&direction=backward&limit=100`;
+      `/v3/transactions?contract=${encodeURIComponent(registry)}&type=contract_call&type=paying_for&direction=backward&limit=100`;
     while (next && pages < REGISTRY_SCAN_PAGES) {
       const page = await fetchActivity(middlewareUrl(config().mdw, next));
       const calls = Array.isArray(page?.data) ? page.data : [];
       pages += 1;
       scanned += calls.length;
-      // Calls include function information but may omit decoded arguments.
+      // External register_node transactions can carry the entrypoint under
+      // tx or payload.tx rather than on the top-level middleware row.
       const candidates = calls.filter(row =>
-        String(row?.function || row?.entrypoint || row?.function_name || '').split('.').pop() === 'register_node');
+        String(row?.function || row?.tx?.function || row?.payload?.tx?.function ||
+          row?.entrypoint || row?.function_name || '').split('.').pop() === 'register_node');
       await taskQueue(candidates.slice(0, REGISTRY_DETAIL_LIMIT), TX_PARALLEL, async row => {
         let parsed = registryRegistration(row, {registryContract: registry, trustedRegistryScope: true});
         if (!parsed) {
@@ -287,7 +279,7 @@ async function ownerLookup(state, owner, {quiet = false} = {}) {
     const data = await scanRegistry(state);
     const rows = data.nodes.filter(n => n.owner === account);
     if (!quiet) registryStatus(`${rows.length} node registration(s) observed for ${compact(account)} ` +
-      `in ${data.scanned} recently scanned contract calls. Older records may not be included.`);
+      `in ${data.scanned} recently scanned registry transactions. Older records may not be included.`);
     return rows;
   } catch (err) {
     if (!quiet) registryStatus(`Public NodeRegistry history unavailable: ${err.message}`);
@@ -308,7 +300,7 @@ async function doRegistryLookup(state) {
 }
 async function discover(state) {
   const button = $('activity-discover'); button.disabled = true;
-  registryStatus('Reading recent public NodeRegistry contract calls…');
+  registryStatus('Reading recent public NodeRegistry transactions…');
   try {
     const data = await scanRegistry(state);
     registryStatus(`${data.nodes.length} historical registration(s) found across ${data.scanned} calls ` +
@@ -340,22 +332,23 @@ function pageLimit() {
 function scanSources(state) {
   const f = filtersFromControls(state);
   const limit = pageLimit(), token = config().token;
-  const build = (path, trustedContractScope) => ({path, trustedContractScope, next: path, done: false, error: null});
-  // AEMDW public contract-call index exposes decoded entrypoints/arguments;
-  // the original reports.js account activity path remains the node-payer fallback.
-  const contractPath = `/v3/contracts/calls?contract_id=${encodeURIComponent(token)}&direction=backward&limit=${limit}`;
+  const build = (path, trustedContractScope) => ({path, trustedContractScope, next: path, done: false, error: null, visited: new Set()});
+  // The /contracts/calls index describes *internal* calls, NOT the ordinary
+  // ContractCallTx/PayingForTx that publish DamageBDD reports. Use the actual
+  // transaction index; retain the legacy payer's account activities as well.
+  const contractPath = `/v3/transactions?contract=${encodeURIComponent(token)}&type=contract_call&type=paying_for&direction=backward&limit=${limit}`;
   const accountPath = (id, owned = false) => `/v3/accounts/${encodeURIComponent(id)}/activities?owned_only=${owned}&type=transactions&direction=backward&limit=${limit}`;
-  // When the node pays on behalf of an account, that PayingFor transaction
-  // might not be indexed under the account. Scan contract spends as well.
+  // When a node submits the PayingForTx on behalf of a user, the outer
+  // transaction might not be owned by the user. Search both indices.
   if (state.scope === 'account') return f.account ?
     [build(contractPath, true), build(accountPath(f.account), false)] : [];
-  // Discover always scans recent public token calls, regardless of the
+  // Discover always scans recent public token transactions, regardless of the
   // local selected node. Users can choose a node from a result afterward.
   if (state.scope === 'discover') return [build(contractPath, true)];
   if (!f.nodeIds.length) return [];
   const sources = [build(contractPath, true)];
-  // PayingFor outer transactions may be indexed under the node payer rather
-  // than the token contract. Include those activities as a second source.
+  // Preserve the original, working node-payer transaction activity path.
+  // This catches wrapped transactions omitted by a generic contract index.
   for (const id of f.nodeIds.slice(0, 8)) {
     if (id.startsWith('ak_')) sources.push(build(accountPath(id, true), false));
   }
@@ -422,20 +415,22 @@ async function getTx(state, hash) {
 }
 async function readMeta(state, cid) {
   if (!state.metaCache.has(cid)) {
-    // run.meta is at the IPFS report root. /reports/:cid/:path serves files
-    // from /reports/ inside that CID and cannot serve the root manifest.
-    const job = fetchPublic(ipfsUrl(cid, 'run.meta'), {as: 'text'})
-      .then(JSON.parse).catch(() => null);
+    // Read immutable CID/run.meta through this node's existing damage_reports
+    // route. A 404 means legacy metadata is absent, not that the run vanished.
+    const job = fetchPublic(reportUrl(cid) + 'run.meta', {as: 'json'})
+      .then(meta => meta && typeof meta === 'object' && !Array.isArray(meta) ? meta : null)
+      .catch(() => null);
     state.metaCache.set(cid, job);
   }
   return state.metaCache.get(cid);
 }
 async function readFeature(state, cid) {
   if (!state.featureCache.has(cid)) {
-    const job = firstSuccessful([
-      () => fetchPublic(ipfsUrl(cid), {as: 'text'}),
-      () => fetchPublic(featureUrl(cid), {as: 'text', accept: 'text/plain'})
-    ]).then(parseFeature).catch(() => ({title: '', tags: []}));
+    // The already-exposed /features/:hash route calls this node's damage_ipfs.
+    // Never issue cross-origin ipfs.io requests, even if an old page injected
+    // a window.DamageActivity.ipfsGateway value.
+    const job = fetchPublic(featureUrl(cid), {as: 'text', accept: 'text/plain'})
+      .then(parseFeature).catch(() => ({title: '', tags: []}));
     state.featureCache.set(cid, job);
   }
   return state.featureCache.get(cid);
@@ -466,13 +461,18 @@ async function enrich(state, row) {
     if (!run.featureTitle) run.featureTitle = feature.title;
     if (!run.tags?.length) run.tags = feature.tags;
   }
-  if (run.status === 'unknown' && $('activity-status-filter').value !== 'all') {
+  if (run.status === 'unknown' &&
+      ($('activity-status-filter').value !== 'all' || !run.evidenceLoaded)) {
     run.status = await readLegacyStatus(state, row.reportCid);
   }
   return run;
 }
 async function normalizeTxRow(state, item, source) {
   const opts = {contract: config().token, trustedContractScope: source.trustedContractScope};
+  // Avoid requesting full details for unrelated node transactions (channel
+  // creations, transfers, etc). Previously a single 50-row page could trigger
+  // 50 additional HTTP requests despite containing no verification runs.
+  if (!plausibleRunTransaction(item, config().token)) return null;
   let row = normalizeSpend(item, opts);
   const hash = txHashOf(item);
   if (!row && hash) {
@@ -481,15 +481,20 @@ async function normalizeTxRow(state, item, source) {
       {...full, payload: {tx: item}}, opts);
   }
   if (!row) return null;
-  // Contract call indexes can expose the decoded spend without a caller ID or
-  // block time. Hydrate the enclosing transaction before account/time filtering.
+  // Transaction pages sometimes omit the enclosing caller/time information.
+  // Hydrate missing fields before applying account or time filters.
   if (hash && (!row.callerId || !row.createdMs)) {
     const full = await getTx(state, hash);
     if (full) {
       const combined = {...full, ...item, tx: full.tx || item.tx,
         micro_time: item.micro_time || full.micro_time};
       const hydrated = normalizeSpend(combined, opts);
-      if (hydrated) row = {...row, ...hydrated, txHash: hash};
+      if (hydrated) row = {
+        ...row, ...hydrated, txHash: hash,
+        callerId: hydrated.callerId || row.callerId,
+        nodePublicKey: hydrated.nodePublicKey || row.nodePublicKey,
+        createdMs: hydrated.createdMs || row.createdMs
+      };
     }
   }
   if (!row.txHash) row.txHash = hash;
@@ -507,7 +512,7 @@ function updatePager(state) {
   const more = state.sources.some(s => !s.done);
   next.hidden = !more;
   next.disabled = state.loading;
-  info.textContent = `${state.rows.length} public run(s) examined · ${state.sources.filter(s => s.done).length}/${state.sources.length} sources exhausted`;
+  info.textContent = `${state.scannedTransactions} transactions scanned · ${state.rows.length} runs decoded · ${state.sources.filter(s => s.done).length}/${state.sources.length} sources exhausted`;
 }
 
 function renderRun(row, ul, state) {
@@ -528,7 +533,9 @@ function renderRun(row, ul, state) {
   meta.append(safeLink('Report', reportUrl(row.reportCid)), safeLink('Feature', featureUrl(row.featureCid)));
   if (row.txHash) meta.append(safeLink('Transaction', publicTxUrl(row.txHash)));
   if (row.callerId) meta.append(safeLink(`Account ${compact(row.callerId)}`, accountUrl(row.callerId)));
-  meta.append(safeLink(`Node ${compact(row.nodePublicKey)}`, accountUrl(row.nodePublicKey)));
+  if (row.nodePublicKey) meta.append(safeLink(
+    `${row.nodeSource === 'report_manifest' ? 'Reported node' : 'Node'} ${compact(row.nodePublicKey)}`,
+    accountUrl(row.nodePublicKey)));
   if (row.callerId) {
     const accountRuns = node('button', 'workspace-button history-view-account', 'View account runs');
     accountRuns.type = 'button';
@@ -546,9 +553,13 @@ function renderRun(row, ul, state) {
   details.append(toggle);
   const data = node('dl', 'history-run-details');
   for (const [key, value] of [
-    ['Node', row.nodePublicKey], ['Account', row.callerId || 'Not indexed'],
+    ['Node', row.nodePublicKey || 'Not decoded'], ['Account', row.callerId || 'Not indexed'],
     ['Feature CID', row.featureCid], ['Report CID', row.reportCid],
     ['Transaction', row.txHash || 'Not indexed'], ['Run ID', row.runId || 'Legacy'],
+    ['Node evidence', row.nodeSource === 'report_manifest' ? 'Claimed by IPFS run.meta (not chain-verified)' :
+      row.nodePublicKey ? 'On-chain decoded arguments' : 'Not decoded'],
+    ['Spend evidence', row.spendEvidence === 'token_calldata' ? 'CID strings recovered from token calldata (best effort)' :
+      'Decoded token spend arguments'],
     ['Duration', row.duration ? `${row.duration.toFixed(2)} s` : 'Not recorded']
   ]) { data.append(node('dt', '', key), node('dd', '', value)); }
   details.append(data); main.append(details);
@@ -578,6 +589,7 @@ function startSearch(state) {
   // Supersede in-flight scans; old completions check the generation before render.
   showLoading(state, false);
   state.sources = scanSources(state); state.rows = []; state.seen.clear();
+  state.scannedTransactions = 0; state.undecodedCalls = 0;
   const f = filtersFromControls(state);
   if (f.from != null && f.to != null && f.from > f.to) {
     status('The start time must be before the end time.'); renderRuns(state); return;
@@ -597,66 +609,93 @@ function startSearch(state) {
 async function loadMore(state) {
   if (state.loading || !activePanel()) return;
   const version = state.version;
-  const active = state.sources.filter(s => !s.done);
-  if (!active.length) return;
+  if (!state.sources.some(s => !s.done)) return;
   showLoading(state, true);
   renderRuns(state);
-  const batches = await Promise.all(active.map(async source => {
-    try {
-      const url = middlewareUrl(config().mdw, source.next);
-      const page = await fetchActivity(url);
-      const rows = Array.isArray(page?.data) ? page.data : [];
-      let next = page?.next ? middlewareUrl(config().mdw, page.next) : null;
-      if (next === source.next || rows.length === 0) next = null;
-      return {source, rows, next};
-    } catch (error) { return {source, rows: [], next: source.next, error}; }
-  }));
-  if (version !== state.version) return;
-  const errors = batches.filter(b => b.error);
-  for (const batch of batches) {
-    batch.source.next = batch.next;
-    // Keep an errored cursor retryable, rather than treating an HTTP failure
-    // as the end of the public run history.
-    batch.source.done = !batch.next;
-    batch.source.error = batch.error || null;
-  }
-  const discovered = [];
-  await taskQueue(batches.flatMap(b => b.rows.map(row => ({row, source: b.source}))),
-    TX_PARALLEL, async ({row, source}) => {
+  const errors = [];
+  // One user action makes bounded forward progress even if the first pages
+  // contain no runs. This replaces the old one-page-at-a-time dead-end.
+  for (let round = 0; round < AUTO_SCAN_PAGES; round++) {
+    if (version !== state.version) return;
+    const active = state.sources.filter(s => !s.done);
+    if (!active.length) break;
+    const batches = await Promise.all(active.map(async source => {
+      try {
+        const url = middlewareUrl(config().mdw, source.next);
+        if (source.visited.has(url)) return {source, rows: [], next: null, error: new Error('Repeated middleware cursor')};
+        const page = await fetchActivity(url);
+        source.visited.add(url); // Keep failed cursors retryable.
+        const rows = Array.isArray(page?.data) ? page.data : [];
+        let next = page?.next ? middlewareUrl(config().mdw, page.next) : null;
+        if (next === url) next = null; // A valid next cursor can follow an empty page.
+        return {source, rows, next};
+      } catch (error) { return {source, rows: [], next: source.next, error}; }
+    }));
+    if (version !== state.version) return;
+    for (const batch of batches) {
+      batch.source.next = batch.next;
+      batch.source.done = !batch.next;
+      batch.source.error = batch.error || null;
+      state.scannedTransactions += batch.rows.length;
+      if (batch.error) errors.push(batch.error);
+    }
+    const candidates = batches.flatMap(b => b.rows.map(row => ({row, source: b.source})))
+      .filter(({row}) => plausibleRunTransaction(row, config().token));
+    const discovered = [];
+    await taskQueue(candidates, TX_PARALLEL, async ({row, source}) => {
       const found = await normalizeTxRow(state, row, source).catch(() => null);
       if (found) discovered.push(found);
+      else if (JSON.stringify(row).includes('call_data')) state.undecodedCalls++;
     });
-  if (version !== state.version) return;
-  const f = filtersFromControls(state);
-  const fresh = [];
-  for (const row of discovered) {
-    if (f.nodeIds.length && !f.nodeIds.includes(row.nodePublicKey)) continue;
-    if (f.account && row.callerId && row.callerId !== f.account) continue;
-    const key = row.txHash || `${row.reportCid}:${row.callerId}:${row.nodePublicKey}`;
-    if (!state.seen.has(key)) { state.seen.add(key); fresh.push(row); }
-  }
-  await taskQueue(fresh, EVIDENCE_PARALLEL, async (row, i) => {
-    fresh[i] = await enrich(state, row).catch(() => row);
-  });
-  if (version !== state.version) return;
-  state.rows.push(...fresh);
-  for (const row of fresh) {
-    if (row.callerId) state.knownAccounts.add(row.callerId);
-    if (row.nodePublicKey && !state.registryNodes.has(row.nodePublicKey)) {
-      state.registryNodes.set(row.nodePublicKey,
-        {id: row.nodePublicKey, name: row.nodePublicKey, source: 'public_spend'});
+    if (version !== state.version) return;
+    const f = filtersFromControls(state);
+    // The same tx may appear in both token-contract and node-account indices.
+    // Prefer the candidate with *decoded* chain identities over an incomplete
+    // calldata fallback. Otherwise the first result can hide a real node run.
+    const distinct = new Map();
+    const score = row => (row.nodePublicKey ? 4 : 0) + (row.callerId ? 2 : 0) +
+      (row.amountRaw ? 1 : 0) + (row.createdMs ? 1 : 0);
+    for (const row of discovered) {
+      const key = row.txHash || `${row.reportCid}:${row.callerId}:${row.nodePublicKey}`;
+      if (state.seen.has(key)) continue;
+      if (!distinct.has(key) || score(row) > score(distinct.get(key))) distinct.set(key, row);
     }
+    const fresh = [...distinct.values()];
+    await taskQueue(fresh, EVIDENCE_PARALLEL, async (row, i) => {
+      fresh[i] = await enrich(state, row).catch(() => row);
+    });
+    if (version !== state.version) return;
+    const matched = fresh.filter(row =>
+      (!f.nodeIds.length || f.nodeIds.includes(row.nodePublicKey)) &&
+      (!f.account || row.callerId === f.account));
+    state.rows.push(...matched);
+    for (const row of matched) {
+      state.seen.add(row.txHash || `${row.reportCid}:${row.callerId}:${row.nodePublicKey}`);
+      if (row.callerId) state.knownAccounts.add(row.callerId);
+      if (row.nodePublicKey && !state.registryNodes.has(row.nodePublicKey)) {
+        state.registryNodes.set(row.nodePublicKey,
+          {id: row.nodePublicKey, name: row.nodePublicKey, source: 'public_spend'});
+      }
+    }
+    fillNodeOptions(state); renderRegistryNodes(state); fillKnownAccounts(state);
+    // Show runs found so far; only stop early once meaningful evidence is visible.
+    renderRuns(state);
+    const visible = state.rows.filter(r => matchesRun(r, f)).length;
+    if (visible >= 10 || errors.length) break;
   }
-  fillNodeOptions(state); renderRegistryNodes(state); fillKnownAccounts(state);
-  showLoading(state, false); renderRuns(state);
+  if (version !== state.version) return;
+  showLoading(state, false);
+  renderRuns(state);
   const more = state.sources.some(s => !s.done);
+  const summary = `${state.rows.length} run(s) from ${state.scannedTransactions} public transactions`;
   if (errors.length) {
-    const message = errors[0].error?.message || 'Network unavailable';
-    status(`${state.rows.length} public run(s) examined. ${errors.length} source(s) failed (${message}). Retry Refresh or Load more.`);
+    status(`${summary}. ${errors.length} source(s) failed (${errors[0]?.message || 'Network unavailable'}). Retry to continue.`);
+  } else if (!state.rows.length && state.undecodedCalls) {
+    status(`${summary}. ${state.undecodedCalls} candidate call(s) could not be decoded into report CIDs; older runs may require ABI decoding. Older pages may remain.`);
   } else if (!state.rows.length && !more) {
-    status('No published DAMAGE runs found in these transactions. Change the scope or time range.');
+    status(`No published DAMAGE runs found among ${state.scannedTransactions} scanned transactions. Try another scope or date range.`);
   } else {
-    status(`${state.rows.length} public run(s) examined.${more ? ' More pages available.' : ' End of retrieved activity.'}`);
+    status(`${summary}.${more ? ' Older pages remain — Load more to continue.' : ' All fetched pages exhausted.'}`);
   }
 }
 

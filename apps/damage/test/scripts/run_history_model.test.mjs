@@ -114,7 +114,7 @@ test('validates public identifiers without accepting URLs or injective values', 
 });
 
 
-test('reads a decoded DAMAGE spend from the public contract-call index', () => {
+test('reads a decoded DAMAGE spend from a public transaction record', () => {
   const parsed = normalizeSpend({
     call_tx_hash: 'th_public_call', contract_id: contract,
     function: 'DamageToken.spend', caller_id: accountId,
@@ -149,6 +149,52 @@ test('observes historical NodeRegistry register_node calls without claiming acti
 
 test('on-chain registry and token sources resolve under the middleware prefix', () => {
   assert.equal(middlewareUrl('https://mainnet.aeternity.io/mdw',
-    '/v3/contracts/calls?contract_id=' + contract + '&direction=backward&limit=50'),
-    'https://mainnet.aeternity.io/mdw/v3/contracts/calls?contract_id=' + contract + '&direction=backward&limit=50');
+    '/v3/transactions?contract=' + contract + '&type=contract_call&type=paying_for&direction=backward&limit=50'),
+    'https://mainnet.aeternity.io/mdw/v3/transactions?contract=' + contract + '&type=contract_call&type=paying_for&direction=backward&limit=50');
+});
+
+test('only likely contract transactions are hydrated from mixed node activity', () => {
+  assert.equal(model.plausibleRunTransaction({type: 'ChannelCreateTxEvent', payload: {tx: {type: 'ChannelCreateTx'}}}, contract), false);
+  assert.equal(model.plausibleRunTransaction({type: 'SpendTxEvent', payload: {tx: {type: 'SpendTx'}}}, contract), false);
+  assert.equal(model.plausibleRunTransaction({tx: {type: 'ContractCallTx', contract_id: 'ct_different'}}), false);
+  assert.equal(model.plausibleRunTransaction({tx: {type: 'ContractCallTx', contract_id: contract}}), true);
+  assert.equal(model.plausibleRunTransaction({tx: {type: 'PayingForTx', tx: {tx: {type: 'ContractCallTx'}}}}), true);
+  assert.equal(model.plausibleRunTransaction({tx: {contract_id: contract, arguments: args}}), true);
+});
+
+test('extracts exactly two distinct report CIDs from token calldata when arguments are unavailable', () => {
+  const b64 = bin => Buffer.from(bin).toString('base64');
+  const calldata = 'cb_' + b64(Buffer.concat([
+    Buffer.from([23, 42, 0]), Buffer.from(cidA), Buffer.from([11, 0]), Buffer.from(cidB), Buffer.from([1, 32])
+  ]));
+  assert.deepEqual(model.cidsFromCallData(calldata), [cidA, cidB]);
+  const parsed = normalizeSpend({hash:'th_encoded', tx: {type: 'ContractCallTx',
+    contract_id: contract, caller_id: accountId, call_data: calldata}});
+  assert.equal(parsed.featureCid, cidA);
+  assert.equal(parsed.reportCid, cidB);
+  assert.equal(parsed.callerId, accountId);
+  assert.equal(parsed.nodePublicKey, '');
+  assert.equal(parsed.spendEvidence, 'token_calldata');
+  assert.equal(normalizeSpend({tx: {contract_id: 'ct_another', call_data: calldata}},
+    {trustedContractScope:true}), null);
+  assert.deepEqual(model.cidsFromCallData('cb_' + b64(cidA + cidA)), []);
+  assert.deepEqual(model.cidsFromCallData('cb_' + b64(cidA + cidB + cidA)), []);
+  assert.deepEqual(model.cidsFromCallData('cb_!BAD_BASE64'), []);
+});
+
+test('run.meta can label unresolved identities but never override decoded chain identities', () => {
+  const encoded = {featureCid:cidA, reportCid:cidB, nodePublicKey:'', callerId:'',
+    tags:[],status:'unknown'};
+  const claimed = normalizeRunMeta(encoded, {node_public_key:nodeId,
+    public_key:accountId, status:'passed'});
+  assert.equal(claimed.nodePublicKey, nodeId);
+  assert.equal(claimed.callerId, accountId);
+  assert.equal(claimed.nodeSource, 'report_manifest');
+  assert.equal(claimed.callerSource, 'report_manifest');
+  const otherNode = 'ak_' + 'C'.repeat(40);
+  const verified = normalizeRunMeta({...encoded, nodePublicKey:otherNode,
+    callerId:otherNode}, {node_public_key:nodeId, public_key:accountId});
+  assert.equal(verified.nodePublicKey, otherNode);
+  assert.equal(verified.callerId, otherNode);
+  assert.equal(verified.nodeSource, 'chain_arguments');
 });

@@ -1,7 +1,6 @@
 /* Pure normalization/filter functions shared by run history and its Node tests. */
 export const DEFAULT_TOKEN_CONTRACT = 'ct_m3Cty31JxWHmJFMGuFCTpedDHuMLCit2Qup57qawmEWmcJnCk';
 export const DEFAULT_MDW = 'https://mainnet.aeternity.io/mdw';
-export const DEFAULT_GATEWAY = 'https://ipfs.io/ipfs/';
 // NodeRegistry v2 deployment used by damage_node_registry.erl; override per network.
 export const DEFAULT_REGISTRY_CONTRACT = 'ct_KxoBnfbSvhy3c2384VMS2j99YKuqtUihAMSsk6TekjqnZeNEQ';
 
@@ -34,6 +33,38 @@ function txCandidates(root) {
   }
   return out;
 }
+/** Decide whether it is worth hydrating an activity row with /transactions/:hash.
+ * AEMDW account activity pages contain many completely unrelated transactions.
+ * Unknown shapes remain eligible: missing a type must not hide historical runs.
+ */
+export function plausibleRunTransaction(root, contract = DEFAULT_TOKEN_CONTRACT) {
+  const candidates = txCandidates(root);
+  if (candidates.some(x => {
+    const a = argsOf(x);
+    return a.length >= 4 && isCid(txt(a[2])) && isCid(txt(a[3])) &&
+      (!contractOf(x) || contractOf(x) === contract);
+  })) return true;
+  if (candidates.some(x => {
+    const name = methodName(x);
+    return name === 'spend' && (!contractOf(x) || contractOf(x) === contract);
+  })) return true;
+  const wrapped = candidates.some(x => /(?:paying.?for|ga.?meta)/i.test(txt(x?.type ?? x?.tx_type ?? x?.kind)));
+  // Plain calls to *other* contracts cannot be DAMAGE token spends. Do not
+  // hydrate all unrelated application traffic under a node payer account.
+  if (!wrapped && candidates.some(x =>
+    /contract.?call/i.test(txt(x?.type ?? x?.tx_type ?? x?.kind)) &&
+    contractOf(x) && contractOf(x) !== contract) &&
+    !candidates.some(x => contractOf(x) === contract)) return false;
+  const kinds = candidates.flatMap(x => [x.type, x.tx_type, x.kind])
+    .filter(v => typeof v === 'string' && v).map(v => v.toLowerCase());
+  if (kinds.some(v => /(?:contract.?call|paying.?for|ga.?meta|internalcontractcall)/.test(v)))
+    return true;
+  // A token-scoped transaction can be a wrapped call; inspect if the token is
+  // mentioned even if the outer event type doesn't expose the inner call.
+  if (candidates.some(x => contractOf(x) === contract)) return true;
+  return kinds.length === 0;
+}
+
 export function txHashOf(row) {
   for (const x of txCandidates(row)) {
     for (const k of ['hash', 'tx_hash', 'call_tx_hash']) {
@@ -53,6 +84,22 @@ function argsOf(x) {
   return [];
 }
 function contractOf(x) { return txt(x?.contract_id ?? x?.contract ?? x?.recipient_id); }
+/** The public middleware can expose an encoded cb_ call_data rather than
+ * decoded spend arguments. FATE stores string arguments as literal UTF-8
+ * bytes. Extract only an ordered pair of valid immutable CIDs; this is a
+ * best-effort compatibility fallback, not a full Sophia ABI decoder.
+ */
+export function cidsFromCallData(callData) {
+  if (typeof callData !== 'string' || !/^cb_[A-Za-z0-9+/=]{8,65536}$/.test(callData))
+    return [];
+  try {
+    const bytes = atob(callData.slice(3));
+    const matches = bytes.match(/Qm[1-9A-HJ-NP-Za-km-z]{44}|bafy[a-z2-7]{20,120}/gi) || [];
+    const cids = matches.filter(isCid);
+    return cids.length === 2 && cids[0] !== cids[1] ? cids : [];
+  } catch { return []; }
+}
+
 export function timeMs(v) {
   const n = Number(v);
   if (!Number.isFinite(n) || n <= 0) return null;
@@ -106,6 +153,24 @@ export function normalizeSpend(root, {contract = DEFAULT_TOKEN_CONTRACT, trusted
       featureTitle: '', tags: [], status: 'unknown', evidenceLoaded: false
     };
   }
+  // Older public transactions often have only cb_ encoded calldata.
+  // Trust this fallback ONLY when bound to the configured token contract;
+  // the node argument is not decoded, so a newer IPFS run.meta may later
+  // provide its claimed node identity without pretending it was verified.
+  for (const candidate of candidates) {
+    if (methodName(candidate) && methodName(candidate) !== 'spend') continue;
+    const observedContract = contractOf(candidate) || candidates.map(contractOf).find(Boolean) || '';
+    if ((observedContract && observedContract !== contract) ||
+        (!observedContract && !trustedContractScope)) continue;
+    const [featureCid, reportCid] = cidsFromCallData(candidate.call_data);
+    if (!featureCid || !reportCid) continue;
+    return {
+      txHash: txHashOf(root), nodePublicKey: '', callerId: callerOf([candidate, ...candidates]),
+      featureCid, reportCid, amountRaw: '', createdMs: timestamp(root),
+      featureTitle: '', tags: [], status: 'unknown', evidenceLoaded: false,
+      nodeSource: 'unresolved', spendEvidence: 'token_calldata'
+    };
+  }
   return null;
 }
 
@@ -155,10 +220,16 @@ export function normalizeRunMeta(row, meta) {
   if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return row;
   const tags = Array.isArray(meta.tags) ? meta.tags.map(x => String(x).trim().toLowerCase()).filter(x => /^@[\w:.-]+$/.test(x)) : row.tags;
   const createdMs = timeMs(meta.start_time_hires ?? meta.completed_at) || row.createdMs;
+  const metaNode = aeAddress(meta.node_public_key, ['ak_']);
+  const metaAccount = aeAddress(meta.public_key, ['ak_']);
   return {...row,
     featureTitle: String(meta.feature_title || row.featureTitle || ''),
     tags, createdMs, status: metadataStatus(meta), evidenceLoaded: true,
-    runId: String(meta.run_id || ''), duration: Number(meta.execution_time_hires || 0)
+    runId: String(meta.run_id || ''), duration: Number(meta.execution_time_hires || 0),
+    nodePublicKey: row.nodePublicKey || metaNode || '',
+    callerId: row.callerId || metaAccount || '',
+    nodeSource: row.nodePublicKey ? 'chain_arguments' : metaNode ? 'report_manifest' : 'unresolved',
+    callerSource: row.callerId ? 'chain_arguments' : metaAccount ? 'report_manifest' : 'unresolved'
   };
 }
 

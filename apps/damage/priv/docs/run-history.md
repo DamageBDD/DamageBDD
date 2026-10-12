@@ -7,31 +7,38 @@ execution context is used for these reads.
 
 ## How a run is found
 
-1. The primary public index is
-   `GET https://mainnet.aeternity.io/mdw/v3/contracts/calls?contract_id=<DAMAGE_TOKEN_CONTRACT>&direction=backward&limit=50`.
-   Only the configured DAMAGE token contract is trusted as a run source.
-2. The original `reports.js` fallback remains available: a selected node
-   account is scanned at
+1. The primary *public transaction index* is
+   `GET /mdw/v3/transactions?contract=<DAMAGE_TOKEN_CONTRACT>&type=contract_call&type=paying_for&direction=backward&limit=50`
+   on the configured æternity middleware. `/v3/contracts/calls` is **not** used
+   for finding DAMAGE token spends: it indexes internal contract calls and can
+   miss ordinary `ContractCallTx` and wrapped `PayingForTx` transactions.
+2. Preserve the legacy, successful payer scan alongside the token index:
    `/v3/accounts/<NODE_AK>/activities?owned_only=true&type=transactions&direction=backward&limit=50`.
-   The account view additionally scans that user's activities with
-   `owned_only=false`, **and** the contract-call index because `PayingForTx`
-   transactions can be submitted by the node instead of the user.
-3. Contract call/transaction records are inspected for the `spend` entrypoint
-   with the four arguments defined by `apps/damage/priv/contracts/token.aes`:
-   `(node_address, amount, feature_hash, report_hash)`. Both hashes must be
-   valid IPFS CIDs and the contract must match the configured token contract.
-   Middleware transaction details are fetched when a call index omits the
-   user/caller or timestamp. Pagination follows middleware `next` links.
-4. Feature title/tags are read from
-   `https://ipfs.io/ipfs/<feature_hash>`. New runs contain JSON metadata at
-   `https://ipfs.io/ipfs/<report_hash>/run.meta`. The existing report browser
-   (`damage_reports.erl`) serves the report *files* from the immutable
-   `reports/` directory via `/reports/<report_hash>/`; the root `run.meta`
-   must not be assumed to exist at `/reports/<report_hash>/run.meta` on an
-   older deployed server.
-5. If run metadata is missing, feature title and Gherkin tags can still be
-   obtained from the immutable feature file. An unknown legacy result remains
-   `unknown` instead of assuming success.
+   My account also searches that account's activity, with
+   `owned_only=false`. The node, not the user, may be the payer of a wrapped
+   run transaction, so account history additionally scans the token index.
+3. The reader unwraps nested `PayingForTx` records and validates the configured
+   token contract's `spend(node_address, amount, feature_hash, report_hash)`
+   call, as defined in `apps/damage/priv/contracts/token.aes`. Transaction
+   details are hydrated when necessary. For transactions exposing only encoded
+   `cb_` calldata, a **best-effort** extraction accepts exactly two unique
+   IPFS CIDs, restricted to the configured token contract. This cannot replace
+   full FATE ABI decoding or authenticate the claimed node/runner in `run.meta`.
+4. This **DamageBDD node's already-exposed IPFS-backed routes** are used:
+   - `GET /reports/<report_hash>/run.meta`: public JSON manifest at the IPFS
+     report CID root (new runs). It may legitimately be 404 for legacy runs.
+   - `GET /features/<feature_hash>/` with `Accept: text/plain`: raw public
+     Gherkin source, including feature name and tags.
+   - `GET /reports/<report_hash>/` with `Accept: application/json`: list of
+     files in the immutable `reports/` subdirectory. A `.plain.txt` report
+     provides a best-effort status fallback for old runs.
+   External IPFS gateways are **never requested** by Run history, including
+   when legacy dashboard code supplies an `ipfsGateway` setting.
+5. A bounded batch automatically follows up to three pages per public source
+   when the first pages contain no matching runs. The **Load more runs**
+   control continues from the last cursor to search older transactions. Public
+   paging may be incomplete, and the UI reports scanned transactions and
+   undecodable candidates rather than asserting that the full history is empty.
 
 ## Nodes, discovery, and following
 
@@ -44,8 +51,7 @@ execution context is used for these reads.
 - **Followed nodes**: selected public node identities stored locally in the
   browser. Following grants no access and does not assert registry membership.
 - **Discover nodes**: the observed node arguments in recent token spends
-  plus a **bounded** scan of public NodeRegistry `register_node` contract
-  calls (up to three pages). A registration transaction proves only that a
+  plus a **bounded** scan of public NodeRegistry `register_node` transactions (up to three pages). A registration transaction proves only that a
   registration was observed historically, not that a node is currently
   enabled or still owned by the same account. The NodeRegistry v2 contract
   does not offer a global enumerable state method. Owner lookup is limited
@@ -58,21 +64,23 @@ The standard registry contract address is defined by
 the OTP `damage` configuration tuple
 `{run_history_registry_contract, <<"ct_YOUR_REGISTRY">>}` or
 `window.DamageActivity.nodeRegistryContract` as a public `ct_` ID.
-Likewise the token contract and middleware/gateway may be overridden with
-`window.DamageActivity.damageTokenContract`, `.mdwBase`, and `.ipfsGateway`.
+The token contract and middleware may be overridden with
+`window.DamageActivity.damageTokenContract` and `.mdwBase`. Run history always
+uses same-origin DamageBDD IPFS-backed routes, not `.ipfsGateway`.
 
 ## Compatibility and availability
 
 Reads go **directly to public AEMDW**. A same-origin, path-restricted
 `/api/run-history/activities` proxy can be used as an optional CORS fallback
 when deployed; its absence or a 404 does not prevent using the direct chain
-source. The proxy allowlist includes `/v3/contracts/calls`, individual
-transactions, and public account activities. `GET /api/run-history/nodes`
+source. The proxy allowlist includes `/v3/transactions` with a
+contract filter, individual transactions, and public account activities. `GET /api/run-history/nodes`
 may still exist on upgraded nodes but is **not called by the browser**.
 
 Only executions with a public token `spend` and reachable IPFS evidence are
-listed in this view; unpaid, local-only, and unconfirmed runs require a
-separate durable index. Client-side feature/tag/time filtering applies to
+listed in this view when their CIDs can be decoded; unpaid, local-only,
+unconfirmed, or undecodable ABI calls require a separate durable index or a
+server-side FATE decoder. Client-side feature/tag/time filtering applies to
 retrieved records; load more pages to examine older runs. A network failure
 must not be presented as an empty public activity history.
 

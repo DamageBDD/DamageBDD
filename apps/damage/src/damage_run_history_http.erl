@@ -123,7 +123,7 @@ public_activity_route(Path) ->
             [{capture, none}]) =:= match).
 
 valid_activity_param({"direction", "backward"}) -> true;
-valid_activity_param({"type", T}) -> lists:member(T, ["contract_call", "transactions"]);
+valid_activity_param({"type", T}) -> lists:member(T, ["contract_call", "paying_for", "transactions"]);
 valid_activity_param({"owned_only", V}) -> lists:member(V, ["true", "false"]);
 valid_activity_param({"contract_id", V}) -> registry_account(V) =/= error andalso
     lists:prefix("ct_", V);
