@@ -3,9 +3,9 @@
 -include_lib("kernel/include/file.hrl").
 
 settings_reload_and_persistence_test_() ->
-    {timeout, 30, fun run_settings_test/0}.
+    {timeout, 30, fun run_settings_case/0}.
 
-run_settings_test() ->
+run_settings_case() ->
     %% Do not run over an existing supervised settings service.
     case whereis(damage_settings) of
         undefined -> with_isolated_config(fun check_settings/2);
@@ -13,9 +13,7 @@ run_settings_test() ->
     end.
 
 with_isolated_config(Fun) ->
-    Suffix = integer_to_list(erlang:unique_integer([positive])),
-    Dir = filename:join([os:getenv("TMPDIR", "/tmp"), "damage-settings-test-" ++ Suffix]),
-    ok = file:make_dir(Dir),
+    Dir = make_temp_dir("damage-settings-test-"),
     Base = filename:join(Dir, "sys.config"),
     Overlay = filename:join(Dir, "sys.dashboard.config"),
     EnvNames = ["DAMAGE_CONFIG_FILE", "DAMAGE_SETTINGS_OVERLAY"],
@@ -40,9 +38,7 @@ with_isolated_config(Fun) ->
     after
         [restore_os_env(Name, Val) || {Name, Val} <- OriginalEnv],
         [restore(App, Key, Value) || {App, Key, Value} <- Original],
-        _ = file:delete(Overlay),
-        _ = file:delete(Base),
-        _ = file:del_dir(Dir)
+        _ = file:del_dir_r(Dir)
     end.
 
 check_settings(Base, Overlay) ->
@@ -186,9 +182,7 @@ xdg_initialization_and_legacy_migration_test_() ->
     end}.
 
 run_xdg_initialization_and_legacy_migration() ->
-    Dir = filename:join(os:getenv("TMPDIR", "/tmp"),
-                        "damage-xdg-migration-" ++ integer_to_list(erlang:unique_integer([positive]))),
-    ok = file:make_dir(Dir),
+    Dir = make_temp_dir("damage-xdg-migration-"),
     Base = filename:join(Dir, "sys.config"),
     Legacy = filename:join(Dir, "sys.dashboard.config"),
     Xdg = filename:join(Dir, "xdg"),
@@ -235,6 +229,18 @@ run_xdg_initialization_and_legacy_migration() ->
         [restore_os_env(Name, Val) || {Name, Val} <- OriginalEnv],
         [restore(App, Key, Value) || {App, Key, Value} <- OriginalApps],
         _ = file:del_dir_r(Dir)
+    end.
+
+
+make_temp_dir(Prefix) ->
+    Root = os:getenv("TMPDIR", "/tmp"),
+    Suffix =
+        integer_to_list(erlang:system_time(microsecond)) ++ "-" ++
+            integer_to_list(erlang:unique_integer([positive, monotonic])),
+    Dir = filename:join(Root, Prefix ++ Suffix),
+    case file:make_dir(Dir) of
+        ok -> Dir;
+        {error, eexist} -> make_temp_dir(Prefix)
     end.
 
 restore_os_env(Name, false) -> os:unsetenv(Name);

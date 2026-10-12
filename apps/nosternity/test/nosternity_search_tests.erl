@@ -70,7 +70,11 @@ signed_ingress() ->
     ?assertEqual({error, invalid_event}, nosternity_relay:publish_event(maps:remove(tags, E))),
     ?assertEqual({error, invalid_event}, nosternity_relay:publish_event(E#{tags => [[<<"t">>, 123]]})),
     ?assertEqual({error, invalid_event}, nosternity_relay:publish_event(E#{content => <<255>>})),
-    ?assertEqual({error, invalid_event}, nosternity_relay:publish_event(event(1, <<"future">>, [], 1, erlang:system_time(second)+301))),
+    %% Stay comfortably outside the 300-second acceptance window. Using +301
+    %% is racy if the wall clock advances between event construction/signing and
+    %% relay validation, at which point the event is only 300 seconds ahead.
+    ?assertEqual({error, invalid_event}, nosternity_relay:publish_event(
+        event(1, <<"future">>, [], 1, erlang:system_time(second) + 360))),
     ?assertEqual([id(E)], ids([#{}])).
 
 filter_validation() ->
