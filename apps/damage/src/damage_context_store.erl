@@ -104,14 +104,18 @@ snapshot(Scope) ->
     case ensure_started() of
         ok ->
             StorageKey = scope_key(Scope),
-            case ensure_loaded(StorageKey, Scope) of
-                ok ->
-                    case ets:lookup(?ETS_TABLE, StorageKey) of
-                        [{StorageKey, Snapshot}] -> {ok, Snapshot};
-                        [] -> {error, context_not_loaded}
-                    end;
-                {error, _} = Error ->
-                    Error
+            case cache_lookup(StorageKey) of
+                {ok, Snapshot} ->
+                    {ok, Snapshot};
+                miss ->
+                    snapshot_via_server(StorageKey, Scope);
+                unavailable ->
+                    %% Another caller can observe the registered gen_server
+                    %% before init/1 has created the named ETS table. Calling
+                    %% through the server waits until init has completed and
+                    %% avoids an ets:lookup/2 badarg during concurrent lazy
+                    %% startup.
+                    snapshot_via_server(StorageKey, Scope)
             end;
         {error, _} = Error ->
             Error
@@ -259,6 +263,8 @@ init([]) ->
 
 handle_call(stop, _From, State) ->
     {stop, normal, ok, State};
+handle_call({snapshot, StorageKey, Scope}, _From, #{master_key := MasterKey} = State) ->
+    {reply, snapshot_locked(StorageKey, Scope, MasterKey), State};
 handle_call({ensure_loaded, StorageKey, Scope}, _From, #{master_key := MasterKey} = State) ->
     {reply, ensure_scope_loaded(StorageKey, Scope, MasterKey), State};
 handle_call({freeze_snapshot, StorageKey, Scope}, _From, #{master_key := MasterKey} = State) ->
@@ -330,12 +336,36 @@ term_shape(Term) when is_binary(Term) -> {binary, byte_size(Term)};
 term_shape(Term) when is_atom(Term) -> atom;
 term_shape(_) -> other.
 
-ensure_loaded(StorageKey, Scope) ->
-    case ets:lookup(?ETS_TABLE, StorageKey) of
-        [{StorageKey, _Snapshot}] ->
-            ok;
-        [] ->
-            gen_server:call(?MODULE, {ensure_loaded, StorageKey, Scope}, ?AE_TIMEOUT)
+cache_lookup(StorageKey) ->
+    case ets:whereis(?ETS_TABLE) of
+        undefined ->
+            unavailable;
+        _Table ->
+            try ets:lookup(?ETS_TABLE, StorageKey) of
+                [{StorageKey, Snapshot}] -> {ok, Snapshot};
+                [] -> miss
+            catch
+                error:badarg -> unavailable
+            end
+    end.
+
+snapshot_via_server(StorageKey, Scope) ->
+    try gen_server:call(?MODULE, {snapshot, StorageKey, Scope}, ?AE_TIMEOUT) of
+        Reply -> Reply
+    catch
+        exit:Reason ->
+            {error, {context_store_unavailable, Reason}}
+    end.
+
+snapshot_locked(StorageKey, Scope, MasterKey) ->
+    case ensure_scope_loaded(StorageKey, Scope, MasterKey) of
+        ok ->
+            case ets:lookup(?ETS_TABLE, StorageKey) of
+                [{StorageKey, Snapshot}] -> {ok, Snapshot};
+                [] -> {error, context_not_loaded}
+            end;
+        {error, _} = Error ->
+            Error
     end.
 
 freeze_snapshot_locked(StorageKey, Scope, MasterKey) ->

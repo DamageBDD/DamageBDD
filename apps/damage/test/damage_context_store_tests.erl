@@ -13,6 +13,7 @@ store_test_() ->
         fixture(fun optimistic_version_conflict/1),
         fixture(fun delete_and_clear/1),
         fixture(fun scopes_are_isolated/1),
+        fixture(fun concurrent_lazy_start_is_safe/1),
         fixture(fun snapshot_survives_restart/1),
         fixture(fun persisted_envelope_contains_no_plaintext/1),
         fixture(fun tampered_root_is_rejected/1),
@@ -138,6 +139,49 @@ scopes_are_isolated(_Fixture) ->
     ?assertEqual(<<"account-a">>, value(AccountA, Key)),
     ?assertEqual(<<"account-b">>, value(AccountB, Key)),
     ?assertEqual(<<"wallet-a">>, value(WalletA, Key)).
+
+concurrent_lazy_start_is_safe(_Fixture) ->
+    Scope = damage_context_test_support:account_scope(<<"concurrent-start">>),
+    ok = damage_context_test_support:stop_store(),
+    Parent = self(),
+    Gate = make_ref(),
+    Workers = [
+        spawn(fun() ->
+            receive
+                Gate ->
+                    Result =
+                        try damage_context_store:snapshot(Scope) of
+                            Value -> Value
+                        catch
+                            Class:Reason -> {exception, Class, Reason}
+                        end,
+                    Parent ! {Gate, Result}
+            end
+        end)
+     || _ <- lists:seq(1, 24)
+    ],
+    [Pid ! Gate || Pid <- Workers],
+    Results = [
+        receive
+            {Gate, Result} -> Result
+        after 5000 ->
+            timeout
+        end
+     || _ <- Workers
+    ],
+    ?assertEqual(
+        [],
+        [
+            Result
+         || Result <- Results,
+            not is_snapshot_result(Result)
+        ]
+    ).
+
+is_snapshot_result({ok, #{entries := _Entries}}) ->
+    true;
+is_snapshot_result(_) ->
+    false.
 
 snapshot_survives_restart(_Fixture) ->
     Scope = damage_context_test_support:account_scope(<<"restart">>),

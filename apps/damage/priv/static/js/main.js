@@ -766,14 +766,6 @@ function restoreFeatureDraftFromShareLink() {
 			});
 
 
-        const addScheduleBtn = document.getElementById("addScheduleBtn");
-        if (addScheduleBtn) {
-            addScheduleBtn.addEventListener("click", (event) => {
-                console.log("add schedule");
-                event.preventDefault();
-            });
-        }
-
 		var activityLink = document.getElementById("activity-link");
 		if (activityLink) {
 			document.getElementById("activity-link").addEventListener("click", (event) => {

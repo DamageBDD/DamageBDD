@@ -59,6 +59,7 @@
     <!-- Dashboard foundation first; feature workspaces extend these tokens below. -->
     <link rel="stylesheet" href="/static/css/dashboard-workspace.css">
     <link rel="stylesheet" href="/static/css/dashboard-shell.css">
+    <link rel="stylesheet" href="/static/css/schedules-v2.css">
     <link rel="stylesheet" type="text/css" href='/static/css/reports.css' />
     <link rel="stylesheet" type="text/css" href='/static/css/gallery.css' />
     <link rel="stylesheet" href="/static/css/billing.css">
@@ -71,7 +72,7 @@
     </style></noscript>
 
   </head>
-  <body class="damage-dashboard" data-session-mode="{{auth_mode}}" data-logo-image="{{logo_image}}">
+  <body class="damage-dashboard" data-session-mode="{{auth_mode}}" data-node-admin="{{node_admin}}" data-logo-image="{{logo_image}}">
     {{#reset_password}}
     {{/reset_password}}
     {{{auth_modal}}}
@@ -83,7 +84,6 @@
     {{{invoice_modal}}}
     {{{wallet_modal}}}
     {{{logout_modal}}}
-    {{{schedule_modal}}}
     {{{install_modal}}}
     {{{feature_picker_modal}}}
     {{{notification_modal}}}

@@ -33,6 +33,12 @@ trails() ->
             #{get => #{tags => ?TRAILS_TAG, produces => ["application/json"]}}
         ),
         trails:trail(
+            "/api/schedules/v2/setup",
+            ?MODULE,
+            #{action => setup},
+            #{post => #{tags => ?TRAILS_TAG, produces => ["application/json"]}}
+        ),
+        trails:trail(
             "/api/schedules/v2/preview",
             ?MODULE,
             #{action => preview},
@@ -90,6 +96,15 @@ trails() ->
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
+is_authorized(Req, #{action := setup} = State) ->
+    case damage_http:is_authorized(Req, State) of
+        {true, Req1, AuthState} ->
+            case maps:get(node_admin, AuthState, false) of
+                true -> {true, Req1, AuthState};
+                false -> {{false, <<"Node admin required">>}, Req1, AuthState}
+            end;
+        Other -> Other
+    end;
 is_authorized(Req, State) ->
     damage_http:is_authorized(Req, State).
 
@@ -144,6 +159,14 @@ to_json(Req, #{action := analytics, public_key := Owner} = State) ->
 to_json(Req, State) ->
     {jsx:encode(#{status => <<"notok">>, error => <<"unsupported_get">>}), Req, State}.
 
+from_json(Req, #{action := setup} = State) ->
+    Reply =
+        case damage_schedule_v2_contract:setup() of
+            {ok, Contract} ->
+                {ok, #{contract => Contract, token_contract => damage_schedule_v2_contract:token_contract()}};
+            {error, _} = Error -> Error
+        end,
+    reply_result(Reply, Req, State);
 from_json(Req0, #{action := preview, public_key := Owner} = State) ->
     with_json_body(Req0, State, fun(Json, Req) ->
         reply_result(damage_schedule_v2:preview(Owner, Json), Req, State)

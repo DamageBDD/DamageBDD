@@ -3,6 +3,7 @@
 -export([
     contract_address/0,
     ensure_contract/0,
+    setup/0,
     deploy/0,
     create_schedule/2,
     fund_schedule/3,
@@ -68,6 +69,16 @@ ensure_contract() ->
                 true -> deploy();
                 false -> Error
             end
+    end.
+
+%% Explicit node-admin bootstrap used by the dashboard. Unlike ensure_contract/0
+%% this does not depend on schedule_v2_auto_deploy; the authenticated operator
+%% has already chosen to deploy the vault. It is idempotent once configured.
+setup() ->
+    case contract_address() of
+        {ok, Contract} -> {ok, Contract};
+        {error, schedule_v2_contract_not_configured} -> deploy();
+        {error, _} = Error -> Error
     end.
 
 deploy() ->

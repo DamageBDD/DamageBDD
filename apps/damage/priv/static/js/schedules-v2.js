@@ -6,6 +6,8 @@ let mounted = false;
 let host = null;
 let currentRangeDays = 30;
 let previewState = null;
+let modalReturnFocus = null;
+let modalKeyHandler = null;
 
 export async function updateSchedulesTable() {
   ensureStyles();
@@ -22,19 +24,13 @@ export async function updateSchedulesTable() {
 function findHost() {
   const explicit = document.querySelector("[data-schedules-v2-root]");
   if (explicit) return explicit;
-  const oldBtn = document.getElementById("addScheduleBtn");
-  if (oldBtn) {
-    return oldBtn.closest("section, article, .dashboard-card, .card, .tab-content, [role='tabpanel']")
-      || oldBtn.parentElement?.parentElement
-      || oldBtn.parentElement;
-  }
   return document.getElementById("schedules-tab")
     || document.querySelector("[id$='schedules-tab']")
     || document.querySelector("[data-tab='schedules']");
 }
 
 function ensureStyles() {
-  if (document.getElementById("schedules-v2-css")) return;
+  if (document.querySelector('link[href="/static/css/schedules-v2.css"]')) return;
   const link = document.createElement("link");
   link.id = "schedules-v2-css";
   link.rel = "stylesheet";
@@ -53,21 +49,22 @@ function mount(root) {
         </div>
         <div class="sv2-heading-actions">
           <span id="sv2-chain-status" class="sv2-chain-pill">Checking vault…</span>
-          <button id="sv2-new" class="sv2-primary">+ New schedule</button>
+          <button type="button" id="sv2-setup" class="sv2-secondary" hidden>Initialize vault</button>
+          <button type="button" id="sv2-new" class="sv2-primary">+ New schedule</button>
         </div>
       </div>
 
       <div class="sv2-toolbar">
         <div class="sv2-range" role="group" aria-label="Analytics range">
-          <button data-days="1">24h</button><button data-days="7">7d</button>
-          <button data-days="30" class="active">30d</button><button data-days="90">90d</button>
-          <button data-days="custom">Custom</button>
+          <button type="button" data-days="1">24h</button><button type="button" data-days="7">7d</button>
+          <button type="button" data-days="30" class="active">30d</button><button type="button" data-days="90">90d</button>
+          <button type="button" data-days="custom">Custom</button>
         </div>
         <div id="sv2-custom-range" class="sv2-custom-range" hidden>
           <input id="sv2-range-from" type="date"><span>to</span><input id="sv2-range-to" type="date">
-          <button id="sv2-range-apply">Apply</button>
+          <button type="button" id="sv2-range-apply">Apply</button>
         </div>
-        <button id="sv2-refresh" class="sv2-secondary">Refresh</button>
+        <button type="button" id="sv2-refresh" class="sv2-secondary">Refresh</button>
       </div>
 
       <div id="sv2-stats" class="sv2-stats"></div>
@@ -86,6 +83,7 @@ function mount(root) {
   `;
 
   root.querySelector("#sv2-new").addEventListener("click", openCreateModal);
+  root.querySelector("#sv2-setup").addEventListener("click", initializeVault);
   root.querySelector("#sv2-refresh").addEventListener("click", updateSchedulesTable);
   root.querySelectorAll(".sv2-range button[data-days]").forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -112,21 +110,46 @@ function mount(root) {
 
 async function loadStatus() {
   const pill = host.querySelector("#sv2-chain-status");
+  const setup = host.querySelector("#sv2-setup");
   try {
     const r = await apiFetch(`${API}/status`);
     if (r.status === "ok") {
       pill.textContent = `Vault ${short(r.contract)}`;
       pill.className = "sv2-chain-pill ok";
       pill.title = r.contract;
+      setup.hidden = true;
     } else {
-      pill.textContent = "Vault not configured";
+      pill.textContent = "Vault setup required";
       pill.className = "sv2-chain-pill warn";
-      pill.title = r.reason || "Set schedule_v2_contract or enable auto deployment";
+      pill.title = r.reason || "Schedule V2 vault has not been deployed";
+      setup.hidden = !isNodeAdmin();
     }
   } catch (e) {
     pill.textContent = "Vault unavailable";
     pill.className = "sv2-chain-pill warn";
+    pill.title = e.message || "Schedule V2 status request failed";
+    setup.hidden = true;
   }
+}
+
+async function initializeVault() {
+  const btn = host?.querySelector("#sv2-setup");
+  if (!btn || !isNodeAdmin()) return;
+  if (!confirm("Deploy the Schedule V2 vault using the node account?")) return;
+  setBusy(btn, true);
+  try {
+    const r = await apiFetch(`${API}/setup`, {method: "POST", body: "{}"});
+    toast(`Schedule V2 vault ready: ${short(r.contract || r.data?.contract || "")}`, "success");
+    await loadStatus();
+  } catch (e) {
+    toast(e.message, "error");
+  } finally {
+    setBusy(btn, false);
+  }
+}
+
+function isNodeAdmin() {
+  return String(document.body?.dataset?.nodeAdmin || "").toLowerCase() === "true";
 }
 
 async function loadSchedules() {
@@ -136,7 +159,7 @@ async function loadSchedules() {
     const schedules = response.data || [];
     host.querySelector("#sv2-count").textContent = `${schedules.length} schedule${schedules.length === 1 ? "" : "s"}`;
     if (!schedules.length) {
-      list.innerHTML = `<div class="sv2-empty"><strong>No Schedule V2 jobs yet.</strong><span>Legacy schedules are intentionally not imported. Create a new budgeted schedule.</span><button class="sv2-primary" id="sv2-empty-create">Create schedule</button></div>`;
+      list.innerHTML = `<div class="sv2-empty"><strong>No Schedule V2 jobs yet.</strong><span>Legacy schedules are intentionally not imported. Create a new budgeted schedule.</span><button type="button" class="sv2-primary" id="sv2-empty-create">Create schedule</button></div>`;
       list.querySelector("#sv2-empty-create")?.addEventListener("click", openCreateModal);
       return;
     }
@@ -161,7 +184,7 @@ function renderSchedule(s) {
       <div class="sv2-schedule-top">
         <div class="sv2-feature">
           <div class="sv2-feature-title">${escapeHtml(cleanFeatureTitle(s.feature_title || "Feature"))}</div>
-          <div class="sv2-feature-meta"><code title="${escapeAttr(s.feature_hash || "")}">${escapeHtml(short(s.feature_hash || ""))}</code><button class="sv2-copy" data-copy="${escapeAttr(s.feature_hash || "")}" title="Copy feature hash">⧉</button></div>
+          <div class="sv2-feature-meta"><code title="${escapeAttr(s.feature_hash || "")}">${escapeHtml(short(s.feature_hash || ""))}</code><button type="button" class="sv2-copy" data-copy="${escapeAttr(s.feature_hash || "")}" title="Copy feature hash">⧉</button></div>
         </div>
         <span class="sv2-status ${escapeAttr(status)}">${escapeHtml(status)}</span>
       </div>
@@ -177,10 +200,10 @@ function renderSchedule(s) {
         <div class="sv2-budget-foot"><span>${formatDamage(funded)} locked</span><span>max ${formatDamage(s.max_cost_per_run || 0)} / run</span></div>
       </div>
       <div class="sv2-actions">
-        <button data-action="run" class="sv2-secondary" ${status !== "active" ? "disabled" : ""}>Run now</button>
-        ${status === "active" ? `<button data-action="pause" class="sv2-secondary">Pause</button>` : status === "paused" || status === "exhausted" ? `<button data-action="resume" class="sv2-secondary">Resume</button>` : ""}
-        <button data-action="details" class="sv2-link">Details</button>
-        <button data-action="cancel" class="sv2-danger" ${status === "cancelled" ? "disabled" : ""}>Cancel & unlock</button>
+        <button type="button" data-action="run" class="sv2-secondary" ${status !== "active" ? "disabled" : ""}>Run now</button>
+        ${status === "active" ? `<button type="button" data-action="pause" class="sv2-secondary">Pause</button>` : status === "paused" || status === "exhausted" ? `<button type="button" data-action="resume" class="sv2-secondary">Resume</button>` : ""}
+        <button type="button" data-action="details" class="sv2-link">Details</button>
+        <button type="button" data-action="cancel" class="sv2-danger" ${status === "cancelled" ? "disabled" : ""}>Cancel & unlock</button>
       </div>
     </article>`;
 }
@@ -222,7 +245,7 @@ async function openDetails(id) {
     const runs = history.data || [];
     showModal(`
       <div class="sv2-modal-card sv2-details">
-        <button class="sv2-modal-close" data-close>×</button>
+        <button type="button" class="sv2-modal-close" data-close aria-label="Close schedule details">×</button>
         <div class="sv2-eyebrow">Schedule V2</div><h3>${escapeHtml(cleanFeatureTitle(s.feature_title || "Schedule"))}</h3>
         <dl>
           <dt>Status</dt><dd>${escapeHtml(s.status || "—")}</dd>
@@ -308,7 +331,7 @@ function openCreateModal() {
   const end = new Date(Date.now() + 30 * 86400000);
   showModal(`
     <form id="sv2-create-form" class="sv2-modal-card sv2-create">
-      <button type="button" class="sv2-modal-close" data-close>×</button>
+      <button type="button" class="sv2-modal-close" data-close aria-label="Close new schedule dialog">×</button>
       <div class="sv2-eyebrow">New Schedule V2</div><h3>Schedule verification</h3>
       <p class="sv2-form-intro">Dry-run the feature, count upcoming executions, then lock a bounded DAMAGE budget before activation.</p>
 
@@ -474,11 +497,60 @@ function extractSignedTx(result) {
 }
 
 function showModal(html) {
-  const modal = document.getElementById("sv2-modal"); modal.innerHTML = `<div class="sv2-modal-backdrop">${html}</div>`; modal.hidden = false;
+  const modal = document.getElementById("sv2-modal");
+  if (!modal) return;
+
+  modalReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  modal.innerHTML = `<div class="sv2-modal-backdrop">${html}</div>`;
+  modal.hidden = false;
+
+  const card = modal.querySelector(".sv2-modal-card");
+  if (card) {
+    card.setAttribute("role", "dialog");
+    card.setAttribute("aria-modal", "true");
+    card.setAttribute("tabindex", "-1");
+    const title = card.querySelector("h3");
+    if (title) {
+      if (!title.id) title.id = `sv2-dialog-title-${Date.now()}`;
+      card.setAttribute("aria-labelledby", title.id);
+    }
+  }
+
   modal.querySelectorAll("[data-close]").forEach(b => b.addEventListener("click", hideModal));
-  modal.querySelector(".sv2-modal-backdrop")?.addEventListener("click", e => { if (e.target.classList.contains("sv2-modal-backdrop")) hideModal(); });
+  modal.querySelector(".sv2-modal-backdrop")?.addEventListener("click", e => {
+    if (e.target.classList.contains("sv2-modal-backdrop")) hideModal();
+  });
+
+  modalKeyHandler = (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      hideModal();
+    }
+  };
+  document.addEventListener("keydown", modalKeyHandler);
+
+  const firstFocus = modal.querySelector("[data-close], input, textarea, select, button, [href]");
+  window.requestAnimationFrame(() => (firstFocus || card)?.focus?.());
 }
-function hideModal(){ const m=document.getElementById("sv2-modal"); if(m){m.hidden=true;m.innerHTML="";} }
+
+function hideModal() {
+  const modal = document.getElementById("sv2-modal");
+  if (!modal || modal.hidden) return;
+
+  if (modalKeyHandler) {
+    document.removeEventListener("keydown", modalKeyHandler);
+    modalKeyHandler = null;
+  }
+
+  const returnFocus = modalReturnFocus;
+  modalReturnFocus = null;
+  if (document.activeElement && modal.contains(document.activeElement)) {
+    (returnFocus?.isConnected ? returnFocus : host?.querySelector("#sv2-new"))?.focus?.();
+  }
+
+  modal.hidden = true;
+  modal.innerHTML = "";
+}
 
 async function apiFetch(url, options={}) {
   const headers = new Headers(options.headers || {}); headers.set("accept","application/json");

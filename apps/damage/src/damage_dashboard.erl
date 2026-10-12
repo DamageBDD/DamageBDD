@@ -110,7 +110,6 @@ render_full_page(Ctx) ->
     AuthM = render_tpl(?TPL("auth_modal.mustache"), AuthCtx),
     GuestLanding = render_tpl(?TPL("guest_landing.mustache"), Ctx),
     LogOutM = render_tpl(?TPL("logout_modal.mustache"), Ctx),
-    SchM = render_tpl(?TPL("schedule_modal.mustache"), Ctx),
     InstM = render_tpl(?TPL("install_modal.mustache"), Ctx),
     PickM = render_tpl(?TPL("feature_picker_modal.mustache"), Ctx),
     IpfsPickM = render_tpl(?TPL("file_picker_modal.mustache"), Ctx),
@@ -148,7 +147,6 @@ render_full_page(Ctx) ->
         auth_modal => AuthM,
         guest_landing => GuestLanding,
         logout_modal => LogOutM,
-        schedule_modal => SchM,
         install_modal => InstM,
         feature_picker_modal => PickM,
         file_picker_modal => IpfsPickM,
@@ -205,8 +203,8 @@ render_component(signup_modal, Ctx) ->
     render_tpl(?TPL("signup_modal.mustache"), Ctx);
 render_component(logout_modal, Ctx) ->
     render_tpl(?TPL("logout_modal.mustache"), Ctx);
-render_component(schedule_modal, Ctx) ->
-    render_tpl(?TPL("schedule_modal.mustache"), Ctx);
+render_component(schedule_modal, _Ctx) ->
+    <<>>;
 render_component(node_public_key_modal, Ctx) ->
     render_tpl(?TPL("node_public_key_modal.mustache"), Ctx);
 render_component(install_modal, Ctx) ->
