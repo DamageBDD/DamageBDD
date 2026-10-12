@@ -1,0 +1,99 @@
+<section class="view" data-panel="keys" data-ecai-managed aria-labelledby="keysTitle" hidden>
+  <div class="page-intro page-intro-actions">
+    <div>
+      <div class="eyebrow">CREDENTIALS · OLLAMA COMPATIBILITY</div>
+      <h1 id="keysTitle">API keys.</h1>
+      <p>Create account-scoped bearer keys for Ollama-compatible clients. Keys can be rotated or revoked without changing your DamageBDD sign-in.</p>
+    </div>
+    <button type="button" id="ollamaKeysRefresh" class="button button-outline">Refresh</button>
+  </div>
+
+  <div id="ollamaKeysNotice" class="keys-notice" role="status" aria-live="polite">Sign in with a managed account to manage keys.</div>
+
+  <div class="keys-grid">
+    <section class="surface panel-pad">
+      <div class="panel-heading">
+        <div><div class="eyebrow">01 · ISSUE</div><h2>Create a key</h2></div>
+        <span class="status-tag">HASHED AT REST</span>
+      </div>
+      <p class="context-hint">The full secret is shown once. ECAI stores only a SHA-256 digest of the random secret plus non-secret metadata.</p>
+      <form id="ollamaKeyCreateForm" class="stack-form">
+        <label for="ollamaKeyLabel">Key name
+          <input id="ollamaKeyLabel" maxlength="80" value="Development client" autocomplete="off" required>
+        </label>
+        <label for="ollamaKeyExpiry">Expiry
+          <select id="ollamaKeyExpiry">
+            <option value="0">No expiry</option>
+            <option value="30">30 days</option>
+            <option value="90" selected>90 days</option>
+            <option value="365">1 year</option>
+          </select>
+        </label>
+        <fieldset class="keys-scope-fieldset">
+          <legend>Permissions</legend>
+          <label class="compute-check"><input type="checkbox" id="ollamaScopeModels" checked> Model discovery <code>/api/tags</code>, <code>/api/show</code>, <code>/api/ps</code></label>
+          <label class="compute-check"><input type="checkbox" id="ollamaScopeChat" checked> Chat <code>/api/chat</code></label>
+          <label class="compute-check"><input type="checkbox" id="ollamaScopeGenerate" checked> Generate <code>/api/generate</code></label>
+        </fieldset>
+        <div class="inline-actions wrap-actions">
+          <button type="submit" class="button button-primary" id="ollamaKeyCreate">Create API key</button>
+          <button type="button" class="button button-outline" id="ollamaQuickCreate">Create &amp; configure client</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="surface panel-pad">
+      <div class="panel-heading">
+        <div><div class="eyebrow">02 · CONNECT</div><h2>Quick configuration</h2></div>
+        <span id="ollamaGatewayStatus" class="status-tag">LOADING</span>
+      </div>
+      <div class="keys-endpoint-card">
+        <span>Ollama host</span>
+        <div><code id="ollamaBaseUrl">—</code><button type="button" class="text-button" data-copy-id="ollamaBaseUrl">Copy</button></div>
+      </div>
+      <div class="keys-endpoint-card">
+        <span>Default ECAI model</span>
+        <div><code id="ollamaDefaultModel">—</code><button type="button" class="text-button" data-copy-id="ollamaDefaultModel">Copy</button></div>
+      </div>
+      <p class="context-hint">The quick-config route is <code>GET /ecai/keys/ollama/quick-config</code>. POSTing the same route creates a new key and returns ready-to-copy client configuration with the secret included once.</p>
+      <button type="button" class="button button-outline button-sm" id="ollamaCopyEnv">Copy environment setup</button>
+    </section>
+  </div>
+
+  <section id="ollamaSecretPanel" class="surface panel-pad keys-secret-panel" hidden>
+    <div class="panel-heading">
+      <div><div class="eyebrow">ONE-TIME SECRET</div><h2>Copy this key now</h2></div>
+      <button type="button" class="text-button" id="ollamaSecretDismiss">Dismiss</button>
+    </div>
+    <p class="keys-warning">This value cannot be retrieved again. It will be removed from this page automatically.</p>
+    <div class="keys-secret-row">
+      <input id="ollamaSecretValue" type="text" readonly spellcheck="false" autocomplete="off" aria-label="New Ollama API key">
+      <button type="button" class="button button-primary button-sm" id="ollamaSecretCopy">Copy key</button>
+    </div>
+    <div class="inline-actions wrap-actions">
+      <button type="button" class="button button-outline button-sm" id="ollamaSecretCopyEnv">Copy env</button>
+      <button type="button" class="button button-outline button-sm" id="ollamaSecretCopyPython">Copy Python</button>
+      <button type="button" class="button button-outline button-sm" id="ollamaSecretCopyJs">Copy JavaScript</button>
+      <button type="button" class="button button-outline button-sm" id="ollamaSecretCopyCurl">Copy curl</button>
+    </div>
+  </section>
+
+  <section class="surface panel-pad">
+    <div class="panel-heading">
+      <div><div class="eyebrow">03 · MANAGE</div><h2>Ollama API keys</h2></div>
+      <span id="ollamaKeyCount" class="small muted">Not loaded</span>
+    </div>
+    <div id="ollamaKeyList" class="keys-list"><div class="empty-state">Sign in to load keys.</div></div>
+  </section>
+
+  <section class="surface panel-pad">
+    <div class="panel-heading"><div><div class="eyebrow">04 · CLIENT SETUP</div><h2>Use an existing key</h2></div></div>
+    <p class="context-hint">Replace the placeholder with a key you just created. For custom hosts, use an Authorization bearer header. Keep credentials in environment variables rather than source code or browser bundles.</p>
+    <div class="keys-snippet-grid">
+      <article class="keys-snippet-card"><div class="keys-snippet-head"><strong>Environment</strong><button type="button" class="text-button" data-copy-id="ollamaEnvSnippet">Copy</button></div><pre id="ollamaEnvSnippet" class="code-display">Loading…</pre></article>
+      <article class="keys-snippet-card"><div class="keys-snippet-head"><strong>Python · ollama</strong><button type="button" class="text-button" data-copy-id="ollamaPythonSnippet">Copy</button></div><pre id="ollamaPythonSnippet" class="code-display">Loading…</pre></article>
+      <article class="keys-snippet-card"><div class="keys-snippet-head"><strong>JavaScript · ollama</strong><button type="button" class="text-button" data-copy-id="ollamaJsSnippet">Copy</button></div><pre id="ollamaJsSnippet" class="code-display">Loading…</pre></article>
+      <article class="keys-snippet-card"><div class="keys-snippet-head"><strong>curl</strong><button type="button" class="text-button" data-copy-id="ollamaCurlSnippet">Copy</button></div><pre id="ollamaCurlSnippet" class="code-display">Loading…</pre></article>
+    </div>
+  </section>
+</section>

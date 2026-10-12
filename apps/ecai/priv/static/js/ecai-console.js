@@ -2,7 +2,7 @@
 // Wallet transport remains a lazy import inside auth-wallet-loader.js.
 import {TokenManager, logoutActiveSession} from "/ecai/auth-assets/js/wallet-switcher.js";
 import {initAuthUI} from "/ecai/auth-assets/js/auth-ui.js?v=ecai-browser-v1";
-import {initVideoStudio} from "/static/js/ecai-video.js?v=video-studio-v4-mm-v1";
+import {initVideoStudio} from "/static/js/ecai-video.js?v=video-studio-v4-mm-v1-compute-v2-keys-v1";
 import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1";
 
 /* ECAI Control Plane. Uses only routes exported by the current ECAI Cowboy handlers. */
@@ -17,6 +17,12 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     { group: "Search & chat", method: "GET", path: "/ecai/chat", description: "Local chat service health." },
     { group: "Search & chat", method: "POST", path: "/ecai/chat", description: "ECAI chat by session and user.", body: { session_id: "console", user_id: "console-user", message: "What is ECAI?" } },
     { group: "Search & chat", method: "POST", path: "/v1/chat/completions", description: "OpenAI-compatible chat adapter (non-streaming).", body: { model: "ecai", messages: [{ role: "user", content: "What is ECAI?" }] } },
+    { group: "Ollama keys", method: "GET", path: "/ecai/keys/ollama", description: "List account-scoped Ollama API keys. Plaintext secrets are never returned." },
+    { group: "Ollama keys", method: "POST", path: "/ecai/keys/ollama", description: "Create an Ollama API key; the plaintext secret is returned once.", body: { label: "Development client", expires_in_days: 90, scopes: ["models", "chat", "generate"] } },
+    { group: "Ollama keys", method: "POST", path: "/ecai/keys/ollama/:id/rotate", params: ["id"], description: "Rotate a key and reveal the replacement secret once.", body: {} },
+    { group: "Ollama keys", method: "POST", path: "/ecai/keys/ollama/:id/revoke", params: ["id"], description: "Immediately revoke an Ollama API key.", body: {} },
+    { group: "Ollama keys", method: "GET", path: "/ecai/keys/ollama/quick-config", description: "Return endpoint and SDK configuration templates with a key placeholder." },
+    { group: "Ollama keys", method: "POST", path: "/ecai/keys/ollama/quick-config", description: "Create a key and return ready-to-copy Ollama client configuration.", body: { label: "Quick Ollama client", expires_in_days: 90, scopes: ["models", "chat", "generate"] } },
     { group: "Knowledge & private", method: "POST", path: "/ecai/ekef", description: "Legacy on-chain knowledge minting; server-side signer required.", body: { subject: "ECAI", predicate: "indexes", object: "knowledge", context: "demo" }, confirm: "This may mint an NFT and incur on-chain costs. Continue?" },
     { group: "Knowledge & private", method: "POST", path: "/ecai/private/:corpus/index", description: "Index an owner-scoped private batch. No client-supplied identity or keys.", params: ["corpus"], body: { batch_id: "00000000000000000000000000000001", records: [{ title: "A private fact", text: "Example content" }] } },
     { group: "Knowledge & private", method: "POST", path: "/ecai/private/:corpus/search", description: "Private knowledge retrieval.", params: ["corpus"], body: { query: "example", limit: 8 } },
@@ -108,7 +114,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     ask: { question: "What is known about this topic?", destination: "local" }
   };
   const marketExamples = { claim: { miner_ak: "ak_..." }, submit: { miner_ak: "ak_...", attestation: "attestation", evidence_ref: "" }, pay: { admin_ak: "ak_..." } };
-  const VIEW_NAMES = { overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing", compute: "Compute & NFTs" };
+  const VIEW_NAMES = { overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing", compute: "Compute & NFTs", keys: "Keys" };
   let videoStudio = null;
   let marketMaker = null;
   const state = {
@@ -520,6 +526,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
       if (["code", "network"].includes(state.view)) navigate("overview");
       marketMaker?.reset();
       window.EcaiComputeSettings?.clear();
+      window.EcaiOllamaKeys?.clear();
       put("codeReviewDetail", "Select a validated repair from the review queue.");
       put("codeReviewDiff", "No patch selected.");
       codeReviewButtons();
@@ -585,6 +592,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
       if (state.view === "network" && state.nodeAdmin) await window.EcaiIndexPool?.refresh();
       if (state.view === "code" && state.nodeAdmin) await refreshCode();
       if (state.view === "compute" && managedSession()) await window.EcaiComputeSettings?.refresh();
+      if (state.view === "keys" && managedSession()) await window.EcaiOllamaKeys?.refresh();
       const result = await request("/ecai/index-jobs/status", { ignoreAuth: true });
       state.services.queue = "online";
       updateQueueMetrics(result.status || {});
@@ -2526,6 +2534,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
       case "wikimedia": await refreshWikiProjects(); break;
       case "network": await window.EcaiIndexPool?.refresh(); break;
       case "compute": if (managedSession()) await window.EcaiComputeSettings?.refresh(); else window.EcaiComputeSettings?.clear(); break;
+      case "keys": if (managedSession()) await window.EcaiOllamaKeys?.refresh(); else window.EcaiOllamaKeys?.clear(); break;
       case "code": await refreshCode(); break;
       case "marketplace": await refreshMarket(); break;
       case "video": await videoStudio?.refresh(); break;
@@ -2663,6 +2672,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     if (!$("ecaiConsole")) return;
     window.EcaiIndexPool?.init({request, toast, openLogin, currentToken});
     window.EcaiComputeSettings?.init({request, toast, openLogin, currentToken});
+    window.EcaiOllamaKeys?.init({request, toast, openLogin, currentToken});
     videoStudio = initVideoStudio({request, currentToken, managedSession, openLogin, toast});
     marketMaker = initMarketMaker({request, canManage: () => managedSession() && state.nodeAdmin, openLogin});
     initAuthUI();

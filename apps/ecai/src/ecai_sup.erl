@@ -51,7 +51,7 @@ init([]) ->
     ok = ecai_paths:ensure_parent(SnapPath),
     Interval = application:get_env(ecai, index_snapshot_ms, 60000),
     PoolSpecs0 =
-        maybe_compute_specs() ++ maybe_ingest_specs() ++
+        maybe_ollama_key_specs() ++ maybe_compute_specs() ++ maybe_ingest_specs() ++
             [
                 #{
                     id => ecai_index_snapshot,
@@ -170,6 +170,20 @@ vulnerability_monitor_specs() ->
         })
      || App <- [damage, ecai, erm]
     ].
+
+
+maybe_ollama_key_specs() ->
+    case {application:get_env(ecai, ollama_api_enabled, true),
+          application:get_env(ecai, ollama_api_keys_enabled, true)} of
+        {true, true} ->
+            [#{id => ecai_ollama_api_keys,
+               start => {ecai_ollama_api_keys, start_link, []},
+               restart => permanent, shutdown => 30000,
+               type => worker, modules => [ecai_ollama_api_keys]}];
+        {false, _} -> [];
+        {_, false} -> [];
+        {_, Invalid} -> erlang:error({invalid_configuration, ollama_api_keys_enabled, Invalid})
+    end.
 
 maybe_compute_specs() ->
     case application:get_env(ecai, compute_settings_enabled, true) of

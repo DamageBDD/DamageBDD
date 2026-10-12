@@ -11,7 +11,11 @@
     generate_json/2,
     generate_json/3,
     generate_text/2,
-    generate_text/3
+    generate_text/3,
+    native_chat/2,
+    native_chat/3,
+    native_generate/2,
+    native_generate/3
 ]).
 
 -export([
@@ -31,7 +35,7 @@
 -define(DEFAULT_CLUSTER_ATTEMPTS, 3).
 -define(RECEIPT_TABLE, ecai_inference_receipts_dets).
 -define(RECEIPT_FILE, "inference_receipts.dets").
--define(ROLES, [learning, synthesis, audit, patch]).
+-define(ROLES, [learning, synthesis, audit, patch, chat]).
 
 -record(state, {
     nodes = #{},
@@ -59,6 +63,14 @@ generate_json(Role, Prompt, Opts) -> run_request(json, Role, Prompt, Opts).
 
 generate_text(Role, Prompt) -> generate_text(Role, Prompt, #{}).
 generate_text(Role, Prompt, Opts) -> run_request(text, Role, Prompt, Opts).
+
+native_chat(Role, Request) -> native_chat(Role, Request, #{}).
+native_chat(Role, Request, Opts) when is_map(Request), is_map(Opts) ->
+    run_native_request(native_chat, Role, Request, Opts).
+
+native_generate(Role, Request) -> native_generate(Role, Request, #{}).
+native_generate(Role, Request, Opts) when is_map(Request), is_map(Opts) ->
+    run_native_request(native_generate, Role, Request, Opts).
 
 init(Opts) ->
     case normalize_nodes(configured_nodes(Opts)) of
@@ -232,6 +244,10 @@ run_request(Kind, Role, Prompt, Opts0) when is_atom(Role), is_map(Opts0) ->
         [],
         []
     ).
+
+run_native_request(Kind, Role, Request, Opts0) ->
+    Fingerprint = term_to_binary(Request, [deterministic]),
+    run_request(Kind, Role, Fingerprint, Opts0#{native_request => Request}).
 
 request_attempt(_Kind, Role, _Prompt, _Opts, _Provider, _Model, 0, _Deadline, _Exclude, Errors) ->
     {error, {inference_cluster_failed, Role, lists:reverse(Errors)}};
@@ -499,7 +515,15 @@ invoke_client(Kind, Prompt, ClientOpts) ->
     try
         case Kind of
             json -> ecai_ollama_client:generate_json_with_meta(Prompt, ClientOpts);
-            text -> ecai_ollama_client:generate_text_with_meta(Prompt, ClientOpts)
+            text -> ecai_ollama_client:generate_text_with_meta(Prompt, ClientOpts);
+            native_chat ->
+                ecai_ollama_client:native_chat_with_meta(
+                    maps:get(native_request, ClientOpts), ClientOpts
+                );
+            native_generate ->
+                ecai_ollama_client:native_generate_with_meta(
+                    maps:get(native_request, ClientOpts), ClientOpts
+                )
         end
     catch
         Class:Reason ->
@@ -1306,6 +1330,12 @@ definitely_not_sent({auth_secret_lookup_failed, _, _, _}) ->
 definitely_not_sent({auth_secret_lookup_exception, _, _, _, _}) ->
     true;
 definitely_not_sent({unsupported_auth_configuration, _}) ->
+    true;
+definitely_not_sent({unsupported_native_option, _, _}) ->
+    true;
+definitely_not_sent(invalid_native_chat_messages) ->
+    true;
+definitely_not_sent(invalid_native_generate_prompt) ->
     true;
 definitely_not_sent(empty_bearer_token) ->
     true;

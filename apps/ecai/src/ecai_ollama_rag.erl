@@ -4,7 +4,8 @@
     ask_qa/2,
     ask_private/4,
     ask_bdd/2,
-    retrieve_sources/3
+    retrieve_sources/3,
+    retrieve_sources_lexical/3
 ]).
 
 -define(OLLAMA_HOST, "localhost").
@@ -56,6 +57,21 @@ retrieve_sources(BaseDir, QueryBin, K) ->
             %% fallback to lexical order if embeddings unavailable
             lists:sublist(Candidates, min(K, length(Candidates)))
     end.
+
+%% Managed HTTP inference must not trigger an implicit second model call to the
+%% historical localhost embedding service. This variant performs the same
+%% bounded public-index shortlist without semantic reranking.
+retrieve_sources_lexical(BaseDir, QueryBin, K) ->
+    ok = ecai_private_store:assert_public(BaseDir),
+    HotTab = ecai_hot_terms:new(20000),
+    Terms = tokenize(QueryBin),
+    Postings = [ecai_disk_search:term_postings(BaseDir, HotTab, T) || T <- Terms],
+    Scores = score_docs(Postings),
+    CandidateDocInts = top_k(Scores, max(K, ?DEFAULT_CANDIDATE_POOL)),
+    {ok, DocTab} = ecai_disk_docstore:open(BaseDir),
+    Candidates = load_candidate_metas(DocTab, CandidateDocInts),
+    ok = ecai_disk_docstore:close(DocTab),
+    lists:sublist(Candidates, min(K, length(Candidates))).
 
 load_candidate_metas(DocTab, DocInts) ->
     [

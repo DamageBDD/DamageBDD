@@ -107,7 +107,7 @@ get_trails() ->
             ecai_yelp_admin,
             ecai_dashboard,
             ecai_chat_http_handler
-        ] ++ code_admin_handlers() ++ marketplace_handlers(),
+        ] ++ ollama_api_handlers() ++ code_admin_handlers() ++ marketplace_handlers(),
     %% The dashboard uses the same supervised browser auth service as DamageBDD.
     %% Legacy login routes remain for the separate older indexer pages only.
     AccountRoutes = [
@@ -141,6 +141,12 @@ code_admin_handlers() ->
 marketplace_handlers() ->
     case application:get_env(ecai, marketplace_enabled, false) of
         true -> [ecai_jobs_http];
+        _ -> []
+    end.
+
+ollama_api_handlers() ->
+    case application:get_env(ecai, ollama_api_enabled, true) of
+        true -> [ecai_ollama_keys_http, ecai_ollama_http];
         _ -> []
     end.
 

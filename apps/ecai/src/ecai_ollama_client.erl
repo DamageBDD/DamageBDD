@@ -7,6 +7,8 @@
     generate_text/2,
     generate_json_with_meta/2,
     generate_text_with_meta/2,
+    native_chat_with_meta/2,
+    native_generate_with_meta/2,
     tags/1,
     probe/1,
     defaults/0,
@@ -65,6 +67,12 @@ generate_json_with_meta(Prompt, Opts) when is_map(Opts) ->
 generate_text_with_meta(Prompt, Opts) when is_map(Opts) ->
     request(Prompt, false, Opts).
 
+native_chat_with_meta(Request, Opts) when is_map(Request), is_map(Opts) ->
+    native_request(chat, Request, Opts).
+
+native_generate_with_meta(Request, Opts) when is_map(Request), is_map(Opts) ->
+    native_request(generate, Request, Opts).
+
 %% Historical API retained for Ollama callers.
 tags(Opts) when is_map(Opts) ->
     probe(Opts#{provider => ollama}).
@@ -83,6 +91,14 @@ request(Prompt0, JsonMode, Opts0) ->
     case maps:get(provider, Opts) of
         ollama -> ollama_request(Prompt, JsonMode, Opts);
         openai -> openai_request(Prompt, JsonMode, Opts);
+        Provider -> {error, {unsupported_inference_provider, Provider}}
+    end.
+
+native_request(Kind, Request0, Opts0) ->
+    Opts = provider_defaults(Opts0),
+    case maps:get(provider, Opts) of
+        ollama -> ollama_native_request(Kind, Request0, Opts);
+        openai -> openai_native_request(Kind, Request0, Opts);
         Provider -> {error, {unsupported_inference_provider, Provider}}
     end.
 
@@ -222,6 +238,154 @@ ollama_request(Prompt, JsonMode, Opts) ->
                     {error, {ollama_request_failed, Reason}}
             end
     end.
+
+ollama_native_request(Kind, Request0, Opts) ->
+    case auth_headers(Opts) of
+        {error, _} = Error ->
+            Error;
+        {ok, AuthHeaders} ->
+            Model = to_binary(maps:get(model, Opts)),
+            Request1 = json_put(<<"model">>, Model, Request0),
+            %% Pool requests are deliberately non-streaming. The HTTP wrapper
+            %% can still emit Ollama NDJSON, but backend capacity remains held
+            %% until the complete provider response is known and accounted for.
+            Request = json_put(<<"stream">>, false, Request1),
+            Headers = [
+                {<<"content-type">>, <<"application/json">>},
+                {<<"accept">>, <<"application/json">>}
+                | AuthHeaders
+            ],
+            Path = case Kind of
+                chat -> "/api/chat";
+                generate -> "/api/generate"
+            end,
+            Started = erlang:monotonic_time(millisecond),
+            case damage_gun:post(
+                maps:get(host, Opts),
+                maps:get(port, Opts),
+                Path,
+                Headers,
+                jsx:encode(Request),
+                request_opts(Opts, maps:get(timeout, Opts))
+            ) of
+                {ok, #{status := Status, json := Json, body := RawBody}} when
+                    Status >= 200, Status < 300, is_map(Json)
+                ->
+                    Normalized = json_binary_keys(Json),
+                    {ok, Normalized, native_ollama_meta(Normalized, elapsed_ms(Started))};
+                {ok, #{status := Status, json := Json, body := RawBody}} ->
+                    {error, {ollama_http_status, Status, provider_error(Json, RawBody)}};
+                {ok, #{status := Status, body := RawBody}} ->
+                    {error, {ollama_http_status, Status, RawBody}};
+                {error, Reason} ->
+                    {error, {ollama_request_failed, Reason}}
+            end
+    end.
+
+openai_native_request(chat, Request, Opts0) ->
+    case native_chat_input(Request) of
+        {error, _} = Error ->
+            Error;
+        {ok, Prompt, System} ->
+            Opts = maybe_native_system(Opts0, System),
+            case openai_request(Prompt, false, provider_defaults(Opts)) of
+                {ok, Text, Meta} ->
+                    {ok, synthetic_chat_response(Text, Meta, maps:get(model, Opts)), Meta};
+                {error, _} = Error -> Error
+            end
+    end;
+openai_native_request(generate, Request, Opts0) ->
+    case mget(<<"prompt">>, Request, undefined) of
+        Prompt when is_binary(Prompt) ->
+            System = mget(<<"system">>, Request, <<>>),
+            Opts = maybe_native_system(Opts0, System),
+            case openai_request(Prompt, false, provider_defaults(Opts)) of
+                {ok, Text, Meta} ->
+                    {ok, synthetic_generate_response(Text, Meta, maps:get(model, Opts)), Meta};
+                {error, _} = Error -> Error
+            end;
+        _ ->
+            {error, invalid_native_generate_prompt}
+    end.
+
+native_chat_input(Request) ->
+    case mget(<<"tools">>, Request, []) of
+        [] -> native_chat_messages(mget(<<"messages">>, Request, []));
+        _ -> {error, {unsupported_native_option, openai, tools}}
+    end.
+
+native_chat_messages(Messages) when is_list(Messages) ->
+    Systems = [native_message_content(M) || M <- Messages,
+        is_map(M), mget(<<"role">>, M, <<>>) =:= <<"system">>],
+    Conversation = [native_message_line(M) || M <- Messages,
+        is_map(M), mget(<<"role">>, M, <<>>) =/= <<"system">>],
+    case [L || L <- Conversation, byte_size(L) > 0] of
+        [] -> {error, invalid_native_chat_messages};
+        Lines ->
+            {ok, iolist_to_binary(lists:join(<<"\n">>, Lines)),
+                iolist_to_binary(lists:join(<<"\n\n">>, Systems))}
+    end;
+native_chat_messages(_) ->
+    {error, invalid_native_chat_messages}.
+
+native_message_line(Message) ->
+    Role = to_binary(mget(<<"role">>, Message, <<"user">>)),
+    Content = native_message_content(Message),
+    case Content of
+        <<>> -> <<>>;
+        _ -> <<Role/binary, ": ", Content/binary>>
+    end.
+
+native_message_content(Message) ->
+    case mget(<<"content">>, Message, <<>>) of
+        Content when is_binary(Content) -> Content;
+        Parts when is_list(Parts) ->
+            Text = [to_binary(mget(<<"text">>, P, <<>>)) || P <- Parts, is_map(P)],
+            iolist_to_binary(lists:join(<<"\n">>, Text));
+        Other -> to_binary(Other)
+    end.
+
+maybe_native_system(Opts, <<>>) -> Opts;
+maybe_native_system(Opts, System) when is_binary(System) -> Opts#{system => System};
+maybe_native_system(Opts, _) -> Opts.
+
+synthetic_chat_response(Text, Meta, Model0) ->
+    Base = synthetic_response_base(Meta, Model0),
+    Base#{<<"message">> => #{<<"role">> => <<"assistant">>, <<"content">> => Text}}.
+
+synthetic_generate_response(Text, Meta, Model0) ->
+    Base = synthetic_response_base(Meta, Model0),
+    Base#{<<"response">> => Text}.
+
+synthetic_response_base(Meta, Model0) ->
+    WallMs = maps:get(wall_duration_ms, Meta, 0),
+    #{
+        <<"model">> => to_binary(Model0),
+        <<"created_at">> => now_iso8601(),
+        <<"done">> => true,
+        <<"done_reason">> => <<"stop">>,
+        <<"total_duration">> => max(0, WallMs) * 1000000,
+        <<"load_duration">> => 0,
+        <<"prompt_eval_count">> => int_or_zero(maps:get(input_tokens, Meta, 0)),
+        <<"prompt_eval_duration">> => 0,
+        <<"eval_count">> => int_or_zero(maps:get(output_tokens, Meta, 0)),
+        <<"eval_duration">> => max(0, WallMs) * 1000000
+    }.
+
+native_ollama_meta(Json, WallMs) ->
+    #{
+        provider => ollama,
+        model => to_binary(mget(<<"model">>, Json, <<>>)),
+        created_at => mget(<<"created_at">>, Json, undefined),
+        done_reason => mget(<<"done_reason">>, Json, undefined),
+        total_duration_ns => mget(<<"total_duration">>, Json, undefined),
+        load_duration_ns => mget(<<"load_duration">>, Json, undefined),
+        prompt_eval_count => mget(<<"prompt_eval_count">>, Json, undefined),
+        prompt_eval_duration_ns => mget(<<"prompt_eval_duration">>, Json, undefined),
+        eval_count => mget(<<"eval_count">>, Json, undefined),
+        eval_duration_ns => mget(<<"eval_duration">>, Json, undefined),
+        wall_duration_ms => WallMs
+    }.
 
 ollama_generation_options(Opts) ->
     Base = #{<<"temperature">> => maps:get(temperature, Opts, 0)},
@@ -589,7 +753,9 @@ decode_ollama_tags(Json, _RawBody) when is_map(Json) ->
                 provider => ollama,
                 digest => to_binary(mget(<<"digest">>, M, <<>>)),
                 size => mget(<<"size">>, M, undefined),
-                modified_at => mget(<<"modified_at">>, M, undefined)
+                modified_at => mget(<<"modified_at">>, M, undefined),
+                details => json_binary_keys(mget(<<"details">>, M, #{})),
+                capabilities => json_binary_keys(mget(<<"capabilities">>, M, []))
             }}
         end
      || M <- Models0,
@@ -727,6 +893,38 @@ mget(Key, Map, Default) when is_map(Map) ->
     end;
 mget(_Key, _Map, Default) ->
     Default.
+
+json_put(Key, Value, Map0) when is_binary(Key), is_map(Map0) ->
+    Map1 = case binary_key_atom(Key) of
+        undefined -> Map0;
+        AtomKey -> maps:remove(AtomKey, Map0)
+    end,
+    maps:put(Key, Value, Map1).
+
+binary_key_atom(<<"model">>) -> model;
+binary_key_atom(<<"stream">>) -> stream;
+binary_key_atom(_) -> undefined.
+
+json_binary_keys(Map) when is_map(Map) ->
+    maps:from_list([
+        {json_key(K), json_binary_keys(V)} || {K, V} <- maps:to_list(Map)
+    ]);
+json_binary_keys(List) when is_list(List) ->
+    [json_binary_keys(V) || V <- List];
+json_binary_keys(Value) -> Value.
+
+json_key(K) when is_binary(K) -> K;
+json_key(K) when is_atom(K) -> atom_to_binary(K, utf8);
+json_key(K) when is_list(K) -> unicode:characters_to_binary(K);
+json_key(K) -> to_binary(K).
+
+int_or_zero(I) when is_integer(I), I >= 0 -> I;
+int_or_zero(_) -> 0.
+
+now_iso8601() ->
+    to_binary(calendar:system_time_to_rfc3339(erlang:system_time(second), [
+        {unit, second}, {offset, "Z"}
+    ])).
 
 path_to_list(B) when is_binary(B) -> binary_to_list(B);
 path_to_list(L) when is_list(L) -> L;

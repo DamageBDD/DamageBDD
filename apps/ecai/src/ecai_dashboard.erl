@@ -198,10 +198,12 @@ render_dashboard_page("ecai_console.mustache", Ctx) ->
     %% running ecai_dashboard beams therefore cannot omit it accidentally.
     MarketMaker = render_tpl(?DASH_TPL("ecai_market_maker.mustache"), Ctx),
     ComputeSettings = render_tpl(?DASH_TPL("compute_settings.mustache"), Ctx),
+    OllamaKeys = render_tpl(?DASH_TPL("ollama_keys.mustache"), Ctx),
     render_tpl(?DASH_TPL("ecai_console.mustache"),
                Ctx#{browser_auth_modal => AuthHtml,
                     market_maker_panel => MarketMaker,
-                    compute_settings_panel => ComputeSettings});
+                    compute_settings_panel => ComputeSettings,
+                    ollama_keys_panel => OllamaKeys});
 render_dashboard_page(Template, Ctx) -> render_tpl(?DASH_TPL(Template), Ctx).
 
 %% ---------------------- Rendering helper ---------------------

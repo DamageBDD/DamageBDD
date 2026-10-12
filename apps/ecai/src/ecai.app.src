@@ -31,6 +31,17 @@
             %% Safe default: account settings enabled, but remote spending and mint
             %% requests are both disabled until each account explicitly opts in.
             {compute_settings_enabled, true},
+            %% Native Ollama-compatible inference gateway. Authentication stays
+            %% enabled by default even though the ECAI listener defaults to loopback.
+            {ollama_api_enabled, true},
+            {ollama_api_auth_required, true},
+            %% Per-account Ollama bearer keys are hashed at rest and independently revocable.
+            {ollama_api_keys_enabled, true},
+            {ollama_api_key_limit_per_account, 20},
+            {ollama_api_quick_model, <<"ecai/chat:latest">>},
+            {ollama_api_max_body, 8388608},
+            {ollama_api_rag_top_k, 8},
+            {ollama_api_context_max_bytes, 32768},
             {index_rewards_enabled, false},
             {index_pool_enabled, false},
             {index_pool_participant_enabled, false},
