@@ -93,7 +93,7 @@ recovery_survives_store_restart_test() ->
     with_fixture(fun(#{root := Root}) ->
         Before = save(repair(running)),
         {ok, Recovered} = ecai_patch_lifecycle:recover(Before, {worker_down, killed}, options()),
-        ok = ecai_learning_store:stop(),
+        stop(ecai_learning_store),
         {ok, Store} = ecai_learning_store:start_link(#{state_root => Root}), unlink(Store),
         ?assertEqual(Recovered, current()),
         ?assertEqual({error, conflict}, ecai_learning_store:compare_and_put_repair(
