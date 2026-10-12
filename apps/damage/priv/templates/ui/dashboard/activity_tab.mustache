@@ -1,36 +1,133 @@
-<!-- -*- mode: html -*- -->
-<section class="workspace-page" aria-labelledby="activity-heading">
-  <div class="workspace-heading">
+<!-- Public verification evidence: no private account, context or wallet data is fetched. -->
+<section class="workspace-page run-history" id="run-history-workspace"
+         data-account="{{run_history_account}}" data-node="{{run_history_node}}"
+         aria-labelledby="activity-heading">
+  <div class="workspace-heading activity-heading">
     <div>
       <p class="workspace-eyebrow">EXECUTION EVIDENCE</p>
       <h1 id="activity-heading">Run history</h1>
-      <p>Browse recent verification reports and filter by known account.</p>
+      <p>Browse published verification evidence from this node, your account, and other public nodes.</p>
     </div>
+    <button id="activity-refresh" class="workspace-button" type="button">↻ Refresh</button>
   </div>
 
-  <div class="activity-panel workspace-card">
-    <div class="activity-toolbar workspace-card-body">
-      <div class="activity-filters">
-        <strong>Account filters</strong>
-        <div id="activityAddrTags" class="addr-tags" aria-label="Known accounts"></div>
-        <div class="addr-add">
-          <label class="visually-hidden" for="activityAddrInput">Add account filter</label>
-          <input id="activityAddrInput" type="text"
-                 placeholder="Add account (ak_... or ct_...)"
-                 spellcheck="false" autocomplete="off" inputmode="text"
-                 class="addr-add__input workspace-input">
-          <button id="activityAddrAddBtn" class="workspace-button" type="button">Add</button>
+  <nav class="history-scopes" aria-label="Run history scope">
+    <button type="button" data-history-scope="node" aria-pressed="true">This node</button>
+    <button type="button" data-history-scope="account" aria-pressed="false">My account</button>
+    <button type="button" data-history-scope="followed" aria-pressed="false">Followed nodes <span id="activity-follow-count"></span></button>
+    <button type="button" data-history-scope="discover" aria-pressed="false">Discover nodes</button>
+  </nav>
+
+  <div class="history-content">
+    <div class="history-controls">
+      <div class="history-targets">
+        <div class="history-field" id="activity-node-field">
+          <label for="activity-node">Node</label>
+          <select id="activity-node" class="workspace-input">
+            <option value="">Choose a node to inspect</option>
+          </select>
         </div>
-        <div id="activityAddrHint" class="workspace-helper"></div>
+        <div class="history-field" id="activity-account-field" hidden>
+          <label for="activity-account">Public account activity</label>
+          <input id="activity-account" class="workspace-input" type="text"
+                 placeholder="ak_..." autocomplete="off" spellcheck="false">
+          <select id="activity-account-known" class="workspace-input" aria-label="Select known public account">
+            <option value="">Choose an account from public runs…</option>
+          </select>
+        </div>
+        <div class="history-field" id="activity-node-manual-field">
+          <label for="activity-node-manual">Node address</label>
+          <div class="history-inline">
+            <input id="activity-node-manual" class="workspace-input" type="text"
+                   placeholder="ak_... or ct_..." autocomplete="off" spellcheck="false">
+            <button id="activity-node-use" type="button" class="workspace-button">View node</button>
+          </div>
+        </div>
       </div>
+
+      <div class="history-filter-grid">
+        <div class="history-field">
+          <label for="activity-feature">Feature</label>
+          <input id="activity-feature" class="workspace-input" type="search"
+                 placeholder="Name or feature CID">
+        </div>
+        <div class="history-field">
+          <label for="activity-tags">Gherkin tags</label>
+          <input id="activity-tags" class="workspace-input" type="search"
+                 placeholder="@api @smoke (all must match)">
+        </div>
+        <div class="history-field">
+          <label for="activity-status-filter">Result</label>
+          <select id="activity-status-filter" class="workspace-input">
+            <option value="all">All results</option>
+            <option value="passed">Passed</option>
+            <option value="failed">Failed</option>
+            <option value="unknown">Unknown / legacy</option>
+          </select>
+        </div>
+        <div class="history-field">
+          <label for="activity-range">Time range</label>
+          <select id="activity-range" class="workspace-input">
+            <option value="24h">Last 24 hours</option>
+            <option value="7d" selected>Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+            <option value="all">All time</option>
+            <option value="custom">Custom range</option>
+          </select>
+        </div>
+      </div>
+      <div class="history-advanced">
+        <div class="history-field" id="activity-account-filter-field">
+          <label for="activity-account-filter">Filter by runner account</label>
+          <input id="activity-account-filter" class="workspace-input" type="text"
+                 placeholder="Any account (ak_...)" spellcheck="false">
+        </div>
+        <div class="history-field" id="activity-from-wrap" hidden>
+          <label for="activity-from">From</label>
+          <input id="activity-from" class="workspace-input" type="datetime-local">
+        </div>
+        <div class="history-field" id="activity-to-wrap" hidden>
+          <label for="activity-to">To</label>
+          <input id="activity-to" class="workspace-input" type="datetime-local">
+        </div>
+        <div class="history-field history-page-size">
+          <label for="activity-limit">Scan size</label>
+          <select id="activity-limit" class="workspace-input">
+            <option value="20">20</option><option value="50" selected>50</option><option value="100">100</option>
+          </select>
+        </div>
+      </div>
+      <p id="activity-filter-hint" class="workspace-muted">Feature, tags and status come from public run evidence; some older reports lack these fields.</p>
     </div>
 
-    <ul id="run-reports-list" class="activity-list"></ul>
-
-    <div id="run-reports-pager" class="activity-pager" aria-label="Pagination">
-      <button id="run-reports-prev" class="workspace-button" type="button">◀ Prev</button>
-      <button id="run-reports-next" class="workspace-button" type="button">Next ▶</button>
+    <div class="history-results-head">
+      <div><h2>Published runs</h2><p id="activity-status" role="status" aria-live="polite">Loading published run history…</p></div>
+      <span class="history-count" id="activity-count"></span>
+    </div>
+    <ul id="run-reports-list" class="activity-list" aria-label="Published verification runs"></ul>
+    <div id="run-reports-pager" class="activity-pager">
+      <button id="run-reports-prev" class="workspace-button" type="button" hidden>◀ Previous</button>
+      <button id="run-reports-next" class="workspace-button" type="button">Load more runs</button>
       <span id="run-reports-info" class="activity-pagerinfo workspace-muted"></span>
     </div>
+    <details class="history-directory" id="activity-directory">
+      <summary class="history-directory-toggle"><span id="activity-directory-heading">Browse node registry</span><small>Find registered nodes by operator or node ID</small></summary>
+      <div class="history-directory-head">
+        <div>
+          <h2>Registered nodes</h2>
+          <p>Look up registered nodes by operator account or node ID, or browse recent registrations.</p>
+        </div>
+        <button id="activity-discover" class="workspace-button" type="button">Discover recent nodes</button>
+      </div>
+      <div class="history-inline history-directory-search">
+        <label class="visually-hidden" for="activity-registry-query">Registry owner or node</label>
+        <input id="activity-registry-query" class="workspace-input" type="text"
+               placeholder="Operator ak_... or node ak_... / ct_..." spellcheck="false">
+        <button id="activity-registry-lookup" class="workspace-button" type="button">Look up</button>
+      </div>
+      <p id="activity-registry-status" class="workspace-muted" role="status" aria-live="polite"></p>
+      <ul id="activity-node-results" class="history-node-results" aria-label="Registry nodes"></ul>
+    </details>
+
   </div>
 </section>

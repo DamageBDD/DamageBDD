@@ -473,3 +473,116 @@ pre code.language-gherkin.report {
   .damage-dashboard .activity-panel { padding: 0; }
   .damage-dashboard .activity-filters .addr-add { flex-basis: 100%; }
 }
+
+/* Run history uses the dashboard shell directly: no inset cards or legacy frames. */
+.damage-dashboard .run-history { width: 100%; max-width: none; }
+.damage-dashboard .activity-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.damage-dashboard .activity-heading > .workspace-button { flex-shrink: 0; }
+.damage-dashboard .history-content { min-width: 0; background: transparent; }
+.damage-dashboard .history-scopes {
+  display: flex; flex-wrap: wrap; gap: 12px; margin: 18px 0 20px;
+  padding: 0; background: transparent; border: 0; border-bottom: 1px solid var(--ws-line);
+}
+.damage-dashboard .history-scopes button {
+  appearance: none; flex: 0 1 auto; min-height: 40px; padding: 9px 12px 11px;
+  margin-bottom: -1px; border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+  color: var(--ws-muted); background: transparent; font: inherit; cursor: pointer;
+}
+.damage-dashboard .history-scopes button:hover { color: var(--ws-text); background: transparent; }
+.damage-dashboard .history-scopes button[aria-pressed="true"] {
+  background: transparent; border-color: var(--ws-accent); color: var(--ws-text); font-weight: 650;
+}
+.damage-dashboard .history-scopes button:focus-visible,
+.damage-dashboard .run-history button:focus-visible,
+.damage-dashboard .run-history input:focus-visible,
+.damage-dashboard .run-history select:focus-visible,
+.damage-dashboard .history-directory-toggle:focus-visible {
+  outline: 2px solid var(--ws-accent); outline-offset: 2px;
+}
+.damage-dashboard .history-controls { margin: 0 0 18px; padding: 0 0 20px; border-bottom: 1px solid var(--ws-line); }
+.damage-dashboard .history-targets { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-bottom: 16px; }
+.damage-dashboard .history-targets > .history-field:first-child { flex: 1 1 290px; }
+.damage-dashboard .history-targets > .history-field:last-child { flex: 1 1 290px; }
+.damage-dashboard .history-filter-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.damage-dashboard .history-advanced { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-top: 12px; }
+.damage-dashboard .history-advanced .history-field { flex: 1 1 180px; }
+.damage-dashboard .history-advanced .history-field:first-child { flex-grow: 2; }
+.damage-dashboard .history-advanced .history-page-size { flex-grow: 0; flex-basis: 145px; }
+.damage-dashboard .history-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.damage-dashboard .history-field label { font-size: 12px; font-weight: 650; color: var(--ws-muted); }
+.damage-dashboard .history-field :is(input, select),
+.damage-dashboard .history-directory-search input {
+  width: 100%; min-width: 0; height: 40px; padding: 8px 10px;
+  color: var(--ws-text); background: var(--ws-input);
+  border: 1px solid var(--ws-line); border-radius: 7px; box-shadow: none; font-size: 13px;
+}
+.damage-dashboard .history-field select option { background: var(--ws-input); color: var(--ws-text); }
+.damage-dashboard .history-inline { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.damage-dashboard .history-inline input { min-width: 0; flex: 1 1 auto; }
+.damage-dashboard .history-inline .workspace-button { white-space: nowrap; min-height: 40px; }
+.damage-dashboard .run-history .workspace-muted { font-size: 12px; }
+.damage-dashboard #activity-filter-hint { margin: 10px 0 0; }
+.damage-dashboard .history-results-head { margin: 20px 0 12px; display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.damage-dashboard .history-results-head h2 { font-size: 15px; margin: 0; line-height: 1.3; }
+.damage-dashboard .history-results-head p { margin: 5px 0 0; color: var(--ws-muted); font-size: 12px; }
+.damage-dashboard .history-count { color: var(--ws-muted); font-size: 12px; white-space: nowrap; }
+.damage-dashboard .run-history .activity-list { list-style: none; padding: 0; margin: 0; }
+.damage-dashboard .run-history .activity-item {
+  background: transparent; border: 0; border-bottom: 1px solid var(--ws-line); border-radius: 0;
+  margin: 0; padding: 17px 0; gap: 22px;
+}
+.damage-dashboard .run-history .activity-item:first-child { border-top: 1px solid var(--ws-line); }
+.damage-dashboard .run-history .activity-left { flex: 0 0 130px; }
+.damage-dashboard .run-history .activity-time { font-size: 11px; }
+.damage-dashboard .run-history .activity-title { font-size: 15px; color: var(--ws-text); }
+.damage-dashboard .history-status { font-size: 11px; border-radius: 5px; padding: 3px 8px; border: 1px solid #3c4959; color: #d2dbe8; width: fit-content; }
+.damage-dashboard .history-status.passed { color: #c9efb3; background: #213628; border-color: #395d3c; }
+.damage-dashboard .history-status.failed { color: #ffc5c5; background: #40292d; border-color: #68434b; }
+.damage-dashboard .history-run-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.damage-dashboard .history-run-tags span { background: #202f41; border-radius: 4px; color: #bcd5f5; padding: 2px 6px; font: 11px/1.4 ui-monospace, monospace; }
+.damage-dashboard .run-history .activity-meta { margin-top: 10px; }
+.damage-dashboard .activity-details summary { cursor: pointer; color: var(--ws-muted); font-size: 12px; }
+.damage-dashboard .history-run-details { display: grid; grid-template-columns: minmax(80px, 140px) minmax(0, 1fr); gap: 4px 10px; font-size: 12px; margin: 12px 0 0; }
+.damage-dashboard .history-run-details dt { color: var(--ws-muted); }
+.damage-dashboard .history-run-details dd { margin: 0; overflow-wrap: anywhere; font-family: ui-monospace, monospace; }
+.damage-dashboard .history-empty { list-style: none; padding: 28px 0; color: var(--ws-muted); background: transparent; border: 0; }
+.damage-dashboard .run-history .activity-pager { padding: 0; margin: 14px 0 18px; }
+.damage-dashboard .run-history .workspace-button:disabled { opacity: .45; cursor: wait; }
+/* The registry is an optional disclosure below the primary results, not a dashboard within a dashboard. */
+.damage-dashboard .history-directory { margin: 24px 0 0; padding: 0; background: transparent; border: 0; border-top: 1px solid var(--ws-line); border-radius: 0; }
+.damage-dashboard .history-directory-toggle {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px;
+  padding: 16px 0; cursor: pointer; color: var(--ws-text); font-size: 13px;
+}
+.damage-dashboard .history-directory-toggle span { font-weight: 650; }
+.damage-dashboard .history-directory-toggle small { font-size: 12px; color: var(--ws-muted); }
+.damage-dashboard .history-directory-head { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: center; }
+.damage-dashboard .history-directory h2 { font-size: 14px; margin: 0; line-height: 1.3; }
+.damage-dashboard .history-directory p { margin: 5px 0 12px; color: var(--ws-muted); font-size: 12px; }
+.damage-dashboard .history-directory-search { max-width: 780px; }
+.damage-dashboard #activity-registry-status { margin: 8px 0 0; }
+.damage-dashboard .history-node-results { list-style: none; margin: 0; padding: 0; max-height: 280px; overflow-y: auto; }
+.damage-dashboard .history-node { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--ws-line); }
+.damage-dashboard .history-node:last-child { border: 0; }
+.damage-dashboard .history-node-info { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.damage-dashboard .history-node-info strong { font-size: 13px; overflow-wrap: anywhere; }
+.damage-dashboard .history-node-info code { font-size: 11px; color: var(--ws-muted); }
+.damage-dashboard .history-node-info small { color: var(--ws-muted); }
+.damage-dashboard .history-node-actions { display: flex; gap: 7px; flex-shrink: 0; }
+.damage-dashboard .history-node-actions button { font-size: 12px; min-height: 36px; }
+.damage-dashboard .history-view-account { font-size: 11px; padding: 4px 8px; min-height: 28px; }
+.damage-dashboard #activity-account-known { margin-top: 8px; }
+.damage-dashboard #activity-account-field { flex: 1 1 100%; max-width: 740px; }
+.damage-dashboard #activity-account-field input { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+@media (max-width: 960px) {
+  .damage-dashboard .history-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+  .damage-dashboard .history-scopes { gap: 2px; }
+  .damage-dashboard .history-scopes button { padding-inline: 8px; flex-grow: 1; font-size: 12px; }
+  .damage-dashboard .history-filter-grid { grid-template-columns: minmax(0, 1fr); }
+  .damage-dashboard .run-history .activity-item { flex-direction: column; gap: 8px; }
+  .damage-dashboard .run-history .activity-left { flex: 0 0 auto; flex-direction: row; align-items: center; justify-content: space-between; }
+  .damage-dashboard .history-inline { flex-wrap: wrap; }
+  .damage-dashboard .history-inline .workspace-button { flex: 1 1 100px; }
+}

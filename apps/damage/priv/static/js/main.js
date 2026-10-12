@@ -22,10 +22,11 @@ function bindDashboardPanelRefresh(navigation) {
 	const refresh = event => {
 		const id = event.detail?.id;
 		const task = async () => {
-			if (window.TokenManager?.getMode?.() === "extension") return;
 			if (id === "activity-tab") {
+				// Public history is available to wallet-authenticated users as well.
+				// The history module owns node identity and initial fetch on entry.
 				await window.Reports?.renderRunReports(window.TokenManager?.getAddress?.(), {limit: 10});
-			} else if (id === "schedules-tab" && window.TokenManager?.getToken?.()) {
+			} else if (id === "schedules-tab" && window.TokenManager?.getMode?.() !== "extension" && window.TokenManager?.getToken?.()) {
 				await updateSchedulesTable();
 			}
 		};
