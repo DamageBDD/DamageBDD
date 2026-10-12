@@ -57,61 +57,37 @@ token_contract() -> to_bin(?DAMAGE_TOKEN_CONTRACT).
 
 -spec contract_source() -> string().
 contract_source() ->
-    application:get_env(damage, schedule_v2_contract_source, "contracts/schedule_v2.aes").
+    resolve_contract_source(
+        application:get_env(damage, schedule_v2_contract_source, "contracts/schedule_v2.aes")
+    ).
 
 token_source() ->
-    application:get_env(damage, damage_token_contract_source, "contracts/token.aes").
+    resolve_contract_source(
+        application:get_env(damage, damage_token_contract_source, "contracts/token.aes")
+    ).
+
+resolve_contract_source(Path0) ->
+    Path =
+        case Path0 of
+            B when is_binary(B) -> binary_to_list(B);
+            L when is_list(L) -> L
+        end,
+    case filelib:is_file(Path) of
+        true -> Path;
+        false -> damage_ae:contract_path(damage, Path)
+    end.
 
 ensure_contract() ->
-    case contract_address() of
-        {ok, _} = Ok -> Ok;
-        {error, _} = Error ->
-            case application:get_env(damage, schedule_v2_auto_deploy, false) of
-                true -> deploy();
-                false -> Error
-            end
-    end.
+    damage_contract_bootstrap:ensure_schedule_vault().
 
-%% Explicit node-admin bootstrap used by the dashboard. Unlike ensure_contract/0
-%% this does not depend on schedule_v2_auto_deploy; the authenticated operator
-%% has already chosen to deploy the vault. It is idempotent once configured.
+%% Kept for the HTTP/admin recovery path, but all deployment and persistence
+%% now goes through damage_contract_bootstrap so startup and UI use one source
+%% of truth and cannot race separate vault deployments.
 setup() ->
-    case contract_address() of
-        {ok, Contract} -> {ok, Contract};
-        {error, schedule_v2_contract_not_configured} -> deploy();
-        {error, _} = Error -> Error
-    end.
+    damage_contract_bootstrap:ensure_schedule_vault().
 
 deploy() ->
-    #{public_key := NodeAccount} = KeyPair = secrets:node_keypair(),
-    Args = [to_s(token_contract()), to_s(NodeAccount)],
-    case safe_eval(fun() -> damage_ae:contract_deploy(KeyPair, contract_source(), Args) end) of
-        {ok, Result} when is_map(Result) ->
-            case map_get_any(["contract_id", <<"contract_id">>, contract_id], Result, undefined) of
-                undefined -> {error, {schedule_v2_deploy_failed, Result}};
-                ContractId0 ->
-                    ContractId = to_bin(ContractId0),
-                    _ = store_contract_address(ContractId),
-                    ?LOG_INFO("Schedule V2 contract deployed at ~p", [ContractId]),
-                    {ok, ContractId}
-            end;
-        {ok, Other} ->
-            {error, {schedule_v2_deploy_failed, Other}};
-        {error, _} = Error ->
-            Error
-    end.
-
-store_contract_address(ContractId) ->
-    try secrets:encrypt_store(schedule_v2_contract, ContractId) of
-        Result -> Result
-    catch
-        Class:Reason ->
-            ?LOG_WARNING(
-                "Schedule V2 contract deployed but address persistence failed class=~p reason=~p",
-                [Class, Reason]
-            ),
-            {error, {schedule_v2_contract_address_store_failed, Class, Reason}}
-    end.
+    damage_contract_bootstrap:ensure_schedule_vault().
 
 create_schedule(Owner, Spec) ->
     call_user(

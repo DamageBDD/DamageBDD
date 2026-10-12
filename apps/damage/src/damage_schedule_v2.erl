@@ -37,7 +37,7 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 load_all_schedules() ->
-    gen_server:call(?SERVER, load_all_schedules, 30000).
+    gen_server:call(?SERVER, load_all_schedules, 120000).
 
 ensure_vault(Owner) ->
     gen_server:call(?SERVER, {ensure_vault, to_bin(Owner)}, 120000).
@@ -107,7 +107,7 @@ handle_call(load_all_schedules, _From, State0) ->
             State2 = lists:foldl(fun maybe_arm/2, State1, Schedules),
             {reply, {ok, length(Schedules)}, State2};
         {error, Why} ->
-            ?LOG_WARNING("Schedule V2 loaded without an active vault: ~p", [Why]),
+            ?LOG_WARNING("Schedule loading deferred because vault bootstrap failed: ~p", [Why]),
             {reply, {error, Why}, State1}
     end;
 

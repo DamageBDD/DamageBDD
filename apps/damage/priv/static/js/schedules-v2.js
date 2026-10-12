@@ -8,8 +8,6 @@ let currentRangeDays = 30;
 let previewState = null;
 let modalReturnFocus = null;
 let modalKeyHandler = null;
-let vaultCustodial = false;
-let vaultAutoInitAttempted = false;
 
 export async function updateSchedulesTable() {
   ensureStyles();
@@ -50,8 +48,7 @@ function mount(root) {
           <p>Recurring verification with dry-run budgeting and locked DAMAGE.</p>
         </div>
         <div class="sv2-heading-actions">
-          <span id="sv2-chain-status" class="sv2-chain-pill">Checking vault…</span>
-          <button type="button" id="sv2-setup" class="sv2-secondary" hidden>Initialize vault</button>
+          <span id="sv2-chain-status" class="sv2-chain-pill" hidden></span>
           <button type="button" id="sv2-new" class="sv2-primary">+ New schedule</button>
         </div>
       </div>
@@ -85,7 +82,6 @@ function mount(root) {
   `;
 
   root.querySelector("#sv2-new").addEventListener("click", openCreateModal);
-  root.querySelector("#sv2-setup").addEventListener("click", () => initializeVault());
   root.querySelector("#sv2-refresh").addEventListener("click", updateSchedulesTable);
   root.querySelectorAll(".sv2-range button[data-days]").forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -112,71 +108,23 @@ function mount(root) {
 
 async function loadStatus() {
   const pill = host.querySelector("#sv2-chain-status");
-  const setup = host.querySelector("#sv2-setup");
   try {
     const r = await apiFetch(`${API}/status`);
-    vaultCustodial = r.custodial === true;
     if (r.status === "ok") {
-      pill.textContent = `Vault ${short(r.contract)}`;
-      pill.className = "sv2-chain-pill ok";
-      pill.title = r.contract;
-      setup.hidden = true;
+      pill.hidden = true;
       return;
     }
 
-    if (r.auto_setup === true && vaultCustodial && !vaultAutoInitAttempted) {
-      vaultAutoInitAttempted = true;
-      pill.textContent = "Initializing vault…";
-      pill.className = "sv2-chain-pill";
-      pill.title = "Custodial wallet detected; deploying the Schedule V2 vault";
-      setup.hidden = true;
-      await initializeVault({automatic: true});
-      return;
-    }
-
-    pill.textContent = vaultCustodial ? "Vault initialization required" : "Vault setup required";
+    pill.hidden = false;
+    pill.textContent = "Scheduling unavailable";
     pill.className = "sv2-chain-pill warn";
-    pill.title = r.reason || "Schedule V2 vault has not been deployed";
-    setup.textContent = vaultCustodial ? "Retry vault" : "Initialize vault";
-    setup.hidden = !(vaultCustodial || isNodeAdmin());
+    pill.title = friendlyError(r.reason || "Scheduling is temporarily unavailable");
   } catch (e) {
-    pill.textContent = "Vault unavailable";
+    pill.hidden = false;
+    pill.textContent = "Scheduling unavailable";
     pill.className = "sv2-chain-pill warn";
-    pill.title = e.message || "Schedule V2 status request failed";
-    setup.hidden = true;
+    pill.title = friendlyError(e.message || "Schedule status request failed");
   }
-}
-
-async function initializeVault({automatic = false} = {}) {
-  const btn = host?.querySelector("#sv2-setup");
-  if (!btn || !(vaultCustodial || isNodeAdmin())) return false;
-  if (!automatic && !confirm("Deploy the Schedule V2 vault using the node account?")) return false;
-  setBusy(btn, true);
-  try {
-    const r = await apiFetch(`${API}/setup`, {method: "POST", body: "{}"});
-    if (!automatic) {
-      toast(`Schedule V2 vault ready: ${short(r.contract || r.data?.contract || "")}`, "success");
-    }
-    await loadStatus();
-    return true;
-  } catch (e) {
-    const pill = host?.querySelector("#sv2-chain-status");
-    if (pill) {
-      pill.textContent = "Vault initialization failed";
-      pill.className = "sv2-chain-pill warn";
-      pill.title = e.message || "Schedule V2 vault deployment failed";
-    }
-    btn.textContent = "Retry vault";
-    btn.hidden = false;
-    toast(e.message, "error");
-    return false;
-  } finally {
-    setBusy(btn, false);
-  }
-}
-
-function isNodeAdmin() {
-  return String(document.body?.dataset?.nodeAdmin || "").toLowerCase() === "true";
 }
 
 async function loadSchedules() {
@@ -186,7 +134,7 @@ async function loadSchedules() {
     const schedules = response.data || [];
     host.querySelector("#sv2-count").textContent = `${schedules.length} schedule${schedules.length === 1 ? "" : "s"}`;
     if (!schedules.length) {
-      list.innerHTML = `<div class="sv2-empty"><strong>No Schedule V2 jobs yet.</strong><span>Legacy schedules are intentionally not imported. Create a new budgeted schedule.</span><button type="button" class="sv2-primary" id="sv2-empty-create">Create schedule</button></div>`;
+      list.innerHTML = `<div class="sv2-empty"><strong>No scheduled verification yet.</strong><span>Legacy schedules are intentionally not imported. Create a new budgeted schedule.</span><button type="button" class="sv2-primary" id="sv2-empty-create">Create schedule</button></div>`;
       list.querySelector("#sv2-empty-create")?.addEventListener("click", openCreateModal);
       return;
     }
@@ -273,7 +221,7 @@ async function openDetails(id) {
     showModal(`
       <div class="sv2-modal-card sv2-details">
         <button type="button" class="sv2-modal-close" data-close aria-label="Close schedule details">×</button>
-        <div class="sv2-eyebrow">Schedule V2</div><h3>${escapeHtml(cleanFeatureTitle(s.feature_title || "Schedule"))}</h3>
+        <div class="sv2-eyebrow">Schedule</div><h3>${escapeHtml(cleanFeatureTitle(s.feature_title || "Schedule"))}</h3>
         <dl>
           <dt>Status</dt><dd>${escapeHtml(s.status || "—")}</dd>
           <dt>Schedule ID</dt><dd><code>${escapeHtml(s.id || id)}</code></dd>
@@ -359,7 +307,7 @@ function openCreateModal() {
   showModal(`
     <form id="sv2-create-form" class="sv2-modal-card sv2-create">
       <button type="button" class="sv2-modal-close" data-close aria-label="Close new schedule dialog">×</button>
-      <div class="sv2-eyebrow">New Schedule V2</div><h3>Schedule verification</h3>
+      <div class="sv2-eyebrow">New schedule</div><h3>Schedule verification</h3>
       <p class="sv2-form-intro">Dry-run the feature, count upcoming executions, then lock a bounded DAMAGE budget before activation.</p>
 
       <label class="sv2-field"><span>Feature</span><textarea id="sv2-feature" rows="9" required>${escapeHtml(feature)}</textarea></label>
@@ -370,14 +318,14 @@ function openCreateModal() {
         </select></label>
         <label class="sv2-field" id="sv2-time-field"><span>Time</span><input id="sv2-time" type="time" value="09:00"></label>
         <label class="sv2-field sv2-custom-cron" hidden><span>Cron (UTC)</span><input id="sv2-cron" value="0 * * * *"></label>
-        <label class="sv2-field"><span>Concurrency</span><input id="sv2-concurrency" type="number" min="1" max="1" value="1" disabled><small>Initial Schedule V2 serializes each account so measured execution cost remains exact.</small></label>
+        <label class="sv2-field"><span>Concurrency</span><input id="sv2-concurrency" type="number" min="1" max="1" value="1" disabled><small>Scheduled runs are serialized per account so measured execution cost remains exact.</small></label>
       </div>
       <div class="sv2-field"><span>Execution window</span><div class="sv2-presets"><button type="button" data-window="7">7 days</button><button type="button" data-window="30" class="active">30 days</button><button type="button" data-window="90">90 days</button></div></div>
       <div class="sv2-form-grid">
         <label class="sv2-field"><span>Starts</span><input id="sv2-start" type="datetime-local" value="${localDateTimeValue(now)}"></label>
         <label class="sv2-field"><span>Ends</span><input id="sv2-end" type="datetime-local" value="${localDateTimeValue(end)}"></label>
       </div>
-      <div class="sv2-timezone-note">Times are converted to the Schedule V2 canonical UTC cron. Browser timezone: <b>${escapeHtml(browserTimezone())}</b>.</div>
+      <div class="sv2-timezone-note">Times are converted to the canonical UTC schedule. Browser timezone: <b>${escapeHtml(browserTimezone())}</b>.</div>
 
       <div class="sv2-preview-card" id="sv2-preview-card"><div class="sv2-preview-empty">Run a dry-run preview to calculate the budget.</div></div>
       <div class="sv2-form-actions"><button type="button" id="sv2-preview" class="sv2-secondary">Calculate budget</button><button id="sv2-create" class="sv2-primary" disabled>Create & lock budget</button></div>
@@ -417,7 +365,7 @@ function bindCreateForm() {
       const spec = {...previewState.spec, lock_amount: Number(lockInput.dataset.baseUnits)};
       const r = await apiFetch(API, {method:"POST", body:JSON.stringify(spec)});
       await maybeSignResponse(r);
-      hideModal(); toast("Schedule V2 created and budget locked.","success"); await updateSchedulesTable();
+      hideModal(); toast("Schedule created and budget locked.","success"); await updateSchedulesTable();
     } catch(e) { toast(e.message,"error"); }
     finally { setBusy(btn,false); }
   });
@@ -585,8 +533,24 @@ async function apiFetch(url, options={}) {
   const token = window.TokenManager?.getToken?.(); if (token) headers.set("authorization",`Bearer ${token}`);
   const res = await fetch(url,{...options,headers,credentials:"include"});
   let body={}; try{body=await res.json();}catch(_e){}
-  if(!res.ok || body.status === "notok") throw new Error(body.error || body.message || `Request failed (${res.status})`);
+  if(!res.ok || body.status === "notok") throw new Error(friendlyError(body.error || body.message || `Request failed (${res.status})`));
   return body;
+}
+
+
+function friendlyError(value) {
+  const raw = String(value || "Request failed");
+  const known = {
+    schedule_v2_contract_not_configured: "Scheduling has not been initialized",
+    schedule_v2_contract_not_set: "Scheduling has not been initialized",
+    schedule_v2_deploy_failed: "Schedule setup failed",
+    schedule_v2_contract_address_store_failed: "Schedule setup could not be saved"
+  };
+  if (known[raw]) return known[raw];
+  return raw
+    .replace(/schedule_v2/gi, "schedule")
+    .replace(/Schedule V2/g, "Schedule")
+    .replace(/_/g, " ");
 }
 
 function setBusy(btn,busy){ if(!btn)return; if(busy){btn.dataset.label=btn.textContent;btn.disabled=true;btn.textContent="Working…";}else{btn.disabled=false;if(btn.dataset.label)btn.textContent=btn.dataset.label;} }

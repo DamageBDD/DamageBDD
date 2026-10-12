@@ -227,7 +227,7 @@ start_phase(start_code_reload, _StartType, []) ->
     end,
     ok;
 start_phase(init_chain, _StartType, []) ->
-    _ = maybe_bootstrap_node_registry(),
+    _ = maybe_bootstrap_node_contracts(),
     ok;
 %% --- Essentials setup phase (parity with setup.sh) --------------------------
 start_phase(setup_essentials, _StartType, []) ->
@@ -253,14 +253,14 @@ resume_after_unlock() ->
     end),
     ok.
 
-maybe_bootstrap_node_registry() ->
+maybe_bootstrap_node_contracts() ->
     case node_unlocked() of
         true ->
-            ?LOG_INFO("Scheduling async node registry bootstrap."),
+            ?LOG_INFO("Scheduling async node contract bootstrap."),
             spawn(fun run_node_bootstrap/0),
             ok;
         false ->
-            ?LOG_INFO("Node registry bootstrap deferred until secrets are unlocked.", []),
+            ?LOG_INFO("Node contract bootstrap deferred until secrets are unlocked.", []),
             deferred
     end.
 
@@ -270,7 +270,7 @@ run_node_bootstrap() ->
     %% the store through the public secrets API prevents a raw DETS badarg.  The
     %% bootstrap module should still be migrated to secrets:* APIs directly.
     _ = ensure_secret_store_open(),
-    ?LOG_INFO("Initializing node registry only.", []),
+    ?LOG_INFO("Initializing node contracts.", []),
     try damage_contract_bootstrap:bootstrap_node_only() of
         {ok, Info} ->
             ?LOG_INFO("Node bootstrap initialized: ~p", [Info]),
@@ -311,15 +311,25 @@ maybe_load_schedules() ->
             ?LOG_INFO("Schedule loading deferred until secrets are unlocked.", []),
             deferred;
         true ->
-            try damage_schedule_v2:load_all_schedules() of
-                Result -> Result
-            catch
-                Class:Reason:Stacktrace ->
-                    ?LOG_ERROR(
-                        "Schedule loading failed class=~p reason=~p stack=~p",
-                        [Class, Reason, Stacktrace]
-                    ),
-                    {error, {schedule_load_failed, Class, Reason}}
+            %% The vault is node infrastructure. Ensure it exists before the
+            %% scheduler attempts to load jobs so startup never enters the
+            %% old "configured by dashboard" state.
+            case damage_contract_bootstrap:ensure_schedule_vault() of
+                {ok, Contract} ->
+                    ?LOG_INFO("Schedule vault ready: ~p", [Contract]),
+                    try damage_schedule_v2:load_all_schedules() of
+                        Result -> Result
+                    catch
+                        Class:Reason:Stacktrace ->
+                            ?LOG_ERROR(
+                                "Schedule loading failed class=~p reason=~p stack=~p",
+                                [Class, Reason, Stacktrace]
+                            ),
+                            {error, {schedule_load_failed, Class, Reason}}
+                    end;
+                {error, Reason} = Error ->
+                    ?LOG_ERROR("Schedule vault bootstrap failed: ~p", [Reason]),
+                    Error
             end
     end.
 

@@ -101,7 +101,7 @@ is_authorized(Req, #{action := setup} = State) ->
         {true, Req1, AuthState} ->
             Owner = maps:get(public_key, AuthState, undefined),
             NodeAdmin = maps:get(node_admin, AuthState, false),
-            Custodial = damage_schedule_v2_contract:is_custodial_wallet(Owner),
+            Custodial = is_custodial_request(AuthState, Owner),
             case NodeAdmin orelse Custodial of
                 true -> {true, Req1, AuthState};
                 false -> {{false, <<"Custodial wallet or node admin required">>}, Req1, AuthState}
@@ -126,7 +126,7 @@ content_types_accepted(Req, State) ->
     {[{{<<"application">>, <<"json">>, '*'}, from_json}], Req, State}.
 
 to_json(Req, #{action := status, public_key := Owner} = State) ->
-    Custodial = damage_schedule_v2_contract:is_custodial_wallet(Owner),
+    Custodial = is_custodial_request(State, Owner),
     Body =
         case damage_schedule_v2_contract:contract_address() of
             {ok, Contract} ->
@@ -168,9 +168,9 @@ to_json(Req, State) ->
 
 from_json(Req, #{action := setup, public_key := Owner} = State) ->
     Reply0 =
-        case maps:get(node_admin, State, false) of
+        case maps:get(node_admin, State, false) orelse is_custodial_request(State, Owner) of
             true -> damage_schedule_v2:setup_vault();
-            false -> damage_schedule_v2:ensure_vault(Owner)
+            false -> {error, forbidden}
         end,
     Reply =
         case Reply0 of
@@ -185,7 +185,12 @@ from_json(Req0, #{action := preview, public_key := Owner} = State) ->
     end);
 from_json(Req0, #{action := schedules, public_key := Owner} = State) ->
     with_json_body(Req0, State, fun(Json, Req) ->
-        reply_result(damage_schedule_v2:create(Owner, Json), Req, State)
+        Reply =
+            case ensure_request_vault(State, Owner) of
+                ok -> damage_schedule_v2:create(Owner, Json);
+                {error, _} = Error -> Error
+            end,
+        reply_result(Reply, Req, State)
     end);
 from_json(Req0, #{action := submit_tx, public_key := Owner} = State) ->
     with_json_body(Req0, State, fun(Json, Req) ->
@@ -240,6 +245,30 @@ reply_result({error, schedule_v2_contract_not_configured}, Req, State) ->
     );
 reply_result({error, Reason}, Req, State) ->
     reply_json(400, #{status => <<"notok">>, error => term_bin(Reason)}, Req, State).
+
+ensure_request_vault(State, Owner) ->
+    case damage_schedule_v2_contract:contract_address() of
+        {ok, _Contract} -> ok;
+        {error, schedule_v2_contract_not_configured} ->
+            case is_custodial_request(State, Owner) of
+                true ->
+                    case damage_schedule_v2:setup_vault() of
+                        {ok, _Contract} -> ok;
+                        {error, _} = Error -> Error
+                    end;
+                false ->
+                    {error, schedule_v2_contract_not_configured}
+            end;
+        {error, _} = Error -> Error
+    end.
+
+is_custodial_request(State, Owner) ->
+    case maps:get(auth_mode, State, undefined) of
+        custodial -> true;
+        <<"custodial">> -> true;
+        "custodial" -> true;
+        _ -> damage_schedule_v2_contract:is_custodial_wallet(Owner)
+    end.
 
 normalize_ok(#{status := signing_required} = M) ->
     maps:put(status, <<"signing_required">>, jsonable(M));

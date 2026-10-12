@@ -10,6 +10,7 @@
     bootstrap_node_only/0,
     bootstrap_node_admin/1,
     ensure_node_registry/0,
+    ensure_schedule_vault/0,
     ensure_admin_account_registry/1,
     ensure_named_contracts/2,
     init_admin_contracts/1
@@ -38,9 +39,22 @@
 -define(BUILD_RELEASE_NFT_PATH, "contracts/build_release_nft.aes").
 -define(DEFAULT_BUILD_RELEASE_ORACLE_TTL, 500000).
 
+-define(SCHEDULE_VAULT_NAME, <<"schedule_vault">>).
+-define(SCHEDULE_VAULT_ENV, schedule_v2_contract).
+-define(SCHEDULE_VAULT_PATH, "contracts/schedule_v2.aes").
+
 bootstrap_node_only() ->
     case ensure_node_registry() of
-        {ok, NodeRegistryCt} -> {ok, #{node_registry => NodeRegistryCt}};
+        {ok, NodeRegistryCt} ->
+            case ensure_schedule_vault() of
+                {ok, ScheduleVaultCt} ->
+                    {ok, #{
+                        node_registry => NodeRegistryCt,
+                        schedule_vault => ScheduleVaultCt
+                    }};
+                {error, _} = Error ->
+                    Error
+            end;
         {error, _} = Error -> Error
     end.
 
@@ -158,6 +172,139 @@ activate_node_registry(CtId) ->
             {ok, CtId};
         {error, _} = Error ->
             Error
+    end.
+
+%% The schedule vault is node infrastructure, not a per-user contract.
+%% Bootstrap it from the same node contract path as NodeRegistry so normal
+%% operation never depends on a browser session pressing a setup button.
+-spec ensure_schedule_vault() -> {ok, binary()} | {error, term()}.
+ensure_schedule_vault() ->
+    case node() of
+        nonode@nohost ->
+            %% The damage start phase currently runs before Erlang distribution
+            %% is established. Startup is single-threaded here, so use the
+            %% local path rather than depending on global before net_kernel.
+            ensure_schedule_vault_locked();
+        _ ->
+            Lock = {{?MODULE, schedule_vault}, self()},
+            case global:trans(Lock, fun ensure_schedule_vault_locked/0) of
+                aborted -> {error, schedule_vault_bootstrap_lock_aborted};
+                Result -> Result
+            end
+    end.
+
+ensure_schedule_vault_locked() ->
+    case local_contract_candidate(?SCHEDULE_VAULT_NAME, ?SCHEDULE_VAULT_ENV) of
+        {ok, CtId} ->
+            activate_schedule_vault(CtId);
+        missing ->
+            deploy_schedule_vault();
+        {error, _} = Error ->
+            Error
+    end.
+
+activate_schedule_vault(CtId) ->
+    case node_keypair() of
+        {ok, KeyPair} ->
+            case validate_schedule_vault(KeyPair, CtId) of
+                true ->
+                    case ensure_local_contract_sources(
+                        ?SCHEDULE_VAULT_NAME, ?SCHEDULE_VAULT_ENV, CtId
+                    ) of
+                        ok -> {ok, CtId};
+                        {error, _} = Error -> Error
+                    end;
+                false ->
+                    {error, {schedule_vault_validation_failed, CtId}}
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+deploy_schedule_vault() ->
+    case node_keypair() of
+        {ok, #{public_key := NodeAccount} = KeyPair} ->
+            TokenContract = damage_schedule_v2_contract:token_contract(),
+            ContractPath = damage_ae:contract_path(damage, ?SCHEDULE_VAULT_PATH),
+            Args = [binary_to_list(TokenContract), binary_to_list(NodeAccount)],
+            try
+                CtId = contract_id_from_deploy(
+                    schedule_vault,
+                    damage_ae:contract_deploy(KeyPair, ContractPath, Args)
+                ),
+                case validate_deployed_contract(
+                    KeyPair, CtId, fun validate_schedule_vault/2
+                ) of
+                    true -> activate_schedule_vault(CtId);
+                    false ->
+                        {error, {deployed_schedule_vault_validation_failed, CtId}}
+                end
+            catch
+                Class:Reason:Stacktrace ->
+                    ?LOG_ERROR(
+                        "Schedule vault deployment failed class=~p reason=~p stack=~p",
+                        [Class, Reason, Stacktrace]
+                    ),
+                    {error, {schedule_vault_deploy_failed, Class, Reason}}
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+validate_schedule_vault(KeyPair, CtId) ->
+    ExpectedToken = damage_schedule_v2_contract:token_contract(),
+    ExpectedExecutor = damage_utils:to_bin(maps:get(public_key, KeyPair)),
+    case {
+        schedule_vault_address(KeyPair, CtId, "token_contract", contract_pubkey),
+        schedule_vault_address(KeyPair, CtId, "executor", account_pubkey)
+    } of
+        {{ok, ExpectedToken}, {ok, ExpectedExecutor}} ->
+            true;
+        {TokenResult, ExecutorResult} ->
+            ?LOG_WARNING(
+                "Schedule vault validation mismatch ct=~p token=~p executor=~p",
+                [CtId, TokenResult, ExecutorResult]
+            ),
+            false
+    end.
+
+schedule_vault_address(KeyPair, CtId, Function, EncoderType) ->
+    ContractPath = damage_ae:contract_path(damage, ?SCHEDULE_VAULT_PATH),
+    case damage_ae:contract_query(KeyPair, CtId, ContractPath, Function, []) of
+        #{"return_type" := "ok", "return_value" := Value} ->
+            normalize_schedule_vault_address(Value, EncoderType);
+        #{<<"return_type">> := <<"ok">>, <<"return_value">> := Value} ->
+            normalize_schedule_vault_address(Value, EncoderType);
+        #{return_type := ok, return_value := Value} ->
+            normalize_schedule_vault_address(Value, EncoderType);
+        Other ->
+            {error, {schedule_vault_query_failed, Function, Other}}
+    end.
+
+normalize_schedule_vault_address({address, Raw}, EncoderType)
+    when is_binary(Raw), byte_size(Raw) =:= 32 ->
+    try
+        {ok, damage_utils:to_bin(aeser_api_encoder:encode(EncoderType, Raw))}
+    catch
+        Class:Reason -> {error, {schedule_vault_address_encode_failed, Class, Reason}}
+    end;
+normalize_schedule_vault_address(Value, _EncoderType) when is_binary(Value) ->
+    {ok, Value};
+normalize_schedule_vault_address(Value, _EncoderType) when is_list(Value) ->
+    {ok, unicode:characters_to_binary(Value)};
+normalize_schedule_vault_address(Value, _EncoderType) ->
+    {error, {unexpected_schedule_vault_address, Value}}.
+
+node_keypair() ->
+    try secrets:node_keypair() of
+        #{public_key := Pub, private_key := Priv} = KeyPair
+            when is_binary(Pub), is_binary(Priv) ->
+            {ok, KeyPair};
+        Other ->
+            {error, {node_keypair_unavailable, Other}}
+    catch
+        Class:Reason ->
+            {error, {node_keypair_unavailable, Class, Reason}}
     end.
 
 ensure_admin_account_registry(NodeAdminAccount) ->
