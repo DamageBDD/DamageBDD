@@ -41,7 +41,17 @@
     release_candidate_tags/0,
     release_candidate_tags/1,
     release_candidate_tag_description/0,
-    release_candidate_tag_description/1
+    release_candidate_tag_description/1,
+    release_version/0,
+    release_version/1,
+    release_tag_description/0,
+    release_tag_description/1,
+    tag_release_candidate/0,
+    tag_release_candidate/1,
+    tag_release/0,
+    tag_release/1,
+    tag_version/1,
+    tag_version/2
 ]).
 
 refresh() ->
@@ -138,6 +148,20 @@ release_candidate_tags(Opts) when is_map(Opts) -> ecai_release_candidate:tags(Op
 release_candidate_tag_description() -> ecai_release_candidate:description().
 release_candidate_tag_description(Opts) when is_map(Opts) ->
     ecai_release_candidate:description(Opts).
+
+release_version() -> ecai_release_candidate:propose_release().
+release_version(Opts) when is_map(Opts) -> ecai_release_candidate:propose_release(Opts).
+release_tag_description() -> ecai_release_candidate:release_description().
+release_tag_description(Opts) when is_map(Opts) ->
+    ecai_release_candidate:release_description(Opts).
+
+tag_release_candidate() -> ecai_release_candidate:tag_release_candidate().
+tag_release_candidate(Opts) when is_map(Opts) ->
+    ecai_release_candidate:tag_release_candidate(Opts).
+tag_release() -> ecai_release_candidate:tag_release().
+tag_release(Opts) when is_map(Opts) -> ecai_release_candidate:tag_release(Opts).
+tag_version(Kind) -> ecai_release_candidate:tag(Kind).
+tag_version(Kind, Opts) when is_map(Opts) -> ecai_release_candidate:tag(Kind, Opts).
 
 checkpoint_summary({ok, Checkpoint}) when is_map(Checkpoint) ->
     {ok, maps:without([queue, inflight_entries], Checkpoint)};

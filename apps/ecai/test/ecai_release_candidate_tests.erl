@@ -69,6 +69,72 @@ current_tags_are_reported_test() ->
         ?assert(lists:member(<<"v0.9.0">>, maps:get(tags_at_head, Tags)))
     end).
 
+propose_release_from_latest_rc_test() ->
+    with_repo(fun(Repo) ->
+        ok = git(Repo, ["tag", "v1.2.3"]),
+        ok = commit(Repo, "prepare rc"),
+        ok = git(Repo, ["tag", "v1.2.4-rc.1"]),
+        {ok, Proposal} = ecai_release_candidate:propose_release(#{repo_root => Repo}),
+        ?assertEqual(<<"v1.2.4">>, maps:get(tag, Proposal)),
+        ?assertEqual(stable, maps:get(release_kind, Proposal)),
+        ?assertEqual(<<"v1.2.4-rc.1">>, maps:get(base_tag, Proposal))
+    end).
+
+tag_release_candidate_creates_annotated_tag_test() ->
+    with_repo(fun(Repo) ->
+        {ok, Result} = ecai_release_candidate:tag_release_candidate(#{
+            repo_root => Repo,
+            require_learning_reference => false
+        }),
+        ?assertEqual(true, maps:get(created, Result)),
+        ?assertEqual(rc, maps:get(release_kind, Result)),
+        Tag = maps:get(tag, Result),
+        {ok, Head0} = git_command(Repo, ["rev-parse", "HEAD"]),
+        {ok, Tagged0} = git_command(Repo, ["rev-list", "-n", "1", binary_to_list(Tag)]),
+        ?assertEqual(trim_bin(Head0), trim_bin(Tagged0)),
+        {ok, Object} = git_command(Repo, ["cat-file", "-p", binary_to_list(Tag)]),
+        ?assert(binary:match(Object, <<"ECAI learning provenance">>) =/= nomatch),
+        ?assert(binary:match(Object, <<"ECAI-Learning-Reference: unavailable">>) =/= nomatch)
+    end).
+
+tag_release_finalizes_latest_rc_test() ->
+    with_repo(fun(Repo) ->
+        ok = git(Repo, ["tag", "v2.0.0-rc.1"]),
+        {ok, Result} = ecai_release_candidate:tag_release(#{
+            repo_root => Repo,
+            require_learning_reference => false
+        }),
+        ?assertEqual(<<"v2.0.0">>, maps:get(tag, Result)),
+        ?assertEqual(stable, maps:get(release_kind, Result)),
+        {ok, Object} = git_command(Repo, ["cat-file", "-p", "v2.0.0"]),
+        ?assert(binary:match(Object, <<"ECAI-Release-Kind: release">>) =/= nomatch)
+    end).
+
+non_head_tagging_is_rejected_to_protect_learning_binding_test() ->
+    with_repo(fun(Repo) ->
+        {ok, Old0} = git_command(Repo, ["rev-parse", "HEAD"]),
+        Old = trim_bin(Old0),
+        ok = commit(Repo, "new head"),
+        ?assertMatch(
+            {error, {learning_commit_mismatch, _}},
+            ecai_release_candidate:tag_release_candidate(#{
+                repo_root => Repo,
+                commit => Old,
+                require_learning_reference => false
+            })
+        )
+    end).
+
+explicit_release_version_test() ->
+    with_repo(fun(Repo) ->
+        {ok, Proposal} = ecai_release_candidate:propose_release(#{
+            repo_root => Repo,
+            version => <<"3.2.1">>
+        }),
+        ?assertEqual(<<"v3.2.1">>, maps:get(tag, Proposal)),
+        ?assertEqual(explicit, maps:get(proposal_source, Proposal))
+    end).
+
 with_repo(Fun) ->
     Base = filename:join(
         "/tmp",
@@ -105,6 +171,9 @@ git_command(Cwd, Args) ->
             Port = open_port({spawn_executable, Exe}, [binary, exit_status, stderr_to_stdout, {args, ["-C", Cwd | Args]}]),
             collect_git(Port, <<>>)
     end.
+
+trim_bin(Bin) ->
+    unicode:characters_to_binary(string:trim(binary_to_list(Bin))).
 
 collect_git(Port, Acc) ->
     receive
