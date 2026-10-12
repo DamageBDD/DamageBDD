@@ -1,0 +1,27 @@
+// Tax evidence anchor. Only digest commitments go on chain, never transaction details.
+// Each call creates an immutable event; revisions create additional events.
+// No claim that the accountant's classification is necessarily correct.
+@compiler >= 6
+include "String.aes"
+
+contract TaxEvidenceAnchor =
+
+  record state = { count : int }
+
+  datatype event = ReportCommitted(address, string, string, string, string)
+
+  entrypoint init() = { count = 0 }
+
+  entrypoint count() : int = state.count
+
+  stateful entrypoint commit(period : string,
+                             manifest_sha256 : string,
+                             evidence_set_sha256 : string,
+                             ruleset : string) =
+    require(String.length(period) >= 4, "BAD_PERIOD")
+    require(String.length(manifest_sha256) == 64, "BAD_MANIFEST_HASH")
+    require(String.length(evidence_set_sha256) == 64, "BAD_EVIDENCE_HASH")
+    require(String.length(ruleset) > 0, "BAD_RULESET")
+    Chain.event(ReportCommitted(Call.caller, period, manifest_sha256,
+                                evidence_set_sha256, ruleset))
+    put(state{ count = state.count + 1 })
