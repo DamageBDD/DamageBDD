@@ -553,12 +553,6 @@ function restoreFeatureDraftFromShareLink() {
 
 				if (typeof window.initInstallForm === 'function') window.initInstallForm();
 
-				if(modal.id == 'wallet-modal'){
-					var address = window.TokenManager.getAddress();
-					generateDamageQR(address);
-					var damageAddr = document.getElementById("damage-address");
-					damageAddr.value = address;
-				}
 			}
 		});
 
@@ -699,6 +693,10 @@ function restoreFeatureDraftFromShareLink() {
                 event.preventDefault();
                 try {
                     await window.logoutActiveSession();
+                    // Do not leave the confirmation dialog painted while the logged-out
+                    // page boots and the auth dialog auto-opens. Only one modal should
+                    // ever be visible during the sign-out transition.
+                    try { MicroModal.close("logout-modal"); } catch (_e) {}
                     window.location.reload();
                 } catch (error) {
                     showNotification({title: "Sign-out not confirmed", content: error.message, style: "error"});
@@ -711,9 +709,13 @@ function restoreFeatureDraftFromShareLink() {
 			if (logoutBtn) {
 				logoutBtn.addEventListener("click", (event) => {
 					event.preventDefault();
+					event.stopPropagation();
+					// Sign-out confirmation is mutually exclusive with authentication.
+					// This also cleans up a stale/auto-open auth modal before confirming.
+					try { MicroModal.close("login-modal"); } catch (_e) {}
 					MicroModal.show("logout-modal");
-			});
-		}
+				});
+			}
 
 		showHideLoginButton();
 
@@ -735,7 +737,6 @@ function restoreFeatureDraftFromShareLink() {
 			async (event) => {
 				event.preventDefault();
 				await generateInvoice();
-				MicroModal.close("wallet-modal");
 			}
 		);
 		wrapApiForm(
@@ -744,7 +745,6 @@ function restoreFeatureDraftFromShareLink() {
 			async (event) => {
 				event.preventDefault();
 				await generateLedgerInvoice();
-				MicroModal.close("wallet-modal");
 			}
 		);
         if (window.TokenManager.getMode() !== "extension") loadNodeStatus()
@@ -778,7 +778,7 @@ function restoreFeatureDraftFromShareLink() {
 		if (openWalletModalBtn) {
 			openWalletModalBtn.addEventListener("click", (event) => {
 				event.preventDefault();
-				MicroModal.show("wallet-modal");
+				initDashboardNavigation()?.navigate("wallet-tab");
 			});
 		}
 
@@ -810,13 +810,6 @@ function restoreFeatureDraftFromShareLink() {
 			gateway: "/features/",
 			samplesIndexUrl: "/samples/features/index.json"
 		}).catch(error => console.warn("Feature picker initialization failed:", error));
-		var tabs =Tabby('[data-token-tabs]');
-		document.addEventListener('tabby', function (event) {
-			var tab = event.target;
-			var content = event.detail.content;
-			console.log("switch tab");
-			console.log(event);
-		}, false);
 
 		document.getElementById("damageTextArea").addEventListener("keydown", async function(event) {
 			if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
@@ -2156,9 +2149,6 @@ function restoreFeatureDraftFromShareLink() {
 
 	function generateInvoice() {
 		var amount = document.getElementById('invoice-amount').value;
-		try{
-			MicroModal.close('wallet-modal');
-		}catch(e){};
 		MicroModal.show("invoice-modal");
 		const request = {
 			method: 'POST',

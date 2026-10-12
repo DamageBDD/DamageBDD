@@ -42,6 +42,10 @@ export function initAuthUI({request = fetch, browserConnect = authWallet.connect
   }
   function open(mode = 'login') {
     if (busy) return;
+    // A sign-out confirmation must never stack on top of, or underneath, the
+    // authentication dialog. Automatic auth opens (expiry/callback/bootstrap)
+    // are deferred until the confirmation is gone.
+    if (document.getElementById('logout-modal')?.classList.contains('is-open')) return;
     epoch++;
     resetChallenge();
     for (const el of root.querySelectorAll('[data-auth-panel]')) el.hidden = el.dataset.authPanel !== mode;
