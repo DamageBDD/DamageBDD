@@ -35,8 +35,7 @@
 contract_address() ->
     case application:get_env(damage, schedule_v2_contract) of
         {ok, Value} -> {ok, to_bin(Value)};
-        undefined ->
-            retrieve_stored_contract_address()
+        undefined -> retrieve_stored_contract_address()
     end.
 
 retrieve_stored_contract_address() ->
@@ -156,7 +155,8 @@ prepare_user_call(Owner, Func, Args) ->
                     #{public_key => to_bin(Owner)}, Contract, contract_source(), Func, Args
                 )
             end);
-        Error -> Error
+        Error ->
+            Error
     end.
 
 prepare_allowance(Owner0, RequestedAmount0) ->
@@ -172,16 +172,24 @@ prepare_allowance(Owner0, RequestedAmount0) ->
                     false ->
                         {"create_allowance", [to_s(Contract), integer_to_list(RequestedAmount)]}
                 end,
-            case safe_eval(fun() ->
-                damage_ae:contract_call_prepare_tx(
-                    #{public_key => Owner}, token_contract(), token_source(), Func, Args
-                )
-            end) of
+            case
+                safe_eval(fun() ->
+                    damage_ae:contract_call_prepare_tx(
+                        #{public_key => Owner}, token_contract(), token_source(), Func, Args
+                    )
+                end)
+            of
                 {ok, Tx} ->
-                    {ok, #{tx => Tx, allowance_action => list_to_binary(Func), amount => RequestedAmount}};
-                Error -> Error
+                    {ok, #{
+                        tx => Tx,
+                        allowance_action => list_to_binary(Func),
+                        amount => RequestedAmount
+                    }};
+                Error ->
+                    Error
             end;
-        Error -> Error
+        Error ->
+            Error
     end.
 
 approve_allowance(Owner0, RequestedAmount0) ->
@@ -192,24 +200,29 @@ approve_allowance(Owner0, RequestedAmount0) ->
             Exists = allowance_exists(Owner, Contract),
             {Func, Args} =
                 case Exists of
-                    true -> {"change_allowance", [to_s(Contract), integer_to_list(RequestedAmount)]};
-                    false -> {"create_allowance", [to_s(Contract), integer_to_list(RequestedAmount)]}
+                    true ->
+                        {"change_allowance", [to_s(Contract), integer_to_list(RequestedAmount)]};
+                    false ->
+                        {"create_allowance", [to_s(Contract), integer_to_list(RequestedAmount)]}
                 end,
             safe_eval(fun() ->
                 damage_ae:contract_call(Owner, token_contract(), token_source(), Func, Args)
             end);
-        Error -> Error
+        Error ->
+            Error
     end.
 
 allowance_exists(Owner, Contract) ->
     KeyPair = #{public_key => Owner, private_key => <<>>},
-    try damage_ae:contract_call_dry(
-        KeyPair,
-        token_contract(),
-        token_source(),
-        "change_allowance",
-        [to_s(Contract), "0"]
-    ) of
+    try
+        damage_ae:contract_call_dry(
+            KeyPair,
+            token_contract(),
+            token_source(),
+            "change_allowance",
+            [to_s(Contract), "0"]
+        )
+    of
         Result -> call_result_ok(Result)
     catch
         _:_ -> false
@@ -224,7 +237,8 @@ call_user(Owner0, Func, Args) ->
                     safe_eval(fun() ->
                         damage_ae:contract_call(Owner, Contract, contract_source(), Func, Args)
                     end);
-                Error -> Error
+                Error ->
+                    Error
             end;
         false ->
             case prepare_user_call(Owner, Func, Args) of
@@ -243,7 +257,8 @@ call_node_owner(Func, Args) ->
             safe_eval(fun() ->
                 damage_ae:contract_call(KeyPair, Contract, contract_source(), Func, Args)
             end);
-        Error -> Error
+        Error ->
+            Error
     end.
 
 post_signed(SignedTx0) ->
@@ -251,12 +266,14 @@ post_signed(SignedTx0) ->
     case vanillae:post_tx(SignedTx) of
         {ok, Posted} when is_map(Posted) ->
             case map_get_any(["tx_hash", <<"tx_hash">>, tx_hash], Posted, undefined) of
-                undefined -> {error, {missing_tx_hash, Posted}};
+                undefined ->
+                    {error, {missing_tx_hash, Posted}};
                 TxHash ->
                     Result = damage_ae:wait_tx(TxHash),
                     {ok, Result}
             end;
-        Error -> {error, {post_tx_failed, Error}}
+        Error ->
+            {error, {post_tx_failed, Error}}
     end.
 
 wait_tx_hash(TxHash0) ->
@@ -267,11 +284,13 @@ wait_tx_hash(TxHash0) ->
         Class:Reason:Stack -> {error, {wait_tx_failed, Class, Reason, Stack}}
     end.
 
-call_result_ok({ok, Result}) -> call_result_ok(Result);
+call_result_ok({ok, Result}) ->
+    call_result_ok(Result);
 call_result_ok(Result) when is_map(Result) ->
     Value = map_get_any(["return_type", <<"return_type">>, return_type], Result, undefined),
     Value =:= "ok" orelse Value =:= <<"ok">> orelse Value =:= ok;
-call_result_ok(_) -> false.
+call_result_ok(_) ->
+    false.
 
 is_custodial_wallet(undefined) ->
     false;
@@ -298,7 +317,8 @@ map_get_any([K | Rest], Map, Default) ->
         {ok, V} -> V;
         error -> map_get_any(Rest, Map, Default)
     end;
-map_get_any([], _Map, Default) -> Default.
+map_get_any([], _Map, Default) ->
+    Default.
 
 to_s(B) when is_binary(B) -> binary_to_list(B);
 to_s(L) when is_list(L) -> L;

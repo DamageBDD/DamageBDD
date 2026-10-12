@@ -113,7 +113,8 @@ with_cid_path(Path0, Fun) when is_function(Fun, 1) ->
     end.
 
 normalize_cid_path(Path0) when is_list(Path0) ->
-    try normalize_cid_path(unicode:characters_to_binary(Path0))
+    try
+        normalize_cid_path(unicode:characters_to_binary(Path0))
     catch
         _:_ -> {error, invalid_ipfs_path}
     end;

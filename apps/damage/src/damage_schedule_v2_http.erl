@@ -106,15 +106,17 @@ is_authorized(Req, #{action := setup} = State) ->
                 true -> {true, Req1, AuthState};
                 false -> {{false, <<"Custodial wallet or node admin required">>}, Req1, AuthState}
             end;
-        Other -> Other
+        Other ->
+            Other
     end;
 is_authorized(Req, State) ->
     damage_http:is_authorized(Req, State).
 
 allowed_methods(Req, #{action := schedules} = State) ->
     {[<<"GET">>, <<"POST">>], Req, State};
-allowed_methods(Req, #{action := Action} = State)
-    when Action =:= status; Action =:= analytics; Action =:= schedule; Action =:= runs ->
+allowed_methods(Req, #{action := Action} = State) when
+    Action =:= status; Action =:= analytics; Action =:= schedule; Action =:= runs
+->
     {[<<"GET">>], Req, State};
 allowed_methods(Req, State) ->
     {[<<"POST">>], Req, State}.
@@ -175,8 +177,12 @@ from_json(Req, #{action := setup, public_key := Owner} = State) ->
     Reply =
         case Reply0 of
             {ok, Contract} ->
-                {ok, #{contract => Contract, token_contract => damage_schedule_v2_contract:token_contract()}};
-            {error, _} = Error -> Error
+                {ok, #{
+                    contract => Contract,
+                    token_contract => damage_schedule_v2_contract:token_contract()
+                }};
+            {error, _} = Error ->
+                Error
         end,
     reply_result(Reply, Req, State);
 from_json(Req0, #{action := preview, public_key := Owner} = State) ->
@@ -213,13 +219,20 @@ from_json(Req, State) ->
 
 with_json_body(Req0, State, Fun) ->
     case cowboy_req:read_body(Req0) of
-        {ok, <<>>, Req} -> Fun(#{}, Req);
+        {ok, <<>>, Req} ->
+            Fun(#{}, Req);
         {ok, Raw, Req} ->
             try jsx:decode(Raw, [{labels, atom}, return_maps]) of
                 Json when is_map(Json) -> Fun(Json, Req);
-                _ -> reply_json(400, #{status => <<"notok">>, error => <<"invalid_json">>}, Req, State)
+                _ ->
+                    reply_json(
+                        400, #{status => <<"notok">>, error => <<"invalid_json">>}, Req, State
+                    )
             catch
-                _:_ -> reply_json(400, #{status => <<"notok">>, error => <<"invalid_json">>}, Req, State)
+                _:_ ->
+                    reply_json(
+                        400, #{status => <<"notok">>, error => <<"invalid_json">>}, Req, State
+                    )
             end;
         {more, _Raw, Req} ->
             reply_json(413, #{status => <<"notok">>, error => <<"body_too_large">>}, Req, State)
@@ -248,7 +261,8 @@ reply_result({error, Reason}, Req, State) ->
 
 ensure_request_vault(State, Owner) ->
     case damage_schedule_v2_contract:contract_address() of
-        {ok, _Contract} -> ok;
+        {ok, _Contract} ->
+            ok;
         {error, schedule_v2_contract_not_configured} ->
             case is_custodial_request(State, Owner) of
                 true ->
@@ -259,7 +273,8 @@ ensure_request_vault(State, Owner) ->
                 false ->
                     {error, schedule_v2_contract_not_configured}
             end;
-        {error, _} = Error -> Error
+        {error, _} = Error ->
+            Error
     end.
 
 is_custodial_request(State, Owner) ->
@@ -274,12 +289,16 @@ normalize_ok(#{status := signing_required} = M) ->
     maps:put(status, <<"signing_required">>, jsonable(M));
 normalize_ok(M) when is_map(M) ->
     maps:put(status, <<"ok">>, jsonable(M));
-normalize_ok(V) -> #{status => <<"ok">>, data => jsonable(V)}.
+normalize_ok(V) ->
+    #{status => <<"ok">>, data => jsonable(V)}.
 
 reply_json(Status, Body, Req0, State) ->
     Req = cowboy_req:reply(
         Status,
-        #{<<"content-type">> => <<"application/json; charset=utf-8">>, <<"cache-control">> => <<"no-store">>},
+        #{
+            <<"content-type">> => <<"application/json; charset=utf-8">>,
+            <<"cache-control">> => <<"no-store">>
+        },
         jsx:encode(jsonable(Body)),
         Req0
     ),
@@ -288,8 +307,13 @@ reply_json(Status, Body, Req0, State) ->
 qs_int(Key, Qs, Default) ->
     case lists:keyfind(Key, 1, Qs) of
         {Key, Value} ->
-            try binary_to_integer(Value) catch _:_ -> Default end;
-        false -> Default
+            try
+                binary_to_integer(Value)
+            catch
+                _:_ -> Default
+            end;
+        false ->
+            Default
     end.
 
 jsonable(M) when is_map(M) ->
@@ -301,7 +325,8 @@ jsonable(L) when is_list(L) ->
     end;
 jsonable(A) when is_atom(A) -> atom_to_binary(A, utf8);
 jsonable(T) when is_tuple(T) -> [jsonable(V) || V <- tuple_to_list(T)];
-jsonable(V) -> V.
+jsonable(V) ->
+    V.
 
 json_key(K) when is_atom(K) -> atom_to_binary(K, utf8);
 json_key(K) -> K.

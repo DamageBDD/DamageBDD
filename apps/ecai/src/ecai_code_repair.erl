@@ -65,7 +65,8 @@ replay_feedback() ->
 
 is_feedback_repair(Repair) when is_map(Repair) ->
     maps:is_key(repair_source, Repair) orelse maps:is_key(feedback, Repair);
-is_feedback_repair(_) -> false.
+is_feedback_repair(_) ->
+    false.
 
 find_finding(_Fingerprint, []) ->
     not_found;

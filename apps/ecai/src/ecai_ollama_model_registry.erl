@@ -36,7 +36,8 @@ show(Name) ->
                     <<"ecai.profile">> => to_binary(maps:get(profile, Model))
                 }
             }};
-        {error, _} = Error -> Error
+        {error, _} = Error ->
+            Error
     end.
 
 process_models() ->
@@ -67,10 +68,11 @@ chat_capable(Node) ->
 node_models(Node) ->
     Provider = maps:get(provider, Node, ollama),
     Discovered = maps:get(discovered_models, Node, #{}),
-    ModelPairs = case maps:size(Discovered) of
-        0 -> configured_model_pairs(Node);
-        _ -> maps:to_list(Discovered)
-    end,
+    ModelPairs =
+        case maps:size(Discovered) of
+            0 -> configured_model_pairs(Node);
+            _ -> maps:to_list(Discovered)
+        end,
     [base_model(Provider, Model, Info, Node) || {Model, Info} <- ModelPairs].
 
 configured_model_pairs(Node) ->
@@ -106,42 +108,58 @@ public_name(openai, Model) -> <<"openai/", Model/binary>>;
 public_name(Provider, Model) -> <<(to_binary(Provider))/binary, "/", Model/binary>>.
 
 enhanced_models(Base) ->
-    [Base#{
-        name => enhanced_name(maps:get(name, Base), Profile),
-        profile => Profile,
-        digest => virtual_digest(Base, Profile)
-    }
-     || Profile <- ?PROFILES].
+    [
+        Base#{
+            name => enhanced_name(maps:get(name, Base), Profile),
+            profile => Profile,
+            digest => virtual_digest(Base, Profile)
+        }
+     || Profile <- ?PROFILES
+    ].
 
 enhanced_name(BaseName, rag) -> <<"ecai/", BaseName/binary, "-rag-v1">>;
 enhanced_name(BaseName, code) -> <<"ecai/", BaseName/binary, "-code-v1">>;
 enhanced_name(BaseName, strict) -> <<"ecai/", BaseName/binary, "-strict-v1">>.
 
-aliases([]) -> [];
+aliases([]) ->
+    [];
 aliases(Base) ->
-    DefaultBackend = to_binary(application:get_env(
-        ecai, ollama_api_default_model,
-        application:get_env(ecai, code_ollama_model, "qwen3-coder:30b")
-    )),
-    Preferred = case [M || M <- Base, maps:get(backend_model, M) =:= DefaultBackend] of
-        [M | _] -> M;
-        [] -> hd(Base)
-    end,
+    DefaultBackend = to_binary(
+        application:get_env(
+            ecai,
+            ollama_api_default_model,
+            application:get_env(ecai, code_ollama_model, "qwen3-coder:30b")
+        )
+    ),
+    Preferred =
+        case [M || M <- Base, maps:get(backend_model, M) =:= DefaultBackend] of
+            [M | _] -> M;
+            [] -> hd(Base)
+        end,
     [
-        Preferred#{name => <<"ecai/chat:latest">>, profile => rag,
-            digest => virtual_digest(Preferred, rag)},
-        Preferred#{name => <<"ecai/code:latest">>, profile => code,
-            digest => virtual_digest(Preferred, code)}
+        Preferred#{
+            name => <<"ecai/chat:latest">>,
+            profile => rag,
+            digest => virtual_digest(Preferred, rag)
+        },
+        Preferred#{
+            name => <<"ecai/code:latest">>,
+            profile => code,
+            digest => virtual_digest(Preferred, code)
+        }
     ].
 
 virtual_digest(Base, Profile) ->
-    Material = term_to_binary({
-        ecai_ollama_virtual_model_v1,
-        maps:get(provider, Base),
-        maps:get(backend_model, Base),
-        maps:get(digest, Base, <<>>),
-        Profile
-    }, [deterministic]),
+    Material = term_to_binary(
+        {
+            ecai_ollama_virtual_model_v1,
+            maps:get(provider, Base),
+            maps:get(backend_model, Base),
+            maps:get(digest, Base, <<>>),
+            Profile
+        },
+        [deterministic]
+    ),
     binary:encode_hex(crypto:hash(sha256, Material)).
 
 capabilities(Info) ->
@@ -151,22 +169,28 @@ capabilities(Info) ->
     end.
 
 dedupe_by_name(Models) ->
-    maps:values(lists:foldl(
-        fun(M, Acc) -> Acc#{maps:get(name, M) => M} end,
-        #{}, Models
-    )).
+    maps:values(
+        lists:foldl(
+            fun(M, Acc) -> Acc#{maps:get(name, M) => M} end,
+            #{},
+            Models
+        )
+    ).
 
 dedupe_by_target(Models) ->
-    maps:values(lists:foldl(
-        fun(M, Acc) ->
-            Key = {maps:get(provider, M), maps:get(backend_model, M)},
-            case maps:is_key(Key, Acc) of
-                true -> Acc;
-                false -> Acc#{Key => M}
-            end
-        end,
-        #{}, Models
-    )).
+    maps:values(
+        lists:foldl(
+            fun(M, Acc) ->
+                Key = {maps:get(provider, M), maps:get(backend_model, M)},
+                case maps:is_key(Key, Acc) of
+                    true -> Acc;
+                    false -> Acc#{Key => M}
+                end
+            end,
+            #{},
+            Models
+        )
+    ).
 
 process_model(Node) ->
     Model = maps:get(default_model, Node, <<>>),
@@ -192,18 +216,23 @@ first_nonempty([]) -> <<>>;
 first_nonempty([H | T]) when is_binary(H), byte_size(H) > 0 -> H;
 first_nonempty([_ | T]) -> first_nonempty(T).
 
-normalize_time(undefined) -> now_iso8601();
+normalize_time(undefined) ->
+    now_iso8601();
 normalize_time(I) when is_integer(I), I > 0 ->
     try calendar:system_time_to_rfc3339(I, [{unit, second}, {offset, "Z"}]) of
         S -> to_binary(S)
-    catch _:_ -> now_iso8601()
+    catch
+        _:_ -> now_iso8601()
     end;
-normalize_time(V) -> to_binary(V).
+normalize_time(V) ->
+    to_binary(V).
 
 now_iso8601() ->
-    to_binary(calendar:system_time_to_rfc3339(erlang:system_time(second), [
-        {unit, second}, {offset, "Z"}
-    ])).
+    to_binary(
+        calendar:system_time_to_rfc3339(erlang:system_time(second), [
+            {unit, second}, {offset, "Z"}
+        ])
+    ).
 
 to_binary(B) when is_binary(B) -> B;
 to_binary(A) when is_atom(A) -> atom_to_binary(A, utf8);

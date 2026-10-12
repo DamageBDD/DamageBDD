@@ -10,8 +10,10 @@ start_greeter_display() -> start(display_number(), "erm-greeter-x11.auth").
 
 start(N, AuthName) ->
     case {os:find_executable("Xorg"), os:find_executable("xauth")} of
-        {false, _} -> {error, xorg_not_found};
-        {_, false} -> {error, xauth_not_found};
+        {false, _} ->
+            {error, xorg_not_found};
+        {_, false} ->
+            {error, xauth_not_found};
         {Xorg, Xauth} ->
             Display = ":" ++ integer_to_list(N),
             case runtime_dir() of
@@ -21,22 +23,47 @@ start(N, AuthName) ->
                     Cookie = hex_cookie(crypto:strong_rand_bytes(16)),
                     case run(Xauth, ["-f", XA, "add", Display, ".", Cookie], 3000) of
                         {ok, _} ->
-                            Args = [Display, "-auth", XA, "-nolisten", "tcp", "-keeptty" | vt_args()],
-                            Port = open_port({spawn_executable, Xorg}, [binary, exit_status, stderr_to_stdout, {args, Args}]),
+                            Args = [
+                                Display, "-auth", XA, "-nolisten", "tcp", "-keeptty" | vt_args()
+                            ],
+                            Port = open_port({spawn_executable, Xorg}, [
+                                binary, exit_status, stderr_to_stdout, {args, Args}
+                            ]),
                             case wait_socket(N, Port, 10000) of
-                                ok -> {ok, #{port => Port, display => list_to_binary(Display), xauthority => list_to_binary(XA)}};
-                                Error -> _ = try port_close(Port) catch _:_ -> ok end, file:delete(XA), Error
+                                ok ->
+                                    {ok, #{
+                                        port => Port,
+                                        display => list_to_binary(Display),
+                                        xauthority => list_to_binary(XA)
+                                    }};
+                                Error ->
+                                    _ =
+                                        try
+                                            port_close(Port)
+                                        catch
+                                            _:_ -> ok
+                                        end,
+                                    file:delete(XA),
+                                    Error
                             end;
-                        Error -> file:delete(XA), Error
+                        Error ->
+                            file:delete(XA),
+                            Error
                     end;
-                Error -> Error
+                Error ->
+                    Error
             end
     end.
 
 runtime_dir() ->
     case os:getenv("XDG_RUNTIME_DIR") of
-        false -> {error, xdg_runtime_dir_missing};
-        Dir -> case filelib:is_dir(Dir) of true -> {ok, Dir}; false -> {error, invalid_xdg_runtime_dir} end
+        false ->
+            {error, xdg_runtime_dir_missing};
+        Dir ->
+            case filelib:is_dir(Dir) of
+                true -> {ok, Dir};
+                false -> {error, invalid_xdg_runtime_dir}
+            end
     end.
 
 ensure_private_file(Path) ->
@@ -68,6 +95,24 @@ wait_socket(N, Port, Remaining) ->
         end
     end.
 
-run(Exec, Args, Timeout) -> collect(open_port({spawn_executable, Exec}, [binary, exit_status, stderr_to_stdout, {args, Args}]), <<>>, Timeout).
-collect(P, A, T) -> receive {P,{data,D}} -> collect(P,<<A/binary,D/binary>>,T); {P,{exit_status,0}} -> {ok,A}; {P,{exit_status,S}} -> {error,{exit_status,S}} after T -> _ = try port_close(P) catch _:_ -> ok end, {error,timeout} end.
+run(Exec, Args, Timeout) ->
+    collect(
+        open_port({spawn_executable, Exec}, [binary, exit_status, stderr_to_stdout, {args, Args}]),
+        <<>>,
+        Timeout
+    ).
+collect(P, A, T) ->
+    receive
+        {P, {data, D}} -> collect(P, <<A/binary, D/binary>>, T);
+        {P, {exit_status, 0}} -> {ok, A};
+        {P, {exit_status, S}} -> {error, {exit_status, S}}
+    after T ->
+        _ =
+            try
+                port_close(P)
+            catch
+                _:_ -> ok
+            end,
+        {error, timeout}
+    end.
 hex_cookie(Bin) -> lists:flatten([io_lib:format("~2.16.0b", [B]) || <<B>> <= Bin]).

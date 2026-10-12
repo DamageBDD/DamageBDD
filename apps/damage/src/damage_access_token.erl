@@ -94,21 +94,43 @@ verify_token(TokenBin) when is_binary(TokenBin), byte_size(TokenBin) =< 16384 ->
                     try vanillae:verify_signature(Sig, message_to_sign(PayloadB64), Account) of
                         {ok, true} -> {ok, Account, Payload};
                         _ -> {error, badsig}
-                    catch _:_ -> {error, badsig} end;
-                false -> {error, badpayload}
+                    catch
+                        _:_ -> {error, badsig}
+                    end;
+                false ->
+                    {error, badpayload}
             end;
-        _ -> {error, badtoken}
+        _ ->
+            {error, badtoken}
     end;
-verify_token(_) -> {error, badtoken}.
+verify_token(_) ->
+    {error, badtoken}.
 
-valid_payload(#{typ := <<"damage-access">>, v := 1, sub := Account, iat := Iat,
-                exp := Exp, nonce := Nonce, aud := Aud}, Now)
-  when is_integer(Iat), is_integer(Exp), is_integer(Now), is_binary(Nonce),
-       byte_size(Nonce) >= 16, byte_size(Nonce) =< 128, is_binary(Aud) ->
+valid_payload(
+    #{
+        typ := <<"damage-access">>,
+        v := 1,
+        sub := Account,
+        iat := Iat,
+        exp := Exp,
+        nonce := Nonce,
+        aud := Aud
+    },
+    Now
+) when
+    is_integer(Iat),
+    is_integer(Exp),
+    is_integer(Now),
+    is_binary(Nonce),
+    byte_size(Nonce) >= 16,
+    byte_size(Nonce) =< 128,
+    is_binary(Aud)
+->
     Iat =< Now + 60 andalso Exp > Now andalso Exp > Iat andalso
         Exp - Iat =< ?TOKEN_TIMEOUT andalso damage_browser_auth:valid_address(Account) andalso
         valid_audience(Aud);
-valid_payload(_, _) -> false.
+valid_payload(_, _) ->
+    false.
 valid_audience(Aud) ->
     try
         Url = unicode:characters_to_binary(application:get_env(damage, api_url, "")),
@@ -116,10 +138,15 @@ valid_audience(Aud) ->
         #{host := Host} = uri_string:parse(Url),
         %% Host-only legacy browser audiences are accepted only for this configured host.
         %% Include a port when configured; do not infer audience from an HTTP Host header.
-        HostPort = binary:part(Origin, byte_size(maps:get(scheme, uri_string:parse(Origin))) + 3,
-            byte_size(Origin) - byte_size(maps:get(scheme, uri_string:parse(Origin))) - 3),
+        HostPort = binary:part(
+            Origin,
+            byte_size(maps:get(scheme, uri_string:parse(Origin))) + 3,
+            byte_size(Origin) - byte_size(maps:get(scheme, uri_string:parse(Origin))) - 3
+        ),
         byte_size(Host) > 0 andalso lists:member(Aud, [Url, Origin, HostPort])
-    catch _:_ -> false end.
+    catch
+        _:_ -> false
+    end.
 
 %% ---- base64url helpers ----
 base64url_encode(Bin) when is_binary(Bin) ->
@@ -213,7 +240,7 @@ decode_payload(TokenBin) when is_binary(TokenBin), byte_size(TokenBin) =< 16384 
                 PayloadBin = base64url_decode(PayloadB64),
                 Decoded = jsx:decode(PayloadBin, [return_maps]),
                 true = is_map(Decoded),
-                Payload = maps:from_list([{payload_key(K), V} || {K,V} <- maps:to_list(Decoded)]),
+                Payload = maps:from_list([{payload_key(K), V} || {K, V} <- maps:to_list(Decoded)]),
                 {ok, Payload}
             catch
                 _:_ -> {error, badpayload}
@@ -221,7 +248,8 @@ decode_payload(TokenBin) when is_binary(TokenBin), byte_size(TokenBin) =< 16384 
         _ ->
             {error, badtoken}
     end;
-decode_payload(_) -> {error, badtoken}.
+decode_payload(_) ->
+    {error, badtoken}.
 payload_key(<<"typ">>) -> typ;
 payload_key(<<"v">>) -> v;
 payload_key(<<"sub">>) -> sub;

@@ -514,8 +514,10 @@ handle_billing_result(
 invoke_client(Kind, Prompt, ClientOpts) ->
     try
         case Kind of
-            json -> ecai_ollama_client:generate_json_with_meta(Prompt, ClientOpts);
-            text -> ecai_ollama_client:generate_text_with_meta(Prompt, ClientOpts);
+            json ->
+                ecai_ollama_client:generate_json_with_meta(Prompt, ClientOpts);
+            text ->
+                ecai_ollama_client:generate_text_with_meta(Prompt, ClientOpts);
             native_chat ->
                 ecai_ollama_client:native_chat_with_meta(
                     maps:get(native_request, ClientOpts), ClientOpts

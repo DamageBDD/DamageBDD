@@ -18,7 +18,8 @@ propose(App, Module, Finding, Opts) ->
     case lists:keyfind(Id, 1, supervisor:which_children(?SERVER)) of
         {Id, Pid, _, _} when is_pid(Pid) ->
             {error, {already_started, Pid}};
-        _ -> propose_new(Id, App, Module, Finding, Fingerprint, Version, WorkerOpts)
+        _ ->
+            propose_new(Id, App, Module, Finding, Fingerprint, Version, WorkerOpts)
     end.
 
 propose_new(Id, App, Module, Finding, Fingerprint, Version, Opts) ->

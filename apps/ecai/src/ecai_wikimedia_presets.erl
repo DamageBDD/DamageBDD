@@ -85,7 +85,6 @@ builtin_presets() ->
         )
     ].
 
-
 laptop_smoke_preset() ->
     Root = index_root(),
     (preset(

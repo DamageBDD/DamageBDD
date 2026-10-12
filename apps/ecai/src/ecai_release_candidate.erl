@@ -133,9 +133,12 @@ tag_attempt(Kind, Opts, Attempt) ->
         {ok, Proposal} ->
             case create_tag(Kind, Proposal, Opts) of
                 {error, {learning_snapshot_evidence_mismatch, _}} = Error ->
-                    RetryLimit = non_negative_int(maps:get(learning_snapshot_retry_count, Opts, 1), 1),
+                    RetryLimit = non_negative_int(
+                        maps:get(learning_snapshot_retry_count, Opts, 1), 1
+                    ),
                     case Attempt < RetryLimit of
-                        false -> Error;
+                        false ->
+                            Error;
                         true ->
                             case ensure_learning_quiescent(Opts) of
                                 ok -> tag_attempt(Kind, Opts, Attempt + 1);
@@ -148,10 +151,12 @@ tag_attempt(Kind, Opts, Attempt) ->
     end.
 
 ensure_learning_quiescent(Opts) ->
-    case {
-        maps:get(require_learning_reference, Opts, true),
-        maps:get(require_learning_quiescent, Opts, true)
-    } of
+    case
+        {
+            maps:get(require_learning_reference, Opts, true),
+            maps:get(require_learning_quiescent, Opts, true)
+        }
+    of
         {false, _} ->
             ok;
         {_, false} ->
@@ -206,16 +211,20 @@ create_tag(Kind, Proposal, Opts) ->
                         {error, _} = Error ->
                             Error;
                         {ok, LearningReference0, Snapshot} ->
-                            case persist_release_reference(
-                                Repo, Kind, Proposal, LearningReference0, Snapshot, Opts
-                            ) of
+                            case
+                                persist_release_reference(
+                                    Repo, Kind, Proposal, LearningReference0, Snapshot, Opts
+                                )
+                            of
                                 {error, _} = Error ->
                                     Error;
                                 {ok, LearningReference} ->
                                     Annotation = format_tag_annotation(Proposal, LearningReference),
-                                    case create_annotated_tag(
-                                        Repo, Tag, Target, Annotation, Opts
-                                    ) of
+                                    case
+                                        create_annotated_tag(
+                                            Repo, Tag, Target, Annotation, Opts
+                                        )
+                                    of
                                         {error, _} = Error ->
                                             Error;
                                         ok ->
@@ -254,7 +263,8 @@ ensure_tag_available(Repo, Tag, Opts) ->
                         true -> {error, {tag_already_exists, Tag}};
                         false -> ok
                     end;
-                {error, _} = Error -> Error
+                {error, _} = Error ->
+                    Error
             end
     end.
 
@@ -333,7 +343,8 @@ ensure_module_references([Ref | Rest], Analyses, Cards) ->
             ensure_module_references(Rest, Analyses, Cards);
         _ ->
             case module_reference_current(Ref, Analyses, Cards) of
-                true -> ensure_module_references(Rest, Analyses, Cards);
+                true ->
+                    ensure_module_references(Rest, Analyses, Cards);
                 false ->
                     {error, {
                         learning_snapshot_evidence_mismatch,
@@ -378,9 +389,9 @@ module_reference_diagnostics(Ref, Analyses, Cards) ->
     Module = maps:get(module, Ref, undefined),
     SnapshotAnalyses = [
         maps:with([source_sha256, analysis_sha256], Analysis)
-        || Analysis <- Analyses,
-           maps:get(application, Analysis, undefined) =:= App,
-           maps:get(module, Analysis, undefined) =:= Module
+     || Analysis <- Analyses,
+        maps:get(application, Analysis, undefined) =:= App,
+        maps:get(module, Analysis, undefined) =:= Module
     ],
     SnapshotCards = [
         #{
@@ -388,9 +399,9 @@ module_reference_diagnostics(Ref, Analyses, Cards) ->
             analysis_sha256 => mget(<<"analysis_sha256">>, Card, undefined),
             knowledge_sha256 => knowledge_card_digest(Card)
         }
-        || Card <- Cards,
-           maps:get(application, Card, undefined) =:= App,
-           maps:get(module, Card, undefined) =:= Module
+     || Card <- Cards,
+        maps:get(application, Card, undefined) =:= App,
+        maps:get(module, Card, undefined) =:= Module
     ],
     Ref#{
         snapshot_analyses => SnapshotAnalyses,
@@ -416,7 +427,7 @@ learning_reference(SnapshotPath, Snapshot, Evidence) ->
         global_knowledge_sha256 => deterministic_digest(GlobalKnowledge),
         application_knowledge_sha256 => maps:from_list([
             {App, deterministic_digest(maps:get(App, AppKnowledge, #{}))}
-            || App <- [damage, ecai, erm]
+         || App <- [damage, ecai, erm]
         ]),
         relation_sets => maps:get(relation_sets, Learning, #{}),
         counts => learning_counts(Learning),
@@ -454,7 +465,7 @@ changed_module_references(Changes) ->
             ],
             Change
         )
-        || Change <- Changes
+     || Change <- Changes
     ].
 
 unavailable_learning_reference(Reason) ->
@@ -527,25 +538,43 @@ format_tag_annotation(Proposal, Reference) ->
     iolist_to_binary([
         Description,
         <<"\nECAI learning provenance\n">>,
-        <<"ECAI-Release-Kind: ">>, release_kind_binary(maps:get(release_kind, Proposal)), <<"\n">>,
-        <<"ECAI-Commit: ">>, maps:get(head, Proposal), <<"\n">>,
-        <<"ECAI-Evidence-SHA256: ">>, printable(maps:get(evidence_sha256, Evidence, undefined)), <<"\n">>,
+        <<"ECAI-Release-Kind: ">>,
+        release_kind_binary(maps:get(release_kind, Proposal)),
+        <<"\n">>,
+        <<"ECAI-Commit: ">>,
+        maps:get(head, Proposal),
+        <<"\n">>,
+        <<"ECAI-Evidence-SHA256: ">>,
+        printable(maps:get(evidence_sha256, Evidence, undefined)),
+        <<"\n">>,
         learning_reference_lines(Reference)
     ]).
 
 learning_reference_lines(#{available := false} = Reference) ->
     [
         <<"ECAI-Learning-Reference: unavailable\n">>,
-        <<"ECAI-Learning-Error: ">>, maps:get(error, Reference, <<"unknown">>), <<"\n">>
+        <<"ECAI-Learning-Error: ">>,
+        maps:get(error, Reference, <<"unknown">>),
+        <<"\n">>
     ];
 learning_reference_lines(Reference) ->
     AppDigests = maps:get(application_knowledge_sha256, Reference, #{}),
     [
-        <<"ECAI-Learning-Snapshot: ">>, printable(maps:get(snapshot_id, Reference, undefined)), <<"\n">>,
-        <<"ECAI-Learning-Schema: ">>, printable(maps:get(snapshot_schema_version, Reference, undefined)), <<"\n">>,
-        <<"ECAI-Learning-Snapshot-SHA256: ">>, printable(maps:get(snapshot_sha256, Reference, undefined)), <<"\n">>,
-        <<"ECAI-Learning-State-SHA256: ">>, printable(maps:get(learning_state_sha256, Reference, undefined)), <<"\n">>,
-        <<"ECAI-Global-Knowledge-SHA256: ">>, printable(maps:get(global_knowledge_sha256, Reference, undefined)), <<"\n">>,
+        <<"ECAI-Learning-Snapshot: ">>,
+        printable(maps:get(snapshot_id, Reference, undefined)),
+        <<"\n">>,
+        <<"ECAI-Learning-Schema: ">>,
+        printable(maps:get(snapshot_schema_version, Reference, undefined)),
+        <<"\n">>,
+        <<"ECAI-Learning-Snapshot-SHA256: ">>,
+        printable(maps:get(snapshot_sha256, Reference, undefined)),
+        <<"\n">>,
+        <<"ECAI-Learning-State-SHA256: ">>,
+        printable(maps:get(learning_state_sha256, Reference, undefined)),
+        <<"\n">>,
+        <<"ECAI-Global-Knowledge-SHA256: ">>,
+        printable(maps:get(global_knowledge_sha256, Reference, undefined)),
+        <<"\n">>,
         learning_counts_line(maps:get(counts, Reference, #{})),
         application_digest_lines(AppDigests),
         relation_reference_lines(maps:get(relation_sets, Reference, #{})),
@@ -564,33 +593,48 @@ learning_reference_lines(Reference) ->
 
 learning_counts_line(Counts) ->
     [
-        <<"ECAI-Learning-Counts: analyses=">>, printable(maps:get(analyses, Counts, 0)),
-        <<" module_knowledge=">>, printable(maps:get(module_knowledge, Counts, 0)),
-        <<" application_knowledge=">>, printable(maps:get(application_knowledge, Counts, 0)),
-        <<" graphs=">>, printable(maps:get(graphs, Counts, 0)),
-        <<" relation_sets=">>, printable(maps:get(relation_sets, Counts, 0)),
-        <<" repairs=">>, printable(maps:get(repairs, Counts, 0)),
-        <<" log_incidents=">>, printable(maps:get(log_incidents, Counts, 0)), <<"\n">>
+        <<"ECAI-Learning-Counts: analyses=">>,
+        printable(maps:get(analyses, Counts, 0)),
+        <<" module_knowledge=">>,
+        printable(maps:get(module_knowledge, Counts, 0)),
+        <<" application_knowledge=">>,
+        printable(maps:get(application_knowledge, Counts, 0)),
+        <<" graphs=">>,
+        printable(maps:get(graphs, Counts, 0)),
+        <<" relation_sets=">>,
+        printable(maps:get(relation_sets, Counts, 0)),
+        <<" repairs=">>,
+        printable(maps:get(repairs, Counts, 0)),
+        <<" log_incidents=">>,
+        printable(maps:get(log_incidents, Counts, 0)),
+        <<"\n">>
     ].
 
 application_digest_lines(Digests) ->
     [
         [
-            <<"ECAI-Application-Knowledge-">>, atom_to_binary(App, utf8), <<"-SHA256: ">>,
-            printable(maps:get(App, Digests, undefined)), <<"\n">>
+            <<"ECAI-Application-Knowledge-">>,
+            atom_to_binary(App, utf8),
+            <<"-SHA256: ">>,
+            printable(maps:get(App, Digests, undefined)),
+            <<"\n">>
         ]
-        || App <- [damage, ecai, erm]
+     || App <- [damage, ecai, erm]
     ].
 
 relation_reference_lines(RelationSets) when is_map(RelationSets) ->
     [
         [
-            <<"ECAI-Relation-Set: ">>, to_binary(Scope),
-            <<" count=">>, printable(maps:get(count, Meta, 0)),
-            <<" sha256=">>, printable(maps:get(key_digest_sha256, Meta, undefined)), <<"\n">>
+            <<"ECAI-Relation-Set: ">>,
+            to_binary(Scope),
+            <<" count=">>,
+            printable(maps:get(count, Meta, 0)),
+            <<" sha256=">>,
+            printable(maps:get(key_digest_sha256, Meta, undefined)),
+            <<"\n">>
         ]
-        || {Scope, Meta} <- lists:sort(maps:to_list(RelationSets)),
-           is_map(Meta)
+     || {Scope, Meta} <- lists:sort(maps:to_list(RelationSets)),
+        is_map(Meta)
     ];
 relation_reference_lines(_) ->
     [].
@@ -598,13 +642,19 @@ relation_reference_lines(_) ->
 module_reference_lines(References) ->
     [
         [
-            <<"ECAI-Changed-Module: ">>, to_binary(maps:get(application, Ref, undefined)), <<":">>,
+            <<"ECAI-Changed-Module: ">>,
+            to_binary(maps:get(application, Ref, undefined)),
+            <<":">>,
             module_binary(maps:get(module, Ref, undefined)),
-            <<" source=">>, printable(maps:get(source_sha256, Ref, undefined)),
-            <<" analysis=">>, printable(maps:get(analysis_sha256, Ref, undefined)),
-            <<" knowledge=">>, printable(maps:get(knowledge_sha256, Ref, undefined)), <<"\n">>
+            <<" source=">>,
+            printable(maps:get(source_sha256, Ref, undefined)),
+            <<" analysis=">>,
+            printable(maps:get(analysis_sha256, Ref, undefined)),
+            <<" knowledge=">>,
+            printable(maps:get(knowledge_sha256, Ref, undefined)),
+            <<"\n">>
         ]
-        || Ref <- References
+     || Ref <- References
     ].
 
 optional_reference_line(_Prefix, undefined) -> [];
@@ -704,14 +754,19 @@ json_safe(Map) when is_map(Map) ->
     maps:from_list([{json_key(K), json_safe(V)} || {K, V} <- maps:to_list(Map)]);
 json_safe(List) when is_list(List) -> [json_safe(V) || V <- List];
 json_safe(Tuple) when is_tuple(Tuple) -> [json_safe(V) || V <- tuple_to_list(Tuple)];
-json_safe(undefined) -> null;
-json_safe(true) -> true;
-json_safe(false) -> false;
-json_safe(null) -> null;
+json_safe(undefined) ->
+    null;
+json_safe(true) ->
+    true;
+json_safe(false) ->
+    false;
+json_safe(null) ->
+    null;
 json_safe(Atom) when is_atom(Atom) -> atom_to_binary(Atom, utf8);
 json_safe(Bin) when is_binary(Bin) -> Bin;
 json_safe(Number) when is_number(Number) -> Number;
-json_safe(Other) -> to_binary(Other).
+json_safe(Other) ->
+    to_binary(Other).
 
 json_key(Key) when is_binary(Key) -> Key;
 json_key(Key) when is_atom(Key) -> atom_to_binary(Key, utf8);
@@ -726,19 +781,34 @@ with_repo_state(Repo, Opts, Fun) ->
 
 repository_state(Repo, Opts) ->
     case ecai_repair_git:head(Repo) of
-        {error, _} = Error -> Error;
+        {error, _} = Error ->
+            Error;
         {ok, Head} ->
             case ecai_repair_git:branch(Repo) of
-                {error, _} = Error -> Error;
+                {error, _} = Error ->
+                    Error;
                 {ok, Branch} ->
-                    case git_lines(Repo, ["tag", "--merged", "HEAD", "--sort=-version:refname"], Opts) of
-                        {error, _} = Error -> Error;
+                    case
+                        git_lines(
+                            Repo, ["tag", "--merged", "HEAD", "--sort=-version:refname"], Opts
+                        )
+                    of
+                        {error, _} = Error ->
+                            Error;
                         {ok, Tags} ->
-                            case git_lines(Repo, ["tag", "--points-at", "HEAD", "--sort=-version:refname"], Opts) of
-                                {error, _} = Error -> Error;
+                            case
+                                git_lines(
+                                    Repo,
+                                    ["tag", "--points-at", "HEAD", "--sort=-version:refname"],
+                                    Opts
+                                )
+                            of
+                                {error, _} = Error ->
+                                    Error;
                                 {ok, HeadTags} ->
                                     case git(Repo, ["status", "--porcelain=v1"], Opts) of
-                                        {error, _} = Error -> Error;
+                                        {error, _} = Error ->
+                                            Error;
                                         {ok, Status} ->
                                             case ensure_clean(Status, Opts) of
                                                 ok ->
@@ -750,7 +820,8 @@ repository_state(Repo, Opts) ->
                                                         tags_at_head => HeadTags,
                                                         dirty => trim(Status) =/= <<>>
                                                     }};
-                                                {error, _} = Error -> Error
+                                                {error, _} = Error ->
+                                                    Error
                                             end
                                     end
                             end
@@ -779,7 +850,8 @@ next_candidate(Branch, Semantic, Opts) ->
             candidate_for_core(Core, Prefix, Semantic, explicit);
         not_found ->
             case branch_version(Branch) of
-                {ok, Core} -> candidate_for_core(Core, Prefix, Semantic, branch);
+                {ok, Core} ->
+                    candidate_for_core(Core, Prefix, Semantic, branch);
                 not_found ->
                     case highest_release_line(Semantic) of
                         none ->
@@ -853,9 +925,9 @@ comparison_base(#{kind := rc} = Candidate, Semantic) ->
     Rc = maps:get(rc, Candidate),
     PriorRcs = [
         Tag
-        || Tag = #{kind := rc, core := TagCore, rc := N} <- Semantic,
-           TagCore =:= Core,
-           N < Rc
+     || Tag = #{kind := rc, core := TagCore, rc := N} <- Semantic,
+        TagCore =:= Core,
+        N < Rc
     ],
     case sort_semantic(PriorRcs) of
         [Latest | _] -> maps:get(tag, Latest);
@@ -864,8 +936,8 @@ comparison_base(#{kind := rc} = Candidate, Semantic) ->
 comparison_base(#{kind := stable, core := Core}, Semantic) ->
     SameCoreRcs = [
         Tag
-        || Tag = #{kind := rc, core := TagCore} <- Semantic,
-           TagCore =:= Core
+     || Tag = #{kind := rc, core := TagCore} <- Semantic,
+        TagCore =:= Core
     ],
     case sort_semantic(SameCoreRcs) of
         [LatestRc | _] -> maps:get(tag, LatestRc);
@@ -875,8 +947,8 @@ comparison_base(#{kind := stable, core := Core}, Semantic) ->
 latest_stable_before(Core, Semantic) ->
     Stable = [
         Tag
-        || Tag = #{kind := stable} <- Semantic,
-           core_lt(maps:get(core, Tag), Core)
+     || Tag = #{kind := stable} <- Semantic,
+        core_lt(maps:get(core, Tag), Core)
     ],
     case sort_semantic(Stable) of
         [LatestStable | _] -> maps:get(tag, LatestStable);
@@ -926,14 +998,17 @@ build_description(Repo, State, Opts) ->
     Base = maps:get(base_tag, State),
     Candidate = maps:get(candidate, State),
     case release_changes(Repo, Base, Opts) of
-        {error, _} = Error -> Error;
+        {error, _} = Error ->
+            Error;
         {ok, Changes} ->
             Learned = learned_changes(Repo, Changes, Opts),
             case Learned of
-                {error, _} = Error -> Error;
+                {error, _} = Error ->
+                    Error;
                 {ok, LearnedChanges} ->
                     case commit_log(Repo, Base, Opts) of
-                        {error, _} = Error -> Error;
+                        {error, _} = Error ->
+                            Error;
                         {ok, Commits} ->
                             SnapshotId = snapshot_id(Repo),
                             Evidence0 = #{
@@ -989,19 +1064,30 @@ collect_learned(Repo, [Change | Rest], Opts, Acc) ->
 learned_change(_Repo, #{status := <<"D", _/binary>>, path := Path}, _Opts) ->
     case source_identity(Path) of
         {ok, App, Module} ->
-            {ok, #{application => App, module => Module, status => <<"D">>, path => Path, purpose => <<"module removed">>}};
-        error -> {skip, non_ecai_source}
+            {ok, #{
+                application => App,
+                module => Module,
+                status => <<"D">>,
+                path => Path,
+                purpose => <<"module removed">>
+            }};
+        error ->
+            {skip, non_ecai_source}
     end;
 learned_change(Repo, #{status := Status, path := Path}, Opts) ->
     case source_identity(Path) of
-        error -> {skip, non_ecai_source};
+        error ->
+            {skip, non_ecai_source};
         {ok, App, Module} ->
             case find_analysis(App, Module, Path) of
-                not_found -> maybe_missing_learning(App, Module, Path, Opts);
+                not_found ->
+                    maybe_missing_learning(App, Module, Path, Opts);
                 {ok, ModuleKey, Analysis} ->
                     case ensure_analysis_at_head(Repo, Path, Analysis, Opts) of
                         ok ->
-                            Card = value_or_empty(ecai_learning_store:get_module_knowledge(App, ModuleKey)),
+                            Card = value_or_empty(
+                                ecai_learning_store:get_module_knowledge(App, ModuleKey)
+                            ),
                             {ok, #{
                                 application => App,
                                 module => ModuleKey,
@@ -1013,38 +1099,65 @@ learned_change(Repo, #{status := Status, path := Path}, Opts) ->
                                 purpose => mget(<<"purpose">>, Card, <<"learned module changed">>),
                                 responsibilities => mget(<<"responsibilities">>, Card, [])
                             }};
-                        {error, _} = Error -> Error
+                        {error, _} = Error ->
+                            Error
                     end
             end
     end.
 
 maybe_missing_learning(App, Module, Path, Opts) ->
     case maps:get(require_fresh_learning, Opts, true) of
-        true -> {error, {learning_not_found, App, Module, Path}};
-        false -> {ok, #{application => App, module => Module, status => <<"?">>, path => Path, purpose => <<"learning unavailable">>}}
+        true ->
+            {error, {learning_not_found, App, Module, Path}};
+        false ->
+            {ok, #{
+                application => App,
+                module => Module,
+                status => <<"?">>,
+                path => Path,
+                purpose => <<"learning unavailable">>
+            }}
     end.
 
 ensure_analysis_at_head(Repo, Path, Analysis, Opts) ->
     case maps:get(require_fresh_learning, Opts, true) of
-        false -> ok;
+        false ->
+            ok;
         true ->
             Object = "HEAD:" ++ binary_to_list(Path),
             case git(Repo, ["show", Object], Opts) of
-                {error, _} = Error -> Error;
+                {error, _} = Error ->
+                    Error;
                 {ok, Source} ->
                     HeadHash = sha256_hex(Source),
                     LearnedHash = maps:get(source_sha256, Analysis, undefined),
                     case hashes_equal(HeadHash, LearnedHash) of
-                        true -> ok;
-                        false -> {error, {stale_code_learning, maps:get(application, Analysis, undefined), maps:get(module, Analysis, undefined), #{head => HeadHash, learned => LearnedHash}}}
+                        true ->
+                            ok;
+                        false ->
+                            {error,
+                                {stale_code_learning, maps:get(application, Analysis, undefined),
+                                    maps:get(module, Analysis, undefined), #{
+                                        head => HeadHash, learned => LearnedHash
+                                    }}}
                     end
             end
     end.
 
 commit_log(Repo, Base, Opts) ->
-    Range = case Base of undefined -> "HEAD"; _ -> binary_to_list(Base) ++ "..HEAD" end,
+    Range =
+        case Base of
+            undefined -> "HEAD";
+            _ -> binary_to_list(Base) ++ "..HEAD"
+        end,
     Limit = positive_int(maps:get(commit_limit, Opts, 60), 60),
-    Args = ["log", "--first-parent", "--max-count=" ++ integer_to_list(Limit), "--format=%H%x09%s", Range],
+    Args = [
+        "log",
+        "--first-parent",
+        "--max-count=" ++ integer_to_list(Limit),
+        "--format=%H%x09%s",
+        Range
+    ],
     case git_lines(Repo, Args, Opts) of
         {ok, Lines} -> {ok, [parse_commit(Line) || Line <- Lines]};
         {error, _} = Error -> Error
@@ -1052,31 +1165,73 @@ commit_log(Repo, Base, Opts) ->
 
 parse_commit(Line) ->
     case binary:match(Line, <<"\t">>) of
-        {Pos, 1} -> #{hash => binary:part(Line, 0, Pos), subject => binary:part(Line, Pos + 1, byte_size(Line) - Pos - 1)};
-        nomatch -> #{hash => <<>>, subject => Line}
+        {Pos, 1} ->
+            #{
+                hash => binary:part(Line, 0, Pos),
+                subject => binary:part(Line, Pos + 1, byte_size(Line) - Pos - 1)
+            };
+        nomatch ->
+            #{hash => <<>>, subject => Line}
     end.
 
 format_description(Evidence) ->
-    Base = case maps:get(base_tag, Evidence) of undefined -> <<"<initial repository state>">>; Value -> Value end,
+    Base =
+        case maps:get(base_tag, Evidence) of
+            undefined -> <<"<initial repository state>">>;
+            Value -> Value
+        end,
     KindLabel = release_label(maps:get(release_kind, Evidence, rc)),
     iolist_to_binary([
-        maps:get(tag, Evidence), <<" ">>, KindLabel, <<"\n\n">>,
-        <<"Branch: ">>, maps:get(branch, Evidence), <<"\n">>,
-        <<"Commit: ">>, maps:get(head, Evidence), <<"\n">>,
-        <<"Compared with: ">>, Base, <<"\n">>,
-        <<"ECAI snapshot: ">>, printable(maps:get(snapshot_id, Evidence)), <<"\n">>,
-        <<"Evidence SHA-256: ">>, maps:get(evidence_sha256, Evidence), <<"\n\n">>,
-        <<"Learned changes\n">>, learned_lines(maps:get(learned_changes, Evidence)),
-        <<"\nCommit history\n">>, commit_lines(maps:get(commits, Evidence))
+        maps:get(tag, Evidence),
+        <<" ">>,
+        KindLabel,
+        <<"\n\n">>,
+        <<"Branch: ">>,
+        maps:get(branch, Evidence),
+        <<"\n">>,
+        <<"Commit: ">>,
+        maps:get(head, Evidence),
+        <<"\n">>,
+        <<"Compared with: ">>,
+        Base,
+        <<"\n">>,
+        <<"ECAI snapshot: ">>,
+        printable(maps:get(snapshot_id, Evidence)),
+        <<"\n">>,
+        <<"Evidence SHA-256: ">>,
+        maps:get(evidence_sha256, Evidence),
+        <<"\n\n">>,
+        <<"Learned changes\n">>,
+        learned_lines(maps:get(learned_changes, Evidence)),
+        <<"\nCommit history\n">>,
+        commit_lines(maps:get(commits, Evidence))
     ]).
 
-learned_lines([]) -> <<"- No learned Erlang modules changed.\n">>;
+learned_lines([]) ->
+    <<"- No learned Erlang modules changed.\n">>;
 learned_lines(Changes) ->
-    [[<<"- ">>, status_name(maps:get(status, C)), <<" ">>, atom_to_binary(maps:get(application, C), utf8), <<":">>, module_binary(maps:get(module, C)), <<" — ">>, compact(maps:get(purpose, C, <<"changed">>)), <<"\n">>] || C <- Changes].
+    [
+        [
+            <<"- ">>,
+            status_name(maps:get(status, C)),
+            <<" ">>,
+            atom_to_binary(maps:get(application, C), utf8),
+            <<":">>,
+            module_binary(maps:get(module, C)),
+            <<" — ">>,
+            compact(maps:get(purpose, C, <<"changed">>)),
+            <<"\n">>
+        ]
+     || C <- Changes
+    ].
 
-commit_lines([]) -> <<"- No commits after comparison base.\n">>;
+commit_lines([]) ->
+    <<"- No commits after comparison base.\n">>;
 commit_lines(Commits) ->
-    [[<<"- ">>, short_hash(maps:get(hash, C)), <<" ">>, maps:get(subject, C), <<"\n">>] || C <- Commits].
+    [
+        [<<"- ">>, short_hash(maps:get(hash, C)), <<" ">>, maps:get(subject, C), <<"\n">>]
+     || C <- Commits
+    ].
 
 semantic_tags(Tags) -> sort_semantic([Parsed || Tag <- Tags, Parsed <- parse_tag(Tag)]).
 
@@ -1085,41 +1240,72 @@ parse_tag(Tag) ->
     StablePattern = <<"^(v?)([0-9]+)\\.([0-9]+)\\.([0-9]+)$">>,
     case re:run(Tag, RcPattern, [{capture, all_but_first, binary}]) of
         {match, [Prefix, Major, Minor, Patch, Rc]} ->
-            [#{tag => Tag, kind => rc, prefix => Prefix, core => ints(Major, Minor, Patch), rc => binary_to_integer(Rc)}];
+            [
+                #{
+                    tag => Tag,
+                    kind => rc,
+                    prefix => Prefix,
+                    core => ints(Major, Minor, Patch),
+                    rc => binary_to_integer(Rc)
+                }
+            ];
         nomatch ->
             case re:run(Tag, StablePattern, [{capture, all_but_first, binary}]) of
                 {match, [Prefix, Major, Minor, Patch]} ->
-                    [#{tag => Tag, kind => stable, prefix => Prefix, core => ints(Major, Minor, Patch)}];
-                nomatch -> []
+                    [
+                        #{
+                            tag => Tag,
+                            kind => stable,
+                            prefix => Prefix,
+                            core => ints(Major, Minor, Patch)
+                        }
+                    ];
+                nomatch ->
+                    []
             end
     end.
 
 sort_semantic(Tags) ->
     lists:sort(fun(A, B) -> semantic_key(A) > semantic_key(B) end, Tags).
 
-semantic_key(#{core := {Major, Minor, Patch}, kind := stable}) -> {Major, Minor, Patch, 2, 0};
-semantic_key(#{core := {Major, Minor, Patch}, kind := rc, rc := Rc}) -> {Major, Minor, Patch, 1, Rc}.
+semantic_key(#{core := {Major, Minor, Patch}, kind := stable}) ->
+    {Major, Minor, Patch, 2, 0};
+semantic_key(#{core := {Major, Minor, Patch}, kind := rc, rc := Rc}) ->
+    {Major, Minor, Patch, 1, Rc}.
 
 highest_release_line([]) -> none;
 highest_release_line([First | _]) -> First.
 
 highest_rc(Core, Semantic) ->
-    lists:foldl(fun
-        (#{kind := rc, core := TagCore, rc := Rc}, Acc) when TagCore =:= Core -> erlang:max(Rc, Acc);
-        (_, Acc) -> Acc
-    end, 0, Semantic).
+    lists:foldl(
+        fun
+            (#{kind := rc, core := TagCore, rc := Rc}, Acc) when TagCore =:= Core ->
+                erlang:max(Rc, Acc);
+            (_, Acc) ->
+                Acc
+        end,
+        0,
+        Semantic
+    ).
 
 stable_for_core(Core, Semantic) ->
-    lists:any(fun
-        (#{kind := stable, core := TagCore}) -> TagCore =:= Core;
-        (_) -> false
-    end, Semantic).
+    lists:any(
+        fun
+            (#{kind := stable, core := TagCore}) -> TagCore =:= Core;
+            (_) -> false
+        end,
+        Semantic
+    ).
 
 preferred_prefix(Semantic, Opts) ->
     case maps:get(tag_prefix, Opts, undefined) of
         undefined ->
-            case Semantic of [#{prefix := Prefix} | _] -> Prefix; [] -> <<"v">> end;
-        Prefix -> to_binary(Prefix)
+            case Semantic of
+                [#{prefix := Prefix} | _] -> Prefix;
+                [] -> <<"v">>
+            end;
+        Prefix ->
+            to_binary(Prefix)
     end.
 
 branch_version(Branch) ->
@@ -1134,7 +1320,8 @@ source_identity(Path) ->
     case Parts of
         ["apps", App0, Dir | _] when Dir =:= "src"; Dir =:= "test"; Dir =:= "tests" ->
             case app_atom(App0) of
-                undefined -> error;
+                undefined ->
+                    error;
                 App ->
                     case filename:extension(binary_to_list(Path)) of
                         ".erl" ->
@@ -1142,10 +1329,12 @@ source_identity(Path) ->
                                 filename:basename(binary_to_list(Path), ".erl")
                             ),
                             {ok, App, ModuleName};
-                        _ -> error
+                        _ ->
+                            error
                     end
             end;
-        _ -> error
+        _ ->
+            error
     end.
 
 app_atom("damage") -> damage;
@@ -1166,11 +1355,13 @@ find_analysis(App, ModuleName, Path) ->
 
 find_analysis_by_path(App, ModuleName, Path) ->
     Analyses = ecai_learning_store:analyses(App),
-    case [
-        {maps:get(module, Analysis, undefined), Analysis}
-        || Analysis <- Analyses,
-           module_matches(ModuleName, Path, Analysis)
-    ] of
+    case
+        [
+            {maps:get(module, Analysis, undefined), Analysis}
+         || Analysis <- Analyses,
+            module_matches(ModuleName, Path, Analysis)
+        ]
+    of
         [{Module, Analysis} | _] when is_atom(Module) -> {ok, Module, Analysis};
         _ -> not_found
     end.
@@ -1179,7 +1370,8 @@ module_matches(ModuleName, Path, Analysis) ->
     Module = maps:get(module, Analysis, undefined),
     SourceName = maps:get(source_name, Analysis, <<>>),
     ModuleMatch = is_atom(Module) andalso atom_to_binary(Module, utf8) =:= ModuleName,
-    PathMatch = filename:basename(path_to_list(SourceName)) =:= filename:basename(binary_to_list(Path)),
+    PathMatch =
+        filename:basename(path_to_list(SourceName)) =:= filename:basename(binary_to_list(Path)),
     ModuleMatch andalso PathMatch.
 
 existing_module_atom(Name) ->
@@ -1193,7 +1385,9 @@ snapshot_id(Repo) ->
     try ecai_learning_snapshot:build(#{repo_root => Repo}) of
         #{snapshot_id := Id} -> Id;
         _ -> undefined
-    catch _:_ -> undefined end.
+    catch
+        _:_ -> undefined
+    end.
 
 version_map(#{kind := rc, core := {Major, Minor, Patch}, rc := Rc}) ->
     #{major => Major, minor => Minor, patch => Patch, rc => Rc};
@@ -1202,11 +1396,33 @@ version_map(#{kind := stable, core := {Major, Minor, Patch}}) ->
 
 release_label(rc) -> <<"release candidate">>;
 release_label(stable) -> <<"release">>.
-format_rc(Prefix, {Major, Minor, Patch}, Rc) -> iolist_to_binary([Prefix, integer_to_binary(Major), <<".">>, integer_to_binary(Minor), <<".">>, integer_to_binary(Patch), <<"-rc.">>, integer_to_binary(Rc)]).
-format_stable(Prefix, {Major, Minor, Patch}) -> iolist_to_binary([Prefix, integer_to_binary(Major), <<".">>, integer_to_binary(Minor), <<".">>, integer_to_binary(Patch)]).
+format_rc(Prefix, {Major, Minor, Patch}, Rc) ->
+    iolist_to_binary([
+        Prefix,
+        integer_to_binary(Major),
+        <<".">>,
+        integer_to_binary(Minor),
+        <<".">>,
+        integer_to_binary(Patch),
+        <<"-rc.">>,
+        integer_to_binary(Rc)
+    ]).
+format_stable(Prefix, {Major, Minor, Patch}) ->
+    iolist_to_binary([
+        Prefix,
+        integer_to_binary(Major),
+        <<".">>,
+        integer_to_binary(Minor),
+        <<".">>,
+        integer_to_binary(Patch)
+    ]).
 ints(A, B, C) -> {binary_to_integer(A), binary_to_integer(B), binary_to_integer(C)}.
-normalize_core({A, B, C}) when is_integer(A), is_integer(B), is_integer(C), A >= 0, B >= 0, C >= 0 -> {A, B, C};
-normalize_core(Other) -> erlang:error({invalid_initial_version, Other}).
+normalize_core({A, B, C}) when
+    is_integer(A), is_integer(B), is_integer(C), A >= 0, B >= 0, C >= 0
+->
+    {A, B, C};
+normalize_core(Other) ->
+    erlang:error({invalid_initial_version, Other}).
 core_lt({A1, B1, C1}, {A2, B2, C2}) -> {A1, B1, C1} < {A2, B2, C2}.
 
 status_name(<<"A", _/binary>>) -> <<"ADD">>;
@@ -1217,9 +1433,12 @@ status_name(Status) -> Status.
 
 short_hash(Hash) when byte_size(Hash) > 12 -> binary:part(Hash, 0, 12);
 short_hash(Hash) -> Hash.
-compact(Bin) when is_binary(Bin) -> binary:replace(binary:replace(Bin, <<"\n">>, <<" ">>, [global]), <<"\r">>, <<" ">>, [global]);
-compact(List) when is_list(List) -> iolist_to_binary(lists:join(<<"; ">>, lists:sublist([compact(V) || V <- List], 3)));
-compact(Value) -> iolist_to_binary(io_lib:format("~tp", [Value])).
+compact(Bin) when is_binary(Bin) ->
+    binary:replace(binary:replace(Bin, <<"\n">>, <<" ">>, [global]), <<"\r">>, <<" ">>, [global]);
+compact(List) when is_list(List) ->
+    iolist_to_binary(lists:join(<<"; ">>, lists:sublist([compact(V) || V <- List], 3)));
+compact(Value) ->
+    iolist_to_binary(io_lib:format("~tp", [Value])).
 
 module_binary(Module) when is_atom(Module) -> atom_to_binary(Module, utf8);
 module_binary(Module) when is_binary(Module) -> Module;
@@ -1229,14 +1448,22 @@ value_or_empty({ok, Value}) -> Value;
 value_or_empty(_) -> #{}.
 mget(Key, Map, Default) when is_map(Map) ->
     case maps:find(Key, Map) of
-        {ok, Value} -> Value;
+        {ok, Value} ->
+            Value;
         error ->
-            try binary_to_existing_atom(Key, utf8) of Atom -> maps:get(Atom, Map, Default)
-            catch error:badarg -> Default end
+            try binary_to_existing_atom(Key, utf8) of
+                Atom -> maps:get(Atom, Map, Default)
+            catch
+                error:badarg -> Default
+            end
     end;
-mget(_, _, Default) -> Default.
+mget(_, _, Default) ->
+    Default.
 
-repo_root(Opts) -> filename:absname(path_to_list(maps:get(repo_root, Opts, application:get_env(ecai, code_repo_root, ".")))).
+repo_root(Opts) ->
+    filename:absname(
+        path_to_list(maps:get(repo_root, Opts, application:get_env(ecai, code_repo_root, ".")))
+    ).
 git_lines(Repo, Args, Opts) ->
     case git(Repo, Args, Opts) of
         {ok, Output} -> {ok, lines(Output)};
@@ -1247,27 +1474,39 @@ git(Repo, Args, Opts) ->
         {ok, _} = Ok ->
             Ok;
         {error, Reason} ->
-            {error, {
-                git_command_failed,
-                #{
-                    args => [to_binary(Arg) || Arg <- Args],
-                    reason => Reason
-                }
-            }}
+            {error,
+                {
+                    git_command_failed,
+                    #{
+                        args => [to_binary(Arg) || Arg <- Args],
+                        reason => Reason
+                    }
+                }}
     end.
-command_timeout(Opts) -> positive_int(maps:get(command_timeout_ms, Opts, application:get_env(ecai, code_patch_command_timeout_ms, ?DEFAULT_TIMEOUT_MS)), ?DEFAULT_TIMEOUT_MS).
+command_timeout(Opts) ->
+    positive_int(
+        maps:get(
+            command_timeout_ms,
+            Opts,
+            application:get_env(ecai, code_patch_command_timeout_ms, ?DEFAULT_TIMEOUT_MS)
+        ),
+        ?DEFAULT_TIMEOUT_MS
+    ).
 positive_int(N, _Default) when is_integer(N), N > 0 -> N;
 positive_int(_, Default) -> Default.
 non_negative_int(N, _Default) when is_integer(N), N >= 0 -> N;
 non_negative_int(_, Default) -> Default.
-lines(Bin) -> [Line || Part <- binary:split(Bin, <<"\n">>, [global]), Line <- [trim(Part)], Line =/= <<>>].
+lines(Bin) ->
+    [Line || Part <- binary:split(Bin, <<"\n">>, [global]), Line <- [trim(Part)], Line =/= <<>>].
 trim(Bin) -> unicode:characters_to_binary(string:trim(binary_to_list(Bin))).
 sha256_hex(Bin) ->
     unicode:characters_to_binary(
         string:lowercase(binary_to_list(binary:encode_hex(crypto:hash(sha256, Bin))))
     ).
-hashes_equal(A, B) when is_binary(A), is_binary(B) -> string:lowercase(binary_to_list(A)) =:= string:lowercase(binary_to_list(B));
-hashes_equal(_, _) -> false.
+hashes_equal(A, B) when is_binary(A), is_binary(B) ->
+    string:lowercase(binary_to_list(A)) =:= string:lowercase(binary_to_list(B));
+hashes_equal(_, _) ->
+    false.
 printable(undefined) -> <<"unavailable">>;
 printable(Value) -> to_binary(Value).
 path_to_list(Value) when is_list(Value) -> Value;

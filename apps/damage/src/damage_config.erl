@@ -10,8 +10,16 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("damage.hrl").
 
--export([get_default_config/1, state_dir/0, runs_dir/0, normalize_path/1,
-         ensure_directory/1, system_config_path/0, xdg_config_dir/0, dashboard_config_path/0]).
+-export([
+    get_default_config/1,
+    state_dir/0,
+    runs_dir/0,
+    normalize_path/1,
+    ensure_directory/1,
+    system_config_path/0,
+    xdg_config_dir/0,
+    dashboard_config_path/0
+]).
 
 -spec get_default_config(proplists:proplist() | map()) -> proplists:proplist().
 get_default_config(ConfigIn0) ->
@@ -250,29 +258,37 @@ dedupe_tuples(Ts) ->
 %% VM argument (which may have been passed without the .config extension).
 %% This never reads or modifies the per-run config produced above.
 system_config_path() ->
-    Config = case os:getenv("DAMAGE_SYS_CONFIG") of
-        EnvPath when is_list(EnvPath), EnvPath =/= "" -> EnvPath;
-        _ -> case application:get_env(damage, settings_config_path) of
-                 {ok, AppPath} when is_binary(AppPath); is_list(AppPath) -> to_str(AppPath);
-                 _ -> vm_config_path()
-             end
-    end,
+    Config =
+        case os:getenv("DAMAGE_SYS_CONFIG") of
+            EnvPath when is_list(EnvPath), EnvPath =/= "" -> EnvPath;
+            _ ->
+                case application:get_env(damage, settings_config_path) of
+                    {ok, AppPath} when is_binary(AppPath); is_list(AppPath) -> to_str(AppPath);
+                    _ -> vm_config_path()
+                end
+        end,
     normalize_path(Config).
 
 vm_config_path() ->
     case init:get_argument(config) of
         {ok, Arguments} when is_list(Arguments) ->
-            Paths = [ensure_config_extension(lists:last(Values))
-                     || Values <- Arguments, is_list(Values), Values =/= []],
+            Paths = [
+                ensure_config_extension(lists:last(Values))
+             || Values <- Arguments, is_list(Values), Values =/= []
+            ],
             %% Releases can include an additional -config for the dashboard
             %% overlay. Do not accidentally treat that as the base sys.config.
-            Sources = [P || P <- Paths,
-                            not lists:suffix(".dashboard.config", P)],
+            Sources = [
+                P
+             || P <- Paths,
+                not lists:suffix(".dashboard.config", P)
+            ],
             case Sources of
                 [Base | _] -> Base;
                 [] -> "config/sys.config"
             end;
-        _ -> "config/sys.config"
+        _ ->
+            "config/sys.config"
     end.
 
 ensure_config_extension(Path) ->
@@ -293,7 +309,8 @@ xdg_config_dir() ->
                 absolute -> filename:join(Xdg, "damage");
                 _ -> home_config_dir()
             end;
-        _ -> home_config_dir()
+        _ ->
+            home_config_dir()
     end.
 
 home_config_dir() ->
@@ -303,7 +320,8 @@ home_config_dir() ->
                 absolute -> filename:join([Home, ".config", "damage"]);
                 _ -> "/var/lib/damage/.config/damage"
             end;
-        _ -> "/var/lib/damage/.config/damage"
+        _ ->
+            "/var/lib/damage/.config/damage"
     end.
 
 dashboard_config_path() ->

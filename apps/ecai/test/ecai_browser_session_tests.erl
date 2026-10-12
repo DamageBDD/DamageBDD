@@ -15,8 +15,14 @@ admin_session_policy_test() ->
 
 wallet_metadata_cannot_elevate_configured_admin_test() ->
     with_config(fun() ->
-        Auth = #{authenticated => true, auth_mode => wallet, node_admin => true,
-                 public_key => <<"ak_admin">>, access_token => <<"secret">>, private_key => <<"secret-key">>},
+        Auth = #{
+            authenticated => true,
+            auth_mode => wallet,
+            node_admin => true,
+            public_key => <<"ak_admin">>,
+            access_token => <<"secret">>,
+            private_key => <<"secret-key">>
+        },
         M = ecai_auth_http:session_metadata(Auth),
         ?assertEqual(true, maps:get(authenticated, M)),
         ?assertEqual(wallet, maps:get(auth_mode, M)),
@@ -28,7 +34,12 @@ wallet_metadata_cannot_elevate_configured_admin_test() ->
 
 managed_metadata_preserves_scoped_admin_test() ->
     with_config(fun() ->
-        Auth = #{authenticated => true, auth_mode => custodial, node_admin => true, public_key => <<"ak_admin">>},
+        Auth = #{
+            authenticated => true,
+            auth_mode => custodial,
+            node_admin => true,
+            public_key => <<"ak_admin">>
+        },
         M = ecai_auth_http:session_metadata(Auth),
         ?assertEqual(true, maps:get(node_admin, M)),
         ?assertEqual(true, maps:get(code_admin, M)),
@@ -37,9 +48,11 @@ managed_metadata_preserves_scoped_admin_test() ->
     end).
 
 admin_json_preserves_boolean_gates_test() ->
-    Value = ecai_code_admin_http:externalize(#{ok => true,
+    Value = ecai_code_admin_http:externalize(#{
+        ok => true,
         publication_gate => #{eligible => false, blockers => [push_disabled]},
-        publishing => undefined}),
+        publishing => undefined
+    }),
     ?assertEqual(true, maps:get(<<"ok">>, Value)),
     Gate = maps:get(<<"publication_gate">>, Value),
     ?assertEqual(false, maps:get(<<"eligible">>, Gate)),
@@ -47,11 +60,21 @@ admin_json_preserves_boolean_gates_test() ->
     ?assertEqual(null, maps:get(<<"publishing">>, Value)).
 
 with_config(Fun) ->
-    Values = [{damage, node_admins, [<<"ak_admin">>]},
-              {ecai, code_admin_enabled, true}, {ecai, code_admin_accounts, []}],
+    Values = [
+        {damage, node_admins, [<<"ak_admin">>]},
+        {ecai, code_admin_enabled, true},
+        {ecai, code_admin_accounts, []}
+    ],
     Old = [{App, Key, application:get_env(App, Key)} || {App, Key, _} <- Values],
     lists:foreach(fun({App, Key, V}) -> application:set_env(App, Key, V) end, Values),
-    try Fun() after lists:foreach(fun
-        ({App, Key, undefined}) -> application:unset_env(App, Key);
-        ({App, Key, {ok, V}}) -> application:set_env(App, Key, V)
-    end, Old) end.
+    try
+        Fun()
+    after
+        lists:foreach(
+            fun
+                ({App, Key, undefined}) -> application:unset_env(App, Key);
+                ({App, Key, {ok, V}}) -> application:set_env(App, Key, V)
+            end,
+            Old
+        )
+    end.

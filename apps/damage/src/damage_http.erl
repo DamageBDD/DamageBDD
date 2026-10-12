@@ -231,7 +231,8 @@ trails() ->
                             [
                                 #{
                                     name => <<"feature_cid">>,
-                                    description => <<"IPFS CID or CID-relative path of the feature file.">>,
+                                    description =>
+                                        <<"IPFS CID or CID-relative path of the feature file.">>,
                                     in => <<"body">>,
                                     required => true,
                                     type => <<"string">>
@@ -257,9 +258,14 @@ is_authorized(Req, #{action := node_balances} = State) ->
 is_authorized(Req, #{action := tx} = State) ->
     %% The legacy path does not bind payment proof to an immutable execution quote.
     %% Do not broadcast a supplied transaction or open a channel from this endpoint.
-    {stop, cowboy_req:reply(409,
-        #{<<"content-type">> => <<"application/json">>, <<"cache-control">> => <<"no-store">>},
-        jsx:encode(damage_wallet_policy:rejection()), Req), State};
+    {stop,
+        cowboy_req:reply(
+            409,
+            #{<<"content-type">> => <<"application/json">>, <<"cache-control">> => <<"no-store">>},
+            jsx:encode(damage_wallet_policy:rejection()),
+            Req
+        ),
+        State};
 is_authorized(Req, State0) ->
     damage_auth:require_auth(
         Req,
@@ -1011,7 +1017,9 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                                             case safe_confirm_spend(RunConfig, Result0) of
                                                 {ok, Spend, TxHash} ->
                                                     ?LOG_INFO("Result ~p", [Spend]),
-                                                    observe_analytics_settlement(Result0, TxHash, chain_confirmed),
+                                                    observe_analytics_settlement(
+                                                        Result0, TxHash, chain_confirmed
+                                                    ),
                                                     Result1 =
                                                         maps:put(
                                                             tx_hash,
@@ -1038,7 +1046,9 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                                                     ),
                                                     {RunStatus, Summary};
                                                 {pending, TxHash, ChainError} ->
-                                                    observe_analytics_settlement(Result0, TxHash, pending_chain),
+                                                    observe_analytics_settlement(
+                                                        Result0, TxHash, pending_chain
+                                                    ),
                                                     ?LOG_WARNING(
                                                         "confirm spend pending account=~p tx_hash=~p error=~p",
                                                         [AeAccount, TxHash, ChainError]
@@ -1260,7 +1270,8 @@ charge_hits(_) ->
     0.
 
 observe_analytics_settlement(RunRecord, TxHash, Settlement) ->
-    try damage_analytics_store:settle_run(RunRecord, TxHash, Settlement)
+    try
+        damage_analytics_store:settle_run(RunRecord, TxHash, Settlement)
     catch
         _:_ -> ok
     end.

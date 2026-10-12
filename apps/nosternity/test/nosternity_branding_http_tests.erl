@@ -39,8 +39,11 @@ custom_branding_test() ->
 note_id_is_escaped_once_test() ->
     with_server(fun(Port) ->
         set_branding(),
-        {200, _, Note} = request(Port, <<"GET">>,
-            <<"/nostr/note/?id=%22%3E%3Cscript%3E%26">>),
+        {200, _, Note} = request(
+            Port,
+            <<"GET">>,
+            <<"/nostr/note/?id=%22%3E%3Cscript%3E%26">>
+        ),
         contains(Note, <<"<title>Nostr Note | Community &amp; Search</title>">>),
         contains(Note, <<"value=\"&quot;&gt;&lt;script&gt;&amp;\"">>),
         excludes(Note, <<"&amp;quot;">>),
@@ -62,15 +65,20 @@ discovery_matches_branding_test() ->
         ?assertNot(maps:is_key(<<"icon">>, Default)),
         set_branding(),
         {200, Headers, Body} = request(Port, <<"GET">>, <<"/nostr">>),
-        ?assertEqual(<<"application/nostr+json">>,
-            proplists:get_value(<<"content-type">>, Headers)),
+        ?assertEqual(
+            <<"application/nostr+json">>,
+            proplists:get_value(<<"content-type">>, Headers)
+        ),
         Info = jsx:decode(Body, [return_maps]),
         ?assertEqual(<<"A & B <Node>">>, maps:get(<<"name">>, Info)),
         ?assertEqual(<<"<script>alert(\"x\")</script>">>, maps:get(<<"description">>, Info)),
         ?assertEqual(<<"https://example.org/logo.svg?x=1&y=2">>, maps:get(<<"icon">>, Info)),
-        lists:foreach(fun(Key) ->
-            ?assertEqual(maps:get(Key, Default), maps:get(Key, Info))
-        end, [<<"supported_nips">>, <<"software">>, <<"version">>, <<"limitation">>]),
+        lists:foreach(
+            fun(Key) ->
+                ?assertEqual(maps:get(Key, Default), maps:get(Key, Info))
+            end,
+            [<<"supported_nips">>, <<"software">>, <<"version">>, <<"limitation">>]
+        ),
         ?assertEqual([1, 9, 11, 40, 50], maps:get(<<"supported_nips">>, Info)),
         application:set_env(nosternity, node_logo_url, <<"/branding/logo.svg">>),
         {200, _, RelativeBody} = request(Port, <<"GET">>, <<"/nostr">>),
@@ -81,51 +89,75 @@ contains(Body, Fragment) -> ?assertNotEqual(nomatch, binary:match(Body, Fragment
 excludes(Body, Fragment) -> ?assertEqual(nomatch, binary:match(Body, Fragment)).
 
 set_branding() ->
-    lists:foreach(fun({Key, Value}) -> application:set_env(nosternity, Key, Value) end,
-        [{node_name, <<"A & B <Node>">>},
-         {node_title, <<"Community & Search">>},
-         {node_description, <<"<script>alert(\"x\")</script>">>},
-         {node_logo_url, <<"https://example.org/logo.svg?x=1&y=2">>},
-         {node_favicon_url, <<"/branding/favicon.svg">>},
-         {node_accent_color, <<"#123abc">>}]).
+    lists:foreach(
+        fun({Key, Value}) -> application:set_env(nosternity, Key, Value) end,
+        [
+            {node_name, <<"A & B <Node>">>},
+            {node_title, <<"Community & Search">>},
+            {node_description, <<"<script>alert(\"x\")</script>">>},
+            {node_logo_url, <<"https://example.org/logo.svg?x=1&y=2">>},
+            {node_favicon_url, <<"/branding/favicon.svg">>},
+            {node_accent_color, <<"#123abc">>}
+        ]
+    ).
 
 with_server(Fun) ->
     {ok, _} = application:ensure_all_started(cowboy),
     {ok, _} = application:ensure_all_started(gun),
-    Keys = [node_name, node_title, node_description, node_logo_url,
-        node_favicon_url, node_accent_color],
+    Keys = [
+        node_name,
+        node_title,
+        node_description,
+        node_logo_url,
+        node_favicon_url,
+        node_accent_color
+    ],
     Saved = [{Key, application:get_env(nosternity, Key)} || Key <- Keys],
     lists:foreach(fun(Key) -> application:unset_env(nosternity, Key) end, Keys),
     Ref = make_ref(),
     %% Use the production handlers and application templates on a loopback port.
-    Dispatch = cowboy_router:compile([{'_', [
-        {"/", nosternity_http, #{action => home_ui}},
-        {"/nostr/note/", nosternity_http, #{action => note_ui}},
-        {"/nostr", nosternity_websocket, #{}},
-        {"/branding/[...]", cowboy_static, {priv_dir, nosternity, "branding"}}
-    ]}]),
+    Dispatch = cowboy_router:compile([
+        {'_', [
+            {"/", nosternity_http, #{action => home_ui}},
+            {"/nostr/note/", nosternity_http, #{action => note_ui}},
+            {"/nostr", nosternity_websocket, #{}},
+            {"/branding/[...]", cowboy_static, {priv_dir, nosternity, "branding"}}
+        ]}
+    ]),
     try
-        {ok, _} = cowboy:start_clear(Ref, [{ip, {127, 0, 0, 1}}, {port, 0}],
-            #{env => #{dispatch => Dispatch}}),
+        {ok, _} = cowboy:start_clear(
+            Ref,
+            [{ip, {127, 0, 0, 1}}, {port, 0}],
+            #{env => #{dispatch => Dispatch}}
+        ),
         Fun(ranch:get_port(Ref))
     after
         cowboy:stop_listener(Ref),
-        lists:foreach(fun
-            ({Key, undefined}) -> application:unset_env(nosternity, Key);
-            ({Key, {ok, Value}}) -> application:set_env(nosternity, Key, Value)
-        end, Saved)
+        lists:foreach(
+            fun
+                ({Key, undefined}) -> application:unset_env(nosternity, Key);
+                ({Key, {ok, Value}}) -> application:set_env(nosternity, Key, Value)
+            end,
+            Saved
+        )
     end.
 
 request(Port, Method, Path) ->
-    {ok, Pid} = gun:open("127.0.0.1", Port,
-        #{transport => tcp, protocols => [http], retry => 0}),
+    {ok, Pid} = gun:open(
+        "127.0.0.1",
+        Port,
+        #{transport => tcp, protocols => [http], retry => 0}
+    ),
     try
         {ok, http} = gun:await_up(Pid, 3000),
         Ref = gun:request(Pid, Method, Path, [], <<>>),
         case gun:await(Pid, Ref, 3000) of
-            {response, fin, Status, Headers} -> {Status, Headers, <<>>};
+            {response, fin, Status, Headers} ->
+                {Status, Headers, <<>>};
             {response, nofin, Status, Headers} ->
                 {ok, Body} = gun:await_body(Pid, Ref, 3000),
                 {Status, Headers, Body}
         end
-    after gun:close(Pid) end.
+    after
+        gun:close(Pid)
+    end.

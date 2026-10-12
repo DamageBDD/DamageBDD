@@ -63,40 +63,75 @@ start_link() -> start_link(#{}).
 start_link(Opts) -> gen_server:start_link({local, ?SERVER}, ?MODULE, Opts, []).
 scan_now() -> gen_server:cast(?SERVER, scan_now).
 status() -> gen_server:call(?SERVER, status).
-enqueue_feedback(App, Module, Finding, Meta)
-  when is_atom(App), is_atom(Module), is_map(Finding), is_map(Meta) ->
+enqueue_feedback(App, Module, Finding, Meta) when
+    is_atom(App), is_atom(Module), is_map(Finding), is_map(Meta)
+->
     gen_server:cast(?SERVER, {enqueue_feedback, App, Module, Finding, Meta}).
 
 init(Opts) ->
     %% The cycle runner is linked so it cannot outlive a killed manager. Monitor
     %% delivery, rather than the link, owns failure accounting for that runner.
     process_flag(trap_exit, true),
-    Interval = positive_int(maps:get(interval_ms, Opts,
-        application:get_env(ecai, code_patch_scan_interval_ms, ?DEFAULT_INTERVAL)),
-        ?DEFAULT_INTERVAL),
-    RetryTick = positive_int(maps:get(retry_tick_ms, Opts,
-        application:get_env(ecai, code_patch_retry_tick_ms, ?DEFAULT_RETRY_TICK)),
-        ?DEFAULT_RETRY_TICK),
-    MaxConcurrent = positive_int(maps:get(max_concurrent, Opts,
-        application:get_env(ecai, code_patch_max_concurrent, ?DEFAULT_MAX_CONCURRENT)),
-        ?DEFAULT_MAX_CONCURRENT),
-    State = #state{interval_ms = Interval, retry_tick_ms = RetryTick,
-        max_concurrent = MaxConcurrent, opts = Opts},
-    {ok, arm_timer(scan, nonneg_int(maps:get(initial_scan_delay_ms, Opts, 10000), 10000),
-        arm_timer(retry_tick, nonneg_int(maps:get(initial_retry_delay_ms, Opts, 1000), 1000), State))}.
+    Interval = positive_int(
+        maps:get(
+            interval_ms,
+            Opts,
+            application:get_env(ecai, code_patch_scan_interval_ms, ?DEFAULT_INTERVAL)
+        ),
+        ?DEFAULT_INTERVAL
+    ),
+    RetryTick = positive_int(
+        maps:get(
+            retry_tick_ms,
+            Opts,
+            application:get_env(ecai, code_patch_retry_tick_ms, ?DEFAULT_RETRY_TICK)
+        ),
+        ?DEFAULT_RETRY_TICK
+    ),
+    MaxConcurrent = positive_int(
+        maps:get(
+            max_concurrent,
+            Opts,
+            application:get_env(ecai, code_patch_max_concurrent, ?DEFAULT_MAX_CONCURRENT)
+        ),
+        ?DEFAULT_MAX_CONCURRENT
+    ),
+    State = #state{
+        interval_ms = Interval,
+        retry_tick_ms = RetryTick,
+        max_concurrent = MaxConcurrent,
+        opts = Opts
+    },
+    {ok,
+        arm_timer(
+            scan,
+            nonneg_int(maps:get(initial_scan_delay_ms, Opts, 10000), 10000),
+            arm_timer(
+                retry_tick, nonneg_int(maps:get(initial_retry_delay_ms, Opts, 1000), 1000), State
+            )
+        )}.
 
 handle_call(status, _From, State) ->
     %% No DETS fold, Git invocation, or supervisor call may run in this callback.
     %% Durable counts are explicitly timestamped; active counts use monitored PIDs.
-    Active = length([Pid || Pid <- maps:keys(State#state.workers),
-        erlang:is_process_alive(Pid)]),
+    Active = length([
+        Pid
+     || Pid <- maps:keys(State#state.workers),
+        erlang:is_process_alive(Pid)
+    ]),
     Base = maps:merge(empty_snapshot(), State#state.snapshot),
-    Reply = Base#{cycles => State#state.cycles,
-        queued => State#state.queued, queued_total => State#state.queued,
-        retried => State#state.retried, retried_total => State#state.retried,
-        active => Active, max_concurrent => State#state.max_concurrent,
-        last_run_at => State#state.last_run_at, last_retry_at => State#state.last_retry_at,
-        last_error => State#state.last_error, last_failure => State#state.last_failure,
+    Reply = Base#{
+        cycles => State#state.cycles,
+        queued => State#state.queued,
+        queued_total => State#state.queued,
+        retried => State#state.retried,
+        retried_total => State#state.retried,
+        active => Active,
+        max_concurrent => State#state.max_concurrent,
+        last_run_at => State#state.last_run_at,
+        last_retry_at => State#state.last_retry_at,
+        last_error => State#state.last_error,
+        last_failure => State#state.last_failure,
         cycle_failures => State#state.cycle_failures,
         cycle_running => State#state.task =/= undefined,
         cycle => task_status(State#state.task),
@@ -106,7 +141,8 @@ handle_call(status, _From, State) ->
         last_worker_down => State#state.last_worker_down,
         snapshot_ready => State#state.snapshot_at =/= undefined,
         snapshot_at => State#state.snapshot_at,
-        snapshot_error => State#state.snapshot_error},
+        snapshot_error => State#state.snapshot_error
+    },
     {reply, Reply, State};
 handle_call(_Req, _From, State) ->
     {reply, {error, unsupported_call}, State}.
@@ -118,14 +154,29 @@ handle_cast({enqueue_feedback, App, Module, Finding, Meta}, State) ->
     Item = {App, Module, Finding, Meta},
     Pending = [Item | State#state.feedback_pending],
     {noreply, request_cycle(retry_tick, State#state{feedback_pending = Pending})};
-handle_cast(_Msg, State) -> {noreply, State}.
+handle_cast(_Msg, State) ->
+    {noreply, State}.
 
 handle_info({timeout, Ref, scan}, State = #state{scan_timer = Ref}) ->
-    {noreply, request_cycle(scan, arm_timer(scan, State#state.interval_ms,
-        State#state{scan_timer = undefined}))};
+    {noreply,
+        request_cycle(
+            scan,
+            arm_timer(
+                scan,
+                State#state.interval_ms,
+                State#state{scan_timer = undefined}
+            )
+        )};
 handle_info({timeout, Ref, retry_tick}, State = #state{retry_timer = Ref}) ->
-    {noreply, request_cycle(retry_tick, arm_timer(retry_tick, State#state.retry_tick_ms,
-        State#state{retry_timer = undefined}))};
+    {noreply,
+        request_cycle(
+            retry_tick,
+            arm_timer(
+                retry_tick,
+                State#state.retry_tick_ms,
+                State#state{retry_timer = undefined}
+            )
+        )};
 handle_info(scan, State) ->
     %% Legacy/manual messages request work but never mint another timer chain.
     {noreply, request_cycle(scan, State)};
@@ -135,8 +186,10 @@ handle_info({patch_worker_started, Fp, Version, Pid}, State) when is_pid(Pid) ->
     {noreply, monitor_worker(Fp, Version, Pid, State)};
 handle_info({patch_children, Children}, State) when is_list(Children) ->
     {noreply, adopt_workers(Children, State)};
-handle_info({patch_cycle_result, Ref, _Result},
-        State = #state{task = #{ref := Ref, timed_out := true}}) ->
+handle_info(
+    {patch_cycle_result, Ref, _Result},
+    State = #state{task = #{ref := Ref, timed_out := true}}
+) ->
     %% A result already in flight must not release a timed-out runner's lease.
     {noreply, State};
 handle_info({patch_cycle_result, Ref, Result}, State = #state{task = #{ref := Ref} = Task}) ->
@@ -144,48 +197,66 @@ handle_info({patch_cycle_result, Ref, Result}, State = #state{task = #{ref := Re
     _ = erlang:cancel_timer(maps:get(timer, Task)),
     State1 = finish_cycle(maps:get(kind, Task), Result, State#state{task = undefined}),
     {noreply, start_pending_cycle(State1)};
-handle_info({timeout, TRef, {patch_cycle_timeout, Ref}},
-        State = #state{task = #{ref := Ref, timer := TRef, pid := Pid} = Task}) ->
+handle_info(
+    {timeout, TRef, {patch_cycle_timeout, Ref}},
+    State = #state{task = #{ref := Ref, timer := TRef, pid := Pid} = Task}
+) ->
     exit(Pid, kill),
     %% Keep ownership until DOWN confirms death. No overlapping dispatchers.
     {noreply, State#state{task = Task#{timed_out => true}}};
-handle_info({'DOWN', MRef, process, _Pid, Reason},
-        State = #state{task = #{mref := MRef} = Task}) ->
+handle_info(
+    {'DOWN', MRef, process, _Pid, Reason},
+    State = #state{task = #{mref := MRef} = Task}
+) ->
     _ = erlang:cancel_timer(maps:get(timer, Task)),
-    Error = case maps:get(timed_out, Task, false) of
-        true -> {patch_cycle_timeout, maps:get(kind, Task)};
-        false -> {patch_cycle_down, maps:get(kind, Task), Reason}
-    end,
-    State1 = finish_cycle(maps:get(kind, Task), #{errors => [Error]},
-        State#state{task = undefined}),
+    Error =
+        case maps:get(timed_out, Task, false) of
+            true -> {patch_cycle_timeout, maps:get(kind, Task)};
+            false -> {patch_cycle_down, maps:get(kind, Task), Reason}
+        end,
+    State1 = finish_cycle(
+        maps:get(kind, Task),
+        #{errors => [Error]},
+        State#state{task = undefined}
+    ),
     {noreply, start_pending_cycle(State1)};
 handle_info({'DOWN', MRef, process, Pid, Reason}, State) ->
     case maps:find(Pid, State#state.workers) of
         {ok, #{mref := MRef, key := Key}} ->
             Reasons = (State#state.down_reasons)#{Key => {worker_down, Reason}},
-            State1 = State#state{workers = maps:remove(Pid, State#state.workers),
+            State1 = State#state{
+                workers = maps:remove(Pid, State#state.workers),
                 down_reasons = Reasons,
-                last_worker_down = #{key => Key, reason => Reason, at => now_iso8601()}},
+                last_worker_down = #{key => Key, reason => Reason, at => now_iso8601()}
+            },
             %% Recovery rereads durable state; normal completion must not be retried.
             {noreply, request_cycle(retry_tick, State1)};
-        _ -> {noreply, State}
+        _ ->
+            {noreply, State}
     end;
 handle_info({'EXIT', _Pid, _Reason}, State) ->
     {noreply, State};
-handle_info(_Info, State) -> {noreply, State}.
+handle_info(_Info, State) ->
+    {noreply, State}.
 
 terminate(_Reason, State) ->
     cancel_timer(State#state.scan_timer),
     cancel_timer(State#state.retry_timer),
     case State#state.task of
-        #{pid := Pid, timer := Timer} -> cancel_timer(Timer), exit(Pid, kill);
-        _ -> ok
+        #{pid := Pid, timer := Timer} ->
+            cancel_timer(Timer),
+            exit(Pid, kill);
+        _ ->
+            ok
     end,
     ok.
 code_change(_Old, State, _Extra) -> {ok, State}.
 
-cancel_timer(undefined) -> ok;
-cancel_timer(Ref) -> erlang:cancel_timer(Ref), ok.
+cancel_timer(undefined) ->
+    ok;
+cancel_timer(Ref) ->
+    erlang:cancel_timer(Ref),
+    ok.
 
 arm_timer(scan, Delay, State) ->
     cancel_timer(State#state.scan_timer),
@@ -198,44 +269,76 @@ request_cycle(scan, State) -> start_pending_cycle(State#state{scan_pending = tru
 request_cycle(retry_tick, State) -> start_pending_cycle(State#state{retry_pending = true}).
 
 start_pending_cycle(State = #state{task = Task}) when Task =/= undefined -> State;
-start_pending_cycle(State = #state{scan_pending = false, retry_pending = false}) -> State;
+start_pending_cycle(State = #state{scan_pending = false, retry_pending = false}) ->
+    State;
 start_pending_cycle(State) ->
-    Kind = case State#state.scan_pending of true -> scan; false -> retry_tick end,
+    Kind =
+        case State#state.scan_pending of
+            true -> scan;
+            false -> retry_tick
+        end,
     Parent = self(),
     Ref = make_ref(),
-    Opts = (State#state.opts)#{manager_pid => Parent,
-        worker_down_reasons => State#state.down_reasons},
+    Opts = (State#state.opts)#{
+        manager_pid => Parent,
+        worker_down_reasons => State#state.down_reasons
+    },
     Feedback = lists:reverse(State#state.feedback_pending),
     Max = State#state.max_concurrent,
-    {Pid, MRef} = spawn_opt(fun() ->
-        Result = run_cycle(Kind, Feedback, Opts, Max),
-        Parent ! {patch_cycle_result, Ref, Result}
-    end, [link, monitor]),
-    Timeout = positive_int(maps:get(cycle_timeout_ms, Opts,
-        application:get_env(ecai, code_patch_cycle_timeout_ms, 300000)), 300000),
+    {Pid, MRef} = spawn_opt(
+        fun() ->
+            Result = run_cycle(Kind, Feedback, Opts, Max),
+            Parent ! {patch_cycle_result, Ref, Result}
+        end,
+        [link, monitor]
+    ),
+    Timeout = positive_int(
+        maps:get(
+            cycle_timeout_ms,
+            Opts,
+            application:get_env(ecai, code_patch_cycle_timeout_ms, 300000)
+        ),
+        300000
+    ),
     Timer = erlang:start_timer(Timeout, self(), {patch_cycle_timeout, Ref}),
-    Task = #{pid => Pid, mref => MRef, ref => Ref, timer => Timer,
-        kind => Kind, started_ms => erlang:monotonic_time(millisecond)},
-    State#state{task = Task, scan_pending = false, retry_pending = false,
-        feedback_pending = [], down_reasons = #{}}.
+    Task = #{
+        pid => Pid,
+        mref => MRef,
+        ref => Ref,
+        timer => Timer,
+        kind => Kind,
+        started_ms => erlang:monotonic_time(millisecond)
+    },
+    State#state{
+        task = Task,
+        scan_pending = false,
+        retry_pending = false,
+        feedback_pending = [],
+        down_reasons = #{}
+    }.
 
 run_cycle(Kind, Feedback, Opts, Max) ->
-    Result = try
-        Children = safe_patch_children(),
-        notify_manager(Opts, {patch_children, Children}),
-        {FQ, FE} = lists:foldl(fun({App, Module, Finding, Meta}, {Q, E}) ->
-            case guarded(fun() -> admit_feedback(App, Module, Finding, Meta, Opts) end) of
-                {ok, {Q1, E1}} -> {Q + Q1, E1 ++ E};
-                {error, Error} -> {Q, [{feedback_admission_failed, App, Module, Error} | E]}
-            end
-        end, {0, []}, Feedback),
-        {SQ, SE} = scan_candidates(Kind, Opts, Max),
-        {Started, DE} = dispatch_persisted(Opts, Max),
-        #{queued => FQ + SQ, started => Started, errors => DE ++ SE ++ FE}
-    catch
-        Class:Reason:Stack ->
-            #{errors => [{patch_cycle_exception, Class, Reason, lists:sublist(Stack, 8)}]}
-    end,
+    Result =
+        try
+            Children = safe_patch_children(),
+            notify_manager(Opts, {patch_children, Children}),
+            {FQ, FE} = lists:foldl(
+                fun({App, Module, Finding, Meta}, {Q, E}) ->
+                    case guarded(fun() -> admit_feedback(App, Module, Finding, Meta, Opts) end) of
+                        {ok, {Q1, E1}} -> {Q + Q1, E1 ++ E};
+                        {error, Error} -> {Q, [{feedback_admission_failed, App, Module, Error} | E]}
+                    end
+                end,
+                {0, []},
+                Feedback
+            ),
+            {SQ, SE} = scan_candidates(Kind, Opts, Max),
+            {Started, DE} = dispatch_persisted(Opts, Max),
+            #{queued => FQ + SQ, started => Started, errors => DE ++ SE ++ FE}
+        catch
+            Class:Reason:Stack ->
+                #{errors => [{patch_cycle_exception, Class, Reason, lists:sublist(Stack, 8)}]}
+        end,
     %% Even failed cycles can report a fresh snapshot; errors are never replaced
     %% by an empty queue when a dependency cannot be read.
     case guarded(fun() -> queue_snapshot(Opts) end) of
@@ -243,60 +346,109 @@ run_cycle(Kind, Feedback, Opts, Max) ->
         {error, Error} -> Result#{snapshot_error => Error}
     end.
 
-scan_candidates(retry_tick, _Opts, _Max) -> {0, []};
+scan_candidates(retry_tick, _Opts, _Max) ->
+    {0, []};
 scan_candidates(scan, Opts, Max) ->
     case learning_ready(Opts) of
-        false -> {0, [learning_not_ready]};
+        false ->
+            {0, [learning_not_ready]};
         true ->
             _ = safe_replay_feedback(),
-            lists:foldl(fun(App, {Q, E}) ->
-                case safe_app_findings(App) of
-                    {ok, Reports} ->
-                        %% A malformed report cannot abort unrelated applications.
-                        lists:foldl(fun(Report, {RQ, RE}) ->
-                            case guarded(fun() -> process_reports(App, [Report], Opts, Max) end) of
-                                {ok, {N, Errors}} -> {RQ + N, Errors ++ RE};
-                                {error, Error} -> {RQ, [{report_admission_failed, App, Error} | RE]}
-                            end
-                        end, {Q, E}, Reports);
-                    {error, Reason} -> {Q, [{App, Reason} | E]}
-                end
-            end, {0, []}, ?APPS)
+            lists:foldl(
+                fun(App, {Q, E}) ->
+                    case safe_app_findings(App) of
+                        {ok, Reports} ->
+                            %% A malformed report cannot abort unrelated applications.
+                            lists:foldl(
+                                fun(Report, {RQ, RE}) ->
+                                    case
+                                        guarded(fun() ->
+                                            process_reports(App, [Report], Opts, Max)
+                                        end)
+                                    of
+                                        {ok, {N, Errors}} ->
+                                            {RQ + N, Errors ++ RE};
+                                        {error, Error} ->
+                                            {RQ, [{report_admission_failed, App, Error} | RE]}
+                                    end
+                                end,
+                                {Q, E},
+                                Reports
+                            );
+                        {error, Reason} ->
+                            {Q, [{App, Reason} | E]}
+                    end
+                end,
+                {0, []},
+                ?APPS
+            )
     end.
 
 guarded(Fun) ->
-    try {ok, Fun()} catch
+    try
+        {ok, Fun()}
+    catch
         Class:Reason:Stack -> {error, {Class, Reason, lists:sublist(Stack, 8)}}
     end.
 
 finish_cycle(Kind, Result, State) ->
     Errors0 = maps:get(errors, Result, []),
-    Errors = case maps:find(snapshot_error, Result) of
-        {ok, Error} -> [{queue_snapshot_failed, Error} | Errors0];
-        error -> Errors0
-    end,
+    Errors =
+        case maps:find(snapshot_error, Result) of
+            {ok, Error} -> [{queue_snapshot_failed, Error} | Errors0];
+            error -> Errors0
+        end,
     LastError = merge_errors(State#state.last_error, Errors),
     Now = now_iso8601(),
     State1 = State#state{
-        cycles = State#state.cycles + case Kind of scan -> 1; _ -> 0 end,
+        cycles =
+            State#state.cycles +
+                case Kind of
+                    scan -> 1;
+                    _ -> 0
+                end,
         queued = State#state.queued + maps:get(queued, Result, 0),
         retried = State#state.retried + maps:get(started, Result, 0),
-        cycle_failures = State#state.cycle_failures + case Errors of [] -> 0; _ -> 1 end,
-        last_run_at = case Kind of scan -> Now; _ -> State#state.last_run_at end,
-        last_retry_at = Now, last_error = LastError,
-        last_failure = case Errors of
-            [] -> State#state.last_failure;
-            _ -> #{at => Now, errors => Errors}
-        end},
+        cycle_failures =
+            State#state.cycle_failures +
+                case Errors of
+                    [] -> 0;
+                    _ -> 1
+                end,
+        last_run_at =
+            case Kind of
+                scan -> Now;
+                _ -> State#state.last_run_at
+            end,
+        last_retry_at = Now,
+        last_error = LastError,
+        last_failure =
+            case Errors of
+                [] -> State#state.last_failure;
+                _ -> #{at => Now, errors => Errors}
+            end
+    },
     case maps:find(snapshot, Result) of
-        {ok, Snapshot} -> State1#state{snapshot = Snapshot,
-            snapshot_at = maps:get(snapshot_at, Result), snapshot_error = undefined};
-        error -> State1#state{snapshot_error = maps:get(snapshot_error, Result, LastError)}
+        {ok, Snapshot} ->
+            State1#state{
+                snapshot = Snapshot,
+                snapshot_at = maps:get(snapshot_at, Result),
+                snapshot_error = undefined
+            };
+        error ->
+            State1#state{snapshot_error = maps:get(snapshot_error, Result, LastError)}
     end.
 
 empty_snapshot() ->
-    #{queued_live => 0, retry_wait => 0, pending => 0, running_persisted => 0,
-        stale_running => 0, repair_statuses => #{}, failure_summary => #{}}.
+    #{
+        queued_live => 0,
+        retry_wait => 0,
+        pending => 0,
+        running_persisted => 0,
+        stale_running => 0,
+        repair_statuses => #{},
+        failure_summary => #{}
+    }.
 
 queue_snapshot(Opts) ->
     Repairs = safe_repairs(),
@@ -305,35 +457,54 @@ queue_snapshot(Opts) ->
     RetryWait = status_count(retry_wait, Counts),
     Children = safe_patch_children(),
     notify_manager(Opts, {patch_children, Children}),
-    #{queued_live => Queued, retry_wait => RetryWait, pending => Queued + RetryWait,
+    #{
+        queued_live => Queued,
+        retry_wait => RetryWait,
+        pending => Queued + RetryWait,
         running_persisted => status_count(running, Counts),
-        stale_running => stale_running_count(Repairs), repair_statuses => Counts,
-        failure_summary => failure_summary(Repairs, Opts)}.
+        stale_running => stale_running_count(Repairs),
+        repair_statuses => Counts,
+        failure_summary => failure_summary(Repairs, Opts)
+    }.
 
 monitor_worker(Fp, Version, Pid, State) ->
     case maps:is_key(Pid, State#state.workers) of
-        true -> State;
+        true ->
+            State;
         false ->
             MRef = erlang:monitor(process, Pid),
-            State#state{workers = (State#state.workers)#{Pid =>
-                #{mref => MRef, key => {Fp, Version}}}}
+            State#state{
+                workers = (State#state.workers)#{
+                    Pid =>
+                        #{mref => MRef, key => {Fp, Version}}
+                }
+            }
     end.
 
 adopt_workers(Children, State) ->
-    lists:foldl(fun
-        ({{ecai_patch_worker, Fp, Version}, Pid, _, _}, Acc) when is_pid(Pid) ->
-            case erlang:is_process_alive(Pid) of
-                true -> monitor_worker(Fp, Version, Pid, Acc);
-                false -> Acc
-            end;
-        (_, Acc) -> Acc
-    end, State, Children).
+    lists:foldl(
+        fun
+            ({{ecai_patch_worker, Fp, Version}, Pid, _, _}, Acc) when is_pid(Pid) ->
+                case erlang:is_process_alive(Pid) of
+                    true -> monitor_worker(Fp, Version, Pid, Acc);
+                    false -> Acc
+                end;
+            (_, Acc) ->
+                Acc
+        end,
+        State,
+        Children
+    ).
 
-task_status(undefined) -> idle;
+task_status(undefined) ->
+    idle;
 task_status(Task) ->
-    #{kind => maps:get(kind, Task), pid => maps:get(pid, Task),
+    #{
+        kind => maps:get(kind, Task),
+        pid => maps:get(pid, Task),
         timed_out => maps:get(timed_out, Task, false),
-        elapsed_ms => max(0, erlang:monotonic_time(millisecond) - maps:get(started_ms, Task))}.
+        elapsed_ms => max(0, erlang:monotonic_time(millisecond) - maps:get(started_ms, Task))
+    }.
 
 learning_ready(Opts) ->
     Require = maps:get(
@@ -519,7 +690,6 @@ process_findings(
         E1
     ).
 
-
 admit_feedback(App, Module, Finding, Meta, Opts) ->
     case patchable(Finding, Opts) of
         false ->
@@ -538,11 +708,14 @@ admit_feedback(App, Module, Finding, Meta, Opts) ->
                             case analysis_matches_report_source(ExpectedSha, Analysis) of
                                 true ->
                                     queue_feedback_if_needed(
-                                        App, Module, Finding, Analysis, Meta, Opts);
+                                        App, Module, Finding, Analysis, Meta, Opts
+                                    );
                                 false ->
                                     ecai_codebase_learner:module_changed(App, Module),
-                                    {0, [{feedback_source_changed, App, Module, ExpectedSha,
-                                          maps:get(source_sha256, Analysis, undefined)}]}
+                                    {0, [
+                                        {feedback_source_changed, App, Module, ExpectedSha,
+                                            maps:get(source_sha256, Analysis, undefined)}
+                                    ]}
                             end;
                         Other ->
                             {0, [{feedback_analysis_invalid, App, Module, Other}]}
@@ -580,8 +753,11 @@ queue_feedback_if_needed(App, Module, Finding, Analysis, Meta, _Opts) ->
                         created_at => Now,
                         updated_at => Now
                     },
-                    case ecai_learning_store:compare_and_put_repair(
-                            Fp, Version, not_found, maps:merge(Queued0, Provenance)) of
+                    case
+                        ecai_learning_store:compare_and_put_repair(
+                            Fp, Version, not_found, maps:merge(Queued0, Provenance)
+                        )
+                    of
                         {ok, _} -> {1, []};
                         {error, conflict} -> {0, []};
                         Error -> {0, [{feedback_reservation_failed, Fp, Version, Error}]}
@@ -593,7 +769,8 @@ has_active_feedback_repair(Fp) ->
     try ecai_learning_store:repairs(Fp) of
         Repairs when is_list(Repairs) ->
             lists:any(fun feedback_repair_active/1, Repairs);
-        _ -> false
+        _ ->
+            false
     catch
         _:_ -> false
     end.
@@ -608,7 +785,8 @@ feedback_repair_active(Repair) when is_map(Repair) ->
         <<"superseded">> -> false;
         _ -> true
     end;
-feedback_repair_active(_) -> false.
+feedback_repair_active(_) ->
+    false.
 
 report_source_sha256(Report) ->
     case mget(<<"source_sha256">>, Report, undefined) of
@@ -718,13 +896,15 @@ maybe_persist_enriched_repair(
 
 put_current_repair(Fp, Version, Before, After) ->
     case ecai_learning_store:compare_and_put_repair(Fp, Version, Before, After) of
-        {ok, Stored} -> Stored;
+        {ok, Stored} ->
+            Stored;
         {error, conflict} ->
             case ecai_learning_store:get_repair(Fp, Version) of
                 {ok, Current} -> Current;
                 Other -> erlang:error({repair_reload_failed, Fp, Version, Other})
             end;
-        Error -> erlang:error({repair_transition_failed, Fp, Version, Error})
+        Error ->
+            erlang:error({repair_transition_failed, Fp, Version, Error})
     end.
 
 dispatch_persisted(Opts, MaxConcurrent) ->
@@ -753,11 +933,21 @@ dispatch_persisted(Opts, MaxConcurrent) ->
                 true ->
                     {Started, Errors};
                 false ->
-                    case guarded(fun() -> dispatch_persisted_repair(
-                        Repair, Opts, MaxConcurrent, Started, Errors) end) of
-                        {ok, Result} -> Result;
-                        {error, Error} -> {Started, [{repair_dispatch_failed,
-                            maps:get(fingerprint, Repair, undefined), Error} | Errors]}
+                    case
+                        guarded(fun() ->
+                            dispatch_persisted_repair(
+                                Repair, Opts, MaxConcurrent, Started, Errors
+                            )
+                        end)
+                    of
+                        {ok, Result} ->
+                            Result;
+                        {error, Error} ->
+                            {Started, [
+                                {repair_dispatch_failed, maps:get(fingerprint, Repair, undefined),
+                                    Error}
+                                | Errors
+                            ]}
                     end
             end
         end,
@@ -822,11 +1012,13 @@ terminalize_exhausted_retry_wait(Repair, _Limit) ->
     Repair.
 
 persist_terminalized_retry(Before, Terminal) ->
-    case {maps:get(fingerprint, Terminal, undefined),
-            maps:get(finding_version, Terminal, undefined)} of
+    case
+        {maps:get(fingerprint, Terminal, undefined), maps:get(finding_version, Terminal, undefined)}
+    of
         {Fp, Version} when is_binary(Fp), is_binary(Version) ->
             put_current_repair(Fp, Version, Before, Terminal);
-        _ -> Terminal
+        _ ->
+            Terminal
     end.
 
 preflight_orphan_retry_batch(Repairs, Opts) ->
@@ -995,16 +1187,21 @@ reconcile_stale_running(Repairs, Opts) ->
 
 reconcile_stale_running_repair(Repair, Opts) ->
     Key = {maps:get(fingerprint, Repair), maps:get(finding_version, Repair)},
-    Reason = maps:get(Key, maps:get(worker_down_reasons, Opts, #{}),
-        {orphaned_worker, maps:get(worker_started_at, Repair, undefined)}),
+    Reason = maps:get(
+        Key,
+        maps:get(worker_down_reasons, Opts, #{}),
+        {orphaned_worker, maps:get(worker_started_at, Repair, undefined)}
+    ),
     case ecai_patch_lifecycle:recover(Repair, Reason, Opts) of
         {ok, unchanged} ->
             case ecai_learning_store:get_repair(element(1, Key), element(2, Key)) of
                 {ok, Current} -> Current;
                 _ -> Repair
             end;
-        {ok, Recovered} -> Recovered;
-        {error, Error} -> erlang:error(Error)
+        {ok, Recovered} ->
+            Recovered;
+        {error, Error} ->
+            erlang:error(Error)
     end.
 
 migrate_legacy_retries(Repairs, Opts) ->
@@ -1156,47 +1353,71 @@ start_repair(App, Module, Finding, Fp, Version, Repair, Opts, Q, E) ->
 reserve_repair(App, Module, Finding, Fp, Version, Repair, Opts, Q, E) ->
     Now = now_iso8601(),
     Running = (maps:without([completed_at, worker_pid, next_retry_at_ms], Repair))#{
-        status => running, stage => inference, retryable => false,
-        updated_at => Now, worker_started_at => Now, dispatch_pid => self()},
+        status => running,
+        stage => inference,
+        retryable => false,
+        updated_at => Now,
+        worker_started_at => Now,
+        dispatch_pid => self()
+    },
     case ecai_learning_store:compare_and_put_repair(Fp, Version, Repair, Running) of
-        {error, conflict} -> {Q, E};
+        {error, conflict} ->
+            {Q, E};
         {ok, Reserved} ->
-            WorkerOpts = maps:merge(Opts,
-                #{resume_repair => Repair, worker_id => {Fp, Version},
-                    reservation_seq => maps:get(persist_seq, Reserved)}),
-            Result = try ecai_patch_sup:propose(App, Module, Finding, WorkerOpts)
-                catch Class:Reason -> {error, {worker_start_exception, Class, Reason}} end,
+            WorkerOpts = maps:merge(
+                Opts,
+                #{
+                    resume_repair => Repair,
+                    worker_id => {Fp, Version},
+                    reservation_seq => maps:get(persist_seq, Reserved)
+                }
+            ),
+            Result =
+                try
+                    ecai_patch_sup:propose(App, Module, Finding, WorkerOpts)
+                catch
+                    Class:Reason -> {error, {worker_start_exception, Class, Reason}}
+                end,
             finish_start(Result, App, Module, Fp, Version, Reserved, Opts, Q, E);
-        Other -> {Q, [{repair_reservation_failed, Fp, Version, Other} | E]}
+        Other ->
+            {Q, [{repair_reservation_failed, Fp, Version, Other} | E]}
     end.
 
-finish_start({ok, Status, Terminal}, _App, _Module, Fp, Version, _Running, _Opts, Q, E)
-  when (Status =:= blocked orelse Status =:= superseded), is_map(Terminal) ->
+finish_start({ok, Status, Terminal}, _App, _Module, Fp, Version, _Running, _Opts, Q, E) when
+    (Status =:= blocked orelse Status =:= superseded), is_map(Terminal)
+->
     %% Preserve the preflight decision and strip old lifecycle metadata without
     %% ever replacing a newer worker/operator transition.
     case ecai_learning_store:get_repair(Fp, Version) of
         {ok, #{status := Status} = Current} ->
             Clean = normalize_preflight_terminal(Status, Current, #{}),
             case Clean =:= Current of
-                true -> ok;
-                false -> _ = put_current_repair(Fp, Version, Current, Clean), ok
+                true ->
+                    ok;
+                false ->
+                    _ = put_current_repair(Fp, Version, Current, Clean),
+                    ok
             end,
             {Q, E};
-        {ok, _Newer} -> {Q, E};
-        Error -> {Q, [{preflight_result_unavailable, Fp, Version, Error} | E]}
+        {ok, _Newer} ->
+            {Q, E};
+        Error ->
+            {Q, [{preflight_result_unavailable, Fp, Version, Error} | E]}
     end;
 finish_start({ok, Pid}, App, Module, Fp, Version, Running, Opts, Q, E) when is_pid(Pid) ->
     attach_started_worker(Pid, App, Module, Fp, Version, Running, Opts, Q + 1, E);
 finish_start({ok, Pid, _Info}, App, Module, Fp, Version, Running, Opts, Q, E) when is_pid(Pid) ->
     attach_started_worker(Pid, App, Module, Fp, Version, Running, Opts, Q + 1, E);
-finish_start({error, {already_started, Pid}}, App, Module, Fp, Version, Running, Opts, Q, E)
-  when is_pid(Pid) ->
+finish_start({error, {already_started, Pid}}, App, Module, Fp, Version, Running, Opts, Q, E) when
+    is_pid(Pid)
+->
     attach_started_worker(Pid, App, Module, Fp, Version, Running, Opts, Q, E);
 finish_start(Result, App, Module, Fp, Version, Running, Opts, Q, E) ->
-    Reason = case Result of
-        {error, R} -> R;
-        Other -> {invalid_worker_start_result, Other}
-    end,
+    Reason =
+        case Result of
+            {error, R} -> R;
+            Other -> {invalid_worker_start_result, Other}
+        end,
     Failed = start_failure_record(Running, Reason, Opts),
     case ecai_learning_store:compare_and_put_repair(Fp, Version, Running, Failed) of
         {ok, _} -> {Q, [{App, Module, Fp, Reason} | E]};
@@ -1216,8 +1437,11 @@ attach_started_worker(Pid, _App, _Module, Fp, Version, Running, Opts, Q, E) ->
 
 notify_manager(Opts, Message) ->
     case maps:get(manager_pid, Opts, whereis(?SERVER)) of
-        Pid when is_pid(Pid) -> Pid ! Message, ok;
-        _ -> ok
+        Pid when is_pid(Pid) ->
+            Pid ! Message,
+            ok;
+        _ ->
+            ok
     end.
 
 normalize_preflight_terminal(ExpectedStatus, Terminal0, Running) ->
@@ -1263,7 +1487,8 @@ active_patch_workers() ->
     length([
         Pid
      || {_Id, Pid, _Type, _Modules} <- safe_patch_children(),
-        is_pid(Pid), erlang:is_process_alive(Pid)
+        is_pid(Pid),
+        erlang:is_process_alive(Pid)
     ]).
 
 safe_patch_children() ->

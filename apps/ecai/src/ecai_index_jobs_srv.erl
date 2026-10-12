@@ -235,7 +235,8 @@ handle_call({get, JobId}, _From, State = #st{jobs = Jobs}) ->
                 <<"resources">> => ecai_index_job_codec:externalize(Resources)
             },
             {reply, {ok, Public}, State1};
-        error -> {reply, {error, not_found}, State}
+        error ->
+            {reply, {error, not_found}, State}
     end;
 handle_call(status, _From, State = #st{jobs = Jobs, running = Running}) ->
     Counts = lists:foldl(
@@ -854,10 +855,11 @@ start_queued_job(Job0, State0) ->
         attempt => Attempt,
         error => undefined,
         started_at_ms => Now,
-        first_started_at_ms => case first_start_time(Job0, Now) of
-            undefined -> Now;
-            ExistingStart -> ExistingStart
-        end,
+        first_started_at_ms =>
+            case first_start_time(Job0, Now) of
+                undefined -> Now;
+                ExistingStart -> ExistingStart
+            end,
         run_started_at_ms => Now,
         finished_at_ms => undefined,
         updated_at_ms => Now,
@@ -1168,12 +1170,15 @@ recover_job(Job0) ->
             recover_to_queue(Job1, finalizing);
         pause_requested ->
             (stop_run_clock(Job1, recovery_end_time(Job1)))#{
-                state => paused, updated_at_ms => now_ms(),
+                state => paused,
+                updated_at_ms => now_ms(),
                 progress => stop_progress(maps:get(progress, Job1, #{}), paused)
             };
         cancel_requested ->
             (stop_run_clock(Job1, recovery_end_time(Job1)))#{
-                state => canceled, finished_at_ms => now_ms(), updated_at_ms => now_ms(),
+                state => canceled,
+                finished_at_ms => now_ms(),
+                updated_at_ms => now_ms(),
                 progress => stop_progress(maps:get(progress, Job1, #{}), canceled)
             };
         minting ->
@@ -1206,48 +1211,75 @@ enrich_progress(Job, Progress0) ->
     Phase = maps:get(phase, Progress0, undefined),
     PrevPhase = maps:get(rate_phase, Job, undefined),
     Changed = Phase =/= PrevPhase,
-    Base = case Changed of
-        true -> Completed;
-        false -> maps:get(rate_base_completed, Job, Completed)
-    end,
-    Started = case Changed of
-        true -> Now;
-        false -> maps:get(rate_started_at_ms, Job, Now)
-    end,
+    Base =
+        case Changed of
+            true -> Completed;
+            false -> maps:get(rate_base_completed, Job, Completed)
+        end,
+    Started =
+        case Changed of
+            true -> Now;
+            false -> maps:get(rate_started_at_ms, Job, Now)
+        end,
     PreviousCompleted = maps:get(completed, Previous, Completed),
     PreviousSamples = maps:get(rate_samples, Previous, 0),
-    Samples = case Changed of
-        true -> 0;
-        false when is_number(Completed), is_number(PreviousCompleted),
-            Completed > PreviousCompleted -> PreviousSamples + 1;
-        false -> PreviousSamples
-    end,
+    Samples =
+        case Changed of
+            true ->
+                0;
+            false when
+                is_number(Completed),
+                is_number(PreviousCompleted),
+                Completed > PreviousCompleted
+            ->
+                PreviousSamples + 1;
+            false ->
+                PreviousSamples
+        end,
     Elapsed = erlang:max(Now - Started, 1),
-    Delta = case is_number(Completed) andalso is_number(Base) of
-        true -> erlang:max(Completed - Base, 0);
-        false -> 0
-    end,
+    Delta =
+        case is_number(Completed) andalso is_number(Base) of
+            true -> erlang:max(Completed - Base, 0);
+            false -> 0
+        end,
     Rate = Delta * 1000.0 / Elapsed,
-    Percent = case {Total, Completed} of
-        {Ptotal, Pdone} when is_number(Ptotal), Ptotal > 0,
-            is_number(Pdone) ->
-            erlang:min(100.0, erlang:max(0.0, 100.0 * Pdone / Ptotal));
-        _ -> undefined
-    end,
+    Percent =
+        case {Total, Completed} of
+            {Ptotal, Pdone} when
+                is_number(Ptotal),
+                Ptotal > 0,
+                is_number(Pdone)
+            ->
+                erlang:min(100.0, erlang:max(0.0, 100.0 * Pdone / Ptotal));
+            _ ->
+                undefined
+        end,
     Warm = Samples >= 3 andalso Elapsed >= 15000 andalso Delta >= 3,
-    Eta = case {Total, Completed, Rate, Warm} of
-        {Etotal, Edone, Erate, true} when is_number(Etotal),
-            is_number(Edone), Etotal > Edone, Erate > 0 ->
-            trunc((Etotal - Edone) * 1000.0 / Erate);
-        {Etotal2, Edone2, _OtherRate, _} when is_number(Etotal2),
-            is_number(Edone2), Etotal2 > 0, Edone2 >= Etotal2 -> 0;
-        _ -> undefined
-    end,
-    EtaStatus = case Eta of
-        N when is_integer(N) -> provisional;
-        _ when not Warm -> warming_up;
-        _ -> unavailable
-    end,
+    Eta =
+        case {Total, Completed, Rate, Warm} of
+            {Etotal, Edone, Erate, true} when
+                is_number(Etotal),
+                is_number(Edone),
+                Etotal > Edone,
+                Erate > 0
+            ->
+                trunc((Etotal - Edone) * 1000.0 / Erate);
+            {Etotal2, Edone2, _OtherRate, _} when
+                is_number(Etotal2),
+                is_number(Edone2),
+                Etotal2 > 0,
+                Edone2 >= Etotal2
+            ->
+                0;
+            _ ->
+                undefined
+        end,
+    EtaStatus =
+        case Eta of
+            N when is_integer(N) -> provisional;
+            _ when not Warm -> warming_up;
+            _ -> unavailable
+        end,
     Progress = Progress0#{
         percent => Percent,
         rate_per_second => Rate,
@@ -1257,8 +1289,11 @@ enrich_progress(Job, Progress0) ->
         rate_samples => Samples,
         updated_at_ms => Now
     },
-    {Progress, #{rate_started_at_ms => Started,
-        rate_base_completed => Base, rate_phase => Phase}}.
+    {Progress, #{
+        rate_started_at_ms => Started,
+        rate_base_completed => Base,
+        rate_phase => Phase
+    }}.
 
 complete_progress(Progress0, State) ->
     Completed0 = maps:get(completed, Progress0, 0),
@@ -1296,8 +1331,13 @@ public_job(Job, QueuePositions) when is_map(QueuePositions) ->
     JobId = maps:get(id, Job),
     QueuePosition = maps:get(JobId, QueuePositions, undefined),
     Clean = maps:without(
-        [worker_pid, rate_started_at_ms, rate_base_completed, rate_phase,
-            run_started_at_ms],
+        [
+            worker_pid,
+            rate_started_at_ms,
+            rate_base_completed,
+            rate_phase,
+            run_started_at_ms
+        ],
         Job
     ),
     Now = now_ms(),
@@ -1316,21 +1356,34 @@ public_job(Job, QueuePositions) when is_map(QueuePositions) ->
 sample_worker(JobId, State = #st{running = Running, worker_samples = Samples}) ->
     case maps:find(JobId, Running) of
         {ok, #{pid := Pid}} when is_pid(Pid) ->
-            case erlang:process_info(Pid, [memory, heap_size, total_heap_size,
-                stack_size, reductions, message_queue_len, status,
-                garbage_collection]) of
+            case
+                erlang:process_info(Pid, [
+                    memory,
+                    heap_size,
+                    total_heap_size,
+                    stack_size,
+                    reductions,
+                    message_queue_len,
+                    status,
+                    garbage_collection
+                ])
+            of
                 undefined ->
                     {#{active => false}, State#st{
-                        worker_samples = maps:remove(JobId, Samples)}};
+                        worker_samples = maps:remove(JobId, Samples)
+                    }};
                 Info ->
                     Now = now_ms(),
                     Reds = proplists:get_value(reductions, Info, 0),
-                    RedsRate = case maps:get(JobId, Samples, undefined) of
-                        #{pid := Pid, reductions := Old, at_ms := At}
-                            when Now > At, Reds >= Old ->
-                            (Reds - Old) * 1000.0 / (Now - At);
-                        _ -> undefined
-                    end,
+                    RedsRate =
+                        case maps:get(JobId, Samples, undefined) of
+                            #{pid := Pid, reductions := Old, at_ms := At} when
+                                Now > At, Reds >= Old
+                            ->
+                                (Reds - Old) * 1000.0 / (Now - At);
+                            _ ->
+                                undefined
+                        end,
                     Gc = proplists:get_value(garbage_collection, Info, []),
                     Worker = #{
                         active => true,
@@ -1345,14 +1398,19 @@ sample_worker(JobId, State = #st{running = Running, worker_samples = Samples}) -
                         minor_gcs => proplists:get_value(minor_gcs, Gc),
                         sampled_at_ms => Now
                     },
-                    NewSamples = Samples#{JobId => #{pid => Pid,
-                        reductions => Reds, at_ms => Now}},
-                    {ecai_index_job_codec:externalize(Worker),
-                        State#st{worker_samples = NewSamples}}
+                    NewSamples = Samples#{
+                        JobId => #{
+                            pid => Pid,
+                            reductions => Reds,
+                            at_ms => Now
+                        }
+                    },
+                    {ecai_index_job_codec:externalize(Worker), State#st{worker_samples = NewSamples}}
             end;
         _ ->
             {#{active => false}, State#st{
-                worker_samples = maps:remove(JobId, Samples)}}
+                worker_samples = maps:remove(JobId, Samples)
+            }}
     end.
 
 %% Durable active duration only increases while a worker owns the attempt.
@@ -1366,10 +1424,11 @@ preserve_first_start(Job) ->
 first_start_time(Job, _Now) ->
     case maps:get(first_started_at_ms, Job, undefined) of
         First when is_integer(First), First > 0 -> First;
-        _ -> case maps:get(started_at_ms, Job, undefined) of
-            Started when is_integer(Started), Started > 0 -> Started;
-            _ -> undefined
-        end
+        _ ->
+            case maps:get(started_at_ms, Job, undefined) of
+                Started when is_integer(Started), Started > 0 -> Started;
+                _ -> undefined
+            end
     end.
 
 valid_elapsed(N) when is_integer(N), N >= 0 -> N;
@@ -1378,28 +1437,38 @@ valid_elapsed(_) -> 0.
 legacy_active_ms(Job) ->
     case maps:get(active_elapsed_ms, Job, undefined) of
         N when is_integer(N), N >= 0 -> N;
-        _ -> case {maps:get(started_at_ms, Job, undefined),
-                   maps:get(finished_at_ms, Job, undefined)} of
-            {Start, Finish} when is_integer(Start), is_integer(Finish),
-                Finish >= Start -> Finish - Start;
-            _ -> 0
-        end
+        _ ->
+            case
+                {maps:get(started_at_ms, Job, undefined), maps:get(finished_at_ms, Job, undefined)}
+            of
+                {Start, Finish} when
+                    is_integer(Start),
+                    is_integer(Finish),
+                    Finish >= Start
+                ->
+                    Finish - Start;
+                _ ->
+                    0
+            end
     end.
 
 running_clock(Job, Now) ->
     case maps:get(run_started_at_ms, Job, undefined) of
         Start when is_integer(Start), Start > 0 ->
             erlang:max(0, Now - Start);
-        _ -> 0
+        _ ->
+            0
     end.
 
 stop_run_clock(Job0, Now) ->
     Job = preserve_first_start(Job0),
     AttemptMs = running_clock(Job, Now),
     Base = legacy_active_ms(Job),
-    Job#{active_elapsed_ms => Base + AttemptMs,
+    Job#{
+        active_elapsed_ms => Base + AttemptMs,
         last_attempt_elapsed_ms => AttemptMs,
-        run_started_at_ms => undefined}.
+        run_started_at_ms => undefined
+    }.
 
 recovery_end_time(Job) ->
     case maps:get(updated_at_ms, Job, undefined) of
@@ -1409,47 +1478,92 @@ recovery_end_time(Job) ->
 
 job_runtime(Job, Now) ->
     State = maps:get(state, Job, queued),
-    Active = lists:member(State, [preparing, running, pause_requested,
-        cancel_requested, finalizing]),
-    Current = case Active of true -> running_clock(Job, Now); false -> 0 end,
+    Active = lists:member(State, [
+        preparing,
+        running,
+        pause_requested,
+        cancel_requested,
+        finalizing
+    ]),
+    Current =
+        case Active of
+            true -> running_clock(Job, Now);
+            false -> 0
+        end,
     Base = legacy_active_ms(Job),
     Created = maps:get(created_at_ms, Job, Now),
-    EndAt = case lists:member(State, [completed, ready_to_mint, minted,
-        canceled, failed]) of
-        true -> maps:get(finished_at_ms, Job, Now);
-        false -> Now
-    end,
-    EndSafe = case EndAt of E when is_integer(E) -> E; _ -> Now end,
-    Since = case Created of C when is_integer(C) -> C; _ -> Now end,
-    #{sampled_at_ms => Now,
-      wall_elapsed_ms => erlang:max(0, EndSafe - Since),
-      active_elapsed_ms => Base + Current,
-      attempt_elapsed_ms => Current,
-      last_attempt_elapsed_ms => maps:get(last_attempt_elapsed_ms, Job, 0),
-      first_started_at_ms => first_start_time(Job, Now),
-      active_time_estimated => not maps:is_key(active_elapsed_ms, Job),
-      running => Active,
-      last_progress_age_ms => case maps:get(updated_at_ms, maps:get(progress, Job, #{}), undefined) of
-          T when is_integer(T) -> erlang:max(0, Now - T);
-          _ -> undefined
-      end}.
+    EndAt =
+        case
+            lists:member(State, [
+                completed,
+                ready_to_mint,
+                minted,
+                canceled,
+                failed
+            ])
+        of
+            true -> maps:get(finished_at_ms, Job, Now);
+            false -> Now
+        end,
+    EndSafe =
+        case EndAt of
+            E when is_integer(E) -> E;
+            _ -> Now
+        end,
+    Since =
+        case Created of
+            C when is_integer(C) -> C;
+            _ -> Now
+        end,
+    #{
+        sampled_at_ms => Now,
+        wall_elapsed_ms => erlang:max(0, EndSafe - Since),
+        active_elapsed_ms => Base + Current,
+        attempt_elapsed_ms => Current,
+        last_attempt_elapsed_ms => maps:get(last_attempt_elapsed_ms, Job, 0),
+        first_started_at_ms => first_start_time(Job, Now),
+        active_time_estimated => not maps:is_key(active_elapsed_ms, Job),
+        running => Active,
+        last_progress_age_ms =>
+            case maps:get(updated_at_ms, maps:get(progress, Job, #{}), undefined) of
+                T when is_integer(T) -> erlang:max(0, Now - T);
+                _ -> undefined
+            end
+    }.
 
 stop_progress(Progress, Phase) ->
-    Progress#{phase => Phase, eta_ms => undefined,
-        eta_status => unavailable, rate_per_second => 0.0,
-        rate_samples => 0, updated_at_ms => now_ms()}.
+    Progress#{
+        phase => Phase,
+        eta_ms => undefined,
+        eta_status => unavailable,
+        rate_per_second => 0.0,
+        rate_samples => 0,
+        updated_at_ms => now_ms()
+    }.
 
 visible_progress(Progress, State, Now) ->
-    case lists:member(State, [preparing, running, pause_requested,
-        cancel_requested, finalizing]) of
+    case
+        lists:member(State, [
+            preparing,
+            running,
+            pause_requested,
+            cancel_requested,
+            finalizing
+        ])
+    of
         true ->
             case maps:get(updated_at_ms, Progress, Now) of
                 T when is_integer(T), Now - T > 120000 ->
                     Progress#{eta_ms => undefined, eta_status => stale};
-                _ -> Progress
+                _ ->
+                    Progress
             end;
-        false -> Progress#{eta_ms => undefined,
-            eta_status => unavailable, rate_per_second => 0.0}
+        false ->
+            Progress#{
+                eta_ms => undefined,
+                eta_status => unavailable,
+                rate_per_second => 0.0
+            }
     end.
 
 queue_positions(Jobs) ->

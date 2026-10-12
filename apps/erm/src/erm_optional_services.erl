@@ -77,8 +77,9 @@ reconcile(S0, Trigger) ->
     Previous = maps:get(last, S0, #{}),
     log_changes(Results, Previous, Trigger),
 
-    NeedsRetry = needs_retry(gtknode4, Gtk) orelse needs_retry(lens, Lens) orelse
-        needs_retry(share, Share),
+    NeedsRetry =
+        needs_retry(gtknode4, Gtk) orelse needs_retry(lens, Lens) orelse
+            needs_retry(share, Share),
     Retry0 = maps:get(retry_ms, S0, ?RETRY_MIN_MS),
     {Timer, Retry1} =
         case NeedsRetry of

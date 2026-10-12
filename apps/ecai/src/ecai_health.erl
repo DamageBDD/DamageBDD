@@ -411,13 +411,18 @@ patch_queue_diagnostics(ManagerR, LearnerR, Inference, Repairs, Workers) ->
     PatchFree = get_in(Inference, [roles, patch, available], 0),
     LastError = maps:get(last_error, Manager, undefined),
 
-    ManagerAvailable = case ManagerR of
-        {ok, M} when is_map(M) -> maps:get(status, M, ok) =/= error;
-        _ -> false
-    end,
+    ManagerAvailable =
+        case ManagerR of
+            {ok, M} when is_map(M) -> maps:get(status, M, ok) =/= error;
+            _ -> false
+        end,
     Inputs = #{
         manager_status_available => ManagerAvailable,
-        manager_status_error => case ManagerAvailable of true -> undefined; false -> ManagerR end,
+        manager_status_error =>
+            case ManagerAvailable of
+                true -> undefined;
+                false -> ManagerR
+            end,
         manager_cycle_running => maps:get(cycle_running, Manager, false),
         manager_snapshot_ready => maps:get(snapshot_ready, Manager, true),
         manager_snapshot_error => maps:get(snapshot_error, Manager, undefined),

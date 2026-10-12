@@ -6,28 +6,42 @@
 
 -define(MAX_BODY, 16384).
 
-trails() -> [
-    trails:trail("/ecai/keys/ollama", ?MODULE, #{action => collection}, #{
-        get => #{tags => ["ECAI Ollama API Keys"], produces => ["application/json"]},
-        post => #{tags => ["ECAI Ollama API Keys"], consumes => ["application/json"], produces => ["application/json"]}
-    }),
-    trail("/ecai/keys/ollama/:id/rotate", rotate, post),
-    trail("/ecai/keys/ollama/:id/revoke", revoke, post),
-    trails:trail("/ecai/keys/ollama/quick-config", ?MODULE, #{action => quick_config}, #{
-        get => #{tags => ["ECAI Ollama API Keys"], produces => ["application/json"]},
-        post => #{tags => ["ECAI Ollama API Keys"], consumes => ["application/json"], produces => ["application/json"]}
-    })
-].
+trails() ->
+    [
+        trails:trail("/ecai/keys/ollama", ?MODULE, #{action => collection}, #{
+            get => #{tags => ["ECAI Ollama API Keys"], produces => ["application/json"]},
+            post => #{
+                tags => ["ECAI Ollama API Keys"],
+                consumes => ["application/json"],
+                produces => ["application/json"]
+            }
+        }),
+        trail("/ecai/keys/ollama/:id/rotate", rotate, post),
+        trail("/ecai/keys/ollama/:id/revoke", revoke, post),
+        trails:trail("/ecai/keys/ollama/quick-config", ?MODULE, #{action => quick_config}, #{
+            get => #{tags => ["ECAI Ollama API Keys"], produces => ["application/json"]},
+            post => #{
+                tags => ["ECAI Ollama API Keys"],
+                consumes => ["application/json"],
+                produces => ["application/json"]
+            }
+        })
+    ].
 
 trail(Path, Action, Method) ->
     trails:trail(Path, ?MODULE, #{action => Action}, #{
-        Method => #{tags => ["ECAI Ollama API Keys"], consumes => ["application/json"], produces => ["application/json"]}
+        Method => #{
+            tags => ["ECAI Ollama API Keys"],
+            consumes => ["application/json"],
+            produces => ["application/json"]
+        }
     }).
 
 init(Req0, #{action := Action} = State) ->
     Method = cowboy_req:method(Req0),
     case allowed(Action, Method) of
-        false -> respond(Req0, State, 405, #{ok => false, error => method_not_allowed});
+        false ->
+            respond(Req0, State, 405, #{ok => false, error => method_not_allowed});
         true ->
             Mutation = Method =/= <<"GET">>,
             case authenticate_manager(Req0, Mutation) of
@@ -71,10 +85,11 @@ dispatch(quick_config, <<"GET">>, _Owner, Req, State) ->
     respond(Req, State, 200, #{ok => true, data => Config});
 dispatch(quick_config, <<"POST">>, Owner, Req0, State) ->
     with_json_body(Req0, State, fun(Body0, Req) ->
-        Body = case maps:is_key(<<"label">>, Body0) of
-            true -> Body0;
-            false -> Body0#{<<"label">> => <<"Quick Ollama client">>}
-        end,
+        Body =
+            case maps:is_key(<<"label">>, Body0) of
+                true -> Body0;
+                false -> Body0#{<<"label">> => <<"Quick Ollama client">>}
+            end,
         case ecai_ollama_api_keys:create(Owner, Body) of
             {ok, Issued} -> respond_issued(201, Issued, Req, State);
             {error, Why} -> result({error, Why}, Req, State)
@@ -82,12 +97,16 @@ dispatch(quick_config, <<"POST">>, Owner, Req0, State) ->
     end).
 
 respond_issued(Code, #{key := Key, secret := Secret} = Issued, Req, State) ->
-    Data0 = #{<<"key">> => Key, <<"secret">> => Secret,
-              <<"quick_config">> => quick_config(Req, Secret)},
-    Data = case maps:get(replaced_key_id, Issued, undefined) of
-        undefined -> Data0;
-        Id -> Data0#{<<"replaced_key_id">> => Id}
-    end,
+    Data0 = #{
+        <<"key">> => Key,
+        <<"secret">> => Secret,
+        <<"quick_config">> => quick_config(Req, Secret)
+    },
+    Data =
+        case maps:get(replaced_key_id, Issued, undefined) of
+            undefined -> Data0;
+            Id -> Data0#{<<"replaced_key_id">> => Id}
+        end,
     respond(Req, State, Code, #{ok => true, data => Data}).
 
 quick_config(Req, Token) ->
@@ -95,10 +114,15 @@ quick_config(Req, Token) ->
     Model = to_binary(application:get_env(ecai, ollama_api_quick_model, <<"ecai/chat:latest">>)),
     Auth = <<"Bearer ", Token/binary>>,
     Curl = iolist_to_binary([
-        "curl ", Base, "/api/chat \\\n",
-        "  -H 'Authorization: ", Auth, "' \\\n",
+        "curl ",
+        Base,
+        "/api/chat \\\n",
+        "  -H 'Authorization: ",
+        Auth,
+        "' \\\n",
         "  -H 'Content-Type: application/json' \\\n",
-        "  -d '{\"model\":\"", Model,
+        "  -d '{\"model\":\"",
+        Model,
         "\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello from ECAI\"}],\"stream\":false}'"
     ]),
     Python = iolist_to_binary([
@@ -107,7 +131,8 @@ quick_config(Req, Token) ->
         "    host=os.environ[\"OLLAMA_HOST\"],\n",
         "    headers={\"Authorization\": \"Bearer \" + os.environ[\"OLLAMA_API_KEY\"]},\n",
         ")\n",
-        "response = client.chat(model=\"", Model,
+        "response = client.chat(model=\"",
+        Model,
         "\", messages=[{\"role\": \"user\", \"content\": \"Hello from ECAI\"}], stream=False)\n",
         "print(response.message.content)\n"
     ]),
@@ -118,14 +143,20 @@ quick_config(Req, Token) ->
         "  headers: { Authorization: `Bearer ${process.env.OLLAMA_API_KEY}` },\n",
         "})\n",
         "const response = await client.chat({\n",
-        "  model: '", Model, "',\n",
+        "  model: '",
+        Model,
+        "',\n",
         "  messages: [{ role: 'user', content: 'Hello from ECAI' }],\n",
         "  stream: false,\n",
         "})\nconsole.log(response.message.content)\n"
     ]),
     Shell = iolist_to_binary([
-        "export OLLAMA_HOST=\"", Base, "\"\n",
-        "export OLLAMA_API_KEY=\"", Token, "\""
+        "export OLLAMA_HOST=\"",
+        Base,
+        "\"\n",
+        "export OLLAMA_API_KEY=\"",
+        Token,
+        "\""
     ]),
     #{
         <<"base_url">> => Base,
@@ -136,7 +167,8 @@ quick_config(Req, Token) ->
         <<"curl">> => Curl,
         <<"python">> => Python,
         <<"javascript">> => Javascript,
-        <<"note">> => <<"Keep API keys out of browser bundles, logs and source control. Revoke or rotate them from Dashboard > Keys.">>
+        <<"note">> =>
+            <<"Keep API keys out of browser bundles, logs and source control. Revoke or rotate them from Dashboard > Keys.">>
     }.
 
 public_base_url(Req) ->
@@ -150,8 +182,9 @@ request_origin(Req) ->
     Host0 = cowboy_req:host(Req),
     Host = maybe_bracket_ipv6(Host0),
     Port = cowboy_req:port(Req),
-    Default = (Scheme =:= <<"http">> andalso Port =:= 80) orelse
-              (Scheme =:= <<"https">> andalso Port =:= 443),
+    Default =
+        (Scheme =:= <<"http">> andalso Port =:= 80) orelse
+            (Scheme =:= <<"https">> andalso Port =:= 443),
     case Default of
         true -> <<Scheme/binary, "://", Host/binary>>;
         false -> <<Scheme/binary, "://", Host/binary, ":", (integer_to_binary(Port))/binary>>
@@ -163,7 +196,8 @@ maybe_bracket_ipv6(Host) when is_binary(Host) ->
         _ -> Host
     end.
 
-strip_trailing_slash(<<>>) -> <<>>;
+strip_trailing_slash(<<>>) ->
+    <<>>;
 strip_trailing_slash(Bin) ->
     case binary:last(Bin) of
         $/ -> binary:part(Bin, 0, byte_size(Bin) - 1);
@@ -177,7 +211,8 @@ authenticate_manager(Req, Mutation) ->
         <<"Bearer ", Token/binary>> when byte_size(Token) >= 10, byte_size(Token) =< 8192 ->
             actor(damage_auth:resolve_oauth(Token, #{}));
         _ when Mutation =:= false -> actor(damage_auth:authenticate(Req, #{}));
-        _ -> {error, explicit_bearer_required}
+        _ ->
+            {error, explicit_bearer_required}
     end.
 
 actor({ok, #{auth_mode := custodial} = Auth}) ->
@@ -186,7 +221,8 @@ actor({ok, #{auth_mode := custodial} = Auth}) ->
         Owner when is_binary(Owner), byte_size(Owner) > 0 -> {ok, Owner};
         _ -> {error, authenticated_account_required}
     end;
-actor(_) -> {error, managed_account_required}.
+actor(_) ->
+    {error, managed_account_required}.
 
 with_json_body(Req0, State, Fun) ->
     case read_json_body(Req0) of
@@ -203,7 +239,8 @@ with_empty_json_body(Req0, State, Fun) ->
 
 read_json_body(Req0) ->
     case cowboy_req:header(<<"content-type">>, Req0, <<>>) of
-        <<>> -> {ok, #{}, Req0};
+        <<>> ->
+            {ok, #{}, Req0};
         <<"application/json", _/binary>> ->
             case cowboy_req:read_body(Req0, #{length => ?MAX_BODY, period => 5000}) of
                 {ok, Bytes, Req} when byte_size(Bytes) =< ?MAX_BODY ->
@@ -211,29 +248,42 @@ read_json_body(Req0) ->
                         <<>> -> {ok, #{}, Req};
                         _ -> decode_body(Bytes, Req)
                     end;
-                {_, _, Req} -> {error, 413, request_too_large, Req}
+                {_, _, Req} ->
+                    {error, 413, request_too_large, Req}
             end;
-        _ -> {error, 415, json_required, Req0}
+        _ ->
+            {error, 415, json_required, Req0}
     end.
 
 decode_body(Bytes, Req) ->
     try jsx:decode(Bytes, [return_maps]) of
         M when is_map(M) -> {ok, M, Req};
         _ -> {error, 400, json_object_required, Req}
-    catch _:_ -> {error, 400, invalid_json, Req} end.
+    catch
+        _:_ -> {error, 400, invalid_json, Req}
+    end.
 
-result({ok, Value}, Req, State) -> respond(Req, State, 200, #{ok => true, data => Value});
-result({error, key_not_found}, Req, State) -> respond(Req, State, 404, #{ok => false, error => key_not_found});
-result({error, Why}, Req, State) -> respond(Req, State, 409, #{ok => false, error => Why});
-result(_, Req, State) -> respond(Req, State, 503, #{ok => false, error => unexpected_result}).
+result({ok, Value}, Req, State) ->
+    respond(Req, State, 200, #{ok => true, data => Value});
+result({error, key_not_found}, Req, State) ->
+    respond(Req, State, 404, #{ok => false, error => key_not_found});
+result({error, Why}, Req, State) ->
+    respond(Req, State, 409, #{ok => false, error => Why});
+result(_, Req, State) ->
+    respond(Req, State, 503, #{ok => false, error => unexpected_result}).
 
 respond(Req0, State, Code, Value) ->
-    Req = cowboy_req:reply(Code,
-        #{<<"content-type">> => <<"application/json; charset=utf-8">>,
-          <<"cache-control">> => <<"no-store">>,
-          <<"pragma">> => <<"no-cache">>,
-          <<"x-content-type-options">> => <<"nosniff">>},
-        jsx:encode(ecai_index_job_codec:externalize(Value)), Req0),
+    Req = cowboy_req:reply(
+        Code,
+        #{
+            <<"content-type">> => <<"application/json; charset=utf-8">>,
+            <<"cache-control">> => <<"no-store">>,
+            <<"pragma">> => <<"no-cache">>,
+            <<"x-content-type-options">> => <<"nosniff">>
+        },
+        jsx:encode(ecai_index_job_codec:externalize(Value)),
+        Req0
+    ),
     {ok, Req, State}.
 
 to_binary(B) when is_binary(B) -> B;

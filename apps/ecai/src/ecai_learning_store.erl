@@ -111,12 +111,16 @@ put_repair(Fingerprint, FindingVersion, Repair) ->
     ).
 %% Expected is a previously read repair map (or not_found for admission).
 %% The persisted sequence, not a wall-clock timestamp, is the revision fence.
-compare_and_put_repair(Fingerprint, FindingVersion, Expected, Repair)
-  when is_map(Repair) ->
+compare_and_put_repair(Fingerprint, FindingVersion, Expected, Repair) when
+    is_map(Repair)
+->
     Fp = to_binary(Fingerprint),
     Version = to_binary(FindingVersion),
-    gen_server:call(?SERVER,
-        {compare_and_put_repair, Fp, Version, Expected, Repair}, infinity).
+    gen_server:call(
+        ?SERVER,
+        {compare_and_put_repair, Fp, Version, Expected, Repair},
+        infinity
+    ).
 
 get_repair(Fingerprint, FindingVersion) ->
     gen_server:call(
@@ -206,22 +210,30 @@ handle_call({put_transition, Key, Type, Id, Value0}, _From, State0) ->
     {reply, Reply, State1};
 handle_call({compare_and_put_repair, Fp, Version, Expected, Repair}, _From, State0) ->
     Key = {repair, Fp, Version},
-    Current = case dets:lookup(State0#state.tab, Key) of
-        [{Key, Value}] -> Value;
-        [] -> not_found
-    end,
+    Current =
+        case dets:lookup(State0#state.tab, Key) of
+            [{Key, Value}] -> Value;
+            [] -> not_found
+        end,
     case same_repair_revision(Expected, Current) of
         false ->
             {reply, {error, conflict}, State0};
         true ->
-            {Reply, State1} = persist_transition(Key, repair, {Fp, Version},
-                Repair#{fingerprint => Fp, finding_version => Version}, State0),
-            Result = case Reply of
-                ok ->
-                    [{Key, Stored}] = dets:lookup(State1#state.tab, Key),
-                    {ok, Stored};
-                _ -> Reply
-            end,
+            {Reply, State1} = persist_transition(
+                Key,
+                repair,
+                {Fp, Version},
+                Repair#{fingerprint => Fp, finding_version => Version},
+                State0
+            ),
+            Result =
+                case Reply of
+                    ok ->
+                        [{Key, Stored}] = dets:lookup(State1#state.tab, Key),
+                        {ok, Stored};
+                    _ ->
+                        Reply
+                end,
             {reply, Result, State1}
     end;
 handle_call({put_checkpoint, Name, Checkpoint0}, _From, State) ->
@@ -282,13 +294,16 @@ terminate(_Reason, State) ->
 
 code_change(_Old, State, _Extra) -> {ok, State}.
 
-same_repair_revision(not_found, not_found) -> true;
-same_repair_revision(#{persist_seq := Seq}, #{persist_seq := Seq}) -> true;
+same_repair_revision(not_found, not_found) ->
+    true;
+same_repair_revision(#{persist_seq := Seq}, #{persist_seq := Seq}) ->
+    true;
 same_repair_revision(Expected, Current) when is_map(Expected), is_map(Current) ->
     %% Old records may predate event sequences. Fold results add identity keys.
     maps:without([fingerprint, finding_version], Expected) =:=
         maps:without([fingerprint, finding_version], Current);
-same_repair_revision(_, _) -> false.
+same_repair_revision(_, _) ->
+    false.
 
 persist_value(Tab, Key, Value) ->
     case dets:insert(Tab, {Key, Value}) of

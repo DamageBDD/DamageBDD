@@ -62,7 +62,6 @@ activation_is_owned_and_restartable_test() ->
         remove_tree(Base)
     end.
 
-
 live_record_is_searchable_before_final_snapshot_test() ->
     OldPath = application:get_env(ecai, wikimedia_active_search_state_path),
     Base = filename:join(

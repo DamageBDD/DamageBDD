@@ -487,7 +487,11 @@ fetch_aeternity_account_activity(AeAccount, Limit) ->
                 ),
                 await_aeternity_activity(ConnPid, StreamRef)
             after
-                try gun:close(ConnPid) catch _:_ -> ok end
+                try
+                    gun:close(ConnPid)
+                catch
+                    _:_ -> ok
+                end
             end;
         Error ->
             {error, {middleware_unavailable, Error}}

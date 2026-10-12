@@ -52,14 +52,14 @@ init([]) ->
 
     Core =
         [
-        #{
-                    id => damage_settings,
-                    start => {damage_settings, start_link, []},
-                    restart => permanent,
-                    shutdown => 5000,
-                    type => worker,
-                    modules => [damage_settings]
-                },
+            #{
+                id => damage_settings,
+                start => {damage_settings, start_link, []},
+                restart => permanent,
+                shutdown => 5000,
+                type => worker,
+                modules => [damage_settings]
+            },
             #{
                 id => secrets,
                 start => {secrets, start_link, []},
@@ -93,7 +93,9 @@ init([]) ->
                 #{
                     id => damage_browser_auth,
                     start => {damage_browser_auth, start_link, []},
-                    restart => permanent, shutdown => 5000, type => worker,
+                    restart => permanent,
+                    shutdown => 5000,
+                    type => worker,
                     modules => [damage_browser_auth]
                 },
                 #{

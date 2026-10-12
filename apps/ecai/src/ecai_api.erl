@@ -29,7 +29,8 @@ trails() ->
                 methods => #{
                     post => #{
                         tags => ?TRAILS_TAG,
-                        description => "Mint a subject/predicate/object/context fact on-chain using a server-side signer",
+                        description =>
+                            "Mint a subject/predicate/object/context fact on-chain using a server-side signer",
                         parameters => [
                             #{
                                 name => <<"subject">>,
@@ -80,7 +81,8 @@ trails() ->
             methods => #{
                 post => #{
                     tags => ?TRAILS_TAG,
-                    description => "Generate an ECAI-backed completion. Supply messages or a legacy message; uses authenticated principal for memory isolation.",
+                    description =>
+                        "Generate an ECAI-backed completion. Supply messages or a legacy message; uses authenticated principal for memory isolation.",
                     parameters => [
                         #{
                             name => <<"messages">>,
@@ -224,116 +226,210 @@ from_json(Req, #{action := search} = State) ->
 %% It must never accept a signer supplied in the HTTP payload.
 from_json(Req, #{action := encode} = State) ->
     case read_json_object(Req) of
-        {ok, #{<<"subject">> := Subject, <<"predicate">> := Predicate,
-               <<"object">> := Object, <<"context">> := Context}, Req1}
-            when is_binary(Subject), is_binary(Predicate),
-                 is_binary(Object), is_binary(Context),
-                 byte_size(Subject) > 0, byte_size(Subject) =< 4096,
-                 byte_size(Predicate) > 0, byte_size(Predicate) =< 4096,
-                 byte_size(Object) > 0, byte_size(Object) =< 4096,
-                 byte_size(Context) > 0, byte_size(Context) =< 4096 ->
-            Knowledge = #{subject => Subject, predicate => Predicate,
-                          object => Object, context => Context},
+        {ok,
+            #{
+                <<"subject">> := Subject,
+                <<"predicate">> := Predicate,
+                <<"object">> := Object,
+                <<"context">> := Context
+            },
+            Req1} when
+            is_binary(Subject),
+            is_binary(Predicate),
+            is_binary(Object),
+            is_binary(Context),
+            byte_size(Subject) > 0,
+            byte_size(Subject) =< 4096,
+            byte_size(Predicate) > 0,
+            byte_size(Predicate) =< 4096,
+            byte_size(Object) > 0,
+            byte_size(Object) =< 4096,
+            byte_size(Context) > 0,
+            byte_size(Context) =< 4096
+        ->
+            Knowledge = #{
+                subject => Subject,
+                predicate => Predicate,
+                object => Object,
+                context => Context
+            },
             case maps:get(ae_account, State, undefined) of
-                #{public_key := PublicKey, private_key := PrivateKey} = KeyPair
-                    when is_binary(PublicKey), is_binary(PrivateKey) ->
-                    case ecai_otp_compat:catch_value(fun() ->
-                        ecai_nft:mint_knowledge(KeyPair, Knowledge)
-                    end) of
+                #{public_key := PublicKey, private_key := PrivateKey} = KeyPair when
+                    is_binary(PublicKey), is_binary(PrivateKey)
+                ->
+                    case
+                        ecai_otp_compat:catch_value(fun() ->
+                            ecai_nft:mint_knowledge(KeyPair, Knowledge)
+                        end)
+                    of
                         {ok, MintResult} ->
-                            reply_api_json(Req1, 200,
-                                #{ok => true, result => MintResult}, State);
+                            reply_api_json(
+                                Req1,
+                                200,
+                                #{ok => true, result => MintResult},
+                                State
+                            );
                         _ ->
                             %% Do not leak signer/key metadata in error responses.
-                            reply_api_json(Req1, 502,
-                                #{ok => false, error => <<"knowledge_mint_failed">>}, State)
+                            reply_api_json(
+                                Req1,
+                                502,
+                                #{ok => false, error => <<"knowledge_mint_failed">>},
+                                State
+                            )
                     end;
                 _ ->
-                    reply_api_json(Req1, 503,
-                        #{ok => false, error => <<"server_signer_unavailable">>}, State)
+                    reply_api_json(
+                        Req1,
+                        503,
+                        #{ok => false, error => <<"server_signer_unavailable">>},
+                        State
+                    )
             end;
         {ok, _, Req1} ->
-            reply_api_json(Req1, 400,
-                #{ok => false, error => <<"invalid_knowledge_fields">>}, State);
+            reply_api_json(
+                Req1,
+                400,
+                #{ok => false, error => <<"invalid_knowledge_fields">>},
+                State
+            );
         {error, Req1} ->
-            reply_api_json(Req1, 400,
-                #{ok => false, error => <<"invalid_json">>}, State)
+            reply_api_json(
+                Req1,
+                400,
+                #{ok => false, error => <<"invalid_json">>},
+                State
+            )
     end;
 from_json(Req, #{action := chat_completions} = State) ->
     case read_json_object(Req) of
         {ok, Body, Req1} ->
             case {authenticated_principal(State), chat_message(Body)} of
                 {{ok, Principal}, {ok, Message}} ->
-                    Session = case maps:get(<<"session_id">>, Body, undefined) of
-                        Value when is_binary(Value), byte_size(Value) > 0,
-                                   byte_size(Value) =< 256 -> Value;
-                        _ -> binary:encode_hex(crypto:strong_rand_bytes(16))
-                    end,
-                    Model = case maps:get(<<"model">>, Body, undefined) of
-                        V when is_binary(V), byte_size(V) > 0 -> V;
-                        _ -> <<"ecai">>
-                    end,
-                    case ecai_otp_compat:catch_value(fun() ->
-                        ecai_chat:get_reply(Session, Principal, Message)
-                    end) of
+                    Session =
+                        case maps:get(<<"session_id">>, Body, undefined) of
+                            Value when
+                                is_binary(Value),
+                                byte_size(Value) > 0,
+                                byte_size(Value) =< 256
+                            ->
+                                Value;
+                            _ ->
+                                binary:encode_hex(crypto:strong_rand_bytes(16))
+                        end,
+                    Model =
+                        case maps:get(<<"model">>, Body, undefined) of
+                            V when is_binary(V), byte_size(V) > 0 -> V;
+                            _ -> <<"ecai">>
+                        end,
+                    case
+                        ecai_otp_compat:catch_value(fun() ->
+                            ecai_chat:get_reply(Session, Principal, Message)
+                        end)
+                    of
                         {ok, Reply} when is_binary(Reply) ->
-                            Id = <<"chatcmpl-", (binary:encode_hex(crypto:strong_rand_bytes(8)))/binary>>,
-                            reply_api_json(Req1, 200, #{
-                                id => Id, object => <<"chat.completion">>,
-                                created => erlang:system_time(second), model => Model,
-                                choices => [#{index => 0,
-                                    message => #{role => <<"assistant">>, content => Reply},
-                                    finish_reason => <<"stop">>}],
-                                reply => Reply
-                            }, State);
+                            Id =
+                                <<"chatcmpl-",
+                                    (binary:encode_hex(crypto:strong_rand_bytes(8)))/binary>>,
+                            reply_api_json(
+                                Req1,
+                                200,
+                                #{
+                                    id => Id,
+                                    object => <<"chat.completion">>,
+                                    created => erlang:system_time(second),
+                                    model => Model,
+                                    choices => [
+                                        #{
+                                            index => 0,
+                                            message => #{role => <<"assistant">>, content => Reply},
+                                            finish_reason => <<"stop">>
+                                        }
+                                    ],
+                                    reply => Reply
+                                },
+                                State
+                            );
                         _ ->
-                            reply_api_json(Req1, 503,
-                                #{error => #{message => <<"ecai_chat_unavailable">>}}, State)
+                            reply_api_json(
+                                Req1,
+                                503,
+                                #{error => #{message => <<"ecai_chat_unavailable">>}},
+                                State
+                            )
                     end;
                 {{error, _}, _} ->
-                    reply_api_json(Req1, 401,
-                        #{error => #{message => <<"unauthenticated">>}}, State);
+                    reply_api_json(
+                        Req1,
+                        401,
+                        #{error => #{message => <<"unauthenticated">>}},
+                        State
+                    );
                 {_, {error, _}} ->
-                    reply_api_json(Req1, 400,
-                        #{error => #{message => <<"invalid_chat_message">>}}, State)
+                    reply_api_json(
+                        Req1,
+                        400,
+                        #{error => #{message => <<"invalid_chat_message">>}},
+                        State
+                    )
             end;
         {error, Req1} ->
-            reply_api_json(Req1, 400,
-                #{error => #{message => <<"invalid_json">>}}, State)
+            reply_api_json(
+                Req1,
+                400,
+                #{error => #{message => <<"invalid_json">>}},
+                State
+            )
     end.
 
 read_json_object(Req0) ->
     case cowboy_req:read_body(Req0, #{length => 65536, period => 5000}) of
         {ok, Raw, Req1} ->
-            case ecai_otp_compat:catch_value(fun() ->
-                jsx:decode(Raw, [return_maps])
-            end) of
+            case
+                ecai_otp_compat:catch_value(fun() ->
+                    jsx:decode(Raw, [return_maps])
+                end)
+            of
                 Value when is_map(Value) -> {ok, Value, Req1};
                 _ -> {error, Req1}
             end;
-        {more, _Partial, Req1} -> {error, Req1}
+        {more, _Partial, Req1} ->
+            {error, Req1}
     end.
 
 chat_message(#{<<"messages">> := Messages}) when is_list(Messages) ->
-    UserMessages = [Content || #{<<"role">> := <<"user">>,
-                                <<"content">> := Content} <- Messages,
-                                is_binary(Content)],
+    UserMessages = [
+        Content
+     || #{
+            <<"role">> := <<"user">>,
+            <<"content">> := Content
+        } <- Messages,
+        is_binary(Content)
+    ],
     case UserMessages of
         [] -> {error, missing_user_message};
         _ -> valid_chat_message(lists:last(UserMessages))
     end;
 chat_message(#{<<"message">> := Message}) ->
     valid_chat_message(Message);
-chat_message(_) -> {error, missing_user_message}.
+chat_message(_) ->
+    {error, missing_user_message}.
 
-valid_chat_message(Value) when is_binary(Value), byte_size(Value) > 0,
-                               byte_size(Value) =< 16384 -> {ok, Value};
-valid_chat_message(_) -> {error, invalid_chat_message}.
+valid_chat_message(Value) when
+    is_binary(Value),
+    byte_size(Value) > 0,
+    byte_size(Value) =< 16384
+->
+    {ok, Value};
+valid_chat_message(_) ->
+    {error, invalid_chat_message}.
 
 authenticated_principal(State) ->
-    case ecai_otp_compat:catch_value(fun() ->
-        damage_auth:authenticated_account(State)
-    end) of
+    case
+        ecai_otp_compat:catch_value(fun() ->
+            damage_auth:authenticated_account(State)
+        end)
+    of
         {ok, AuthOwner} when is_binary(AuthOwner), byte_size(AuthOwner) > 0 ->
             {ok, AuthOwner};
         _ ->
@@ -342,14 +438,18 @@ authenticated_principal(State) ->
                     {ok, SignerOwner};
                 LegacyOwner when is_binary(LegacyOwner), byte_size(LegacyOwner) > 0 ->
                     {ok, LegacyOwner};
-                _ -> {error, unauthenticated}
+                _ ->
+                    {error, unauthenticated}
             end
     end.
 
 reply_api_json(Req0, Status, Result, State) ->
     Req1 = cowboy_req:reply(
-        Status, #{<<"content-type">> => <<"application/json">>},
-        jsx:encode(Result), Req0),
+        Status,
+        #{<<"content-type">> => <<"application/json">>},
+        jsx:encode(Result),
+        Req0
+    ),
     {stop, Req1, State}.
 
 read_stream(ConnPid, StreamRef) ->

@@ -6,26 +6,50 @@
 -spec plan() -> map().
 plan() ->
     Twiddles = maps:from_list([
-        {N, [{math:cos(-2 * math:pi() * K / N), math:sin(-2 * math:pi() * K / N)}
-             || K <- lists:seq(0, N div 2 - 1)]}
-        || I <- lists:seq(1, 11), N <- [1 bsl I]
+        {N, [
+            {math:cos(-2 * math:pi() * K / N), math:sin(-2 * math:pi() * K / N)}
+         || K <- lists:seq(0, N div 2 - 1)
+        ]}
+     || I <- lists:seq(1, 11), N <- [1 bsl I]
     ]),
-    Edges = [700.0 * (math:pow(10.0, (mel(80) + I * (mel(7600) - mel(80)) / 33) / 2595) - 1)
-             || I <- lists:seq(0, 33)],
+    Edges = [
+        700.0 * (math:pow(10.0, (mel(80) + I * (mel(7600) - mel(80)) / 33) / 2595) - 1)
+     || I <- lists:seq(0, 33)
+    ],
     Bank = mel_filters(Edges),
-    Dct = [[math:sqrt(2.0 / 32) * math:cos(math:pi() * K * (I + 0.5) / 32)
-            || I <- lists:seq(0, 31)] || K <- lists:seq(1, 13)],
-    #{twiddles => Twiddles, mel_bank => Bank, dct => Dct,
-      window => [0.5 - 0.5 * math:cos(2 * math:pi() * I / 639) || I <- lists:seq(0, 639)]}.
+    Dct = [
+        [
+            math:sqrt(2.0 / 32) * math:cos(math:pi() * K * (I + 0.5) / 32)
+         || I <- lists:seq(0, 31)
+        ]
+     || K <- lists:seq(1, 13)
+    ],
+    #{
+        twiddles => Twiddles,
+        mel_bank => Bank,
+        dct => Dct,
+        window => [0.5 - 0.5 * math:cos(2 * math:pi() * I / 639) || I <- lists:seq(0, 639)]
+    }.
 
 mel(F) -> 2595 * math:log10(1 + F / 700).
 mel_filters([L, C, R | Rest]) ->
-    Weights0 = [{K + 1, max(0.0, min((K * 16000 / 1024 - L) / (C - L),
-                                   (R - K * 16000 / 1024) / (R - C)))}
-                || K <- lists:seq(0, 512)],
+    Weights0 = [
+        {
+            K + 1,
+            max(
+                0.0,
+                min(
+                    (K * 16000 / 1024 - L) / (C - L),
+                    (R - K * 16000 / 1024) / (R - C)
+                )
+            )
+        }
+     || K <- lists:seq(0, 512)
+    ],
     Sum = max(1.0e-12, lists:sum([W || {_, W} <- Weights0])),
     [[{K, W / Sum} || {K, W} <- Weights0, W > 0] | mel_filters([C, R | Rest])];
-mel_filters(_) -> [].
+mel_filters(_) ->
+    [].
 
 %% Complex radix-2 FFT; the caller supplies a supported power-of-two length.
 -spec fft([{number(), number()}], map()) -> [{number(), number()}].
@@ -35,8 +59,10 @@ fft(Xs, #{twiddles := T}) when is_list(Xs) ->
         true -> fft_loop(Xs, N, T);
         false -> erlang:error(badarg)
     end;
-fft(_, _) -> erlang:error(badarg).
-fft_loop([X], 1, _) -> [X];
+fft(_, _) ->
+    erlang:error(badarg).
+fft_loop([X], 1, _) ->
+    [X];
 fft_loop(Xs, N, T) ->
     {Even, Odd} = split(Xs, [], []),
     E = fft_loop(Even, N div 2, T),
@@ -46,7 +72,8 @@ fft_loop(Xs, N, T) ->
 
 split([], E, O) -> {lists:reverse(E), lists:reverse(O)};
 split([A, B | Rest], E, O) -> split(Rest, [A | E], [B | O]).
-butterfly([], [], [], L, H) -> {lists:reverse(L), lists:reverse(H)};
+butterfly([], [], [], L, H) ->
+    {lists:reverse(L), lists:reverse(H)};
 butterfly([{ER, EI} | Es], [{OR, OI} | Os], [{WR, WI} | Ws], L, H) ->
     TR = WR * OR - WI * OI,
     TI = WR * OI + WI * OR,
@@ -69,8 +96,10 @@ cepstra(Frame, #{window := Window, mel_bank := Bank, dct := Dct} = Plan) ->
     Emph = preemphasis(Frame),
     Windowed = [X * W || {X, W} <- lists:zip(Emph, Window)],
     Power = list_to_tuple(power(Windowed, 1024, Plan)),
-    Logs = [math:log(max(1.0e-10, lists:sum([element(K, Power) * W || {K, W} <- Band])))
-            || Band <- Bank],
+    Logs = [
+        math:log(max(1.0e-10, lists:sum([element(K, Power) * W || {K, W} <- Band])))
+     || Band <- Bank
+    ],
     [lists:sum([X * W || {X, W} <- lists:zip(Logs, Row)]) || Row <- Dct].
 
 preemphasis([X | Rest]) -> [0.03 * X | preemphasis(Rest, X)].

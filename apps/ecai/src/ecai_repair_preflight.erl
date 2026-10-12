@@ -215,9 +215,14 @@ persist_preflight(Fp, Version, Existing, Repair) ->
     WorkerAlive = local_alive(Worker),
     ForeignDispatcher = Dispatcher =/= self() andalso local_alive(Dispatcher),
     case WorkerAlive orelse ForeignDispatcher of
-        true -> throw({preflight_persist_failed, {repair_owned, Fp, Version}});
+        true ->
+            throw({preflight_persist_failed, {repair_owned, Fp, Version}});
         false ->
-            Expected = case map_size(Existing) of 0 -> not_found; _ -> Existing end,
+            Expected =
+                case map_size(Existing) of
+                    0 -> not_found;
+                    _ -> Existing
+                end,
             case ecai_learning_store:compare_and_put_repair(Fp, Version, Expected, Repair) of
                 {ok, Stored} -> Stored;
                 Error -> throw({preflight_persist_failed, {Fp, Version, Error}})

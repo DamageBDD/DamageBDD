@@ -58,16 +58,18 @@ status() ->
         ok ->
             case ecai_wikimedia_fixture_server:status() of
                 Status when is_map(Status) ->
-                    {ok,
-                        Status#{
-                            transport => ecai_api,
-                            api_base_url => api_base_url(),
-                            source_base_url => source_base_url()
-                        }};
-                {error, _Reason} = Error -> Error;
-                Other -> {error, {invalid_fixture_status, Other}}
+                    {ok, Status#{
+                        transport => ecai_api,
+                        api_base_url => api_base_url(),
+                        source_base_url => source_base_url()
+                    }};
+                {error, _Reason} = Error ->
+                    Error;
+                Other ->
+                    {error, {invalid_fixture_status, Other}}
             end;
-        {error, _Reason} = Error -> Error
+        {error, _Reason} = Error ->
+            Error
     end.
 
 -spec file_entry(binary() | list()) -> {ok, map()} | {error, term()}.
@@ -84,12 +86,11 @@ file_entry(Name0) ->
                         {ok, #file_info{type = regular, size = Size}} ->
                             case Size =:= maps:get(size, Public) of
                                 true ->
-                                    {ok,
-                                        Public#{
-                                            path => Path,
-                                            content_type =>
-                                                ecai_wikimedia_fixture_handler:content_type(Name)
-                                        }};
+                                    {ok, Public#{
+                                        path => Path,
+                                        content_type =>
+                                            ecai_wikimedia_fixture_handler:content_type(Name)
+                                    }};
                                 false ->
                                     {error, {fixture_file_size_changed, Name}}
                             end;
@@ -101,7 +102,8 @@ file_entry(Name0) ->
                 error ->
                     {error, {unknown_wikimedia_sample_file, Name}}
             end;
-        {error, _Reason} = Error -> Error
+        {error, _Reason} = Error ->
+            Error
     end.
 
 -spec api_base_url() -> binary().
@@ -184,14 +186,15 @@ write_and_validate_catalog(Catalog) ->
                     PathBin = unicode:characters_to_binary(Path),
                     case ecai_wikimedia_catalog:read(PathBin) of
                         {ok, Normalized} -> {ok, PathBin, Normalized};
-                        {error, Reason} ->
-                            {error, {wikimedia_api_catalog_invalid, Reason}}
+                        {error, Reason} -> {error, {wikimedia_api_catalog_invalid, Reason}}
                     end;
                 {error, Reason} ->
                     {error, {wikimedia_api_catalog_write_failed, Path, Reason}}
             end;
-        {error, _Reason} = Error -> Error;
-        Other -> {error, {invalid_fixture_status, Other}}
+        {error, _Reason} = Error ->
+            Error;
+        Other ->
+            {error, {invalid_fixture_status, Other}}
     end.
 
 atomic_write(Path, Bytes) ->
@@ -200,12 +203,14 @@ atomic_write(Path, Bytes) ->
     case file:write_file(Tmp, Bytes, [raw, binary]) of
         ok ->
             case file:rename(Tmp, Path) of
-                ok -> ok;
+                ok ->
+                    ok;
                 {error, Reason} ->
                     _ = file:delete(Tmp),
                     {error, Reason}
             end;
-        {error, _Reason} = Error -> Error
+        {error, _Reason} = Error ->
+            Error
     end.
 
 find_file(Name, [#{name := Name} = File | _]) -> {ok, File};
@@ -239,7 +244,8 @@ default_port(_) -> undefined.
 has_prefix(Value, Prefix) when is_binary(Value), is_binary(Prefix) ->
     byte_size(Value) >= byte_size(Prefix) andalso
         binary:part(Value, 0, byte_size(Prefix)) =:= Prefix;
-has_prefix(_Value, _Prefix) -> false.
+has_prefix(_Value, _Prefix) ->
+    false.
 
 format_host(Host) ->
     case binary:match(Host, <<":">>) of

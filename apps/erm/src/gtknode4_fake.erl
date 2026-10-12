@@ -182,11 +182,16 @@ default_props(Type, Props0) ->
     },
     Props1 = maps:merge(Base, Props0),
     case Type of
-        button -> ensure_prop(label, <<"Button">>, Props1);
-        label -> ensure_prop(label, <<>>, Props1);
-        entry -> ensure_prop(text, <<>>, Props1);
-        text_view -> ensure_prop(text, <<>>, Props1);
-        list_view -> ensure_prop(selected_index, -1, ensure_prop(items, [], Props1));
+        button ->
+            ensure_prop(label, <<"Button">>, Props1);
+        label ->
+            ensure_prop(label, <<>>, Props1);
+        entry ->
+            ensure_prop(text, <<>>, Props1);
+        text_view ->
+            ensure_prop(text, <<>>, Props1);
+        list_view ->
+            ensure_prop(selected_index, -1, ensure_prop(items, [], Props1));
         map ->
             ensure_prop(
                 show_zoom_buttons,
@@ -201,7 +206,8 @@ default_props(Type, Props0) ->
                     )
                 )
             );
-        _ -> Props1
+        _ ->
+            Props1
     end.
 
 ensure_prop(Key, Value, Map) ->

@@ -255,19 +255,22 @@ ollama_native_request(Kind, Request0, Opts) ->
                 {<<"accept">>, <<"application/json">>}
                 | AuthHeaders
             ],
-            Path = case Kind of
-                chat -> "/api/chat";
-                generate -> "/api/generate"
-            end,
+            Path =
+                case Kind of
+                    chat -> "/api/chat";
+                    generate -> "/api/generate"
+                end,
             Started = erlang:monotonic_time(millisecond),
-            case damage_gun:post(
-                maps:get(host, Opts),
-                maps:get(port, Opts),
-                Path,
-                Headers,
-                jsx:encode(Request),
-                request_opts(Opts, maps:get(timeout, Opts))
-            ) of
+            case
+                damage_gun:post(
+                    maps:get(host, Opts),
+                    maps:get(port, Opts),
+                    Path,
+                    Headers,
+                    jsx:encode(Request),
+                    request_opts(Opts, maps:get(timeout, Opts))
+                )
+            of
                 {ok, #{status := Status, json := Json, body := RawBody}} when
                     Status >= 200, Status < 300, is_map(Json)
                 ->
@@ -291,7 +294,8 @@ openai_native_request(chat, Request, Opts0) ->
             case openai_request(Prompt, false, provider_defaults(Opts)) of
                 {ok, Text, Meta} ->
                     {ok, synthetic_chat_response(Text, Meta, maps:get(model, Opts)), Meta};
-                {error, _} = Error -> Error
+                {error, _} = Error ->
+                    Error
             end
     end;
 openai_native_request(generate, Request, Opts0) ->
@@ -302,7 +306,8 @@ openai_native_request(generate, Request, Opts0) ->
             case openai_request(Prompt, false, provider_defaults(Opts)) of
                 {ok, Text, Meta} ->
                     {ok, synthetic_generate_response(Text, Meta, maps:get(model, Opts)), Meta};
-                {error, _} = Error -> Error
+                {error, _} = Error ->
+                    Error
             end;
         _ ->
             {error, invalid_native_generate_prompt}
@@ -315,12 +320,21 @@ native_chat_input(Request) ->
     end.
 
 native_chat_messages(Messages) when is_list(Messages) ->
-    Systems = [native_message_content(M) || M <- Messages,
-        is_map(M), mget(<<"role">>, M, <<>>) =:= <<"system">>],
-    Conversation = [native_message_line(M) || M <- Messages,
-        is_map(M), mget(<<"role">>, M, <<>>) =/= <<"system">>],
+    Systems = [
+        native_message_content(M)
+     || M <- Messages,
+        is_map(M),
+        mget(<<"role">>, M, <<>>) =:= <<"system">>
+    ],
+    Conversation = [
+        native_message_line(M)
+     || M <- Messages,
+        is_map(M),
+        mget(<<"role">>, M, <<>>) =/= <<"system">>
+    ],
     case [L || L <- Conversation, byte_size(L) > 0] of
-        [] -> {error, invalid_native_chat_messages};
+        [] ->
+            {error, invalid_native_chat_messages};
         Lines ->
             {ok, iolist_to_binary(lists:join(<<"\n">>, Lines)),
                 iolist_to_binary(lists:join(<<"\n\n">>, Systems))}
@@ -342,7 +356,8 @@ native_message_content(Message) ->
         Parts when is_list(Parts) ->
             Text = [to_binary(mget(<<"text">>, P, <<>>)) || P <- Parts, is_map(P)],
             iolist_to_binary(lists:join(<<"\n">>, Text));
-        Other -> to_binary(Other)
+        Other ->
+            to_binary(Other)
     end.
 
 maybe_native_system(Opts, <<>>) -> Opts;
@@ -895,10 +910,11 @@ mget(_Key, _Map, Default) ->
     Default.
 
 json_put(Key, Value, Map0) when is_binary(Key), is_map(Map0) ->
-    Map1 = case binary_key_atom(Key) of
-        undefined -> Map0;
-        AtomKey -> maps:remove(AtomKey, Map0)
-    end,
+    Map1 =
+        case binary_key_atom(Key) of
+            undefined -> Map0;
+            AtomKey -> maps:remove(AtomKey, Map0)
+        end,
     maps:put(Key, Value, Map1).
 
 binary_key_atom(<<"model">>) -> model;
@@ -906,12 +922,11 @@ binary_key_atom(<<"stream">>) -> stream;
 binary_key_atom(_) -> undefined.
 
 json_binary_keys(Map) when is_map(Map) ->
-    maps:from_list([
-        {json_key(K), json_binary_keys(V)} || {K, V} <- maps:to_list(Map)
-    ]);
+    maps:from_list([{json_key(K), json_binary_keys(V)} || {K, V} <- maps:to_list(Map)]);
 json_binary_keys(List) when is_list(List) ->
     [json_binary_keys(V) || V <- List];
-json_binary_keys(Value) -> Value.
+json_binary_keys(Value) ->
+    Value.
 
 json_key(K) when is_binary(K) -> K;
 json_key(K) when is_atom(K) -> atom_to_binary(K, utf8);
@@ -922,9 +937,11 @@ int_or_zero(I) when is_integer(I), I >= 0 -> I;
 int_or_zero(_) -> 0.
 
 now_iso8601() ->
-    to_binary(calendar:system_time_to_rfc3339(erlang:system_time(second), [
-        {unit, second}, {offset, "Z"}
-    ])).
+    to_binary(
+        calendar:system_time_to_rfc3339(erlang:system_time(second), [
+            {unit, second}, {offset, "Z"}
+        ])
+    ).
 
 path_to_list(B) when is_binary(B) -> binary_to_list(B);
 path_to_list(L) when is_list(L) -> L;

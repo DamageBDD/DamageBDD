@@ -69,7 +69,6 @@ minimum_active_months_cannot_exceed_window_test() ->
 invalid_override_type_is_rejected_test() ->
     ?assertError(badarg, ecai_wikimedia_ops:genesis_spec(not_a_map)).
 
-
 custom_project_targets_are_isolated_test() ->
     En = ecai_wikimedia_ops:genesis_spec(#{project => <<"enwiki">>}),
     Fr = ecai_wikimedia_ops:genesis_spec(#{
@@ -85,16 +84,22 @@ custom_project_targets_are_isolated_test() ->
     ?assertNotEqual(maps:get(<<"namespace">>, EnTarget), maps:get(<<"namespace">>, FrTarget)),
     ?assertEqual(<<"frwiki">>, maps:get(<<"project">>, maps:get(<<"source">>, Fr))),
     FrDefault = ecai_wikimedia_ops:genesis_spec(#{project => <<"frwiki">>}),
-    ?assertEqual(<<"fr.wikipedia">>,
-                 maps:get(<<"pageview_project">>, maps:get(<<"source">>, FrDefault))),
+    ?assertEqual(
+        <<"fr.wikipedia">>,
+        maps:get(<<"pageview_project">>, maps:get(<<"source">>, FrDefault))
+    ),
     ?assertMatch({ok, _}, ecai_index_job_codec:normalize_spec(Fr)).
 
 malformed_project_cannot_escape_output_directory_test() ->
     Invalid = ecai_wikimedia_ops:genesis_spec(#{project => <<"../outside">>}),
     En = ecai_wikimedia_ops:genesis_spec(#{}),
-    ?assertEqual(maps:get(<<"base_dir">>, maps:get(<<"target">>, En)),
-                 maps:get(<<"base_dir">>, maps:get(<<"target">>, Invalid))),
+    ?assertEqual(
+        maps:get(<<"base_dir">>, maps:get(<<"target">>, En)),
+        maps:get(<<"base_dir">>, maps:get(<<"target">>, Invalid))
+    ),
     ?assertMatch({error, _}, ecai_index_job_codec:normalize_spec(Invalid)),
     DotDot = ecai_wikimedia_ops:genesis_spec(#{project => <<"..">>}),
-    ?assertEqual(maps:get(<<"base_dir">>, maps:get(<<"target">>, En)),
-                 maps:get(<<"base_dir">>, maps:get(<<"target">>, DotDot))).
+    ?assertEqual(
+        maps:get(<<"base_dir">>, maps:get(<<"target">>, En)),
+        maps:get(<<"base_dir">>, maps:get(<<"target">>, DotDot))
+    ).

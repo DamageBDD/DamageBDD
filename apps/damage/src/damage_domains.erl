@@ -79,7 +79,9 @@ to_json(Req0, #{public_key := AeAccount} = State) ->
             {jsx:encode(Domains), Req, State};
         {error, Reason} ->
             ?LOG_ERROR("Domain context read failed account=~p reason=~p", [AeAccount, Reason]),
-            reply_json_stop(503, #{status => <<"error">>, error => <<"DOMAIN_STORE_UNAVAILABLE">>}, Req, State)
+            reply_json_stop(
+                503, #{status => <<"error">>, error => <<"DOMAIN_STORE_UNAVAILABLE">>}, Req, State
+            )
     end.
 
 from_json(Req0, #{public_key := AeAccount} = State) ->
@@ -93,14 +95,32 @@ from_json(Req0, #{public_key := AeAccount} = State) ->
                         {ok, existing, DomainObj} ->
                             reply_json_stop(200, DomainObj, Req, State);
                         {error, Reason} ->
-                            ?LOG_ERROR("Domain context write failed account=~p reason=~p", [AeAccount, Reason]),
-                            reply_json_stop(503, #{status => <<"error">>, error => <<"DOMAIN_STORE_UNAVAILABLE">>}, Req, State)
+                            ?LOG_ERROR("Domain context write failed account=~p reason=~p", [
+                                AeAccount, Reason
+                            ]),
+                            reply_json_stop(
+                                503,
+                                #{status => <<"error">>, error => <<"DOMAIN_STORE_UNAVAILABLE">>},
+                                Req,
+                                State
+                            )
                     end;
                 {error, Reason} ->
-                    reply_json_stop(400, #{status => <<"error">>, error => <<"INVALID_DOMAIN">>, reason => to_binary(Reason)}, Req, State)
+                    reply_json_stop(
+                        400,
+                        #{
+                            status => <<"error">>,
+                            error => <<"INVALID_DOMAIN">>,
+                            reason => to_binary(Reason)
+                        },
+                        Req,
+                        State
+                    )
             end;
         {_, _, Req} ->
-            reply_json_stop(413, #{status => <<"error">>, error => <<"DOMAIN_REQUEST_TOO_LARGE">>}, Req, State)
+            reply_json_stop(
+                413, #{status => <<"error">>, error => <<"DOMAIN_REQUEST_TOO_LARGE">>}, Req, State
+            )
     end.
 
 delete_resource(Req, #{public_key := AeAccount} = State) ->
@@ -111,7 +131,9 @@ delete_resource(Req, #{public_key := AeAccount} = State) ->
             {true, no_store(Req), State};
         {error, Reason} ->
             ?LOG_ERROR("Domain context delete failed account=~p reason=~p", [AeAccount, Reason]),
-            reply_json_stop(503, #{status => <<"error">>, error => <<"DOMAIN_STORE_UNAVAILABLE">>}, Req, State)
+            reply_json_stop(
+                503, #{status => <<"error">>, error => <<"DOMAIN_STORE_UNAVAILABLE">>}, Req, State
+            )
     end.
 
 ensure_domain(AeAccount, Domain) ->
@@ -133,10 +155,12 @@ ensure_domain(AeAccount, Domain) ->
                         {error, _} = Error -> Error
                     end
             end;
-        {error, _} = Error -> Error
+        {error, _} = Error ->
+            Error
     end.
 
-delete_domains(_AeAccount, []) -> {ok, 0};
+delete_domains(_AeAccount, []) ->
+    {ok, 0};
 delete_domains(AeAccount, Ids) ->
     case load_domains(AeAccount) of
         {ok, Domains0} ->
@@ -154,7 +178,8 @@ delete_domains(AeAccount, Ids) ->
                 ok -> {ok, Deleted};
                 {error, _} = Error -> Error
             end;
-        {error, _} = Error -> Error
+        {error, _} = Error ->
+            Error
     end.
 
 load_domains(AeAccount) ->
@@ -179,7 +204,8 @@ persist_domains(AeAccount, Domains) when map_size(Domains) =:= 0 ->
         not_found -> ok;
         {error, _} = Error -> Error
     end;
-persist_domains(AeAccount, Domains) -> store_domains(AeAccount, Domains).
+persist_domains(AeAccount, Domains) ->
+    store_domains(AeAccount, Domains).
 
 normalize_domains(Domains) ->
     maps:from_list([
@@ -209,11 +235,13 @@ decode_domain_request(Data) ->
 
 normalize_domain(Domain0) ->
     Domain1 = list_to_binary(string:lowercase(string:trim(binary_to_list(to_binary(Domain0))))),
-    case re:run(
-        Domain1,
-        <<"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$">>,
-        [{capture, none}]
-    ) of
+    case
+        re:run(
+            Domain1,
+            <<"^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$">>,
+            [{capture, none}]
+        )
+    of
         match -> {ok, Domain1};
         nomatch -> {error, invalid_domain_name}
     end.
@@ -239,8 +267,10 @@ is_allowed_domain(Host, AeAccount) when is_binary(Host) ->
     is_allowed_domain(binary_to_list(Host), AeAccount);
 is_allowed_domain(Host, AeAccount) ->
     case string:split(Host, ".", trailing) of
-        [_, "lan"] -> true;
-        [_, "local"] -> true;
+        [_, "lan"] ->
+            true;
+        [_, "local"] ->
+            true;
         _ ->
             AllowedHosts = [
                 "jsontest.com",
@@ -262,10 +292,13 @@ check_host_token(Host0, AeAccount, Token0) ->
     case load_domains(AeAccount) of
         {ok, Domains} ->
             case maps:get(DomainId, Domains, undefined) of
-                #{domain := Host, domain_token := Token, expiry := Expiry} -> Expiry > date_util:epoch();
-                _ -> false
+                #{domain := Host, domain_token := Token, expiry := Expiry} ->
+                    Expiry > date_util:epoch();
+                _ ->
+                    false
             end;
-        {error, _} -> false
+        {error, _} ->
+            false
     end.
 
 txt_tokens(Record0) ->
@@ -282,14 +315,14 @@ txt_tokens(Record0) ->
         string:split(Flat, ";", all)
     ).
 
-
 txt_record_to_list(Bin) when is_binary(Bin) -> binary_to_list(Bin);
 txt_record_to_list(List) when is_list(List) ->
     case io_lib:printable_unicode_list(List) of
         true -> List;
         false -> lists:flatten([txt_record_to_list(Item) || Item <- List])
     end;
-txt_record_to_list(Other) -> to_list(Other).
+txt_record_to_list(Other) ->
+    to_list(Other).
 
 no_store(Req0) ->
     Req1 = cowboy_req:set_resp_header(<<"cache-control">>, <<"private, no-store">>, Req0),
@@ -298,9 +331,11 @@ no_store(Req0) ->
 reply_json_stop(Status, Body, Req0, State) ->
     Req = cowboy_req:reply(
         Status,
-        #{<<"content-type">> => <<"application/json; charset=utf-8">>,
-          <<"cache-control">> => <<"private, no-store">>,
-          <<"x-content-type-options">> => <<"nosniff">>},
+        #{
+            <<"content-type">> => <<"application/json; charset=utf-8">>,
+            <<"cache-control">> => <<"private, no-store">>,
+            <<"x-content-type-options">> => <<"nosniff">>
+        },
         jsx:encode(Body),
         Req0
     ),
@@ -311,12 +346,18 @@ map_get_any([K | Ks], Map, Default) ->
         {ok, V} -> V;
         error -> map_get_any(Ks, Map, Default)
     end;
-map_get_any([], _Map, Default) -> Default.
+map_get_any([], _Map, Default) ->
+    Default.
 
 int_value(V, _Default) when is_integer(V) -> V;
 int_value(V, Default) when is_binary(V) ->
-    try binary_to_integer(V) catch _:_ -> Default end;
-int_value(_, Default) -> Default.
+    try
+        binary_to_integer(V)
+    catch
+        _:_ -> Default
+    end;
+int_value(_, Default) ->
+    Default.
 
 to_binary(V) when is_binary(V) -> V;
 to_binary(V) when is_list(V) -> unicode:characters_to_binary(V);

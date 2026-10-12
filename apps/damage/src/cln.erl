@@ -57,7 +57,9 @@
     sats_to_msat/1,
     msat_to_sats/1
 ]).
--export([pay_invoice/1, pay_invoice/2, decode_invoice/1, xpay_invoice/2, list_pays/1, list_peerchannels/0]).
+-export([
+    pay_invoice/1, pay_invoice/2, decode_invoice/1, xpay_invoice/2, list_pays/1, list_peerchannels/0
+]).
 -export([
     list_funds/0,
     list_pays/0,
@@ -709,24 +711,33 @@ decode_invoice(Bolt11) when is_binary(Bolt11), byte_size(Bolt11) =< 8192 ->
         gen_server:call(W, {decode_invoice, Bolt11}, ?CLN_HTTP_TIMEOUT)
     end).
 
-list_pays(#{payment_hash := Hash} = Params) when is_binary(Hash),
-                                               byte_size(Hash) =:= 64,
-                                               map_size(Params) =:= 1 ->
+list_pays(#{payment_hash := Hash} = Params) when
+    is_binary(Hash),
+    byte_size(Hash) =:= 64,
+    map_size(Params) =:= 1
+->
     poolboy:transaction(?MODULE, fun(W) ->
         gen_server:call(W, {list_pays, Params}, ?CLN_HTTP_TIMEOUT)
     end).
 
 %% Domain-separated participation proof; no general HTTP signing endpoint.
-sign_index_pool_message(<<"ecai-index-pool:v1:", _/binary>> = Message)
-  when byte_size(Message) =:= 83 ->
+sign_index_pool_message(<<"ecai-index-pool:v1:", _/binary>> = Message) when
+    byte_size(Message) =:= 83
+->
     poolboy:transaction(?MODULE, fun(W) ->
         gen_server:call(W, {sign_index_pool_message, Message}, ?CLN_HTTP_TIMEOUT)
     end).
-check_index_pool_message(<<"ecai-index-pool:v1:", _/binary>> = Message, Signature, Pubkey)
-  when byte_size(Message) =:= 83, is_binary(Signature), byte_size(Signature) =< 256,
-       is_binary(Pubkey), byte_size(Pubkey) =:= 66 ->
+check_index_pool_message(<<"ecai-index-pool:v1:", _/binary>> = Message, Signature, Pubkey) when
+    byte_size(Message) =:= 83,
+    is_binary(Signature),
+    byte_size(Signature) =< 256,
+    is_binary(Pubkey),
+    byte_size(Pubkey) =:= 66
+->
     poolboy:transaction(?MODULE, fun(W) ->
-        gen_server:call(W, {check_index_pool_message, Message, Signature, Pubkey}, ?CLN_HTTP_TIMEOUT)
+        gen_server:call(
+            W, {check_index_pool_message, Message, Signature, Pubkey}, ?CLN_HTTP_TIMEOUT
+        )
     end).
 
 %% xpay is supported by CLN >= 24.11. No automatic pay/xpay fallback on error:
@@ -1762,32 +1773,59 @@ handle_call(
         payment_hash => PaymentHash
     }),
     {reply, Invoice, State};
-handle_call({sign_index_pool_message, Message}, _From,
-    #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} = State) ->
-    {reply, cln_post_json(Host, Port, Options, Rune, "/v1/signmessage", #{message => Message}), State};
-handle_call({check_index_pool_message, Message, Signature, Pubkey}, _From,
-    #state{cln_host = Host, cln_port = Port, readonly_rune = Rune, options = Options} = State) ->
-    {reply, cln_post_json(Host, Port, Options, Rune, "/v1/checkmessage",
-        #{message => Message, zbase => Signature, pubkey => Pubkey}), State};
-handle_call(list_peerchannels, _From,
-    #state{cln_host = Host, cln_port = Port, options = Options, readonly_rune = Rune} = State) ->
+handle_call(
+    {sign_index_pool_message, Message},
+    _From,
+    #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} = State
+) ->
+    {reply, cln_post_json(Host, Port, Options, Rune, "/v1/signmessage", #{message => Message}),
+        State};
+handle_call(
+    {check_index_pool_message, Message, Signature, Pubkey},
+    _From,
+    #state{cln_host = Host, cln_port = Port, readonly_rune = Rune, options = Options} = State
+) ->
+    {reply,
+        cln_post_json(
+            Host,
+            Port,
+            Options,
+            Rune,
+            "/v1/checkmessage",
+            #{message => Message, zbase => Signature, pubkey => Pubkey}
+        ),
+        State};
+handle_call(
+    list_peerchannels,
+    _From,
+    #state{cln_host = Host, cln_port = Port, options = Options, readonly_rune = Rune} = State
+) ->
     %% Raw, uncached capacity data; never turn an RPC failure into an empty list.
     {reply, cln_post_json(Host, Port, Options, Rune, "/v1/listpeerchannels", #{}), State};
 handle_call(
-    {decode_invoice, Bolt11}, _From,
+    {decode_invoice, Bolt11},
+    _From,
     #state{cln_host = Host, cln_port = Port, readonly_rune = Rune, options = Options} = State
 ) ->
     Reply = cln_post_json(Host, Port, Options, Rune, "/v1/decode", #{string => Bolt11}),
     {reply, Reply, State};
 handle_call(
-    {list_pays, Params}, _From,
+    {list_pays, Params},
+    _From,
     #state{cln_host = Host, cln_port = Port, readonly_rune = Rune, options = Options} = State
 ) ->
-    Reply = cln_post_json(Host, Port, Options, Rune, "/v1/listpays",
-                          maps:with([payment_hash], Params)),
+    Reply = cln_post_json(
+        Host,
+        Port,
+        Options,
+        Rune,
+        "/v1/listpays",
+        maps:with([payment_hash], Params)
+    ),
     {reply, Reply, State};
 handle_call(
-    {xpay_invoice, Bolt11, Opts}, _From,
+    {xpay_invoice, Bolt11, Opts},
+    _From,
     #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} = State
 ) ->
     ReqMap = (maps:with([maxfee, retry_for, maxdelay], Opts))#{invstring => Bolt11},

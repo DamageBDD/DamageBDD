@@ -7,7 +7,8 @@ builtins_are_small_public_descriptors_test() ->
         Presets = ecai_wikimedia_presets:list(),
         ?assert(length(Presets) >= 4),
         Smoke = lists:keyfind(<<"laptop-smoke">>, 1, [
-            {maps:get(id, Preset), Preset} || Preset <- Presets
+            {maps:get(id, Preset), Preset}
+         || Preset <- Presets
         ]),
         ?assertMatch({<<"laptop-smoke">>, _}, Smoke),
         Ids = [maps:get(id, Preset) || Preset <- Presets],
@@ -156,7 +157,8 @@ with_on_demand_fixture(Fun) ->
                 ok = application:set_env(ecai, wikimedia_fixture_port, 0),
                 {ok, Pid} = ecai_wikimedia_fixture_server:start_link(),
                 unlink(Pid),
-                try Fun()
+                try
+                    Fun()
                 after
                     ok = ecai_wikimedia_fixture_server:stop(Pid)
                 end

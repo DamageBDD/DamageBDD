@@ -65,7 +65,8 @@ start_normal_runtime_phase() ->
             ok;
         {error, HttpReason} ->
             case application:get_env(erm, http_required, false) of
-                true -> {error, {http_listener_failed, HttpReason}};
+                true ->
+                    {error, {http_listener_failed, HttpReason}};
                 false ->
                     ?LOG_WARNING(
                         "ERM HTTP listener is unavailable; continuing without HTTP: ~p",

@@ -184,7 +184,8 @@ handle_info(
     State = #st{live_owner_ref = Ref, live_owner_pid = Pid}
 ) ->
     {noreply, clear_live_state(State)};
-handle_info(_Message, State) -> {noreply, State}.
+handle_info(_Message, State) ->
+    {noreply, State}.
 
 terminate(_Reason, State) ->
     _ = clear_live_state(State),
@@ -196,8 +197,7 @@ code_change(_OldVsn, State, _Extra) -> {ok, State}.
 active_search_context(State = #st{live_ctx = LiveCtx}) when LiveCtx =/= undefined ->
     case ctx_alive(LiveCtx) of
         true -> {live, LiveCtx, State};
-        false ->
-            active_search_context(State#st{live_ctx = undefined, live_metadata = #{}})
+        false -> active_search_context(State#st{live_ctx = undefined, live_metadata = #{}})
     end;
 active_search_context(State = #st{ctx = Ctx}) when Ctx =/= undefined ->
     case ctx_alive(Ctx) of

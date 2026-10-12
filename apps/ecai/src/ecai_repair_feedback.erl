@@ -14,7 +14,8 @@ incident(Incident) when is_map(Incident) ->
                 {ok, App, Module, Finding, Meta} ->
                     ecai_patch_manager:enqueue_feedback(App, Module, Finding, Meta),
                     ok;
-                {skip, _} = Skip -> Skip
+                {skip, _} = Skip ->
+                    Skip
             end;
         false ->
             {skip, disabled_or_ineligible}
@@ -37,18 +38,19 @@ health_report(Report) when is_map(Report) ->
 health_report(_) ->
     {skip, invalid_report}.
 
-
 replay() ->
     case enabled() of
-        false -> {skip, disabled};
+        false ->
+            {skip, disabled};
         true ->
             Limit = replay_limit(),
-            Incidents = try ecai_learning_store:log_incidents(Limit) of
-                Values when is_list(Values) -> Values;
-                _ -> []
-            catch
-                _:_ -> []
-            end,
+            Incidents =
+                try ecai_learning_store:log_incidents(Limit) of
+                    Values when is_list(Values) -> Values;
+                    _ -> []
+                catch
+                    _:_ -> []
+                end,
             lists:foreach(fun(Incident) -> _ = incident(Incident) end, Incidents),
             _ = replay_health_checkpoint(),
             ok
@@ -56,7 +58,8 @@ replay() ->
 
 replay_health_checkpoint() ->
     case health_feedback_enabled() of
-        false -> ok;
+        false ->
+            ok;
         true ->
             try ecai_learning_store:get_checkpoint(ecai_health_monitor) of
                 {ok, Checkpoint} when is_map(Checkpoint) ->
@@ -64,7 +67,8 @@ replay_health_checkpoint() ->
                         Report when is_map(Report) -> health_report(Report);
                         _ -> ok
                     end;
-                _ -> ok
+                _ ->
+                    ok
             catch
                 _:_ -> ok
             end
@@ -148,12 +152,13 @@ maybe_health_log(Log, Resolution, Report) when is_map(Log) ->
         _ ->
             ok
     end;
-maybe_health_log(_, _, _) -> ok.
+maybe_health_log(_, _, _) ->
+    ok.
 
 eligible_incident(Incident) ->
     maps:get(status, Incident, undefined) =:= learned andalso
-    confidence_rank(get_in(Incident, [learning, confidence], low)) >=
-        confidence_rank(min_confidence()).
+        confidence_rank(get_in(Incident, [learning, confidence], low)) >=
+            confidence_rank(min_confidence()).
 
 enabled() -> application:get_env(ecai, code_repair_feedback_enabled, true) =:= true.
 health_feedback_enabled() ->
@@ -183,7 +188,8 @@ severity(_) -> <<"medium">>.
 health_steps_text(Steps) when is_list(Steps) ->
     Actions = [maps:get(action, S, <<>>) || S <- Steps, is_map(S)],
     join_text(Actions, 8, 1024);
-health_steps_text(_) -> <<>>.
+health_steps_text(_) ->
+    <<>>.
 
 prefixed_fp(Prefix, Fp) ->
     hash_hex(<<Prefix/binary, Fp/binary>>).
@@ -191,15 +197,18 @@ prefixed_fp(Prefix, Fp) ->
 hash_hex(Bin) ->
     iolist_to_binary([io_lib:format("~2.16.0b", [B]) || <<B>> <= crypto:hash(sha256, Bin)]).
 
-get_in(Map, [], _Default) -> Map;
+get_in(Map, [], _Default) ->
+    Map;
 get_in(Map, [K | Ks], Default) when is_map(Map) ->
     get_in(maps:get(K, Map, Default), Ks, Default);
-get_in(_, _, Default) -> Default.
+get_in(_, _, Default) ->
+    Default.
 
 join_text(Values, Limit, MaxEach) when is_list(Values) ->
     Clean = [text(V, MaxEach) || V <- lists:sublist(Values, Limit), text(V, MaxEach) =/= <<>>],
     combine(Clean);
-join_text(_, _, _) -> <<>>.
+join_text(_, _, _) ->
+    <<>>.
 
 combine(Parts) ->
     iolist_to_binary(lists:join(<<"\n">>, [P || P <- Parts, is_binary(P), P =/= <<>>])).

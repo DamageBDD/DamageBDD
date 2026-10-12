@@ -22,12 +22,15 @@ context(Request) ->
             try nosternity_relay:search(Filters) of
                 {ok, #{results := Results, total := Total}} ->
                     {ok, build_context(Query, Question, Results, Total, Limit)};
-                {error, invalid_filters} -> {error, invalid_filters};
-                _ -> {error, search_unavailable}
+                {error, invalid_filters} ->
+                    {error, invalid_filters};
+                _ ->
+                    {error, search_unavailable}
             catch
                 _:_ -> {error, search_unavailable}
             end;
-        Error -> Error
+        Error ->
+            Error
     end.
 
 -spec ask(map()) -> {ok, map()} | {error, atom()}.
@@ -38,10 +41,13 @@ ask(Request) ->
             case context(Request) of
                 {ok, #{sources := []} = Context} ->
                     {ok, Context#{answer => <<"Not in sources.">>, llm_called => false}};
-                {ok, Context} -> generate(Context, Opts);
-                Error -> Error
+                {ok, Context} ->
+                    generate(Context, Opts);
+                Error ->
+                    Error
             end;
-        Error -> Error
+        Error ->
+            Error
     end.
 
 prepare(Request) when is_map(Request) ->
@@ -50,12 +56,13 @@ prepare(Request) when is_map(Request) ->
     Limit = maps:get(<<"limit">>, Request, ?MAX_SOURCES),
     Filters = maps:get(<<"filters">>, Request, [#{}]),
     case
-        maps:without([<<"query">>, <<"question">>, <<"limit">>, <<"filters">>], Request)
-            =:= #{} andalso
+        maps:without([<<"query">>, <<"question">>, <<"limit">>, <<"filters">>], Request) =:=
+            #{} andalso
             valid_text(Query, 1024) andalso valid_text(Question, 8192) andalso
             is_integer(Limit) andalso Limit >= 1 andalso Limit =< ?MAX_SOURCES
     of
-        false -> {error, invalid_request};
+        false ->
+            {error, invalid_request};
         true ->
             case nosternity_filter:valid_filters(Filters) of
                 {ok, Valid} ->
@@ -65,16 +72,19 @@ prepare(Request) when is_map(Request) ->
                         fun(Filter) -> public_filter(Filter, Query, Limit) end, Valid
                     ),
                     {ok, Query, Question, Public, Limit};
-                _ -> {error, invalid_filters}
+                _ ->
+                    {error, invalid_filters}
             end
     end;
-prepare(_) -> {error, invalid_request}.
+prepare(_) ->
+    {error, invalid_request}.
 
 public_filter(Filter, Query, Limit) ->
     Kinds = maps:get(<<"kinds">>, Filter, ?PUBLIC_KINDS),
     PublicKinds = [Kind || Kind <- Kinds, lists:member(Kind, ?PUBLIC_KINDS)],
     case PublicKinds of
-        [] -> false;
+        [] ->
+            false;
         _ ->
             RequestedLimit = maps:get(<<"limit">>, Filter, Limit),
             {true, Filter#{
@@ -89,7 +99,8 @@ valid_text(Text, Max) when is_binary(Text), byte_size(Text) > 0, byte_size(Text)
         Text -> string:trim(Text) =/= <<>>;
         _ -> false
     end;
-valid_text(_, _) -> false.
+valid_text(_, _) ->
+    false.
 
 build_context(Query, Question, Results, Total, Limit) ->
     %% Defend the provider boundary independently of relay filter handling.
@@ -134,19 +145,33 @@ inference_options() ->
 %% sys.config.sample uses application-owned tuple/proplist configuration;
 %% retain map compatibility for existing releases and programmatic callers.
 configured_options(Opts) when is_list(Opts) ->
-    try configured_options(maps:from_list(Opts))
-    catch _:_ -> {error, llm_not_configured} end;
+    try
+        configured_options(maps:from_list(Opts))
+    catch
+        _:_ -> {error, llm_not_configured}
+    end;
 configured_options(Opts) when is_map(Opts) ->
     %% No request options enter this function. Keep transport credentials only
     %% in trusted operator configuration, never in API output or model input.
     Provider = maps:get(provider, Opts, ollama),
     Model = maps:get(model, Opts, undefined),
     case lists:member(Provider, [ollama, openai]) andalso config_text(Model) of
-        false -> {error, llm_not_configured};
+        false ->
+            {error, llm_not_configured};
         true ->
             Allowed = maps:with(
-                [provider, host, port, model, transport, auth, base_path,
-                    reasoning_effort, temperature, max_output_tokens],
+                [
+                    provider,
+                    host,
+                    port,
+                    model,
+                    transport,
+                    auth,
+                    base_path,
+                    reasoning_effort,
+                    temperature,
+                    max_output_tokens
+                ],
                 Opts
             ),
             {ok, Allowed#{
@@ -159,12 +184,18 @@ configured_options(Opts) when is_map(Opts) ->
                 max_output_tokens => bounded_output(maps:get(max_output_tokens, Opts, 2048))
             }}
     end;
-configured_options(_) -> {error, llm_not_configured}.
+configured_options(_) ->
+    {error, llm_not_configured}.
 
 config_text(Bin) when is_binary(Bin) -> valid_text(Bin, 256);
 config_text(List) when is_list(List) ->
-    try valid_text(unicode:characters_to_binary(List), 256) catch _:_ -> false end;
-config_text(_) -> false.
+    try
+        valid_text(unicode:characters_to_binary(List), 256)
+    catch
+        _:_ -> false
+    end;
+config_text(_) ->
+    false.
 
 bounded_output(N) when is_integer(N), N >= 1, N =< 4096 -> N;
 bounded_output(_) -> 2048.
@@ -175,7 +206,8 @@ generate(Context, Opts) ->
         <<"sources">> => maps:get(sources, Context)
     }),
     case byte_size(Prompt) =< ?MAX_PROMPT_BYTES of
-        false -> {error, context_too_large};
+        false ->
+            {error, context_too_large};
         true ->
             try ecai_ollama_client:generate_text(Prompt, Opts) of
                 {ok, Answer} when is_binary(Answer), byte_size(Answer) =< 65536 ->
@@ -183,7 +215,8 @@ generate(Context, Opts) ->
                         true -> {ok, Context#{answer => Answer, llm_called => true}};
                         false -> {error, llm_request_failed}
                     end;
-                _ -> {error, llm_request_failed}
+                _ ->
+                    {error, llm_request_failed}
             catch
                 %% Provider errors can echo credentials or indexed text.
                 _:_ -> {error, llm_request_failed}

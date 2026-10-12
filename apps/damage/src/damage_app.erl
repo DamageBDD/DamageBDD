@@ -69,7 +69,7 @@ get_trails() ->
             damage_doc,
             damage_swap_options_http,
             damage_settings_http,
-        damage_dashboard,
+            damage_dashboard,
             damage_nwc_http,
             damage_nip96_http,
             damage_liquidity_http,

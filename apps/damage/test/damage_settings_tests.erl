@@ -18,23 +18,42 @@ with_isolated_config(Fun) ->
     Overlay = filename:join(Dir, "sys.dashboard.config"),
     EnvNames = ["DAMAGE_CONFIG_FILE", "DAMAGE_SETTINGS_OVERLAY"],
     OriginalEnv = [{Name, os:getenv(Name)} || Name <- EnvNames],
-    Original = [{damage, Key, application:get_env(damage, Key)} ||
-                Key <- [settings_config_path, settings_overlay_path,
-                        settings_poll_interval_ms, ae_fee_multiplier, l402_price_msat,
-                        tax_enabled, tax_cln_owner, tax_data_dir,
-                        tax_backfill_on_start, tax_standard_utc_offset_minutes,
-                        tax_max_prices_per_backfill, tax_price_pause_ms]] ++
-               [{erm, media_enabled, application:get_env(erm, media_enabled)},
-                {bop, port, application:get_env(bop, port)}],
+    Original =
+        [
+            {damage, Key, application:get_env(damage, Key)}
+         || Key <- [
+                settings_config_path,
+                settings_overlay_path,
+                settings_poll_interval_ms,
+                ae_fee_multiplier,
+                l402_price_msat,
+                tax_enabled,
+                tax_cln_owner,
+                tax_data_dir,
+                tax_backfill_on_start,
+                tax_standard_utc_offset_minutes,
+                tax_max_prices_per_backfill,
+                tax_price_pause_ms
+            ]
+        ] ++
+            [
+                {erm, media_enabled, application:get_env(erm, media_enabled)},
+                {bop, port, application:get_env(bop, port)}
+            ],
     try
         [_ = os:unsetenv(Name) || Name <- EnvNames],
-        ok = file:write_file(Base, "[{damage,[{ae_fee_multiplier,2}]},{ecai,[]},{nosternity,[]}].\n"),
+        ok = file:write_file(
+            Base, "[{damage,[{ae_fee_multiplier,2}]},{ecai,[]},{nosternity,[]}].\n"
+        ),
         ok = application:set_env(damage, settings_config_path, Base),
         ok = application:set_env(damage, settings_overlay_path, Overlay),
         ok = application:set_env(damage, settings_poll_interval_ms, 60000),
         {ok, Pid} = damage_settings:start_link(),
-        try Fun(Base, Overlay)
-        after gen_server:stop(Pid) end
+        try
+            Fun(Base, Overlay)
+        after
+            gen_server:stop(Pid)
+        end
     after
         [restore_os_env(Name, Val) || {Name, Val} <- OriginalEnv],
         [restore(App, Key, Value) || {App, Key, Value} <- Original],
@@ -55,14 +74,20 @@ check_settings(Base, Overlay) ->
 
     {ok, AfterSave} = damage_settings:get(damage),
     Version1 = maps:get(version, AfterSave),
-    ?assertMatch({error, {conflict, _}},
-                 damage_settings:save(damage, #{<<"ae_fee_multiplier">> => 5}, Version0)),
-    ?assertMatch({error, {not_editable, _}},
-                 damage_settings:save(damage, #{<<"node_admins">> => [<<"ak_x">>]}, Version1)),
+    ?assertMatch(
+        {error, {conflict, _}},
+        damage_settings:save(damage, #{<<"ae_fee_multiplier">> => 5}, Version0)
+    ),
+    ?assertMatch(
+        {error, {not_editable, _}},
+        damage_settings:save(damage, #{<<"node_admins">> => [<<"ak_x">>]}, Version1)
+    ),
 
     %% Manual sys.config edits take effect for unoverridden fields.
-    ok = file:write_file(Base,
-         "[{damage,[{ae_fee_multiplier,3},{l402_price_msat,1000}]},{ecai,[]},{nosternity,[]}].\n"),
+    ok = file:write_file(
+        Base,
+        "[{damage,[{ae_fee_multiplier,3},{l402_price_msat,1000}]},{ecai,[]},{nosternity,[]}].\n"
+    ),
     {ok, _} = damage_settings:reload(),
     ?assertEqual({ok, 4}, application:get_env(damage, ae_fee_multiplier)),
     ?assertEqual({ok, 1000}, application:get_env(damage, l402_price_msat)),
@@ -74,8 +99,10 @@ check_settings(Base, Overlay) ->
     ?assertMatch({error, _}, damage_settings:reload()),
     ?assertEqual({ok, 4}, application:get_env(damage, ae_fee_multiplier)),
 
-    ok = file:write_file(Base,
-         "[{damage,[{ae_fee_multiplier,3},{l402_price_msat,1000}]},{ecai,[]},{nosternity,[]}].\n"),
+    ok = file:write_file(
+        Base,
+        "[{damage,[{ae_fee_multiplier,3},{l402_price_msat,1000}]},{ecai,[]},{nosternity,[]}].\n"
+    ),
     {ok, _} = damage_settings:reload(),
     {ok, Fresh} = damage_settings:get(damage),
     {ok, _} = damage_settings:reset(damage, [<<"ae_fee_multiplier">>], maps:get(version, Fresh)),
@@ -86,16 +113,24 @@ check_settings(Base, Overlay) ->
     {ok, _} = damage_settings:save(bop, #{<<"port">> => 8099}, maps:get(version, B0)),
     ?assertEqual({ok, 8099}, application:get_env(bop, port)),
     {ok, E0} = damage_settings:get(erm),
-    {ok, _} = damage_settings:save(erm, #{<<"media_enabled">> => false},
-                                   maps:get(version, E0)),
+    {ok, _} = damage_settings:save(
+        erm,
+        #{<<"media_enabled">> => false},
+        maps:get(version, E0)
+    ),
     ?assertEqual({ok, false}, application:get_env(erm, media_enabled)),
     {ok, _} = damage_settings:get(erm),
 
     %% Reject impossible Nosternity default/max combinations before persisting.
     {ok, N0} = damage_settings:get(nosternity),
-    ?assertMatch({error, {invalid_setting_combination, nosternity, _, _}},
-        damage_settings:save(nosternity, #{<<"search_default_limit">> => 300},
-                             maps:get(version, N0))),
+    ?assertMatch(
+        {error, {invalid_setting_combination, nosternity, _, _}},
+        damage_settings:save(
+            nosternity,
+            #{<<"search_default_limit">> => 300},
+            maps:get(version, N0)
+        )
+    ),
     {ok, N1} = damage_settings:get(nosternity),
     ?assertEqual(maps:get(version, N0), maps:get(version, N1)),
 
@@ -103,24 +138,29 @@ check_settings(Base, Overlay) ->
     %% Enabling without an explicit owner is refused before writing the file.
     {ok, Tax0} = damage_settings:get(damage),
     TaxVersion = maps:get(version, Tax0),
-    ?assertMatch({error, {invalid_setting_combination, damage,
-                           tax_enabled, tax_cln_owner}},
-        damage_settings:save(damage, #{<<"tax_enabled">> => true}, TaxVersion)),
+    ?assertMatch(
+        {error, {invalid_setting_combination, damage, tax_enabled, tax_cln_owner}},
+        damage_settings:save(damage, #{<<"tax_enabled">> => true}, TaxVersion)
+    ),
     {ok, TaxUnchanged} = damage_settings:get(damage),
     ?assertEqual(TaxVersion, maps:get(version, TaxUnchanged)),
     TaxOwner = <<"ak_22222222222222222222222222222222222222222222222222222">>,
     BeforeEnable = application:get_env(damage, tax_enabled),
     BeforeOwner = application:get_env(damage, tax_cln_owner),
     BeforeDir = application:get_env(damage, tax_data_dir),
-    {ok, _} = damage_settings:save(damage, #{
-        <<"tax_enabled">> => true,
-        <<"tax_cln_owner">> => TaxOwner,
-        <<"tax_data_dir">> => <<"/tmp/damage-tax-private">>,
-        <<"tax_backfill_on_start">> => false,
-        <<"tax_standard_utc_offset_minutes">> => 600,
-        <<"tax_max_prices_per_backfill">> => 125,
-        <<"tax_price_pause_ms">> => 100
-    }, TaxVersion),
+    {ok, _} = damage_settings:save(
+        damage,
+        #{
+            <<"tax_enabled">> => true,
+            <<"tax_cln_owner">> => TaxOwner,
+            <<"tax_data_dir">> => <<"/tmp/damage-tax-private">>,
+            <<"tax_backfill_on_start">> => false,
+            <<"tax_standard_utc_offset_minutes">> => 600,
+            <<"tax_max_prices_per_backfill">> => 125,
+            <<"tax_price_pause_ms">> => 100
+        },
+        TaxVersion
+    ),
     %% Lifecycle fields are persisted but not hot-published over a running
     %% journal; this also keeps the tax link hidden until the restart.
     ?assertEqual(BeforeEnable, application:get_env(damage, tax_enabled)),
@@ -131,8 +171,11 @@ check_settings(Base, Overlay) ->
     {ok, TaxSaved} = damage_settings:get(damage),
     ?assert(lists:member(<<"damage.tax_enabled">>, maps:get(pending_restart, TaxSaved))),
     ?assert(lists:member(<<"damage.tax_cln_owner">>, maps:get(pending_restart, TaxSaved))),
-    [TaxField] = [F || F <- maps:get(fields, TaxSaved),
-                      maps:get(name, F) =:= <<"tax_cln_owner">>],
+    [TaxField] = [
+        F
+     || F <- maps:get(fields, TaxSaved),
+        maps:get(name, F) =:= <<"tax_cln_owner">>
+    ],
     ?assertEqual(TaxOwner, maps:get(value, TaxField)),
     ?assertEqual(<<"damage.config">>, maps:get(source, TaxField)),
     {ok, [AppTerms]} = file:consult(Overlay),
@@ -146,9 +189,10 @@ check_settings(Base, Overlay) ->
     ?assertEqual({ok, TaxOwner}, application:get_env(damage, tax_cln_owner)),
     ?assertEqual({ok, "/tmp/damage-tax-private"}, application:get_env(damage, tax_data_dir)),
     %% An enabled tax service may not lose its CLN ownership binding.
-    ?assertMatch({error, {invalid_setting_combination, damage,
-                           tax_enabled, tax_cln_owner}},
-        damage_settings:reset(damage, [<<"tax_cln_owner">>], maps:get(version, TaxSaved))),
+    ?assertMatch(
+        {error, {invalid_setting_combination, damage, tax_enabled, tax_cln_owner}},
+        damage_settings:reset(damage, [<<"tax_cln_owner">>], maps:get(version, TaxSaved))
+    ),
     ?assertEqual({ok, TaxOwner}, application:get_env(damage, tax_cln_owner)).
 
 restore(App, Key, {ok, Value}) -> application:set_env(App, Key, Value);
@@ -161,14 +205,20 @@ xdg_path_resolution_test() ->
     try
         _ = os:putenv("HOME", "/tmp/damage-xdg-test-home"),
         _ = os:putenv("XDG_CONFIG_HOME", "/tmp/damage-xdg-test-config"),
-        ?assertEqual("/tmp/damage-xdg-test-config/damage/damage.config",
-                     damage_config:dashboard_config_path()),
+        ?assertEqual(
+            "/tmp/damage-xdg-test-config/damage/damage.config",
+            damage_config:dashboard_config_path()
+        ),
         _ = os:putenv("XDG_CONFIG_HOME", "relative-dir"),
-        ?assertEqual("/tmp/damage-xdg-test-home/.config/damage/damage.config",
-                     damage_config:dashboard_config_path()),
+        ?assertEqual(
+            "/tmp/damage-xdg-test-home/.config/damage/damage.config",
+            damage_config:dashboard_config_path()
+        ),
         _ = os:unsetenv("XDG_CONFIG_HOME"),
-        ?assertEqual("/tmp/damage-xdg-test-home/.config/damage/damage.config",
-                     damage_config:dashboard_config_path())
+        ?assertEqual(
+            "/tmp/damage-xdg-test-home/.config/damage/damage.config",
+            damage_config:dashboard_config_path()
+        )
     after
         [restore_os_env(Name, Val) || {Name, Val} <- Original]
     end.
@@ -189,8 +239,12 @@ run_xdg_initialization_and_legacy_migration() ->
     Managed = filename:join([Xdg, "damage", "damage.config"]),
     Vars = ["XDG_CONFIG_HOME", "HOME", "DAMAGE_CONFIG_FILE", "DAMAGE_SETTINGS_OVERLAY"],
     OriginalEnv = [{Name, os:getenv(Name)} || Name <- Vars],
-    Keys = [settings_config_path, settings_overlay_path, settings_poll_interval_ms,
-            ae_fee_multiplier],
+    Keys = [
+        settings_config_path,
+        settings_overlay_path,
+        settings_poll_interval_ms,
+        ae_fee_multiplier
+    ],
     OriginalApps = [{damage, Key, application:get_env(damage, Key)} || Key <- Keys],
     try
         _ = os:putenv("XDG_CONFIG_HOME", Xdg),
@@ -215,22 +269,29 @@ run_xdg_initialization_and_legacy_migration() ->
             ?assertEqual(8#700, DirMode band 8#777),
             {ok, State0} = damage_settings:get(damage),
             ?assertEqual(list_to_binary(Managed), maps:get(config_file, State0)),
-            [Fee] = [F || F <- maps:get(fields, State0),
-                          maps:get(name, F) =:= <<"ae_fee_multiplier">>],
+            [Fee] = [
+                F
+             || F <- maps:get(fields, State0),
+                maps:get(name, F) =:= <<"ae_fee_multiplier">>
+            ],
             ?assertEqual(<<"damage.config">>, maps:get(source, Fee)),
-            {ok, _} = damage_settings:save(damage, #{<<"ae_fee_multiplier">> => 5},
-                                            maps:get(version, State0)),
+            {ok, _} = damage_settings:save(
+                damage,
+                #{<<"ae_fee_multiplier">> => 5},
+                maps:get(version, State0)
+            ),
             {ok, [[{damage, Updated}]]} = file:consult(Managed),
             ?assertEqual(5, proplists:get_value(ae_fee_multiplier, Updated)),
             {ok, [[{damage, OldSettingsAgain}]]} = file:consult(Legacy),
             ?assertEqual(7, proplists:get_value(ae_fee_multiplier, OldSettingsAgain))
-        after gen_server:stop(Pid) end
+        after
+            gen_server:stop(Pid)
+        end
     after
         [restore_os_env(Name, Val) || {Name, Val} <- OriginalEnv],
         [restore(App, Key, Value) || {App, Key, Value} <- OriginalApps],
         _ = file:del_dir_r(Dir)
     end.
-
 
 make_temp_dir(Prefix) ->
     Root = os:getenv("TMPDIR", "/tmp"),

@@ -112,7 +112,11 @@ reconcile(State0) ->
             Active = active_worker_keys(Children),
             {Recovered, Errors} = lists:foldl(
                 fun(Repair, {Recovered0, Errors0}) ->
-                    case maybe_recover(Repair, Active, NowMs, State0#state.grace_ms, State0#state.opts) of
+                    case
+                        maybe_recover(
+                            Repair, Active, NowMs, State0#state.grace_ms, State0#state.opts
+                        )
+                    of
                         unchanged -> {Recovered0, Errors0};
                         {ok, _Key} -> {Recovered0 + 1, Errors0};
                         {error, Reason} -> {Recovered0, [Reason | Errors0]}
@@ -185,8 +189,13 @@ should_recover(Repair, Key, Active, {NowMs, GraceMs}) ->
         stale_enough(Repair, NowMs, GraceMs).
 
 recover_repair({Fp, Version}, Repair, Opts) ->
-    try ecai_patch_lifecycle:recover(Repair,
-            {orphaned_worker, maps:get(worker_started_at, Repair, undefined)}, Opts) of
+    try
+        ecai_patch_lifecycle:recover(
+            Repair,
+            {orphaned_worker, maps:get(worker_started_at, Repair, undefined)},
+            Opts
+        )
+    of
         {ok, unchanged} -> unchanged;
         {ok, _Stored} -> {ok, {Fp, Version}};
         {error, _} = Error -> Error

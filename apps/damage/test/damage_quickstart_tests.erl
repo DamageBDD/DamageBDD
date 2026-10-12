@@ -7,9 +7,15 @@ simple_feature_test() ->
     ?assertEqual(200, maps:get(expected_status, Result)),
     Feature = maps:get(feature, Result),
     Parsed = egherkin:parse(Feature),
-    AST = case Parsed of {ok, Value} -> Value; Other -> Other end,
+    AST =
+        case Parsed of
+            {ok, Value} -> Value;
+            Other -> Other
+        end,
     ?assertMatch({_, _, _, _, _, _}, AST),
-    ?assertMatch({_, _}, binary:match(Feature, <<"Given I am using server \"https://example.com\"">>)),
+    ?assertMatch(
+        {_, _}, binary:match(Feature, <<"Given I am using server \"https://example.com\"">>)
+    ),
     ?assertMatch({_, _}, binary:match(Feature, <<"When I make a GET request to \"/health\"">>)),
     ?assertMatch({_, _}, binary:match(Feature, <<"Then the response status must be \"200\"">>)).
 
@@ -29,13 +35,18 @@ unsafe_url_parts_test() ->
         <<"https://127.0.0.1/">>,
         <<"https://example.com;evil/">>
     ],
-    lists:foreach(fun(U) -> ?assertMatch({error, _}, damage_quickstart:generate(U)) end,
-                  Samples).
+    lists:foreach(
+        fun(U) -> ?assertMatch({error, _}, damage_quickstart:generate(U)) end,
+        Samples
+    ).
 
 allowlist_is_exact_test() ->
     Prev = application:get_env(damage, quickstart_trial_targets),
-    application:set_env(damage, quickstart_trial_targets,
-                        [{"example.com", ["/health"]}]),
+    application:set_env(
+        damage,
+        quickstart_trial_targets,
+        [{"example.com", ["/health"]}]
+    ),
     try
         {ok, Hit} = damage_quickstart:generate(<<"https://example.com/health">>),
         {ok, Miss} = damage_quickstart:generate(<<"https://example.com/health/admin">>),
@@ -52,9 +63,18 @@ allowlist_is_exact_test() ->
 
 ipv4_public_filter_test() ->
     Public = [{1, 1, 1, 1}, {8, 8, 8, 8}],
-    Private = [{127, 0, 0, 1}, {10, 0, 0, 1}, {172, 16, 4, 1},
-               {192, 168, 1, 2}, {169, 254, 169, 254},
-               {100, 100, 100, 100}, {192, 0, 2, 1}, {203, 0, 113, 5},
-               {198, 18, 0, 1}, {224, 0, 0, 1}, {0, 0, 0, 0}],
+    Private = [
+        {127, 0, 0, 1},
+        {10, 0, 0, 1},
+        {172, 16, 4, 1},
+        {192, 168, 1, 2},
+        {169, 254, 169, 254},
+        {100, 100, 100, 100},
+        {192, 0, 2, 1},
+        {203, 0, 113, 5},
+        {198, 18, 0, 1},
+        {224, 0, 0, 1},
+        {0, 0, 0, 0}
+    ],
     lists:foreach(fun(Ip) -> ?assert(damage_quickstart:public_ipv4(Ip)) end, Public),
     lists:foreach(fun(Ip) -> ?assertNot(damage_quickstart:public_ipv4(Ip)) end, Private).

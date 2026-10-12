@@ -185,7 +185,11 @@ spool_month_fresh(Runtime, Source, MonthIndex, ProgressFun, FinalDir) ->
                             DownloadPath,
                             FoldFun,
                             Initial,
-                            #{max_line_bytes => maps:get(pageview_max_line_bytes, Runtime, 33554432)}
+                            #{
+                                max_line_bytes => maps:get(
+                                    pageview_max_line_bytes, Runtime, 33554432
+                                )
+                            }
                         )
                     of
                         {ok, State1, StreamStats} ->
@@ -421,17 +425,21 @@ checked_update_aggregate(Runtime, Tab, PageId, Views, MonthIndex, Title) ->
     AtPageLimit = is_integer(MaxPages) andalso Size >= MaxPages andalso not ets:member(Tab, PageId),
     AtMemoryLimit = table_over_limit(Tab, MaxBytes),
     case AtPageLimit orelse AtMemoryLimit of
-        true -> {error, {partition_resource_limit, Size, MaxPages, MaxBytes}};
+        true ->
+            {error, {partition_resource_limit, Size, MaxPages, MaxBytes}};
         false ->
             ok = update_aggregate(Tab, PageId, Views, MonthIndex, Title),
             case table_over_limit(Tab, MaxBytes) of
-                true -> {error, {partition_resource_limit, ets:info(Tab, size), MaxPages, MaxBytes}};
-                false -> ok
+                true ->
+                    {error, {partition_resource_limit, ets:info(Tab, size), MaxPages, MaxBytes}};
+                false ->
+                    ok
             end
     end.
 table_over_limit(Tab, Max) when is_integer(Max) ->
     ets:info(Tab, memory) * erlang:system_info(wordsize) > Max;
-table_over_limit(_Tab, infinity) -> false.
+table_over_limit(_Tab, infinity) ->
+    false.
 
 update_aggregate(Tab, PageId, Views, MonthIndex, Title) ->
     Bit = 1 bsl (MonthIndex - 1),

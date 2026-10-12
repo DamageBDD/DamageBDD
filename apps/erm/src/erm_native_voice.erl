@@ -2,8 +2,19 @@
 -module(erm_native_voice).
 -behaviour(gen_server).
 -include_lib("kernel/include/file.hrl").
--export([start_link/1, status/0, enrol/2, enrol/3, cancel_enrol/0, decode/1, normalise/1, score/2,
-    configure/1, reload/0, reload/1, reconnect/0, tune/0, tune/1]).
+-export([
+    start_link/1,
+    status/0,
+    enrol/2, enrol/3,
+    cancel_enrol/0,
+    decode/1,
+    normalise/1,
+    score/2,
+    configure/1,
+    reload/0, reload/1,
+    reconnect/0,
+    tune/0, tune/1
+]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 -record(st, {
     opts,
@@ -130,10 +141,14 @@ handle_call(status, _, S) ->
             undefined ->
                 undefined;
             #{label := L, count := N, samples := V, deadline := Deadline} = E ->
-                #{label => L, target => N, collected => length(V),
+                #{
+                    label => L,
+                    target => N,
+                    collected => length(V),
                     rejected => maps:get(rejected, E, 0),
                     remaining_ms => max(0, Deadline - now_ms()),
-                    last_check => maps:get(last_check, E, undefined)}
+                    last_check => maps:get(last_check, E, undefined)
+                }
         end,
     {reply,
         #{
@@ -142,8 +157,15 @@ handle_call(status, _, S) ->
             muted => S#st.muted,
             enrolled => S#st.profile =/= undefined,
             speaker_settings => maps:with(
-                [device, require_speaker, speaker_threshold, enrolment_threshold,
-                    min_speaker_ms, observe_only], S#st.opts
+                [
+                    device,
+                    require_speaker,
+                    speaker_threshold,
+                    enrolment_threshold,
+                    min_speaker_ms,
+                    observe_only
+                ],
+                S#st.opts
             ),
             configuration => maps:with(erm_voice_acoustics:keys(), S#st.opts),
             native_protocol => maps:get(protocol, S#st.extra, 1),
@@ -163,10 +185,15 @@ handle_call(status, _, S) ->
         S};
 handle_call({configure, _}, _, S = #st{enrol = E}) when E =/= undefined ->
     {reply, {error, enrollment_active}, S};
-handle_call({configure, Options}, _, S) -> apply_config(Options, S);
+handle_call({configure, Options}, _, S) ->
+    apply_config(Options, S);
 handle_call({reload, Options}, _, S) ->
-    Unsupported = [K || {K, V} <- maps:to_list(Options),
-        not lists:member(K, erm_voice_acoustics:keys()), maps:get(K, S#st.opts, undefined) =/= V],
+    Unsupported = [
+        K
+     || {K, V} <- maps:to_list(Options),
+        not lists:member(K, erm_voice_acoustics:keys()),
+        maps:get(K, S#st.opts, undefined) =/= V
+    ],
     case {Unsupported, S#st.enrol} of
         {[], undefined} -> apply_config(maps:with(erm_voice_acoustics:keys(), Options), S);
         {[], _} -> {reply, {error, enrollment_active}, S};
@@ -176,55 +203,85 @@ handle_call(reconnect, _, S = #st{model_hash = undefined}) ->
     {reply, {error, not_ready}, S};
 handle_call(reconnect, _, S = #st{enrol = undefined}) ->
     case maps:is_key(tuner, S#st.extra) of
-        true -> {reply, {error, tuning_active}, S};
+        true ->
+            {reply, {error, tuning_active}, S};
         false ->
             close_port(S#st.port),
             Next = cancel_backend_retry(clear_timer(S)),
-            {reply, ok, connect(Next#st{port = undefined, ready = false, processing = false,
-                extra = maps:remove(acoustic_config, Next#st.extra)})}
+            {reply, ok,
+                connect(Next#st{
+                    port = undefined,
+                    ready = false,
+                    processing = false,
+                    extra = maps:remove(acoustic_config, Next#st.extra)
+                })}
     end;
-handle_call(reconnect, _, S) -> {reply, {error, enrollment_active}, S};
-handle_call({enrol_claim, Pid, Label, Count, Timeout}, {Pid, _},
-    S = #st{ready = true, enrol = undefined}) when is_integer(Timeout), Timeout >= 1000, Timeout =< 600000 ->
+handle_call(reconnect, _, S) ->
+    {reply, {error, enrollment_active}, S};
+handle_call(
+    {enrol_claim, Pid, Label, Count, Timeout},
+    {Pid, _},
+    S = #st{ready = true, enrol = undefined}
+) when is_integer(Timeout), Timeout >= 1000, Timeout =< 600000 ->
     case guide_available(S) of
         ok ->
             case begin_enrol(Label, Count, Timeout, S) of
                 {reply, ok, Next} -> claim_guide(Pid, enrolment, Next);
                 Error -> Error
             end;
-        Error -> {reply, Error, S}
+        Error ->
+            {reply, Error, S}
     end;
 handle_call({enrol_claim, _, _, _, _}, _, S) ->
     {reply, {error, not_ready_or_enrolling}, S};
-handle_call({tune_claim, Pid}, {Pid, _}, S = #st{ready = true, enrol = undefined, profile = Profile})
-    when Profile =/= undefined ->
+handle_call(
+    {tune_claim, Pid}, {Pid, _}, S = #st{ready = true, enrol = undefined, profile = Profile}
+) when
+    Profile =/= undefined
+->
     case guide_available(S) of
         ok -> claim_guide(Pid, tuning, S);
         Error -> {reply, Error, S}
     end;
-handle_call({tune_claim, _}, _, S) -> {reply, {error, not_ready_enrolled_or_idle}, S};
+handle_call({tune_claim, _}, _, S) ->
+    {reply, {error, not_ready_enrolled_or_idle}, S};
 handle_call(tune_ready, {Pid, _}, S = #st{extra = #{tuner := #{pid := Pid}}}) ->
     Muted = suppressed(),
-    Next = case S#st.ready andalso Muted =/= S#st.muted of
-        true -> bump(S#st{muted = Muted}); false -> S
-    end,
-    Reply = case Next#st.ready andalso not Muted of true -> ok; false -> {error, not_ready} end,
+    Next =
+        case S#st.ready andalso Muted =/= S#st.muted of
+            true -> bump(S#st{muted = Muted});
+            false -> S
+        end,
+    Reply =
+        case Next#st.ready andalso not Muted of
+            true -> ok;
+            false -> {error, not_ready}
+        end,
     {reply, Reply, Next};
 handle_call({tune_listen, Enabled}, {Pid, _}, S) when is_boolean(Enabled) ->
     case maps:get(tuner, S#st.extra, undefined) of
         #{pid := Pid} = T ->
             case Enabled andalso (suppressed() orelse not S#st.ready orelse S#st.muted) of
-                true -> {reply, {error, not_ready}, S};
-                false -> {reply, ok, bump(S#st{extra = (S#st.extra)#{tuner => (maps:remove(detection_id, T))#{listening => Enabled}}})}
+                true ->
+                    {reply, {error, not_ready}, S};
+                false ->
+                    {reply, ok,
+                        bump(S#st{
+                            extra = (S#st.extra)#{
+                                tuner => (maps:remove(detection_id, T))#{listening => Enabled}
+                            }
+                        })}
             end;
-        _ -> {reply, {error, not_tuning_owner}, S}
+        _ ->
+            {reply, {error, not_tuning_owner}, S}
     end;
 handle_call(tune_release, {Pid, _}, S) ->
     case maps:get(tuner, S#st.extra, undefined) of
         #{pid := Pid, monitor := Ref} ->
             demonitor(Ref, [flush]),
             {reply, ok, release_guide(S)};
-        _ -> {reply, ok, S}
+        _ ->
+            {reply, ok, S}
     end;
 handle_call({enrol, _, _}, _, S = #st{extra = #{tuner := _}}) ->
     {reply, {error, tuning_active}, S};
@@ -237,10 +294,13 @@ handle_call({enrol, L0, N}, _, S = #st{ready = true, enrol = undefined, muted = 
     end;
 handle_call({enrol, _, _}, _, S) ->
     {reply, {error, not_ready_muted_or_enrolling}, S};
-handle_call({enrol_abort, Pid}, {Pid, _}, S = #st{extra = #{tuner := #{pid := Pid, mode := enrolment} = T}}) ->
+handle_call(
+    {enrol_abort, Pid}, {Pid, _}, S = #st{extra = #{tuner := #{pid := Pid, mode := enrolment} = T}}
+) ->
     {reply, {ok, maps:get(last_check, T, undefined)},
         bump(S#st{enrol = undefined, extra = (S#st.extra)#{tuner => T#{listening => false}}})};
-handle_call(cancel_enrol, _, S = #st{enrol = undefined}) -> {reply, ok, S};
+handle_call(cancel_enrol, _, S = #st{enrol = undefined}) ->
+    {reply, ok, S};
 handle_call(cancel_enrol, _, S) ->
     {reply, ok, end_enrol(cancelled, S)};
 handle_call(_, _, S) ->
@@ -268,17 +328,21 @@ handle_info({timeout, T, reconnect}, S = #st{backend_retry = T, port = undefined
     is_reference(T)
 ->
     {noreply, connect(S#st{backend_retry = undefined})};
-handle_info({P, {data, <<"R", Dim:16, Version>>}}, S = #st{port = P, ready = false})
-    when Dim > 0, Dim =< 4096, Version >= 2, Version =< 4 ->
+handle_info({P, {data, <<"R", Dim:16, Version>>}}, S = #st{port = P, ready = false}) when
+    Dim > 0, Dim =< 4096, Version >= 2, Version =< 4
+->
     {noreply, Next} = handle_info({P, {data, <<"R", Dim:16>>}}, S),
     {noreply, send_acoustics(Next#st{extra = (Next#st.extra)#{protocol => Version}})};
 handle_info({P, {data, <<"C", Epoch:64>>}}, S = #st{port = P}) ->
     case maps:get(acoustic_config, S#st.extra, undefined) of
         #{epoch := Epoch} = C ->
             {noreply, S#st{extra = (S#st.extra)#{acoustic_config => C#{state => applied}}}};
-        _ -> {noreply, S}
+        _ ->
+            {noreply, S}
     end;
-handle_info({'DOWN', Ref, process, Pid, _}, S = #st{extra = #{tuner := #{pid := Pid, monitor := Ref}}}) ->
+handle_info(
+    {'DOWN', Ref, process, Pid, _}, S = #st{extra = #{tuner := #{pid := Pid, monitor := Ref}}}
+) ->
     {noreply, release_guide(S)};
 handle_info({P, {data, <<"R", Dim:16>>}}, S = #st{port = P, ready = false}) when
     Dim > 0, Dim =< 4096
@@ -294,12 +358,17 @@ handle_info({P, {data, <<"R", Dim:16>>}}, S = #st{port = P, ready = false}) when
     {noreply,
         bump(
             clear_timer(S#st{
-                ready = true, dim = Dim, profile = Profile, error = undefined, muted = suppressed(),
+                ready = true,
+                dim = Dim,
+                profile = Profile,
+                error = undefined,
+                muted = suppressed(),
                 extra = (S#st.extra)#{protocol => 1, acoustic_config => unavailable}
             })
         )};
 handle_info({P, {data, <<"B", Epoch:64, Id:64>>}}, S = #st{port = P, ready = true, opts = O}) ->
-    {noreply, arm(maps:get(inference_timeout_ms, O), detection_end(Epoch, Id, S#st{processing = true}))};
+    {noreply,
+        arm(maps:get(inference_timeout_ms, O), detection_end(Epoch, Id, S#st{processing = true}))};
 handle_info({P, {data, <<"F">>}}, S = #st{port = P, ready = true}) ->
     {noreply, clear_timer(S#st{processing = false})};
 handle_info({P, {data, <<"D", Reason/binary>>}}, S = #st{port = P}) ->
@@ -328,14 +397,16 @@ handle_info({'EXIT', P, R}, S = #st{port = P}) ->
 handle_info({timeout, T, backend}, S = #st{timer = T}) ->
     {noreply, failed(backend_timeout, S)};
 handle_info(poll, S0) ->
-    S1 = case maps:get(acoustic_config, S0#st.extra, unavailable) of
-        #{state := pending, requested_at := At} ->
-            case now_ms() - At > 5000 of
-                true -> failed(acoustic_config_timeout, S0);
-                false -> S0
-            end;
-        _ -> S0
-    end,
+    S1 =
+        case maps:get(acoustic_config, S0#st.extra, unavailable) of
+            #{state := pending, requested_at := At} ->
+                case now_ms() - At > 5000 of
+                    true -> failed(acoustic_config_timeout, S0);
+                    false -> S0
+                end;
+            _ ->
+                S0
+        end,
     S2 =
         case S1#st.enrol of
             #{deadline := D1} ->
@@ -363,13 +434,30 @@ begin_enrol(L0, N, Timeout, S) when is_integer(N), N >= 3, N =< 10 ->
     try
         L = unicode:characters_to_binary(L0),
         true = is_binary(L) andalso byte_size(L) > 0 andalso byte_size(L) =< 128,
-        logger:notice("speaker enrolment started; ~p samples; threshold=~p min_audio_ms=~p device=~ts",
-            [N, maps:get(enrolment_threshold, S#st.opts),
-                maps:get(min_speaker_ms, S#st.opts), maps:get(device, S#st.opts)]),
-        {reply, ok, S#st{enrol = #{label => L, count => N, samples => [],
-            deadline => now_ms() + Timeout, rejected => 0, last_check => undefined}}}
-    catch _:_ -> {reply, {error, invalid_label}, S} end;
-begin_enrol(_, _, _, S) -> {reply, {error, invalid_sample_count}, S}.
+        logger:notice(
+            "speaker enrolment started; ~p samples; threshold=~p min_audio_ms=~p device=~ts",
+            [
+                N,
+                maps:get(enrolment_threshold, S#st.opts),
+                maps:get(min_speaker_ms, S#st.opts),
+                maps:get(device, S#st.opts)
+            ]
+        ),
+        {reply, ok, S#st{
+            enrol = #{
+                label => L,
+                count => N,
+                samples => [],
+                deadline => now_ms() + Timeout,
+                rejected => 0,
+                last_check => undefined
+            }
+        }}
+    catch
+        _:_ -> {reply, {error, invalid_label}, S}
+    end;
+begin_enrol(_, _, _, S) ->
+    {reply, {error, invalid_sample_count}, S}.
 
 guide_available(S) ->
     case {maps:is_key(tuner, S#st.extra), maps:get(acoustic_config, S#st.extra, unavailable)} of
@@ -379,14 +467,19 @@ guide_available(S) ->
     end.
 claim_guide(Pid, Mode, S) ->
     Ref = make_ref(),
-    T = #{pid => Pid, monitor => monitor(process, Pid), listening => false, mode => Mode, ref => Ref},
+    T = #{
+        pid => Pid, monitor => monitor(process, Pid), listening => false, mode => Mode, ref => Ref
+    },
     Next = bump(S#st{extra = (S#st.extra)#{tuner => T}}),
     case Next#st.ready andalso maps:get(protocol, Next#st.extra, 1) >= 3 of
         true -> persistent_term:put({?MODULE, guidance}, #{native => self(), owner => Pid});
         false -> ok
     end,
-    {reply, {ok, (maps:with([device | erm_voice_acoustics:keys()], S#st.opts))#{
-        native_protocol => maps:get(protocol, S#st.extra, 1), guide_ref => Ref}}, Next}.
+    {reply,
+        {ok, (maps:with([device | erm_voice_acoustics:keys()], S#st.opts))#{
+            native_protocol => maps:get(protocol, S#st.extra, 1), guide_ref => Ref
+        }},
+        Next}.
 clear_guidance() ->
     case persistent_term:get({?MODULE, guidance}, undefined) of
         #{native := Pid} when Pid =:= self() -> persistent_term:erase({?MODULE, guidance});
@@ -397,30 +490,47 @@ guide_kind(#st{extra = #{tuner := T}}) -> maps:get(mode, T, tuning);
 guide_kind(_) -> undefined.
 release_guide(S) ->
     clear_guidance(),
-    Enrol = case guide_kind(S) of enrolment -> undefined; _ -> S#st.enrol end,
+    Enrol =
+        case guide_kind(S) of
+            enrolment -> undefined;
+            _ -> S#st.enrol
+        end,
     bump(S#st{enrol = Enrol, extra = maps:remove(tuner, S#st.extra)}).
 end_enrol(Reason, S) ->
     case maps:get(tuner, S#st.extra, undefined) of
         #{pid := Pid, mode := enrolment} = T ->
             Pid ! {voice_enrolment_stopped, self(), maps:get(ref, T, undefined), Reason},
             bump(S#st{enrol = undefined, extra = (S#st.extra)#{tuner => T#{listening => false}}});
-        _ -> bump(S#st{enrol = undefined})
+        _ ->
+            bump(S#st{enrol = undefined})
     end.
-
 
 utterance(#{embedding := V, ms := Ms} = U, S = #st{opts = O, dim = Dim}) ->
     case Ms >= maps:get(min_speaker_ms, O) andalso length(V) =:= Dim of
         true ->
             case normalise(V) of
-                {ok, N} -> accept_embedding(U, N, S);
-                _ -> reject_speaker(invalid_embedding, #{audio_ms => Ms, embedding_dim => length(V)}, S)
+                {ok, N} ->
+                    accept_embedding(U, N, S);
+                _ ->
+                    reject_speaker(
+                        invalid_embedding, #{audio_ms => Ms, embedding_dim => length(V)}, S
+                    )
             end;
         false ->
             case S#st.enrol =/= undefined orelse maps:get(require_speaker, O) of
-                true -> reject_speaker(insufficient_audio, #{audio_ms => Ms,
-                    min_audio_ms => maps:get(min_speaker_ms, O),
-                    embedding_dim => length(V), expected_dim => Dim}, S);
-                false -> dispatch(U, unverified, S)
+                true ->
+                    reject_speaker(
+                        insufficient_audio,
+                        #{
+                            audio_ms => Ms,
+                            min_audio_ms => maps:get(min_speaker_ms, O),
+                            embedding_dim => length(V),
+                            expected_dim => Dim
+                        },
+                        S
+                    );
+                false ->
+                    dispatch(U, unverified, S)
             end
     end.
 accept_embedding(#{ms := Ms}, N, S = #st{enrol = #{samples := Vs, count := Count} = E}) ->
@@ -431,15 +541,32 @@ accept_embedding(#{ms := Ms}, N, S = #st{enrol = #{samples := Vs, count := Count
             %% These vectors never enter the accepted set or saved profile.
             Retries = maps:get(retry_vectors, E, []),
             Scores = [score(N, V) || V <- Retries],
-            RetryCheck = #{compared_samples => length(Retries), scores => Scores,
-                min_score => case Scores of [] -> undefined; _ -> lists:min(Scores) end},
-            reject_speaker(enrolment_inconsistent,
+            RetryCheck = #{
+                compared_samples => length(Retries),
+                scores => Scores,
+                min_score =>
+                    case Scores of
+                        [] -> undefined;
+                        _ -> lists:min(Scores)
+                    end
+            },
+            reject_speaker(
+                enrolment_inconsistent,
                 Check#{audio_ms => Ms, retry_similarity => RetryCheck},
-                S#st{enrol = E#{retry_vectors => lists:sublist([N | Retries], 2)}});
+                S#st{enrol = E#{retry_vectors => lists:sublist([N | Retries], 2)}}
+            );
         {accept, Mean, Check} ->
-            enrol_sample(N, Vs, Count,
-                (maps:remove(retry_vectors, E))#{last_check =>
-                    enrol_diagnostics(Check#{accepted => true, audio_ms => Ms}, S)}, Mean, S)
+            enrol_sample(
+                N,
+                Vs,
+                Count,
+                (maps:remove(retry_vectors, E))#{
+                    last_check =>
+                        enrol_diagnostics(Check#{accepted => true, audio_ms => Ms}, S)
+                },
+                Mean,
+                S
+            )
     end;
 accept_embedding(U, N, S = #st{opts = O, profile = Profile}) ->
     case maps:get(require_speaker, O) of
@@ -462,17 +589,29 @@ accept_embedding(U, N, S = #st{opts = O, profile = Profile}) ->
 %% Also reject updates that make any accepted sample fail the resulting profile.
 enrolment_check(N, Vs, Threshold) ->
     Scores = [score(N, V) || V <- Vs],
-    CandidateScore = case Vs of
-        [] -> undefined;
-        _ ->
-            {ok, Reference} = centroid(Vs),
-            score(N, Reference)
-    end,
-    Check = #{method => centroid, threshold => Threshold, scores => Scores,
-        compared_samples => length(Vs), candidate_score => CandidateScore,
-        min_score => case Scores of [] -> undefined; _ -> lists:min(Scores) end},
+    CandidateScore =
+        case Vs of
+            [] ->
+                undefined;
+            _ ->
+                {ok, Reference} = centroid(Vs),
+                score(N, Reference)
+        end,
+    Check = #{
+        method => centroid,
+        threshold => Threshold,
+        scores => Scores,
+        compared_samples => length(Vs),
+        candidate_score => CandidateScore,
+        min_score =>
+            case Scores of
+                [] -> undefined;
+                _ -> lists:min(Scores)
+            end
+    },
     case Vs =:= [] orelse CandidateScore >= Threshold of
-        false -> {reject, Check#{failed_check => candidate_score}};
+        false ->
+            {reject, Check#{failed_check => candidate_score}};
         true ->
             Samples = [N | Vs],
             {ok, Mean} = centroid(Samples),
@@ -487,21 +626,27 @@ enrolment_check(N, Vs, Threshold) ->
 centroid([First | _] = Samples) ->
     Sum = lists:foldl(
         fun(V, A) -> lists:zipwith(fun(X, Y) -> X + Y end, V, A) end,
-        lists:duplicate(length(First), 0.0), Samples
+        lists:duplicate(length(First), 0.0),
+        Samples
     ),
     normalise(Sum).
 
 enrol_sample(N, Vs, Count, E, Mean, S) ->
     Samples = [N | Vs],
-    Check = (maps:get(last_check, E))#{collected => length(Samples), target => Count,
-        rejected => maps:get(rejected, E, 0)},
+    Check = (maps:get(last_check, E))#{
+        collected => length(Samples),
+        target => Count,
+        rejected => maps:get(rejected, E, 0)
+    },
     logger:notice("speaker enrolment sample ~p/~p check=~tp", [
         length(Samples), Count, maps:get(last_check, E, undefined)
     ]),
     case length(Samples) =:= Count of
         false ->
-            enrol_feedback(Check#{state => collecting},
-                S#st{enrol = E#{samples => Samples}, last = {enrolment_sample, length(Samples)}});
+            enrol_feedback(
+                Check#{state => collecting},
+                S#st{enrol = E#{samples => Samples}, last = {enrolment_sample, length(Samples)}}
+            );
         true ->
             Profile = #{
                 version => 1,
@@ -512,12 +657,16 @@ enrol_sample(N, Vs, Count, E, Mean, S) ->
             case save_profile(maps:get(profile_file, S#st.opts), Profile) of
                 ok ->
                     logger:notice("speaker enrolment saved"),
-                    enrol_feedback(Check#{state => saved},
-                        bump(S#st{enrol = undefined, profile = Profile, last = enrolled}));
+                    enrol_feedback(
+                        Check#{state => saved},
+                        bump(S#st{enrol = undefined, profile = Profile, last = enrolled})
+                    );
                 Error ->
                     logger:error("speaker profile save failed: ~tp", [Error]),
-                    enrol_feedback(Check#{state => save_failed, save_error => Error},
-                        S#st{enrol = undefined, last = Error})
+                    enrol_feedback(
+                        Check#{state => save_failed, save_error => Error},
+                        S#st{enrol = undefined, last = Error}
+                    )
             end
     end.
 %% Keep the public last-result shape stable. Enrollment diagnostics contain
@@ -525,12 +674,18 @@ enrol_sample(N, Vs, Count, E, Mean, S) ->
 reject_speaker(Reason, Check0, S = #st{enrol = #{samples := Vs, count := Count} = E}) ->
     Rejected = maps:get(rejected, E, 0) + 1,
     Check = enrol_diagnostics(Check0#{accepted => false, reason => Reason}, S),
-    Next = case Reason of enrolment_inconsistent -> E; _ -> maps:remove(retry_vectors, E) end,
+    Next =
+        case Reason of
+            enrolment_inconsistent -> E;
+            _ -> maps:remove(retry_vectors, E)
+        end,
     logger:notice("speaker enrolment rejected: ~tp check=~tp collected=~p/~p rejected=~p", [
         Reason, Check, length(Vs), Count, Rejected
     ]),
-    enrol_feedback(Check#{state => collecting, collected => length(Vs), target => Count, rejected => Rejected},
-        S#st{enrol = Next#{rejected => Rejected, last_check => Check}, last = {rejected, Reason}});
+    enrol_feedback(
+        Check#{state => collecting, collected => length(Vs), target => Count, rejected => Rejected},
+        S#st{enrol = Next#{rejected => Rejected, last_check => Check}, last = {rejected, Reason}}
+    );
 reject_speaker(Reason, Check, S) ->
     logger:debug("native utterance rejected: ~tp check=~tp", [Reason, Check]),
     S#st{last = {rejected, Reason}}.
@@ -545,11 +700,14 @@ enrol_feedback(Check, S = #st{extra = #{tuner := #{pid := Pid, mode := enrolment
     Result = Check#{kind => enrolment},
     Pid ! {voice_measurement, self(), maps:get(ref, T, undefined), Result},
     S#st{extra = (S#st.extra)#{tuner => T#{last_check => Result}}};
-enrol_feedback(_, S) -> S.
+enrol_feedback(_, S) ->
+    S.
 
 reject(R, S) ->
-    logger:debug("native utterance rejected: ~tp check=~tp",
-        [R, maps:get(last_measurement, S#st.extra, undefined)]),
+    logger:debug(
+        "native utterance rejected: ~tp check=~tp",
+        [R, maps:get(last_measurement, S#st.extra, undefined)]
+    ),
     S#st{last = {rejected, R}}.
 dispatch(#{id := Id}, Score, S = #st{opts = #{observe_only := true}}) ->
     logger:debug("native speaker observation id=~p score=~p", [Id, Score]),
@@ -575,14 +733,31 @@ dispatch(#{text := Text, id := Id}, Score, S = #st{opts = O}) ->
         nomatch ->
             S#st{last = {ignored, no_wake}}
     end.
-decode(<<"A", Epoch:64, Id:64, Ms:32, Dim:16,
-    Rms:32/float-big, Peak:32/float-big, Clipped:32/float-big, Gain:32/float-big, Rest/binary>>)
-    when Rms >= -120, Rms =< 1, Peak >= -120, Peak =< 1,
-         Clipped >= 0, Clipped =< 1, Gain >= -24, Gain =< 12 ->
+decode(
+    <<"A", Epoch:64, Id:64, Ms:32, Dim:16, Rms:32/float-big, Peak:32/float-big,
+        Clipped:32/float-big, Gain:32/float-big, Rest/binary>>
+) when
+    Rms >= -120,
+    Rms =< 1,
+    Peak >= -120,
+    Peak =< 1,
+    Clipped >= 0,
+    Clipped =< 1,
+    Gain >= -24,
+    Gain =< 12
+->
     case decode(<<"U", Epoch:64, Id:64, Ms:32, Dim:16, Rest/binary>>) of
-        {ok, U} -> {ok, U#{quality => #{rms_dbfs => Rms, peak_dbfs => Peak,
-            clipped_fraction => Clipped, input_gain_db => Gain}}};
-        Error -> Error
+        {ok, U} ->
+            {ok, U#{
+                quality => #{
+                    rms_dbfs => Rms,
+                    peak_dbfs => Peak,
+                    clipped_fraction => Clipped,
+                    input_gain_db => Gain
+                }
+            }};
+        Error ->
+            Error
     end;
 decode(<<"U", Epoch:64, Id:64, Ms:32, Dim:16, Rest/binary>>) when
     Dim =< 4096, Ms =< 15000, byte_size(Rest) >= Dim * 4
@@ -616,17 +791,28 @@ suppressed() ->
 bump(S = #st{port = P, epoch = E, muted = M, ready = true}) ->
     Epoch = E + 1,
     Tuner = maps:get(tuner, S#st.extra, undefined),
-    Closed = case Tuner of #{listening := false} -> true; _ -> false end,
-    B = (Epoch bsl 1) bor case M orelse Closed of true -> 1; false -> 0 end,
-    Command = case Tuner of
-        #{listening := true} = T when not M ->
-            case {maps:get(mode, T, tuning), maps:get(protocol, S#st.extra, 1)} of
-                {enrolment, Version} when Version >= 4 -> $E;
-                {_, Version} when Version >= 3 -> $T;
-                _ -> $M
-            end;
-        _ -> $M
-    end,
+    Closed =
+        case Tuner of
+            #{listening := false} -> true;
+            _ -> false
+        end,
+    B =
+        (Epoch bsl 1) bor
+            case M orelse Closed of
+                true -> 1;
+                false -> 0
+            end,
+    Command =
+        case Tuner of
+            #{listening := true} = T when not M ->
+                case {maps:get(mode, T, tuning), maps:get(protocol, S#st.extra, 1)} of
+                    {enrolment, Version} when Version >= 4 -> $E;
+                    {_, Version} when Version >= 3 -> $T;
+                    _ -> $M
+                end;
+            _ ->
+                $M
+        end,
     try
         true = port_command(P, <<Command, B:64>>),
         S#st{epoch = Epoch}
@@ -646,13 +832,16 @@ clear_timer(S = #st{timer = T}) ->
 failed(R, S) ->
     clear_guidance(),
     case maps:get(tuner, S#st.extra, undefined) of
-        #{pid := Tuner} = T -> Tuner ! {voice_backend_failed, self(), maps:get(ref, T, undefined), R};
-        _ -> ok
+        #{pid := Tuner} = T ->
+            Tuner ! {voice_backend_failed, self(), maps:get(ref, T, undefined), R};
+        _ ->
+            ok
     end,
     O = S#st.opts,
     RetryMs = maps:get(backend_retry_ms, O, 5000),
     case R =:= S#st.error of
-        true -> ok;
+        true ->
+            ok;
         false ->
             logger:error(
                 "native voice backend failed: ~tp; binary=~ts arecord=~ts; "
@@ -680,10 +869,16 @@ connect(S = #st{opts = O}) ->
         ok ->
             try
                 Args =
-                    [maps:get(K, O) || K <-
-                        [whisper_model, vad_model, speaker_model, arecord, device, language]] ++
-                    [integer_to_list(maps:get(K, O)) || K <-
-                        [threads, silence_ms, max_segment_ms]],
+                    [
+                        maps:get(K, O)
+                     || K <-
+                            [whisper_model, vad_model, speaker_model, arecord, device, language]
+                    ] ++
+                        [
+                            integer_to_list(maps:get(K, O))
+                         || K <-
+                                [threads, silence_ms, max_segment_ms]
+                        ],
                 P = open_port({spawn_executable, maps:get(binary, O)}, [
                     binary, {packet, 4}, use_stdio, exit_status, {args, Args}
                 ]),
@@ -695,7 +890,8 @@ connect(S = #st{opts = O}) ->
             end
     end.
 
-check_executables([], _) -> ok;
+check_executables([], _) ->
+    ok;
 check_executables([Key | Rest], O) ->
     Path = maps:get(Key, O),
     Result =
@@ -710,12 +906,14 @@ check_executables([Key | Rest], O) ->
         {error, Reason} -> {error, {executable_unavailable, Key, Path, Reason}}
     end.
 
-cancel_backend_retry(S = #st{backend_retry = undefined}) -> S;
+cancel_backend_retry(S = #st{backend_retry = undefined}) ->
+    S;
 cancel_backend_retry(S = #st{backend_retry = Ref}) ->
     erlang:cancel_timer(Ref),
     S#st{backend_retry = undefined}.
 
-retry_in_ms(undefined) -> undefined;
+retry_in_ms(undefined) ->
+    undefined;
 retry_in_ms(Ref) ->
     case erlang:read_timer(Ref) of
         false -> 0;
@@ -784,56 +982,84 @@ terminate(_, S) ->
 code_change(_, S, _) when tuple_size(S) =:= 18, element(1, S) =:= st ->
     Upgraded = erlang:append_element(S, #{}),
     {ok, Upgraded#st{opts = erm_voice_acoustics:defaults(Upgraded#st.opts)}};
-code_change(_, S, _) -> {ok, S}.
+code_change(_, S, _) ->
+    {ok, S}.
 
 apply_config(_, S = #st{extra = #{tuner := _}}) ->
     {reply, {error, tuning_active}, S};
 apply_config(Input, S) ->
     case erm_voice_acoustics:validate(Input, S#st.opts) of
-        {error, _} = Error -> {reply, Error, S};
+        {error, _} = Error ->
+            {reply, Error, S};
         {ok, O} ->
-            AudioChanged = maps:with(erm_voice_acoustics:audio_keys(), O) =/=
-                maps:with(erm_voice_acoustics:audio_keys(), S#st.opts),
+            AudioChanged =
+                maps:with(erm_voice_acoustics:audio_keys(), O) =/=
+                    maps:with(erm_voice_acoustics:audio_keys(), S#st.opts),
             case {AudioChanged, S#st.ready, maps:get(protocol, S#st.extra, 1)} of
-                {true, false, _} -> {reply, {error, not_ready}, S};
-                {true, _, 1} -> {reply, {error, native_rebuild_required}, S};
+                {true, false, _} ->
+                    {reply, {error, not_ready}, S};
+                {true, _, 1} ->
+                    {reply, {error, native_rebuild_required}, S};
                 _ ->
                     Next = bump(S#st{opts = O}),
-                    Applied = case AudioChanged andalso Next#st.ready of
-                        true -> send_acoustics(Next);
-                        false -> Next
-                    end,
-                    Reply = case S#st.ready andalso not Applied#st.ready of
-                        true -> {error, Applied#st.error}; false -> ok end,
+                    Applied =
+                        case AudioChanged andalso Next#st.ready of
+                            true -> send_acoustics(Next);
+                            false -> Next
+                        end,
+                    Reply =
+                        case S#st.ready andalso not Applied#st.ready of
+                            true -> {error, Applied#st.error};
+                            false -> ok
+                        end,
                     {reply, Reply, Applied}
             end
     end.
 
 send_acoustics(S = #st{port = P, opts = O, epoch = E, muted = Muted}) ->
     Epoch = E + 1,
-    Gate = (Epoch bsl 1) bor case Muted of true -> 1; false -> 0 end,
+    Gate =
+        (Epoch bsl 1) bor
+            case Muted of
+                true -> 1;
+                false -> 0
+            end,
     try
-        true = port_command(P, <<"C", Gate:64,
-            (float(maps:get(input_gain_db, O))):32/float-big,
-            (float(maps:get(vad_threshold, O))):32/float-big,
-            (maps:get(silence_ms, O)):32, (maps:get(min_speech_ms, O)):32,
-            (maps:get(max_segment_ms, O)):32>>),
+        true = port_command(
+            P,
+            <<"C", Gate:64, (float(maps:get(input_gain_db, O))):32/float-big,
+                (float(maps:get(vad_threshold, O))):32/float-big, (maps:get(silence_ms, O)):32,
+                (maps:get(min_speech_ms, O)):32, (maps:get(max_segment_ms, O)):32>>
+        ),
         C = #{epoch => Epoch, state => pending, requested_at => now_ms()},
         S#st{epoch = Epoch, extra = (S#st.extra)#{acoustic_config => C}}
-    catch _:_ -> failed(port_closed, S) end.
+    catch
+        _:_ -> failed(port_closed, S)
+    end.
 
 %% Protocol 3 seals capture before B, but retains the immutable inference job.
 %% Do not bump its epoch here: the measurement must survive the end cue.
-detection_end(Epoch, Id, S = #st{epoch = Epoch, muted = false,
-    extra = #{tuner := #{pid := Pid, listening := true} = T} = X}) ->
-    case not suppressed() andalso Id > S#st.last_id andalso
-        not maps:is_key(detection_id, T) andalso maps:get(protocol, X, 1) >= 3 of
+detection_end(
+    Epoch,
+    Id,
+    S = #st{
+        epoch = Epoch,
+        muted = false,
+        extra = #{tuner := #{pid := Pid, listening := true} = T} = X
+    }
+) ->
+    case
+        not suppressed() andalso Id > S#st.last_id andalso
+            not maps:is_key(detection_id, T) andalso maps:get(protocol, X, 1) >= 3
+    of
         true ->
             Pid ! {voice_detection_end, self(), maps:get(ref, T, undefined), Id},
             S#st{extra = X#{tuner => T#{detection_id => Id}}};
-        false -> S
+        false ->
+            S
     end;
-detection_end(_, _, S) -> S.
+detection_end(_, _, S) ->
+    S.
 
 measured_utterance(U, S) ->
     Check = erm_voice_acoustics:measurement(U, S#st.dim, S#st.profile, S#st.opts),
@@ -849,15 +1075,20 @@ measured_utterance(U, S) ->
                         true -> bump(utterance(U, Closed));
                         false -> end_enrol(timed_out, Closed)
                     end;
-                undefined -> bump(Closed)
+                undefined ->
+                    bump(Closed)
             end;
         #{pid := Pid, listening := true} = T ->
             Pid ! {voice_measurement, self(), maps:get(ref, T, undefined), Check},
             %% One utterance per prompt, including queued port messages.
-            bump(Next#st{extra = (Next#st.extra)#{tuner => T#{listening => false}},
-                last = {tuning, maps:get(reason, Check)}});
-        #{pid := _} -> Next;
-        _ -> utterance(U, Next)
+            bump(Next#st{
+                extra = (Next#st.extra)#{tuner => T#{listening => false}},
+                last = {tuning, maps:get(reason, Check)}
+            });
+        #{pid := _} ->
+            Next;
+        _ ->
+            utterance(U, Next)
     end.
 
 model_startup_state(O) ->
@@ -911,12 +1142,13 @@ activate_models(O, S) ->
         ),
         Hash = hash_file(maps:get(speaker_model, O)),
         Profile = load_profile(maps:get(profile_file, O), Hash),
-        {ok, cancel_model_retry_state(S#st{
-            opts = O,
-            model_hash = Hash,
-            profile = Profile,
-            error = undefined
-        })}
+        {ok,
+            cancel_model_retry_state(S#st{
+                opts = O,
+                model_hash = Hash,
+                profile = Profile,
+                error = undefined
+            })}
     catch
         C:R -> {error, {invalid_model_files, C, R}, S}
     end.
@@ -948,7 +1180,8 @@ cancel_model_retry_state(S = #st{model_retry = Ref}) ->
     cancel_model_retry(Ref),
     S#st{model_retry = undefined}.
 
-cancel_model_retry(undefined) -> ok;
+cancel_model_retry(undefined) ->
+    ok;
 cancel_model_retry(Ref) ->
     erlang:cancel_timer(Ref),
     ok.

@@ -2,17 +2,16 @@
 -include_lib("eunit/include/eunit.hrl").
 
 api_key_lifecycle_test_() ->
-    {setup,
-     fun setup/0,
-     fun cleanup/1,
-     fun(Path) -> ?_test(api_key_lifecycle(Path)) end}.
+    {setup, fun setup/0, fun cleanup/1, fun(Path) -> ?_test(api_key_lifecycle(Path)) end}.
 
 api_key_lifecycle(_Path) ->
     Owner = <<"acct-test@example.invalid">>,
     Other = <<"other@example.invalid">>,
-    Params = #{<<"label">> => <<"CI client">>,
-               <<"expires_in_days">> => 90,
-               <<"scopes">> => [<<"models">>, <<"chat">>]},
+    Params = #{
+        <<"label">> => <<"CI client">>,
+        <<"expires_in_days">> => 90,
+        <<"scopes">> => [<<"models">>, <<"chat">>]
+    },
     {ok, Created} = ecai_ollama_api_keys:create(Owner, Params),
     Secret = maps:get(secret, Created),
     Key = maps:get(key, Created),
@@ -46,22 +45,32 @@ api_key_lifecycle(_Path) ->
     ?assertEqual({error, key_revoked}, ecai_ollama_api_keys:authenticate(NewSecret)).
 
 validation_test_() ->
-    {setup,
-     fun setup/0,
-     fun cleanup/1,
-     fun(Path) -> ?_test(validation(Path)) end}.
+    {setup, fun setup/0, fun cleanup/1, fun(Path) -> ?_test(validation(Path)) end}.
 
 validation(_Path) ->
     Owner = <<"validation@example.invalid">>,
-    ?assertEqual({error, invalid_label},
-        ecai_ollama_api_keys:create(Owner, #{<<"label">> => <<>>,
-            <<"scopes">> => [<<"chat">>]})),
-    ?assertEqual({error, invalid_scopes},
-        ecai_ollama_api_keys:create(Owner, #{<<"label">> => <<"bad">>,
-            <<"scopes">> => [<<"admin">>]})),
-    ?assertEqual({error, invalid_expiry},
-        ecai_ollama_api_keys:create(Owner, #{<<"label">> => <<"bad">>,
-            <<"scopes">> => [<<"chat">>], <<"expires_in_days">> => -1})),
+    ?assertEqual(
+        {error, invalid_label},
+        ecai_ollama_api_keys:create(Owner, #{
+            <<"label">> => <<>>,
+            <<"scopes">> => [<<"chat">>]
+        })
+    ),
+    ?assertEqual(
+        {error, invalid_scopes},
+        ecai_ollama_api_keys:create(Owner, #{
+            <<"label">> => <<"bad">>,
+            <<"scopes">> => [<<"admin">>]
+        })
+    ),
+    ?assertEqual(
+        {error, invalid_expiry},
+        ecai_ollama_api_keys:create(Owner, #{
+            <<"label">> => <<"bad">>,
+            <<"scopes">> => [<<"chat">>],
+            <<"expires_in_days">> => -1
+        })
+    ),
     ?assertEqual({error, invalid_key}, ecai_ollama_api_keys:authenticate(<<"not-a-key">>)).
 
 setup() ->
@@ -73,10 +82,13 @@ setup() ->
 
 cleanup(Path) ->
     case whereis(ecai_ollama_api_keys) of
-        undefined -> ok;
+        undefined ->
+            ok;
         Pid ->
-            try gen_server:stop(Pid)
-            catch _:_ -> ok
+            try
+                gen_server:stop(Pid)
+            catch
+                _:_ -> ok
             end
     end,
     case Path of
@@ -85,5 +97,6 @@ cleanup(Path) ->
             _ = file:delete(P ++ ".DAT"),
             _ = file:delete(P ++ ".TMP"),
             ok;
-        _ -> ok
+        _ ->
+            ok
     end.

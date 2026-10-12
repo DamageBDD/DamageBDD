@@ -99,18 +99,31 @@ display_manager_mode() ->
 display_manager_specs() ->
     Config = options_map(application:get_env(erm, display_manager, #{})),
     case maps:get(mode, Config, disabled) of
-        disabled -> [];
+        disabled ->
+            [];
         greeter ->
-            [#{id => erm_dm_sup,
-               start => {erm_dm_sup, start_link, []},
-               restart => permanent, shutdown => 10000, type => supervisor,
-               modules => [erm_dm_sup]}];
+            [
+                #{
+                    id => erm_dm_sup,
+                    start => {erm_dm_sup, start_link, []},
+                    restart => permanent,
+                    shutdown => 10000,
+                    type => supervisor,
+                    modules => [erm_dm_sup]
+                }
+            ];
         session_host ->
             SessionId = maps:get(default_session, Config, <<"herbstluftwm">>),
-            [#{id => erm_dm_session_host,
-               start => {erm_dm_session_host, start_link, [SessionId]},
-               restart => transient, shutdown => 15000, type => worker,
-               modules => [erm_dm_session_host]}];
+            [
+                #{
+                    id => erm_dm_session_host,
+                    start => {erm_dm_session_host, start_link, [SessionId]},
+                    restart => transient,
+                    shutdown => 15000,
+                    type => worker,
+                    modules => [erm_dm_session_host]
+                }
+            ];
         Invalid ->
             ?LOG_WARNING("Ignoring invalid erm.display_manager mode: ~p", [Invalid]),
             []

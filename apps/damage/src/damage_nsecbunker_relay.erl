@@ -698,11 +698,16 @@ classify_relay_failure({connect_failed, Reason}) ->
     classify_relay_failure(Reason);
 classify_relay_failure({connection_down, Reason}) ->
     classify_relay_failure(Reason);
-classify_relay_failure({subscription_closed, <<"auth-required:", _/binary>>}) -> permanent;
-classify_relay_failure({subscription_closed, <<"restricted:", _/binary>>}) -> permanent;
-classify_relay_failure({subscription_closed, <<"blocked:", _/binary>>}) -> permanent;
-classify_relay_failure({subscription_closed, <<"invalid:", _/binary>>}) -> permanent;
-classify_relay_failure({subscription_closed, <<"unsupported:", _/binary>>}) -> permanent;
+classify_relay_failure({subscription_closed, <<"auth-required:", _/binary>>}) ->
+    permanent;
+classify_relay_failure({subscription_closed, <<"restricted:", _/binary>>}) ->
+    permanent;
+classify_relay_failure({subscription_closed, <<"blocked:", _/binary>>}) ->
+    permanent;
+classify_relay_failure({subscription_closed, <<"invalid:", _/binary>>}) ->
+    permanent;
+classify_relay_failure({subscription_closed, <<"unsupported:", _/binary>>}) ->
+    permanent;
 classify_relay_failure({await_up_failed, Reason}) ->
     classify_relay_failure(Reason);
 classify_relay_failure({await_up_exit, Reason}) ->
@@ -1234,7 +1239,9 @@ subscription_optional_auth_does_not_close_test() ->
     {noreply, St1} = relay_test_frame(
         Pid, Conn, [<<"AUTH">>, <<"private-challenge">>], St0#st{conns = #{Pid => Conn}}
     ),
-    ?assertMatch(#{subscribed := true, auth_challenge_received := true}, maps:get(Pid, St1#st.conns)),
+    ?assertMatch(
+        #{subscribed := true, auth_challenge_received := true}, maps:get(Pid, St1#st.conns)
+    ),
     ?assertEqual(nomatch, binary:match(term_to_binary(St1), <<"private-challenge">>)).
 
 subscription_timeout_retries_test() ->

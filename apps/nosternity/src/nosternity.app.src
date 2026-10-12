@@ -10,7 +10,21 @@
         {mod, {nosternity_app, []}},
         {
             applications,
-            [kernel, stdlib, crypto, jsx, bbmustache, bech32, cowboy, trails, cowboy_swagger, gproc, gun, damage, ecai]
+            [
+                kernel,
+                stdlib,
+                crypto,
+                jsx,
+                bbmustache,
+                bech32,
+                cowboy,
+                trails,
+                cowboy_swagger,
+                gproc,
+                gun,
+                damage,
+                ecai
+            ]
         },
         {env, []},
         {modules, [nosternity_app, nosternity_sup]},

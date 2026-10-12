@@ -64,7 +64,8 @@ maps_api_contract() ->
 cleanup_registered() ->
     _ = erm_maps:stop(),
     case whereis(gtknode4_sup) of
-        undefined -> ok;
+        undefined ->
+            ok;
         Pid ->
             exit(Pid, kill),
             wait_until_stopped(50)
@@ -74,7 +75,8 @@ wait_until_stopped(0) ->
     ok;
 wait_until_stopped(Attempts) ->
     case whereis(gtknode4_sup) of
-        undefined -> ok;
+        undefined ->
+            ok;
         _ ->
             timer:sleep(10),
             wait_until_stopped(Attempts - 1)

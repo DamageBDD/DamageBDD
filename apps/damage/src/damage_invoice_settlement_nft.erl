@@ -19,11 +19,17 @@
 
 status() ->
     Contract = configured_contract(),
-    #{enabled => configured(),
-      contract_id => case Contract of <<>> -> null; _ -> Contract end,
-      reward_class => reward_class(),
-      standard => <<"AEX-141">>,
-      transferable => true}.
+    #{
+        enabled => configured(),
+        contract_id =>
+            case Contract of
+                <<>> -> null;
+                _ -> Contract
+            end,
+        reward_class => reward_class(),
+        standard => <<"AEX-141">>,
+        transferable => true
+    }.
 
 configured() ->
     C = settlement_cfg(),
@@ -45,16 +51,21 @@ prepare(_) ->
 
 prepare(I, Recipient) when is_map(I), is_binary(Recipient) ->
     case configured() of
-        false -> {error, <<"Settlement reward NFT is not enabled on this node">>};
+        false ->
+            {error, <<"Settlement reward NFT is not enabled on this node">>};
         true ->
             case valid_account_text(Recipient) of
-                false -> {error, <<"Choose a valid Aeternity settlement account before minting a reward">>};
+                false ->
+                    {error,
+                        <<"Choose a valid Aeternity settlement account before minting a reward">>};
                 true ->
-                    {ok, #{status => <<"queued">>,
-                           attestation_sha256 => attestation_hash(I),
-                           recipient => Recipient,
-                           contract_id => configured_contract(),
-                           reward_class => reward_class()}}
+                    {ok, #{
+                        status => <<"queued">>,
+                        attestation_sha256 => attestation_hash(I),
+                        recipient => Recipient,
+                        contract_id => configured_contract(),
+                        reward_class => reward_class()
+                    }}
             end
     end;
 prepare(_, _) ->
@@ -62,7 +73,8 @@ prepare(_, _) ->
 
 attestation_hash(I) when is_map(I) ->
     Customer = maps:get(customer, I, #{}),
-    Canonical = #{schema_version => 1,
+    Canonical = #{
+        schema_version => 1,
         invoice_id => maps:get(id, I, <<>>),
         invoice_number => maps:get(number, I, null),
         plan_id => maps:get(plan_id, I, <<>>),
@@ -71,7 +83,8 @@ attestation_hash(I) when is_map(I) ->
         paid_on => maps:get(paid_on, I, <<>>),
         payment_reference => maps:get(payment_reference, I, <<>>),
         currency => maps:get(currency, I, <<>>),
-        total_minor => maps:get(total_minor, I, 0)},
+        total_minor => maps:get(total_minor, I, 0)
+    },
     lower_hex(crypto:hash(sha256, term_to_binary(Canonical, [deterministic]))).
 
 mint(I) when is_map(I) ->
@@ -108,11 +121,18 @@ mint_new(KeyPair, Contract, Hash, Recipient, PaidOn, Reward) ->
     %% The tracked API deliberately does not expose the contract return value,
     %% so the immutable attestation index is the source of truth for token id.
     Outcome = damage_ae:contract_call_tracked(
-        KeyPair, Contract, contract_source(), "mint_settlement", Args),
+        KeyPair, Contract, contract_source(), "mint_settlement", Args
+    ),
     reconcile_mint(Outcome, KeyPair, Contract, Hash, Recipient, Reward).
 
-reconcile_mint({error, #{status := rejected} = Rejection} = Outcome, KeyPair, Contract,
-        Hash, Recipient, Reward) ->
+reconcile_mint(
+    {error, #{status := rejected} = Rejection} = Outcome,
+    KeyPair,
+    Contract,
+    Hash,
+    Recipient,
+    Reward
+) ->
     %% A duplicate/idempotency race can legitimately reject a second write
     %% after the first one has mined. Reconcile the unique hash before treating
     %% any execution rejection as terminal.
@@ -128,7 +148,7 @@ reconcile_mint({error, #{status := rejected} = Rejection} = Outcome, KeyPair, Co
             {error, settlement_outcome_unknown}
     end;
 reconcile_mint({error, Reason}, _KeyPair, _Contract, _Hash, _Recipient, _Reward) when
-        Reason =:= invalid_signing_keypair; Reason =:= transaction_prepare_failed
+    Reason =:= invalid_signing_keypair; Reason =:= transaction_prepare_failed
 ->
     {error, settlement_mint_failed};
 reconcile_mint(Outcome, KeyPair, Contract, Hash, Recipient, Reward) ->
@@ -138,8 +158,16 @@ reconcile_mint(Outcome, KeyPair, Contract, Hash, Recipient, Reward) ->
     %% contract level and will reconcile the same attestation hash.
     case lookup_token(KeyPair, Contract, Hash) of
         {ok, Token} ->
-            {ok, result(Token, Contract, Hash, Recipient, Reward,
-                        outcome_reused(Outcome), tx_hash(Outcome))};
+            {ok,
+                result(
+                    Token,
+                    Contract,
+                    Hash,
+                    Recipient,
+                    Reward,
+                    outcome_reused(Outcome),
+                    tx_hash(Outcome)
+                )};
         none ->
             case Outcome of
                 {ok, #{status := confirmed}} -> {error, settlement_outcome_unknown};
@@ -154,8 +182,10 @@ reconcile_mint(Outcome, KeyPair, Contract, Hash, Recipient, Reward) ->
 lookup_token(#{public_key := _, private_key := _} = KeyPair, Contract, Hash) ->
     %% Reads must stay read-only. Do not use contract_query/5 here because that
     %% helper may fall back to an on-chain call when dry-run is unavailable.
-    case damage_ae:contract_call_dry(
-        KeyPair, Contract, contract_source(), "settlement_token", [to_list(Hash)])
+    case
+        damage_ae:contract_call_dry(
+            KeyPair, Contract, contract_source(), "settlement_token", [to_list(Hash)]
+        )
     of
         Call when is_map(Call) ->
             case damage_release_nft:call_return(Call) of
@@ -165,9 +195,11 @@ lookup_token(#{public_key := _, private_key := _} = KeyPair, Contract, Hash) ->
                         none -> none;
                         _ -> {error, invalid_settlement_lookup}
                     end;
-                _ -> {error, settlement_lookup_failed}
+                _ ->
+                    {error, settlement_lookup_failed}
             end;
-        _ -> {error, settlement_lookup_failed}
+        _ ->
+            {error, settlement_lookup_failed}
     end.
 
 outcome_reused({ok, #{status := confirmed}}) -> false;
@@ -177,16 +209,30 @@ redacted_rejection(Rejection) ->
     maps:with([status, stage, reason], Rejection).
 
 result(Token, Contract, Hash, Recipient, Reward, Reused, TxHash) ->
-    Base = #{token_id => Token, contract_id => Contract, attestation_sha256 => Hash,
-             recipient => Recipient, reward_class => Reward, reused => Reused},
-    case TxHash of undefined -> Base; _ -> Base#{tx_hash => TxHash} end.
+    Base = #{
+        token_id => Token,
+        contract_id => Contract,
+        attestation_sha256 => Hash,
+        recipient => Recipient,
+        reward_class => Reward,
+        reused => Reused
+    },
+    case TxHash of
+        undefined -> Base;
+        _ -> Base#{tx_hash => TxHash}
+    end.
 
-tx_hash({ok, Call}) -> tx_hash(Call);
+tx_hash({ok, Call}) ->
+    tx_hash(Call);
 tx_hash({error, Call}) when is_map(Call) -> tx_hash(Call);
 tx_hash(Call) when is_map(Call) ->
-    first([maps:get(tx_hash, Call, undefined), maps:get("tx_hash", Call, undefined),
-           maps:get(<<"tx_hash">>, Call, undefined)]);
-tx_hash(_) -> undefined.
+    first([
+        maps:get(tx_hash, Call, undefined),
+        maps:get("tx_hash", Call, undefined),
+        maps:get(<<"tx_hash">>, Call, undefined)
+    ]);
+tx_hash(_) ->
+    undefined.
 first([undefined | Rest]) -> first(Rest);
 first([V | _]) when is_binary(V); is_list(V) -> to_bin(V);
 first([_ | Rest]) -> first(Rest);
@@ -207,7 +253,8 @@ valid_encoded_text(Type, B) when is_binary(B), byte_size(B) < 100 ->
     catch
         _:_ -> false
     end;
-valid_encoded_text(_, _) -> false.
+valid_encoded_text(_, _) ->
+    false.
 validate_encoded(Type, Encoded) ->
     case aeser_api_encoder:decode(Encoded) of
         {Type, Raw} when is_binary(Raw), byte_size(Raw) =:= 32 -> ok;

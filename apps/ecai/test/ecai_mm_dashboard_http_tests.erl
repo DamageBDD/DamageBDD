@@ -9,8 +9,12 @@ method_policy_test() ->
 
 node_admin_only_test() ->
     A = <<"ak_admin">>,
-    B = #{authenticated => true, auth_mode => custodial, node_admin => true,
-          public_key => A},
+    B = #{
+        authenticated => true,
+        auth_mode => custodial,
+        node_admin => true,
+        public_key => A
+    },
     ?assert(ecai_mm_dashboard_http:authorization_policy(B, true, [A], [])),
     ?assertNot(ecai_mm_dashboard_http:authorization_policy(B, false, [A], [])),
     ?assertNot(ecai_mm_dashboard_http:authorization_policy(B, true, [], [])),
@@ -19,14 +23,26 @@ node_admin_only_test() ->
     ?assertNot(ecai_mm_dashboard_http:authorization_policy(B#{node_admin => false}, true, [A], [])).
 
 control_whitelist_test() ->
-    ?assertEqual({ok, pause},
-                 ecai_mm_dashboard_http:validate_control(#{<<"action">> => <<"pause">>})),
-    ?assertEqual({ok, poll},
-                 ecai_mm_dashboard_http:validate_control(#{<<"action">> => <<"poll">>})),
-    ?assertMatch({error, _}, ecai_mm_dashboard_http:validate_control(
-                 #{<<"action">> => <<"live">>})),
-    ?assertMatch({error, _}, ecai_mm_dashboard_http:validate_control(
-                 #{<<"action">> => <<"resume">>, <<"mode">> => <<"live">>})).
+    ?assertEqual(
+        {ok, pause},
+        ecai_mm_dashboard_http:validate_control(#{<<"action">> => <<"pause">>})
+    ),
+    ?assertEqual(
+        {ok, poll},
+        ecai_mm_dashboard_http:validate_control(#{<<"action">> => <<"poll">>})
+    ),
+    ?assertMatch(
+        {error, _},
+        ecai_mm_dashboard_http:validate_control(
+            #{<<"action">> => <<"live">>}
+        )
+    ),
+    ?assertMatch(
+        {error, _},
+        ecai_mm_dashboard_http:validate_control(
+            #{<<"action">> => <<"resume">>, <<"mode">> => <<"live">>}
+        )
+    ).
 
 history_bounded_test() ->
     ?assertEqual(500, ecai_mm_dashboard_http:history_limit([])),

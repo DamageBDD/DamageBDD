@@ -8,28 +8,62 @@
 
 trails() ->
     [
-      trails:trail("/node/admin/tax", ?MODULE, #{action => page},
-                   #{get => #{tags => ["Node Administration"],
-                             description => "Private tax reporting dashboard"}}),
-      trails:trail("/api/node/tax/settings", ?MODULE, #{action => settings},
-                   #{get => #{tags => ["Tax Administration"]},
-                     post => #{tags => ["Tax Administration"]}}),
-      trails:trail("/api/node/tax/jurisdictions", ?MODULE, #{action => jurisdictions},
-                   #{get => #{tags => ["Tax Administration"]}}),
-      trails:trail("/api/node/tax/reports", ?MODULE, #{action => reports},
-                   #{get => #{tags => ["Node Administration"]}}),
-      trails:trail("/api/node/tax/jobs", ?MODULE, #{action => jobs},
-                   #{get => #{tags => ["Node Administration"]}}),
-      trails:trail("/api/node/tax/backfill", ?MODULE, #{action => backfill},
-                   #{post => #{tags => ["Node Administration"]}}),
-      trails:trail("/api/node/tax/download/:year/:digest/:format",
-                   ?MODULE, #{action => download},
-                   #{get => #{tags => ["Node Administration"]}})
+        trails:trail(
+            "/node/admin/tax",
+            ?MODULE,
+            #{action => page},
+            #{
+                get => #{
+                    tags => ["Node Administration"],
+                    description => "Private tax reporting dashboard"
+                }
+            }
+        ),
+        trails:trail(
+            "/api/node/tax/settings",
+            ?MODULE,
+            #{action => settings},
+            #{
+                get => #{tags => ["Tax Administration"]},
+                post => #{tags => ["Tax Administration"]}
+            }
+        ),
+        trails:trail(
+            "/api/node/tax/jurisdictions",
+            ?MODULE,
+            #{action => jurisdictions},
+            #{get => #{tags => ["Tax Administration"]}}
+        ),
+        trails:trail(
+            "/api/node/tax/reports",
+            ?MODULE,
+            #{action => reports},
+            #{get => #{tags => ["Node Administration"]}}
+        ),
+        trails:trail(
+            "/api/node/tax/jobs",
+            ?MODULE,
+            #{action => jobs},
+            #{get => #{tags => ["Node Administration"]}}
+        ),
+        trails:trail(
+            "/api/node/tax/backfill",
+            ?MODULE,
+            #{action => backfill},
+            #{post => #{tags => ["Node Administration"]}}
+        ),
+        trails:trail(
+            "/api/node/tax/download/:year/:digest/:format",
+            ?MODULE,
+            #{action => download},
+            #{get => #{tags => ["Node Administration"]}}
+        )
     ].
 
 init(Req0, #{action := Action} = Opts) ->
     case authorized(Req0, Opts) of
-        {ok, Req} -> {ok, execute(Action, Req), Opts};
+        {ok, Req} ->
+            {ok, execute(Action, Req), Opts};
         {error, Status, Req} ->
             {ok, reply_json(Status, #{error => <<"permission_denied">>}, Req), Opts}
     end.
@@ -45,10 +79,14 @@ authorized(Req, Opts) ->
                     true -> {ok, Req};
                     false -> {error, 403, Req}
                 end;
-            {anonymous, _State} -> {error, 401, Req};
-            {error, _Reason, _State} -> {error, 401, Req}
+            {anonymous, _State} ->
+                {error, 401, Req};
+            {error, _Reason, _State} ->
+                {error, 401, Req}
         end
-    catch _:_ -> {error, 401, Req} end.
+    catch
+        _:_ -> {error, 401, Req}
+    end.
 
 execute(page, Req) ->
     case cowboy_req:method(Req) of
@@ -56,26 +94,38 @@ execute(page, Req) ->
             case application:get_env(damage, tax_enabled, false) of
                 true ->
                     Html = damage_utils:load_template(
-                        "ui/dashboard/tax_admin.mustache", #{}),
+                        "ui/dashboard/tax_admin.mustache", #{}
+                    ),
                     cowboy_req:reply(200, html_headers(), Html, Req);
-                _ -> reply_json(503, #{error => <<"tax_reporting_disabled">>}, Req)
+                _ ->
+                    reply_json(503, #{error => <<"tax_reporting_disabled">>}, Req)
             end;
-        _ -> method_not_allowed(Req)
+        _ ->
+            method_not_allowed(Req)
     end;
 %% Configuration and country profiles remain reachable before enablement.
-execute(settings, Req) -> settings_action(Req);
+execute(settings, Req) ->
+    settings_action(Req);
 execute(jurisdictions, Req) ->
     case cowboy_req:method(Req) of
         <<"GET">> ->
             Default0 = application:get_env(damage, tax_jurisdiction, <<"AU">>),
-            Default = case damage_tax_regions:valid(Default0) of
-                true -> Default0;
-                false -> <<"AU">>
-            end,
-            reply_json(200, #{jurisdictions => damage_tax_regions:all(),
-                              default_jurisdiction => Default,
-                              notice => <<"Accountant-review workpapers, not official tax filings">>}, Req);
-        _ -> method_not_allowed(Req)
+            Default =
+                case damage_tax_regions:valid(Default0) of
+                    true -> Default0;
+                    false -> <<"AU">>
+                end,
+            reply_json(
+                200,
+                #{
+                    jurisdictions => damage_tax_regions:all(),
+                    default_jurisdiction => Default,
+                    notice => <<"Accountant-review workpapers, not official tax filings">>
+                },
+                Req
+            );
+        _ ->
+            method_not_allowed(Req)
     end;
 execute(Action, Req) ->
     case application:get_env(damage, tax_enabled, false) of
@@ -87,17 +137,20 @@ enabled_action(reports, Req) ->
     case cowboy_req:method(Req) of
         <<"GET">> ->
             Tenant = application:get_env(damage, tax_cln_owner, undefined),
-            Reply = case Tenant of
-                T when is_binary(T), byte_size(T) > 0 ->
-                    case damage_tax_catalog:list_reports(T) of
-                        {ok, Rows} -> {200, #{reports => Rows}};
-                        _ -> {503, #{error => <<"tax_catalog_unavailable">>}}
-                    end;
-                _ -> {409, #{error => <<"tax_cln_owner_not_configured">>}}
-            end,
+            Reply =
+                case Tenant of
+                    T when is_binary(T), byte_size(T) > 0 ->
+                        case damage_tax_catalog:list_reports(T) of
+                            {ok, Rows} -> {200, #{reports => Rows}};
+                            _ -> {503, #{error => <<"tax_catalog_unavailable">>}}
+                        end;
+                    _ ->
+                        {409, #{error => <<"tax_cln_owner_not_configured">>}}
+                end,
             {Status, Body} = Reply,
             reply_json(Status, Body, Req);
-        _ -> method_not_allowed(Req)
+        _ ->
+            method_not_allowed(Req)
     end;
 enabled_action(jobs, Req) ->
     case cowboy_req:method(Req) of
@@ -106,7 +159,8 @@ enabled_action(jobs, Req) ->
                 undefined -> reply_json(503, #{error => <<"tax_job_service_unavailable">>}, Req);
                 _ -> reply_json(200, #{job => damage_tax_jobs:status()}, Req)
             end;
-        _ -> method_not_allowed(Req)
+        _ ->
+            method_not_allowed(Req)
     end;
 enabled_action(backfill, Req) ->
     case cowboy_req:method(Req) of
@@ -127,50 +181,85 @@ settings_action(Req) ->
             settings_view(Req);
         <<"POST">> ->
             settings_mutation(Req);
-        _ -> method_not_allowed(Req)
+        _ ->
+            method_not_allowed(Req)
     end.
 
 settings_view(Req) ->
     try damage_tax_settings:read_view() of
         {ok, View} -> reply_json(200, View, Req);
         {error, _} -> reply_json(503, #{error => <<"tax_settings_unavailable">>}, Req)
-    catch _:_ -> reply_json(503, #{error => <<"tax_settings_unavailable">>}, Req) end.
+    catch
+        _:_ -> reply_json(503, #{error => <<"tax_settings_unavailable">>}, Req)
+    end.
 
 settings_mutation(Req0) ->
     case post_authorized(Req0) of
-        false -> reply_json(403, #{error => <<"request_origin_not_allowed">>}, Req0);
+        false ->
+            reply_json(403, #{error => <<"request_origin_not_allowed">>}, Req0);
         true ->
-            case cowboy_req:read_body(Req0, #{length => 8192, period => 3000,
-                                                timeout => 5000}) of
+            case
+                cowboy_req:read_body(Req0, #{
+                    length => 8192,
+                    period => 3000,
+                    timeout => 5000
+                })
+            of
                 {ok, Body, Req} ->
                     try jsx:decode(Body, [return_maps]) of
                         Json when is_map(Json), map_size(Json) =< 3 ->
                             settings_change(Json, Req);
-                        _ -> reply_json(400, #{error => <<"invalid_tax_settings_request">>}, Req)
-                    catch _:_ -> reply_json(400, #{error => <<"invalid_json">>}, Req) end;
-                {more, _, Req} -> reply_json(413, #{error => <<"request_too_large">>}, Req);
-                {error, _, Req} -> reply_json(400, #{error => <<"invalid_body">>}, Req)
+                        _ ->
+                            reply_json(400, #{error => <<"invalid_tax_settings_request">>}, Req)
+                    catch
+                        _:_ -> reply_json(400, #{error => <<"invalid_json">>}, Req)
+                    end;
+                {more, _, Req} ->
+                    reply_json(413, #{error => <<"request_too_large">>}, Req);
+                {error, _, Req} ->
+                    reply_json(400, #{error => <<"invalid_body">>}, Req)
             end
     end.
 
-settings_change(#{<<"action">> := <<"save">>, <<"version">> := Version,
-                  <<"changes">> := Changes}, Req) when is_binary(Version) ->
+settings_change(
+    #{
+        <<"action">> := <<"save">>,
+        <<"version">> := Version,
+        <<"changes">> := Changes
+    },
+    Req
+) when is_binary(Version) ->
     case damage_tax_settings:authorized_changes(Changes) of
-        true -> settings_mutation_result(fun() -> damage_settings:save(damage, Changes, Version) end, Req);
-        false -> reply_json(403, #{error => <<"tax_fields_only">>}, Req)
+        true ->
+            settings_mutation_result(
+                fun() -> damage_settings:save(damage, Changes, Version) end, Req
+            );
+        false ->
+            reply_json(403, #{error => <<"tax_fields_only">>}, Req)
     end;
-settings_change(#{<<"action">> := <<"reset">>, <<"version">> := Version,
-                  <<"keys">> := Keys}, Req) when is_binary(Version) ->
+settings_change(
+    #{
+        <<"action">> := <<"reset">>,
+        <<"version">> := Version,
+        <<"keys">> := Keys
+    },
+    Req
+) when is_binary(Version) ->
     case damage_tax_settings:authorized_resets(Keys) of
-        true -> settings_mutation_result(fun() -> damage_settings:reset(damage, Keys, Version) end, Req);
-        false -> reply_json(403, #{error => <<"tax_fields_only">>}, Req)
+        true ->
+            settings_mutation_result(
+                fun() -> damage_settings:reset(damage, Keys, Version) end, Req
+            );
+        false ->
+            reply_json(403, #{error => <<"tax_fields_only">>}, Req)
     end;
 settings_change(_, Req) ->
     reply_json(400, #{error => <<"invalid_tax_settings_request">>}, Req).
 
 settings_mutation_result(Fun, Req) ->
     try Fun() of
-        {ok, _Status} -> settings_view(Req);
+        {ok, _Status} ->
+            settings_view(Req);
         {error, {conflict, _Version}} ->
             reply_json(409, #{error => <<"config_changed_reload_required">>}, Req);
         {error, {invalid_value, Name, _Reason}} ->
@@ -181,11 +270,14 @@ settings_mutation_result(Fun, Req) ->
             reply_json(403, #{error => <<"tax_fields_only">>}, Req);
         {error, _Reason} ->
             reply_json(422, #{error => <<"tax_settings_save_rejected">>}, Req)
-    catch _:_ -> reply_json(503, #{error => <<"tax_settings_unavailable">>}, Req) end.
+    catch
+        _:_ -> reply_json(503, #{error => <<"tax_settings_unavailable">>}, Req)
+    end.
 
 do_backfill(Req0) ->
     case post_authorized(Req0) of
-        false -> reply_json(403, #{error => <<"request_origin_not_allowed">>}, Req0);
+        false ->
+            reply_json(403, #{error => <<"request_origin_not_allowed">>}, Req0);
         true ->
             case cowboy_req:read_body(Req0, #{length => 16384, period => 3000}) of
                 {ok, Bytes, Req} ->
@@ -216,19 +308,23 @@ post_authorized(Req) ->
     Type = cowboy_req:header(<<"content-type">>, Req, <<>>),
     Site = cowboy_req:header(<<"sec-fetch-site">>, Req, <<"same-origin">>),
     Header =:= <<"1">> andalso
-    binary:match(Type, <<"application/json">>) =:= {0, 16} andalso
-    (Site =:= <<"same-origin">> orelse Site =:= <<"none">>) andalso
-    origin_matches_host(Req).
+        binary:match(Type, <<"application/json">>) =:= {0, 16} andalso
+        (Site =:= <<"same-origin">> orelse Site =:= <<"none">>) andalso
+        origin_matches_host(Req).
 
 origin_matches_host(Req) ->
     case cowboy_req:header(<<"origin">>, Req, undefined) of
-        undefined -> true;
-        <<"null">> -> false;
+        undefined ->
+            true;
+        <<"null">> ->
+            false;
         Origin ->
             try
                 #{host := OriginHost} = uri_string:parse(Origin),
                 to_bin(OriginHost) =:= cowboy_req:host(Req)
-            catch _:_ -> false end
+            catch
+                _:_ -> false
+            end
     end.
 to_bin(B) when is_binary(B) -> B;
 to_bin(L) when is_list(L) -> unicode:characters_to_binary(L).
@@ -243,15 +339,25 @@ parse_scope(Bytes) when is_binary(Bytes), byte_size(Bytes) =< 16384 ->
             true -> parse_scope_map(Body);
             false -> {error, invalid_scope}
         end
-    catch _:_ -> {error, invalid_json} end;
-parse_scope(_) -> {error, invalid_json}.
+    catch
+        _:_ -> {error, invalid_json}
+    end;
+parse_scope(_) ->
+    {error, invalid_json}.
 
 parse_scope_map(Body) ->
     Keys = maps:keys(Body),
-    Allowed = [<<"source">>, <<"scope">>, <<"year">>, <<"jurisdiction">>,
-               <<"standard_utc_offset_minutes">>, <<"period_start_month">>],
+    Allowed = [
+        <<"source">>,
+        <<"scope">>,
+        <<"year">>,
+        <<"jurisdiction">>,
+        <<"standard_utc_offset_minutes">>,
+        <<"period_start_month">>
+    ],
     case lists:all(fun(K) -> lists:member(K, Allowed) end, Keys) of
-        false -> {error, invalid_scope};
+        false ->
+            {error, invalid_scope};
         true ->
             case scope_part(Body) of
                 {ok, Scope} -> scope_region(Body, Scope);
@@ -261,12 +367,19 @@ parse_scope_map(Body) ->
 
 scope_part(Body) ->
     Source = maps:get(<<"source">>, Body, <<"cln">>),
-    Value = case {maps:find(<<"scope">>, Body), maps:find(<<"year">>, Body)} of
-        {{ok, <<"all">>}, error} -> {ok, all};
-        {error, {ok, Year}} when is_integer(Year), Year >= 2009,
-                                   Year =< 2200 -> {ok, Year};
-        _ -> {error, invalid_scope}
-    end,
+    Value =
+        case {maps:find(<<"scope">>, Body), maps:find(<<"year">>, Body)} of
+            {{ok, <<"all">>}, error} ->
+                {ok, all};
+            {error, {ok, Year}} when
+                is_integer(Year),
+                Year >= 2009,
+                Year =< 2200
+            ->
+                {ok, Year};
+            _ ->
+                {error, invalid_scope}
+        end,
     case {Source, Value} of
         {<<"cln">>, {ok, V}} -> {ok, V};
         {<<"journal">>, {ok, V}} -> {ok, {existing, V}};
@@ -276,23 +389,32 @@ scope_part(Body) ->
 scope_region(Body, Scope) ->
     case maps:find(<<"jurisdiction">>, Body) of
         error ->
-            case maps:is_key(<<"standard_utc_offset_minutes">>, Body) orelse
-                 maps:is_key(<<"period_start_month">>, Body) of
+            case
+                maps:is_key(<<"standard_utc_offset_minutes">>, Body) orelse
+                    maps:is_key(<<"period_start_month">>, Body)
+            of
                 true -> {error, jurisdiction_required};
                 false -> {ok, Scope}
             end;
         {ok, Region} ->
             case damage_tax_regions:lookup(Region) of
                 {ok, Profile} ->
-                    Offset = maps:get(<<"standard_utc_offset_minutes">>, Body,
-                                      maps:get(<<"default_offset_minutes">>, Profile)),
-                    Month = maps:get(<<"period_start_month">>, Body,
-                                     maps:get(<<"start_month">>, Profile)),
+                    Offset = maps:get(
+                        <<"standard_utc_offset_minutes">>,
+                        Body,
+                        maps:get(<<"default_offset_minutes">>, Profile)
+                    ),
+                    Month = maps:get(
+                        <<"period_start_month">>,
+                        Body,
+                        maps:get(<<"start_month">>, Profile)
+                    ),
                     case damage_tax_regions:bounds(Region, 2026, Offset, Month) of
                         {ok, _} -> {ok, {region, Region, Offset, Month, Scope}};
                         Error -> Error
                     end;
-                Error -> Error
+                Error ->
+                    Error
             end
     end.
 
@@ -305,15 +427,21 @@ do_download(Req) ->
             Tenant = application:get_env(damage, tax_cln_owner, undefined),
             case damage_tax_catalog:download(Tenant, Year, Digest, Fmt) of
                 {ok, Bytes, ContentType, Filename} ->
-                    Attachment = <<"attachment; filename=\"FY", YearBin/binary,
-                                   "-", Filename/binary, "\"">>,
-                    H = maps:merge(private_headers(),
-                        #{<<"content-type">> => ContentType,
-                          <<"content-disposition">> => Attachment}),
+                    Attachment =
+                        <<"attachment; filename=\"FY", YearBin/binary, "-", Filename/binary, "\"">>,
+                    H = maps:merge(
+                        private_headers(),
+                        #{
+                            <<"content-type">> => ContentType,
+                            <<"content-disposition">> => Attachment
+                        }
+                    ),
                     cowboy_req:reply(200, H, Bytes, Req);
-                {error, _} -> reply_json(404, #{error => <<"report_not_found">>}, Req)
+                {error, _} ->
+                    reply_json(404, #{error => <<"report_not_found">>}, Req)
             end;
-        _ -> reply_json(400, #{error => <<"invalid_download_identifier">>}, Req)
+        _ ->
+            reply_json(400, #{error => <<"invalid_download_identifier">>}, Req)
     end.
 
 year(B) when is_binary(B), byte_size(B) =:= 4 ->
@@ -323,8 +451,11 @@ year(B) when is_binary(B), byte_size(B) =:= 4 ->
             true -> {ok, N};
             false -> error
         end
-    catch _:_ -> error end;
-year(_) -> error.
+    catch
+        _:_ -> error
+    end;
+year(_) ->
+    error.
 
 format(<<"json">>) -> {ok, json};
 format(<<"csv">>) -> {ok, csv};
@@ -333,27 +464,54 @@ format(<<"worksheet">>) -> {ok, worksheet};
 format(_) -> error.
 
 valid_hash(B) when is_binary(B), byte_size(B) =:= 64 ->
-    lists:all(fun(C) -> (C >= $0 andalso C =< $9) orelse
-                        (C >= $a andalso C =< $f) end, binary:bin_to_list(B));
-valid_hash(_) -> false.
+    lists:all(
+        fun(C) ->
+            (C >= $0 andalso C =< $9) orelse
+                (C >= $a andalso C =< $f)
+        end,
+        binary:bin_to_list(B)
+    );
+valid_hash(_) ->
+    false.
 
 method_not_allowed(Req) ->
-    cowboy_req:reply(405, maps:merge(private_headers(),
-        #{<<"allow">> => <<"GET, POST">>}), <<>>, Req).
+    cowboy_req:reply(
+        405,
+        maps:merge(
+            private_headers(),
+            #{<<"allow">> => <<"GET, POST">>}
+        ),
+        <<>>,
+        Req
+    ).
 reply_json(Code, Data, Req) ->
-    cowboy_req:reply(Code, maps:merge(private_headers(),
-        #{<<"content-type">> => <<"application/json; charset=utf-8">>}),
-        jsx:encode(Data), Req).
+    cowboy_req:reply(
+        Code,
+        maps:merge(
+            private_headers(),
+            #{<<"content-type">> => <<"application/json; charset=utf-8">>}
+        ),
+        jsx:encode(Data),
+        Req
+    ).
 private_headers() ->
-    #{<<"cache-control">> => <<"no-store, private">>,
-      <<"pragma">> => <<"no-cache">>,
-      <<"x-content-type-options">> => <<"nosniff">>,
-      <<"referrer-policy">> => <<"no-referrer">>,
-      <<"x-frame-options">> => <<"DENY">>}.
+    #{
+        <<"cache-control">> => <<"no-store, private">>,
+        <<"pragma">> => <<"no-cache">>,
+        <<"x-content-type-options">> => <<"nosniff">>,
+        <<"referrer-policy">> => <<"no-referrer">>,
+        <<"x-frame-options">> => <<"DENY">>
+    }.
 html_headers() ->
-    maps:merge(private_headers(),
-      #{<<"content-type">> => <<"text/html; charset=utf-8">>,
-        <<"content-security-policy">> =>
-        <<"default-src 'none'; script-src 'self'; style-src 'self'; "
-          "connect-src 'self'; img-src 'self'; base-uri 'none'; "
-          "form-action 'self'; frame-ancestors 'none'">>}).
+    maps:merge(
+        private_headers(),
+        #{
+            <<"content-type">> => <<"text/html; charset=utf-8">>,
+            <<"content-security-policy">> =>
+                <<
+                    "default-src 'none'; script-src 'self'; style-src 'self'; "
+                    "connect-src 'self'; img-src 'self'; base-uri 'none'; "
+                    "form-action 'self'; frame-ancestors 'none'"
+                >>
+        }
+    ).

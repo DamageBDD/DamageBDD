@@ -154,11 +154,15 @@ normalize_kind(Other) -> validation_error({unsupported_job_kind, Other}).
 normalize_source(wikimedia_unit, Source) ->
     Root = required_binary(plan_root, field(plan_root, Source, undefined)),
     Unit = required_binary(unit_id, field(unit_id, Source, undefined)),
-    lists:foreach(fun(H) ->
-        case re:run(H, <<"^[0-9a-f]{64}$">>, [{capture, none}]) of
-            match -> ok; _ -> validation_error(invalid_work_commitment)
-        end
-    end, [Root, Unit]),
+    lists:foreach(
+        fun(H) ->
+            case re:run(H, <<"^[0-9a-f]{64}$">>, [{capture, none}]) of
+                match -> ok;
+                _ -> validation_error(invalid_work_commitment)
+            end
+        end,
+        [Root, Unit]
+    ),
     #{plan_root => Root, unit_id => Unit};
 normalize_source(yelp_ndjson, Source) ->
     #{paths => normalize_paths(Source)};
@@ -452,9 +456,11 @@ validate_combination(wikimedia_unit, #{mode := ledger_only}, Finalize) ->
         false -> ok
     end;
 validate_combination(_Kind, #{mode := shard_search}, Finalize) ->
-    case maps:get(build_nft_manifest, Finalize, false) orelse
-         maps:get(publish_ipfs, Finalize, false) orelse
-         maps:get(auto_mint, Finalize, false) of
+    case
+        maps:get(build_nft_manifest, Finalize, false) orelse
+            maps:get(publish_ipfs, Finalize, false) orelse
+            maps:get(auto_mint, Finalize, false)
+    of
         true -> validation_error(shard_requires_deferred_finalization);
         false -> ok
     end;

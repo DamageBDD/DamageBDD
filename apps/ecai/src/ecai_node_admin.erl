@@ -6,18 +6,22 @@
 
 %% The caller must pass server-derived authentication state. A wallet proof
 %% never confers treasury/code-admin authority even for a configured admin key.
-session_is_node_admin(#{auth_mode := wallet}) -> false;
+session_is_node_admin(#{auth_mode := wallet}) ->
+    false;
 session_is_node_admin(#{authenticated := true, node_admin := true, public_key := Account}) ->
     is_node_admin(Account);
-session_is_node_admin(_) -> false.
+session_is_node_admin(_) ->
+    false.
 
 is_node_admin(Account) ->
     member(Account, application:get_env(damage, node_admins, [])).
 
 can_manage_code(Account) ->
-    allowed_by_policy(Account,
+    allowed_by_policy(
+        Account,
         application:get_env(damage, node_admins, []),
-        application:get_env(ecai, code_admin_accounts, [])).
+        application:get_env(ecai, code_admin_accounts, [])
+    ).
 
 %% Empty ECAI scope admits all DamageBDD node admins (only when enabled
 %% by the separate code_admin_enabled flag in the caller).
@@ -27,10 +31,14 @@ allowed_by_policy(Account, DamageAdmins, EcaiScope) ->
 in_scope(_Account, []) -> true;
 in_scope(Account, Accounts) -> member(Account, Accounts).
 
-member(Account, Accounts) when is_binary(Account), byte_size(Account) > 0,
-                               is_list(Accounts) ->
+member(Account, Accounts) when
+    is_binary(Account),
+    byte_size(Account) > 0,
+    is_list(Accounts)
+->
     lists:any(fun(Entry) -> normalize(Entry) =:= Account end, Accounts);
-member(_, _) -> false.
+member(_, _) ->
+    false.
 
 normalize(Value) when is_binary(Value), byte_size(Value) > 0 -> Value;
 normalize(Value) when is_list(Value) ->
@@ -40,4 +48,5 @@ normalize(Value) when is_list(Value) ->
     catch
         _:_ -> invalid
     end;
-normalize(_) -> invalid.
+normalize(_) ->
+    invalid.

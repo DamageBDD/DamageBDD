@@ -75,7 +75,6 @@ queue_controls_and_recovery_test() ->
         cleanup_queue(Dir)
     end.
 
-
 %% A canceled job retains its identity and checkpoint. Operator resume via
 %% /retry is permitted even if max_retries = 0 (cancellation is not failure).
 canceled_retry_requeues_checkpoint_test() ->
@@ -96,9 +95,13 @@ canceled_retry_requeues_checkpoint_test() ->
             attempt => InitialAttempt,
             checkpoint => Checkpoint,
             progress => #{
-                phase => indexing, unit => sources, completed => 2,
-                total => 5, percent => 40.0,
-                eta_ms => 300000, rate_per_second => 0.9
+                phase => indexing,
+                unit => sources,
+                completed => 2,
+                total => 5,
+                percent => 40.0,
+                eta_ms => 300000,
+                rate_per_second => 0.9
             }
         }),
         ok = ecai_index_job_store:sync(Store),
@@ -119,11 +122,16 @@ canceled_retry_requeues_checkpoint_test() ->
         ?assertEqual(ExpectedPublicCheckpoint, maps:get(<<"checkpoint">>, Resumed)),
         ?assertEqual({error, {invalid_state, queued}}, ecai_index_jobs_srv:retry(JobId)),
         {ok, Events} = ecai_index_jobs_srv:events(JobId, 0, 100),
-        ?assert(lists:any(fun(E) ->
-            Data = maps:get(<<"data">>, E, #{}),
-            maps:get(<<"reason">>, Data, undefined) =:= <<"operator_resume_canceled">> andalso
-            maps:get(<<"resumed_from_checkpoint">>, Data, false) =:= true
-        end, Events)),
+        ?assert(
+            lists:any(
+                fun(E) ->
+                    Data = maps:get(<<"data">>, E, #{}),
+                    maps:get(<<"reason">>, Data, undefined) =:= <<"operator_resume_canceled">> andalso
+                        maps:get(<<"resumed_from_checkpoint">>, Data, false) =:= true
+                end,
+                Events
+            )
+        ),
         stop_queue(Sup2),
         Sup3 = start_queue(Dir),
         {ok, AfterRestart} = ecai_index_jobs_srv:get(JobId),
@@ -173,7 +181,6 @@ retry_obeys_pending_capacity_test() ->
         cleanup_queue(Dir)
     end.
 
-
 %% Worker-local durations accumulate across attempts while wall time includes
 %% queueing and pauses. These tests use fixed timestamps to avoid flaky sleeps.
 runtime_clocks_test() ->
@@ -196,15 +203,29 @@ runtime_clocks_test() ->
     Stopped = ecai_index_jobs_srv:stop_run_clock(Job, Now),
     ?assertEqual(32000, maps:get(active_elapsed_ms, Stopped)),
     ?assertEqual(undefined, maps:get(run_started_at_ms, Stopped)),
-    ?assertEqual(0, maps:get(attempt_elapsed_ms,
-        ecai_index_jobs_srv:job_runtime(Stopped#{state => canceled,
-            finished_at_ms => Now}, Now))).
+    ?assertEqual(
+        0,
+        maps:get(
+            attempt_elapsed_ms,
+            ecai_index_jobs_srv:job_runtime(
+                Stopped#{
+                    state => canceled,
+                    finished_at_ms => Now
+                },
+                Now
+            )
+        )
+    ).
 
 legacy_stopped_timing_test() ->
     Now = erlang:system_time(millisecond),
-    LegacyJob = #{state => canceled, created_at_ms => Now - 240000,
-        started_at_ms => Now - 200000, finished_at_ms => Now - 100000,
-        progress => #{}},
+    LegacyJob = #{
+        state => canceled,
+        created_at_ms => Now - 240000,
+        started_at_ms => Now - 200000,
+        finished_at_ms => Now - 100000,
+        progress => #{}
+    },
     Runtime = ecai_index_jobs_srv:job_runtime(LegacyJob, Now),
     ?assertEqual(140000, maps:get(wall_elapsed_ms, Runtime)),
     ?assertEqual(100000, maps:get(active_elapsed_ms, Runtime)),
@@ -212,32 +233,50 @@ legacy_stopped_timing_test() ->
 
 eta_requires_phase_evidence_test() ->
     Now = erlang:system_time(millisecond),
-    Job = #{rate_started_at_ms => Now - 60000,
+    Job = #{
+        rate_started_at_ms => Now - 60000,
         rate_base_completed => 0,
         rate_phase => selecting_by_pageviews,
-        progress => #{phase => selecting_by_pageviews,
-            completed => 1, rate_samples => 0}},
+        progress => #{
+            phase => selecting_by_pageviews,
+            completed => 1,
+            rate_samples => 0
+        }
+    },
     {Early, _} = ecai_index_jobs_srv:enrich_progress(Job, #{
-        phase => selecting_by_pageviews, completed => 2, total => 144}),
+        phase => selecting_by_pageviews, completed => 2, total => 144
+    }),
     ?assertEqual(undefined, maps:get(eta_ms, Early)),
     ?assertEqual(warming_up, maps:get(eta_status, Early)),
     ?assertEqual(1, maps:get(rate_samples, Early)),
-    MatureJob = Job#{progress => #{phase => selecting_by_pageviews,
-        completed => 8, rate_samples => 3}},
+    MatureJob = Job#{
+        progress => #{
+            phase => selecting_by_pageviews,
+            completed => 8,
+            rate_samples => 3
+        }
+    },
     {Mature, _} = ecai_index_jobs_srv:enrich_progress(MatureJob, #{
-        phase => selecting_by_pageviews, completed => 9, total => 144}),
+        phase => selecting_by_pageviews, completed => 9, total => 144
+    }),
     ?assert(is_integer(maps:get(eta_ms, Mature))),
     ?assertEqual(provisional, maps:get(eta_status, Mature)),
     {NextPhase, _} = ecai_index_jobs_srv:enrich_progress(MatureJob, #{
-        phase => extracting_selected_articles, completed => 10, total => 144}),
+        phase => extracting_selected_articles, completed => 10, total => 144
+    }),
     ?assertEqual(undefined, maps:get(eta_ms, NextPhase)),
     ?assertEqual(0, maps:get(rate_samples, NextPhase)),
     ?assertEqual(warming_up, maps:get(eta_status, NextPhase)).
 
 stopped_eta_is_hidden_test() ->
     Now = erlang:system_time(millisecond),
-    Progress = #{phase => canceled, completed => 2, total => 144,
-        eta_ms => 9000000, rate_per_second => 1.4},
+    Progress = #{
+        phase => canceled,
+        completed => 2,
+        total => 144,
+        eta_ms => 9000000,
+        rate_per_second => 1.4
+    },
     Stopped = ecai_index_jobs_srv:visible_progress(Progress, canceled, Now),
     ?assertEqual(undefined, maps:get(eta_ms, Stopped)),
     ?assertEqual(0.0, maps:get(rate_per_second, Stopped)),
@@ -292,10 +331,19 @@ stop_queue(Sup) ->
     ok.
 
 wait_unregistered(0) ->
-    error({queue_still_registered, [Name || Name <-
-        [ecai_index_jobs_sup, ecai_index_jobs_srv,
-         ecai_index_job_worker_sup, ecai_index_job_events],
-        whereis(Name) =/= undefined]});
+    error(
+        {queue_still_registered, [
+            Name
+         || Name <-
+                [
+                    ecai_index_jobs_sup,
+                    ecai_index_jobs_srv,
+                    ecai_index_job_worker_sup,
+                    ecai_index_job_events
+                ],
+            whereis(Name) =/= undefined
+        ]}
+    );
 wait_unregistered(Attempts) ->
     Names = [
         ecai_index_jobs_sup,
@@ -333,7 +381,8 @@ cleanup_queue(Dir) ->
                 true -> stop_queue(Sup);
                 false -> wait_unregistered(100)
             end;
-        _ -> ok
+        _ ->
+            ok
     end,
     remove_tree(Dir).
 

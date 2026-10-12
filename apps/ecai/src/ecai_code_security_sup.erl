@@ -77,9 +77,17 @@ health_monitor_specs() ->
 %% rest_for_one tree; it is never available without the code-security stack.
 review_queue_specs() ->
     case application:get_env(ecai, code_admin_enabled, false) of
-        true -> [#{id => ecai_code_review_queue,
-                   start => {ecai_code_review_queue, start_link, []},
-                   restart => permanent, shutdown => 5000, type => worker,
-                   modules => [ecai_code_review_queue]}];
-        _ -> []
+        true ->
+            [
+                #{
+                    id => ecai_code_review_queue,
+                    start => {ecai_code_review_queue, start_link, []},
+                    restart => permanent,
+                    shutdown => 5000,
+                    type => worker,
+                    modules => [ecai_code_review_queue]
+                }
+            ];
+        _ ->
+            []
     end.

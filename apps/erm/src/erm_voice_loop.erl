@@ -2,9 +2,18 @@
 %%% run/0 (or start/0) runs in the calling shell, not a background tty reader.
 -module(erm_voice_loop).
 -license("Apache-2.0").
--export([run/0, run/1, start/0, start/1, inspect/0, inspect/1,
-         diagnose/0, diagnose/1, tts_demo/0, tts_demo/1,
-         next/1, loop/2, pause/1, status/1, stop/1]).
+-export([
+    run/0, run/1,
+    start/0, start/1,
+    inspect/0, inspect/1,
+    diagnose/0, diagnose/1,
+    tts_demo/0, tts_demo/1,
+    next/1,
+    loop/2,
+    pause/1,
+    status/1,
+    stop/1
+]).
 
 %% One command: consent -> enrol -> calibrate -> repeated voice tests. On later
 %% calls the persisted profile is reused. Does not require standalone scripts.
@@ -18,18 +27,27 @@ tts_demo() -> tts_demo(#{}).
 tts_demo(Overrides) when is_map(Overrides) ->
     case ecai_voice_session:options(#{}) of
         {ok, Defaults} ->
-            DemoDefaults = #{session => maps:get(session, Defaults) ++ "-tts-demo",
-                             speakers => [<<"human">>, <<"tts_demo">>],
-                             tts_speaker => <<"tts_demo">>,
-                             tts_voice => "en+f3", tts_speed => 155,
-                             unknown_calibration => no, seconds => 8,
-                             enroll_takes => 2, calibrate_takes => 2},
-            io:format("ECAI TTS demo: one microphone speaker and one SYNTHETIC WAV speaker.~n" ++
-                      "This does not validate recognition between two people.~n"),
+            DemoDefaults = #{
+                session => maps:get(session, Defaults) ++ "-tts-demo",
+                speakers => [<<"human">>, <<"tts_demo">>],
+                tts_speaker => <<"tts_demo">>,
+                tts_voice => "en+f3",
+                tts_speed => 155,
+                unknown_calibration => no,
+                seconds => 8,
+                enroll_takes => 2,
+                calibrate_takes => 2
+            },
+            io:format(
+                "ECAI TTS demo: one microphone speaker and one SYNTHETIC WAV speaker.~n" ++
+                    "This does not validate recognition between two people.~n"
+            ),
             ecai_voice_session:run(maps:merge(DemoDefaults, Overrides));
-        Error -> Error
+        Error ->
+            Error
     end;
-tts_demo(_) -> {error, options_must_be_map}.
+tts_demo(_) ->
+    {error, options_must_be_map}.
 
 %% Preserve the original asynchronous test-only API when given an explicit
 %% existing profile; options without one invoke the first-run operator wizard.
@@ -38,7 +56,8 @@ start(Options) when is_map(Options) ->
         true -> ecai_voice_live:start_link(Options);
         false -> run(Options)
     end;
-start(_) -> {error, options_must_be_map}.
+start(_) ->
+    {error, options_must_be_map}.
 
 inspect() ->
     case ecai_voice_session:options(#{}) of
@@ -59,7 +78,8 @@ diagnose(Dir) ->
         {ok, Report} ->
             ok = ecai_voice_diagnostics:print(Report),
             {ok, Report};
-        Error -> Error
+        Error ->
+            Error
     end.
 
 %% Legacy explicit-profile gen_server controls.

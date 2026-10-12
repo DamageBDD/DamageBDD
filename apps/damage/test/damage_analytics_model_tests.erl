@@ -92,12 +92,28 @@ meta_enrichment_preserves_chain_identity_test() ->
     ?assertEqual(2000, maps:get(duration_ms, Run)).
 
 merge_keeps_known_status_and_adds_chain_evidence_test() ->
-    Old = #{report_cid => ?CID_A, feature_cid => ?CID_B, account => ?ACCOUNT,
-            status => passed, created_ms => 1760000000000, completed_ms => 1760000001000,
-            duration_ms => 1000, tx_hash => <<>>, evidence => #{report_meta => true}},
-    New = #{report_cid => ?CID_A, feature_cid => ?CID_B, account => ?ACCOUNT,
-            status => unknown, created_ms => 1760000000000, completed_ms => 1760000000000,
-            duration_ms => 0, tx_hash => <<"th_chain">>, evidence => #{chain_confirmed => true}},
+    Old = #{
+        report_cid => ?CID_A,
+        feature_cid => ?CID_B,
+        account => ?ACCOUNT,
+        status => passed,
+        created_ms => 1760000000000,
+        completed_ms => 1760000001000,
+        duration_ms => 1000,
+        tx_hash => <<>>,
+        evidence => #{report_meta => true}
+    },
+    New = #{
+        report_cid => ?CID_A,
+        feature_cid => ?CID_B,
+        account => ?ACCOUNT,
+        status => unknown,
+        created_ms => 1760000000000,
+        completed_ms => 1760000000000,
+        duration_ms => 0,
+        tx_hash => <<"th_chain">>,
+        evidence => #{chain_confirmed => true}
+    },
     Run = damage_analytics_model:merge_run(Old, New),
     ?assertEqual(passed, maps:get(status, Run)),
     ?assertEqual(1000, maps:get(duration_ms, Run)),
@@ -113,18 +129,20 @@ paying_for_keeps_inner_account_separate_from_payer_test() ->
         <<"tx">> => #{
             <<"type">> => <<"PayingForTx">>,
             <<"payer_id">> => Payer,
-            <<"tx">> => #{<<"tx">> => #{
-                <<"type">> => <<"ContractCallTx">>,
-                <<"contract_id">> => ?TOKEN,
-                <<"function">> => <<"spend">>,
-                <<"caller_id">> => ?ACCOUNT,
-                <<"arguments">> => [
-                    #{<<"value">> => ?NODE},
-                    #{<<"value">> => <<"1000">>},
-                    #{<<"value">> => ?CID_B},
-                    #{<<"value">> => ?CID_A}
-                ]
-            }}
+            <<"tx">> => #{
+                <<"tx">> => #{
+                    <<"type">> => <<"ContractCallTx">>,
+                    <<"contract_id">> => ?TOKEN,
+                    <<"function">> => <<"spend">>,
+                    <<"caller_id">> => ?ACCOUNT,
+                    <<"arguments">> => [
+                        #{<<"value">> => ?NODE},
+                        #{<<"value">> => <<"1000">>},
+                        #{<<"value">> => ?CID_B},
+                        #{<<"value">> => ?CID_A}
+                    ]
+                }
+            }
         }
     },
     {ok, Run} = damage_analytics_model:normalize_chain_spend(Tx, ?TOKEN, false),
@@ -133,16 +151,27 @@ paying_for_keeps_inner_account_separate_from_payer_test() ->
     ?assertEqual(true, maps:get(paying_for, Run)).
 
 failure_signature_is_stable_test() ->
-    Run = #{status => failed, feature_cid => ?CID_B,
-            feature_title => <<"Checkout API">>, result_summary => <<"HTTP 500">>},
+    Run = #{
+        status => failed,
+        feature_cid => ?CID_B,
+        feature_title => <<"Checkout API">>,
+        result_summary => <<"HTTP 500">>
+    },
     A = damage_analytics_model:failure_signature(Run),
     B = damage_analytics_model:failure_signature(Run),
     ?assertEqual(A, B),
     ?assertEqual(16, byte_size(A)).
 
 legacy_report_evidence_is_publicly_visible_test() ->
-    Run = #{report_cid => ?CID_A, feature_cid => ?CID_B, account => ?ACCOUNT,
-            status => passed, created_ms => 1760000000000, completed_ms => 1760000001000,
-            duration_ms => 0, evidence => #{legacy_report => true}},
+    Run = #{
+        report_cid => ?CID_A,
+        feature_cid => ?CID_B,
+        account => ?ACCOUNT,
+        status => passed,
+        created_ms => 1760000000000,
+        completed_ms => 1760000001000,
+        duration_ms => 0,
+        evidence => #{legacy_report => true}
+    },
     Public = damage_analytics_model:public_run(Run),
     ?assertEqual(true, maps:get(evidence_loaded, Public)).

@@ -183,7 +183,8 @@ init_ui(Opts) ->
     Height = maps:get(height, Opts),
 
     case gtkgs:set_stylesheet(erm_maps, stylesheet()) of
-        ok -> ok;
+        ok ->
+            ok;
         {error, StylesheetReason} ->
             ?LOG_WARNING("ERM Maps stylesheet unavailable reason=~p", [StylesheetReason])
     end,
@@ -279,11 +280,13 @@ handle_call({set_center, Latitude0, Longitude0}, _From, State) ->
             {reply, Error, State}
     end;
 handle_call({set_view, Latitude0, Longitude0, Zoom0}, _From, State) ->
-    case {
-        normalize_latitude(Latitude0),
-        normalize_longitude(Longitude0),
-        normalize_zoom(Zoom0)
-    } of
+    case
+        {
+            normalize_latitude(Latitude0),
+            normalize_longitude(Longitude0),
+            normalize_zoom(Zoom0)
+        }
+    of
         {{ok, Latitude}, {ok, Longitude}, {ok, Zoom}} ->
             update_map(
                 [{latitude, Latitude}, {longitude, Longitude}, {zoom_level, Zoom}],
@@ -418,7 +421,6 @@ state_status(State) ->
         backend => safe_gtknode4_status()
     }.
 
-
 ensure_map_backend() ->
     try gtknode4:status() of
         #{ready := true, capabilities := Capabilities} ->
@@ -427,10 +429,11 @@ ensure_map_backend() ->
                 true ->
                     ok;
                 false ->
-                    {error, {map_widget_unavailable, #{
-                        libshumate => maps:get(libshumate, Capabilities, false),
-                        widgets => Widgets
-                    }}}
+                    {error,
+                        {map_widget_unavailable, #{
+                            libshumate => maps:get(libshumate, Capabilities, false),
+                            widgets => Widgets
+                        }}}
             end;
         Status ->
             {error, {gtknode4_not_ready, Status}}
@@ -456,16 +459,18 @@ prepare_options(UserOpts0) ->
     end.
 
 normalize_options(Opts0) ->
-    case {
-        normalize_source_id(maps:get(source_id, Opts0, ?DEFAULT_SOURCE)),
-        normalize_latitude(maps:get(latitude, Opts0, ?DEFAULT_LATITUDE)),
-        normalize_longitude(maps:get(longitude, Opts0, ?DEFAULT_LONGITUDE)),
-        normalize_zoom(maps:get(zoom_level, Opts0, ?DEFAULT_ZOOM)),
-        positive_integer(width, maps:get(width, Opts0, ?DEFAULT_WIDTH)),
-        positive_integer(height, maps:get(height, Opts0, ?DEFAULT_HEIGHT)),
-        positive_integer(ready_timeout, maps:get(ready_timeout, Opts0, ?DEFAULT_READY_TIMEOUT)),
-        boolean_option(show_zoom_buttons, maps:get(show_zoom_buttons, Opts0, true))
-    } of
+    case
+        {
+            normalize_source_id(maps:get(source_id, Opts0, ?DEFAULT_SOURCE)),
+            normalize_latitude(maps:get(latitude, Opts0, ?DEFAULT_LATITUDE)),
+            normalize_longitude(maps:get(longitude, Opts0, ?DEFAULT_LONGITUDE)),
+            normalize_zoom(maps:get(zoom_level, Opts0, ?DEFAULT_ZOOM)),
+            positive_integer(width, maps:get(width, Opts0, ?DEFAULT_WIDTH)),
+            positive_integer(height, maps:get(height, Opts0, ?DEFAULT_HEIGHT)),
+            positive_integer(ready_timeout, maps:get(ready_timeout, Opts0, ?DEFAULT_READY_TIMEOUT)),
+            boolean_option(show_zoom_buttons, maps:get(show_zoom_buttons, Opts0, true))
+        }
+    of
         {
             {ok, SourceId},
             {ok, Latitude},

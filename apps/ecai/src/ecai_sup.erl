@@ -110,34 +110,61 @@ init([]) ->
 %% contacted only after a deliberate API operation, never during supervisor init.
 indexing_rewards_specs() ->
     case application:get_env(ecai, index_rewards_enabled, false) of
-        true -> [#{id => ecai_index_rewards, start => {ecai_index_rewards, start_link, []},
-                   restart => permanent, shutdown => 30000, type => worker,
-                   modules => [ecai_index_rewards]}];
-        false -> [];
-        Invalid -> erlang:error({invalid_configuration, index_rewards_enabled, Invalid})
+        true ->
+            [
+                #{
+                    id => ecai_index_rewards,
+                    start => {ecai_index_rewards, start_link, []},
+                    restart => permanent,
+                    shutdown => 30000,
+                    type => worker,
+                    modules => [ecai_index_rewards]
+                }
+            ];
+        false ->
+            [];
+        Invalid ->
+            erlang:error({invalid_configuration, index_rewards_enabled, Invalid})
     end.
 
 indexing_pool_specs() ->
     case application:get_env(ecai, index_pool_enabled, false) of
         true ->
             true = application:get_env(ecai, index_rewards_enabled, false),
-            [#{id => ecai_index_pool, start => {ecai_index_pool, start_link, []},
-               restart => permanent, shutdown => 30000, type => worker,
-               modules => [ecai_index_pool]}];
-        false -> [];
-        Invalid -> erlang:error({invalid_configuration, index_pool_enabled, Invalid})
+            [
+                #{
+                    id => ecai_index_pool,
+                    start => {ecai_index_pool, start_link, []},
+                    restart => permanent,
+                    shutdown => 30000,
+                    type => worker,
+                    modules => [ecai_index_pool]
+                }
+            ];
+        false ->
+            [];
+        Invalid ->
+            erlang:error({invalid_configuration, index_pool_enabled, Invalid})
     end.
 
 %% The experimental chunk-job ledger is disabled by default and is NOT durable.
 marketplace_specs() ->
     case application:get_env(ecai, marketplace_enabled, false) of
         true ->
-            [#{id => ecai_jobs_srv,
-               start => {ecai_jobs_srv, start_link, []},
-               restart => permanent, shutdown => 5000,
-               type => worker, modules => [ecai_jobs_srv]}];
-        false -> [];
-        Invalid -> erlang:error({invalid_configuration, marketplace_enabled, Invalid})
+            [
+                #{
+                    id => ecai_jobs_srv,
+                    start => {ecai_jobs_srv, start_link, []},
+                    restart => permanent,
+                    shutdown => 5000,
+                    type => worker,
+                    modules => [ecai_jobs_srv]
+                }
+            ];
+        false ->
+            [];
+        Invalid ->
+            erlang:error({invalid_configuration, marketplace_enabled, Invalid})
     end.
 
 code_security_specs() ->
@@ -171,29 +198,49 @@ vulnerability_monitor_specs() ->
      || App <- [damage, ecai, erm]
     ].
 
-
 maybe_ollama_key_specs() ->
-    case {application:get_env(ecai, ollama_api_enabled, true),
-          application:get_env(ecai, ollama_api_keys_enabled, true)} of
+    case
+        {
+            application:get_env(ecai, ollama_api_enabled, true),
+            application:get_env(ecai, ollama_api_keys_enabled, true)
+        }
+    of
         {true, true} ->
-            [#{id => ecai_ollama_api_keys,
-               start => {ecai_ollama_api_keys, start_link, []},
-               restart => permanent, shutdown => 30000,
-               type => worker, modules => [ecai_ollama_api_keys]}];
-        {false, _} -> [];
-        {_, false} -> [];
-        {_, Invalid} -> erlang:error({invalid_configuration, ollama_api_keys_enabled, Invalid})
+            [
+                #{
+                    id => ecai_ollama_api_keys,
+                    start => {ecai_ollama_api_keys, start_link, []},
+                    restart => permanent,
+                    shutdown => 30000,
+                    type => worker,
+                    modules => [ecai_ollama_api_keys]
+                }
+            ];
+        {false, _} ->
+            [];
+        {_, false} ->
+            [];
+        {_, Invalid} ->
+            erlang:error({invalid_configuration, ollama_api_keys_enabled, Invalid})
     end.
 
 maybe_compute_specs() ->
     case application:get_env(ecai, compute_settings_enabled, true) of
         true ->
-            [#{id => ecai_compute_settings,
-               start => {ecai_compute_settings, start_link, []},
-               restart => permanent, shutdown => 30000,
-               type => worker, modules => [ecai_compute_settings]}];
-        false -> [];
-        Invalid -> erlang:error({invalid_configuration, compute_settings_enabled, Invalid})
+            [
+                #{
+                    id => ecai_compute_settings,
+                    start => {ecai_compute_settings, start_link, []},
+                    restart => permanent,
+                    shutdown => 30000,
+                    type => worker,
+                    modules => [ecai_compute_settings]
+                }
+            ];
+        false ->
+            [];
+        Invalid ->
+            erlang:error({invalid_configuration, compute_settings_enabled, Invalid})
     end.
 
 maybe_ingest_specs() ->

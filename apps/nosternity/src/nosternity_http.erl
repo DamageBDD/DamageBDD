@@ -85,8 +85,9 @@ trails() ->
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 
-content_types_provided(Req, #{action := Action} = State)
-    when Action =:= home_ui; Action =:= note_ui ->
+content_types_provided(Req, #{action := Action} = State) when
+    Action =:= home_ui; Action =:= note_ui
+->
     {[{{<<"text">>, <<"html">>, '*'}, to_html}], Req, State};
 content_types_provided(Req, State) ->
     {
@@ -153,8 +154,11 @@ to_html(Req0, #{action := note_ui} = State) ->
     Qs = cowboy_req:parse_qs(Req0),
     %% Mustache escapes once at the HTML boundary, including the query value.
     Id = qs_get_bin(<<"id">>, Qs, <<>>),
-    Html = nosternity_page:render("note.mustache", <<"Nostr Note">>,
-        #{event_id => Id, limit => ?DEFAULT_LIMIT}),
+    Html = nosternity_page:render(
+        "note.mustache",
+        <<"Nostr Note">>,
+        #{event_id => Id, limit => ?DEFAULT_LIMIT}
+    ),
     {Html, cowboy_req:set_resp_header(<<"cache-control">>, <<"no-store">>, Req0), State}.
 
 %%--------------------------------------------------------------------

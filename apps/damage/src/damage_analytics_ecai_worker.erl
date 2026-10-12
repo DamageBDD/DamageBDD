@@ -20,34 +20,48 @@
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
-project(ReportCid, Run, ProjectionHash)
-    when is_binary(ReportCid), ReportCid =/= <<>>, is_map(Run), is_binary(ProjectionHash) ->
+project(ReportCid, Run, ProjectionHash) when
+    is_binary(ReportCid), ReportCid =/= <<>>, is_map(Run), is_binary(ProjectionHash)
+->
     case whereis(?SERVER) of
         undefined -> ok;
         _ -> gen_server:cast(?SERVER, {project, ReportCid, Run, ProjectionHash})
     end;
-project(_, _, _) -> ok.
+project(_, _, _) ->
+    ok.
 
 status() ->
     case whereis(?SERVER) of
-        undefined -> #{status => unavailable, pending => 0, running => false};
+        undefined ->
+            #{status => unavailable, pending => 0, running => false};
         _ ->
-            try gen_server:call(?SERVER, status, 1000)
-            catch _:_ -> #{status => unavailable, pending => 0, running => false} end
+            try
+                gen_server:call(?SERVER, status, 1000)
+            catch
+                _:_ -> #{status => unavailable, pending => 0, running => false}
+            end
     end.
 
 init([]) ->
-    {ok, #{queue => queue:new(), queued => #{}, pending => #{}, running => false,
-           completed => 0, failed => 0}}.
+    {ok, #{
+        queue => queue:new(),
+        queued => #{},
+        pending => #{},
+        running => false,
+        completed => 0,
+        failed => 0
+    }}.
 
 handle_call(status, _From, State) ->
-    {reply, #{
-        status => ok,
-        pending => map_size(maps:get(pending, State, #{})),
-        running => maps:get(running, State, false),
-        completed => maps:get(completed, State, 0),
-        failed => maps:get(failed, State, 0)
-    }, State};
+    {reply,
+        #{
+            status => ok,
+            pending => map_size(maps:get(pending, State, #{})),
+            running => maps:get(running, State, false),
+            completed => maps:get(completed, State, 0),
+            failed => maps:get(failed, State, 0)
+        },
+        State};
 handle_call(_Other, _From, State) ->
     {reply, {error, unsupported_call}, State}.
 
@@ -55,12 +69,14 @@ handle_cast({project, ReportCid, Run, ProjectionHash}, State0) ->
     Pending0 = maps:get(pending, State0),
     Queued0 = maps:get(queued, State0),
     State1 = State0#{pending => Pending0#{ReportCid => {Run, ProjectionHash}}},
-    State2 = case maps:is_key(ReportCid, Queued0) of
-        true -> State1;
-        false ->
-            Queue1 = queue:in(ReportCid, maps:get(queue, State1)),
-            State1#{queue => Queue1, queued => Queued0#{ReportCid => true}}
-    end,
+    State2 =
+        case maps:is_key(ReportCid, Queued0) of
+            true ->
+                State1;
+            false ->
+                Queue1 = queue:in(ReportCid, maps:get(queue, State1)),
+                State1#{queue => Queue1, queued => Queued0#{ReportCid => true}}
+        end,
     {noreply, ensure_work(State2)};
 handle_cast(_Other, State) ->
     {noreply, State}.
@@ -77,21 +93,26 @@ handle_info(work, State0) ->
                 queued => maps:remove(ReportCid, Queued0),
                 pending => maps:remove(ReportCid, Pending0)
             },
-            State2 = case maps:get(ReportCid, Pending0, undefined) of
-                {Run, ProjectionHash} ->
-                    Projection = damage_analytics_ecai:project_run(Run),
-                    ok = damage_analytics_store:set_ecai_projection(
-                        ReportCid, ProjectionHash, Projection
-                    ),
-                    case maps:get(status, Projection, unavailable) of
-                        unavailable -> State1#{failed => maps:get(failed, State1, 0) + 1};
-                        _ -> State1#{completed => maps:get(completed, State1, 0) + 1}
-                    end;
-                undefined -> State1
-            end,
+            State2 =
+                case maps:get(ReportCid, Pending0, undefined) of
+                    {Run, ProjectionHash} ->
+                        Projection = damage_analytics_ecai:project_run(Run),
+                        ok = damage_analytics_store:set_ecai_projection(
+                            ReportCid, ProjectionHash, Projection
+                        ),
+                        case maps:get(status, Projection, unavailable) of
+                            unavailable -> State1#{failed => maps:get(failed, State1, 0) + 1};
+                            _ -> State1#{completed => maps:get(completed, State1, 0) + 1}
+                        end;
+                    undefined ->
+                        State1
+                end,
             case queue:is_empty(maps:get(queue, State2)) of
-                true -> {noreply, State2#{running => false}};
-                false -> self() ! work, {noreply, State2#{running => true}}
+                true ->
+                    {noreply, State2#{running => false}};
+                false ->
+                    self() ! work,
+                    {noreply, State2#{running => true}}
             end
     end;
 handle_info(_Other, State) ->
@@ -100,7 +121,8 @@ handle_info(_Other, State) ->
 terminate(_Reason, _State) -> ok.
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
-ensure_work(#{running := true} = State) -> State;
+ensure_work(#{running := true} = State) ->
+    State;
 ensure_work(State) ->
     self() ! work,
     State#{running => true}.

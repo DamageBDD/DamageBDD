@@ -217,11 +217,18 @@ safe_run_meta(Hash) ->
 reply_run_meta(Hash, Req, State) ->
     case safe_run_meta(Hash) of
         {ok, Data} ->
-            {stop, cowboy_req:reply(200,
-                #{<<"content-type">> => <<"application/json; charset=utf-8">>,
-                  <<"cache-control">> => <<"public, max-age=300">>,
-                  <<"x-content-type-options">> => <<"nosniff">>},
-                Data, Req), State};
+            {stop,
+                cowboy_req:reply(
+                    200,
+                    #{
+                        <<"content-type">> => <<"application/json; charset=utf-8">>,
+                        <<"cache-control">> => <<"public, max-age=300">>,
+                        <<"x-content-type-options">> => <<"nosniff">>
+                    },
+                    Data,
+                    Req
+                ),
+                State};
         {error, _} ->
             {stop, cowboy_req:reply(404, Req), State}
     end.

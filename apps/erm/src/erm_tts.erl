@@ -5,7 +5,8 @@
     start_link/1,
     child_specs/0,
     say/1,
-    tuning_cue/1, cancel_cue/1,
+    tuning_cue/1,
+    cancel_cue/1,
     notify/2,
     cancel/0,
     status/0,
@@ -258,11 +259,13 @@ handle_call({tuning_cue, Kind}, {Pid, _}, S) when Kind =:= ready; Kind =:= 'end'
         true ->
             {Reply, Next} = start_cue(Kind, Pid, S),
             {reply, Reply, Next};
-        false -> {reply, {error, not_tuning_owner}, S}
+        false ->
+            {reply, {error, not_tuning_owner}, S}
     end;
 handle_call({cancel_cue, Ref}, {Pid, _}, S = #st{current = {cue, Ref, Pid, _}}) ->
     {reply, ok, disconnect(cancelled, S)};
-handle_call({cancel_cue, _}, _, S) -> {reply, ok, S};
+handle_call({cancel_cue, _}, _, S) ->
+    {reply, ok, S};
 handle_call({say, Text}, _, S) ->
     {Reply, Next} = enqueue(Text, S),
     {reply, Reply, Next};
@@ -296,13 +299,18 @@ handle_info({P, {data, <<"R">>}}, S = #st{port = P, ready = false}) ->
     logger:notice("tts ready voice=~p volume=~p personality=~p", [
         maps:get(voice, S#st.opts), maps:get(volume, S#st.opts), maps:get(personality, S#st.opts)
     ]),
-    {noreply, clear_timer(S#st{ready = true, error = undefined, opts = (S#st.opts)#{cue_protocol => false}})};
+    {noreply,
+        clear_timer(S#st{
+            ready = true, error = undefined, opts = (S#st.opts)#{cue_protocol => false}
+        })};
 handle_info({P, {data, <<"D">>}}, S = #st{port = P, current = {cue, _, _, _}}) ->
     cue_result(ok, S),
     %% Keep speech replay and the existing speech echo guard unchanged.
     {noreply, clear_timer(S#st{busy = false, current = undefined})};
-handle_info({'DOWN', Monitor, process, Pid, _},
-    S = #st{current = {cue, _, Pid, Monitor}}) ->
+handle_info(
+    {'DOWN', Monitor, process, Pid, _},
+    S = #st{current = {cue, _, Pid, Monitor}}
+) ->
     {noreply, disconnect(cue_owner_down, S)};
 handle_info({P, {data, <<"D">>}}, S = #st{port = P, busy = true, parts = []}) ->
     gate(tail(S), S),
@@ -319,25 +327,37 @@ handle_info({timeout, Ref, tts}, S = #st{timer = Ref}) ->
     {noreply, disconnect(timeout, S)};
 handle_info(_, S) ->
     {noreply, S}.
-start_cue(_, _, S = #st{ready = false}) -> {{error, not_ready}, S};
-start_cue(_, _, S = #st{busy = true}) -> {{error, busy}, S};
+start_cue(_, _, S = #st{ready = false}) ->
+    {{error, not_ready}, S};
+start_cue(_, _, S = #st{busy = true}) ->
+    {{error, busy}, S};
 start_cue(Kind, Pid, S) ->
     case {maps:get(cue_protocol, S#st.opts, false), maps:get(volume, S#st.opts)} of
-        {false, _} -> {{error, tts_rebuild_required}, S};
-        {_, 0} -> {{error, cue_volume_zero}, S};
+        {false, _} ->
+            {{error, tts_rebuild_required}, S};
+        {_, 0} ->
+            {{error, cue_volume_zero}, S};
         {true, Volume} ->
-            Ref = make_ref(), Monitor = monitor(process, Pid),
+            Ref = make_ref(),
+            Monitor = monitor(process, Pid),
             Next = S#st{current = {cue, Ref, Pid, Monitor}, busy = true, parts = []},
             try
-                true = port_command(S#st.port,
-                    <<"B", (integer_to_binary(Volume))/binary, "\n", (atom_to_binary(Kind, utf8))/binary>>),
+                true = port_command(
+                    S#st.port,
+                    <<"B", (integer_to_binary(Volume))/binary, "\n",
+                        (atom_to_binary(Kind, utf8))/binary>>
+                ),
                 {{ok, Ref}, arm(5000, Next)}
-            catch _:_ -> {{error, port_closed}, disconnect(port_closed, Next)} end
+            catch
+                _:_ -> {{error, port_closed}, disconnect(port_closed, Next)}
+            end
     end.
 cue_result(Result, #st{current = {cue, Ref, Pid, Monitor}}) ->
     demonitor(Monitor, [flush]),
-    Pid ! {tts_cue, Ref, Result}, ok;
-cue_result(_, _) -> ok.
+    Pid ! {tts_cue, Ref, Result},
+    ok;
+cue_result(_, _) ->
+    ok.
 
 enqueue(_, S = #st{ready = false}) ->
     {{error, not_ready}, S};
@@ -454,9 +474,10 @@ tail(#st{opts = O}) ->
 guided_native_capture() ->
     case persistent_term:get({erm_native_voice, guidance}, undefined) of
         #{native := Native, owner := Owner} when is_pid(Native), is_pid(Owner) ->
-            Native =:= whereis(erm_native_voice) andalso Owner =:= whereis(erm_voice_tune)
-                andalso is_process_alive(Native) andalso is_process_alive(Owner);
-        _ -> false
+            Native =:= whereis(erm_native_voice) andalso Owner =:= whereis(erm_voice_tune) andalso
+                is_process_alive(Native) andalso is_process_alive(Owner);
+        _ ->
+            false
     end.
 rolling_tail(O) ->
     W = config(application:get_env(erm, whisper_trigger, [])),

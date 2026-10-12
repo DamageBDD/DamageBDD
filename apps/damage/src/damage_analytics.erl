@@ -6,30 +6,57 @@
 -author("Steven Joseph <steven@damagebdd.com>").
 -license("Apache-2.0").
 
--export([trails/0, init/2, allowed_methods/2, content_types_provided/2,
-         content_types_accepted/2, is_authorized/2, to_json/2, from_json/2]).
+-export([
+    trails/0,
+    init/2,
+    allowed_methods/2,
+    content_types_provided/2,
+    content_types_accepted/2,
+    is_authorized/2,
+    to_json/2,
+    from_json/2
+]).
 
 -include_lib("kernel/include/logger.hrl").
 
 trails() ->
     [
         trails:trail(
-            "/api/analytics/summary", ?MODULE, #{action => summary},
-            #{get => #{tags => ["Analytics"],
-                       description => "Read cached verification analytics for the authenticated account.",
-                       produces => ["application/json"]}}
+            "/api/analytics/summary",
+            ?MODULE,
+            #{action => summary},
+            #{
+                get => #{
+                    tags => ["Analytics"],
+                    description =>
+                        "Read cached verification analytics for the authenticated account.",
+                    produces => ["application/json"]
+                }
+            }
         ),
         trails:trail(
-            "/api/analytics/status", ?MODULE, #{action => status},
-            #{get => #{tags => ["Analytics"],
-                       description => "Read analytics cache/indexer health.",
-                       produces => ["application/json"]}}
+            "/api/analytics/status",
+            ?MODULE,
+            #{action => status},
+            #{
+                get => #{
+                    tags => ["Analytics"],
+                    description => "Read analytics cache/indexer health.",
+                    produces => ["application/json"]
+                }
+            }
         ),
         trails:trail(
-            "/api/analytics/refresh", ?MODULE, #{action => refresh},
-            #{post => #{tags => ["Analytics"],
-                        description => "Request an asynchronous analytics reconciliation.",
-                        produces => ["application/json"]}}
+            "/api/analytics/refresh",
+            ?MODULE,
+            #{action => refresh},
+            #{
+                post => #{
+                    tags => ["Analytics"],
+                    description => "Request an asynchronous analytics reconciliation.",
+                    produces => ["application/json"]
+                }
+            }
         )
     ].
 
@@ -43,7 +70,8 @@ content_types_provided(Req, State) ->
 
 content_types_accepted(Req, #{action := refresh} = State) ->
     {[{{<<"application">>, <<"json">>, '*'}, from_json}], Req, State};
-content_types_accepted(Req, State) -> {[], Req, State}.
+content_types_accepted(Req, State) ->
+    {[], Req, State}.
 
 is_authorized(Req, State) ->
     damage_http:is_authorized(Req, State).
@@ -61,8 +89,17 @@ to_json(Req0, #{action := summary, public_key := Account} = State) ->
     Req1 = set_summary_headers(Req0, ETag),
     case cowboy_req:header(<<"if-none-match">>, Req1) of
         ETag ->
-            {stop, cowboy_req:reply(304, #{<<"etag">> => ETag,
-                                          <<"cache-control">> => summary_cache_control()}, <<>>, Req1), State};
+            {stop,
+                cowboy_req:reply(
+                    304,
+                    #{
+                        <<"etag">> => ETag,
+                        <<"cache-control">> => summary_cache_control()
+                    },
+                    <<>>,
+                    Req1
+                ),
+                State};
         _ ->
             {Body, Req1, State}
     end;
@@ -85,9 +122,14 @@ from_json(Req0, #{action := refresh, public_key := Account} = State) ->
     ok = damage_analytics_store:reproject_ecai(),
     Response = #{status => <<"accepted">>, account => Account, syncing => true},
     Req1 = cowboy_req:set_resp_header(<<"cache-control">>, <<"private, no-store">>, Req),
-    {stop, cowboy_req:reply(202,
-        #{<<"content-type">> => <<"application/json; charset=utf-8">>},
-        jsx:encode(Response), Req1), State}.
+    {stop,
+        cowboy_req:reply(
+            202,
+            #{<<"content-type">> => <<"application/json; charset=utf-8">>},
+            jsx:encode(Response),
+            Req1
+        ),
+        State}.
 
 set_summary_headers(Req0, ETag) ->
     Req1 = cowboy_req:set_resp_header(<<"cache-control">>, summary_cache_control(), Req0),

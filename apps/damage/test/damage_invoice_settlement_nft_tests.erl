@@ -10,7 +10,9 @@ attestation_hash_test() ->
     ?assertEqual(64, byte_size(Hash)),
     ?assertMatch(match, re:run(Hash, <<"^[0-9a-f]{64}$">>, [{capture, none}])),
     ?assertEqual(Hash, damage_invoice_settlement_nft:attestation_hash(I)),
-    ?assertNotEqual(Hash, damage_invoice_settlement_nft:attestation_hash(I#{payment_reference => <<"OTHER">>})).
+    ?assertNotEqual(
+        Hash, damage_invoice_settlement_nft:attestation_hash(I#{payment_reference => <<"OTHER">>})
+    ).
 
 prepare_is_private_test() ->
     with_config(fun() ->
@@ -30,8 +32,11 @@ prepare_is_private_test() ->
 status_disabled_without_contract_test() ->
     Prev = application:get_env(damage, enterprise_invoices),
     try
-        application:set_env(damage, enterprise_invoices,
-            [{enabled,true},{settlement_nft,[{enabled,false},{contract_id,?CONTRACT}]}]),
+        application:set_env(
+            damage,
+            enterprise_invoices,
+            [{enabled, true}, {settlement_nft, [{enabled, false}, {contract_id, ?CONTRACT}]}]
+        ),
         ?assertEqual(false, maps:get(enabled, damage_invoice_settlement_nft:status()))
     after
         restore(enterprise_invoices, Prev)
@@ -40,8 +45,16 @@ status_disabled_without_contract_test() ->
 with_config(Fun) ->
     Prev = application:get_env(damage, enterprise_invoices),
     try
-        application:set_env(damage, enterprise_invoices,
-            [{enabled,true},{settlement_nft,[{enabled,true},{contract_id,?CONTRACT},{reward_class,<<"customer">>}]}]),
+        application:set_env(
+            damage,
+            enterprise_invoices,
+            [
+                {enabled, true},
+                {settlement_nft, [
+                    {enabled, true}, {contract_id, ?CONTRACT}, {reward_class, <<"customer">>}
+                ]}
+            ]
+        ),
         Fun()
     after
         restore(enterprise_invoices, Prev)
@@ -51,8 +64,15 @@ restore(Key, {ok, Value}) -> application:set_env(damage, Key, Value);
 restore(Key, undefined) -> application:unset_env(damage, Key).
 
 invoice() ->
-    #{status => <<"paid">>, id => <<"invoice-1">>, number => <<"DBDD-ENT-000001">>,
-      plan_id => <<"retainer">>, customer => #{id => <<"customer-1">>},
-      pdf_sha256 => <<"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef">>,
-      paid_on => <<"2026-10-11">>, payment_reference => <<"PRIVATE-REFERENCE">>,
-      currency => <<"AUD">>, total_minor => 85000}.
+    #{
+        status => <<"paid">>,
+        id => <<"invoice-1">>,
+        number => <<"DBDD-ENT-000001">>,
+        plan_id => <<"retainer">>,
+        customer => #{id => <<"customer-1">>},
+        pdf_sha256 => <<"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef">>,
+        paid_on => <<"2026-10-11">>,
+        payment_reference => <<"PRIVATE-REFERENCE">>,
+        currency => <<"AUD">>,
+        total_minor => 85000
+    }.

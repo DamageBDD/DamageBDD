@@ -49,14 +49,16 @@ is_node_admin_account(AeAccount0) ->
 %% Tax administrators are a separate operator-controlled allowlist. Node
 %% administrators are always tax administrators, but not the other way around.
 %% This list is never editable through the dashboard or public settings API.
-is_tax_admin_account(undefined) -> false;
+is_tax_admin_account(undefined) ->
+    false;
 is_tax_admin_account(AeAccount0) ->
     AeAccount = to_bin(AeAccount0),
     is_node_admin_account(AeAccount) orelse
         case application:get_env(damage, tax_admins, []) of
             Admins when is_list(Admins) ->
                 lists:member(AeAccount, [to_bin(A) || A <- Admins]);
-            _ -> false
+            _ ->
+                false
         end.
 
 %% ------------------------------------------------------------------
@@ -94,14 +96,25 @@ resolve_oauth(<<"ds1.", _/binary>> = Token, State) ->
     case damage_browser_auth:lookup(Token) of
         {ok, #{address := Account, mode := wallet}} ->
             %% Never call identity_server or hydrate a signing key for this path.
-            WalletState = auth_success_state(maps:without([private_key, username], State), Account,
-                #{access_token => Token, auth_type => browser_session, auth_mode => wallet}),
+            WalletState = auth_success_state(
+                maps:without([private_key, username], State),
+                Account,
+                #{access_token => Token, auth_type => browser_session, auth_mode => wallet}
+            ),
             {ok, WalletState#{node_admin => false, tax_admin => false}};
         {ok, #{address := Account, mode := custodial, email := Email}} ->
-            with_identity_account(Account, State,
-                #{access_token => Token, username => Email,
-                  auth_type => browser_session, auth_mode => custodial});
-        _ -> {error, invalid_oauth}
+            with_identity_account(
+                Account,
+                State,
+                #{
+                    access_token => Token,
+                    username => Email,
+                    auth_type => browser_session,
+                    auth_mode => custodial
+                }
+            );
+        _ ->
+            {error, invalid_oauth}
     end;
 resolve_oauth(Token, State) ->
     case damage_access_token:verify_token(Token) of
@@ -187,8 +200,13 @@ authenticate(Req, State0) ->
         {access_token, Token} ->
             case resolve_oauth(Token, BaseState) of
                 {ok, AuthState} ->
-                    case damage_wallet_policy:allowed(cowboy_req:method(Req), cowboy_req:path(Req),
-                            maps:get(auth_mode, AuthState, legacy)) of
+                    case
+                        damage_wallet_policy:allowed(
+                            cowboy_req:method(Req),
+                            cowboy_req:path(Req),
+                            maps:get(auth_mode, AuthState, legacy)
+                        )
+                    of
                         true -> {ok, AuthState};
                         false -> {error, wallet_operation_unavailable, BaseState}
                     end;
@@ -285,9 +303,17 @@ require_auth(Req, State0, OnAnonymousFun, OnErrorFun) when
         {anonymous, BaseState} ->
             OnAnonymousFun(Req, BaseState);
         {error, wallet_operation_unavailable, BaseState} ->
-            {stop, cowboy_req:reply(403,
-                #{<<"content-type">> => <<"application/json">>, <<"cache-control">> => <<"no-store">>},
-                jsx:encode(damage_wallet_policy:rejection()), Req), BaseState};
+            {stop,
+                cowboy_req:reply(
+                    403,
+                    #{
+                        <<"content-type">> => <<"application/json">>,
+                        <<"cache-control">> => <<"no-store">>
+                    },
+                    jsx:encode(damage_wallet_policy:rejection()),
+                    Req
+                ),
+                BaseState};
         {error, Reason, BaseState} ->
             OnErrorFun(Req, Reason, BaseState)
     end.

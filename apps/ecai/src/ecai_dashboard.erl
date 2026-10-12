@@ -187,24 +187,33 @@ render_advanced_indexer_component(_, _) ->
     <<>>.
 
 render_dashboard_page("ecai_console.mustache", Ctx) ->
-    AuthCtx = #{logo_image => <<"/static/img/ecai-brain.svg">>,
-                auth_brand_name => <<"ECAI">>,
-                auth_brand_label => <<"INTELLIGENCE FABRIC">>,
-                auth_brand_alt => <<"ECAI brain mark">>,
-                auth_auto_open => <<"false">>, auth_callback_path => <<"/dashboard">>,
-                auth_allow_guest => true, auth_hide_node_wallet => true},
+    AuthCtx = #{
+        logo_image => <<"/static/img/ecai-brain.svg">>,
+        auth_brand_name => <<"ECAI">>,
+        auth_brand_label => <<"INTELLIGENCE FABRIC">>,
+        auth_brand_alt => <<"ECAI brain mark">>,
+        auth_auto_open => <<"false">>,
+        auth_callback_path => <<"/dashboard">>,
+        auth_allow_guest => true,
+        auth_hide_node_wallet => true
+    },
     AuthHtml = damage_utils:load_template(damage, "ui/dashboard/auth_modal.mustache", AuthCtx),
     %% The Video Studio markup lives in the console template itself. Older
     %% running ecai_dashboard beams therefore cannot omit it accidentally.
     MarketMaker = render_tpl(?DASH_TPL("ecai_market_maker.mustache"), Ctx),
     ComputeSettings = render_tpl(?DASH_TPL("compute_settings.mustache"), Ctx),
     OllamaKeys = render_tpl(?DASH_TPL("ollama_keys.mustache"), Ctx),
-    render_tpl(?DASH_TPL("ecai_console.mustache"),
-               Ctx#{browser_auth_modal => AuthHtml,
-                    market_maker_panel => MarketMaker,
-                    compute_settings_panel => ComputeSettings,
-                    ollama_keys_panel => OllamaKeys});
-render_dashboard_page(Template, Ctx) -> render_tpl(?DASH_TPL(Template), Ctx).
+    render_tpl(
+        ?DASH_TPL("ecai_console.mustache"),
+        Ctx#{
+            browser_auth_modal => AuthHtml,
+            market_maker_panel => MarketMaker,
+            compute_settings_panel => ComputeSettings,
+            ollama_keys_panel => OllamaKeys
+        }
+    );
+render_dashboard_page(Template, Ctx) ->
+    render_tpl(?DASH_TPL(Template), Ctx).
 
 %% ---------------------- Rendering helper ---------------------
 render_tpl(TemplateRelPath, Context) ->

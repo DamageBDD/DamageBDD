@@ -87,7 +87,8 @@ worker_specs() ->
 
 nostr_client_specs() ->
     case nosternity_config:get(nostr_clients_enabled) of
-        false -> [];
+        false ->
+            [];
         true ->
             case whereis(nostr_pool) of
                 undefined ->
@@ -95,30 +96,39 @@ nostr_client_specs() ->
                 Pid ->
                     ?LOG_DEBUG("Using damage-supervised nostr_pool pid=~p", [Pid])
             end,
-            [#{
-                id => nosternity_nostr,
-                start => {damage_nostr, start_link, [nosternity_nostr_nsec]},
-                restart => transient,
-                shutdown => 60000,
-                type => worker,
-                modules => [damage_nostr]
-            },
-            #{
-                id => inglorious_nostr,
-                start => {damage_nostr, start_link, [inglorious_nostr_nsec]},
-                restart => transient,
-                shutdown => 60000,
-                type => worker,
-                modules => [damage_nostr]
-            }
+            [
+                #{
+                    id => nosternity_nostr,
+                    start => {damage_nostr, start_link, [nosternity_nostr_nsec]},
+                    restart => transient,
+                    shutdown => 60000,
+                    type => worker,
+                    modules => [damage_nostr]
+                },
+                #{
+                    id => inglorious_nostr,
+                    start => {damage_nostr, start_link, [inglorious_nostr_nsec]},
+                    restart => transient,
+                    shutdown => 60000,
+                    type => worker,
+                    modules => [damage_nostr]
+                }
             ]
     end.
 
-
 dashboard_specs() ->
     case nosternity_config:get(dashboard_enabled) of
-        false -> [];
-        true -> [#{id => nosternity_auth, start => {nosternity_auth, start_link, []},
-                   restart => permanent, shutdown => 5000, type => worker,
-                   modules => [nosternity_auth]}]
+        false ->
+            [];
+        true ->
+            [
+                #{
+                    id => nosternity_auth,
+                    start => {nosternity_auth, start_link, []},
+                    restart => permanent,
+                    shutdown => 5000,
+                    type => worker,
+                    modules => [nosternity_auth]
+                }
+            ]
     end.

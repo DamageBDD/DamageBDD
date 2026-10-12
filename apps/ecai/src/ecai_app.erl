@@ -110,14 +110,15 @@ get_trails() ->
         ] ++ ollama_api_handlers() ++ code_admin_handlers() ++ marketplace_handlers(),
     %% The dashboard uses the same supervised browser auth service as DamageBDD.
     %% Legacy login routes remain for the separate older indexer pages only.
-    AccountRoutes = [
-        trails:trail("/accounts/auth/", damage_accounts, #{action => authenticate}, #{
-            post => #{tags => ["ECAI Authentication"], produces => ["application/json"]}
-        }),
-        trails:trail("/accounts/logout", damage_accounts, #{action => logout}, #{
-            post => #{tags => ["ECAI Authentication"], produces => ["application/json"]}
-        })
-    ] ++ damage_browser_auth_http:trails(ecai),
+    AccountRoutes =
+        [
+            trails:trail("/accounts/auth/", damage_accounts, #{action => authenticate}, #{
+                post => #{tags => ["ECAI Authentication"], produces => ["application/json"]}
+            }),
+            trails:trail("/accounts/logout", damage_accounts, #{action => logout}, #{
+                post => #{tags => ["ECAI Authentication"], produces => ["application/json"]}
+            })
+        ] ++ damage_browser_auth_http:trails(ecai),
     AuthAssets = ecai_auth_http:asset_routes(),
     Trails =
         [

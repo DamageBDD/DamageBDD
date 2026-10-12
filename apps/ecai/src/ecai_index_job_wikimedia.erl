@@ -294,11 +294,12 @@ run_one_unit(Job, Runtime0, Checkpoint0, pageviews) ->
                 {[], _} ->
                     {ok, Runtime0, Checkpoint0#{stage => aggregating, partition_index => 0}};
                 {_, 0} ->
-                    {error, {empty_pageview_selection, #{
-                        pageview_files_processed => Index,
-                        pageview_rows => 0,
-                        pageview_total_views => maps:get(pageview_total_views, Checkpoint0, 0)
-                    }}};
+                    {error,
+                        {empty_pageview_selection, #{
+                            pageview_files_processed => Index,
+                            pageview_rows => 0,
+                            pageview_total_views => maps:get(pageview_total_views, Checkpoint0, 0)
+                        }}};
                 {_, _} ->
                     {ok, Runtime0, Checkpoint0#{stage => aggregating, partition_index => 0}}
             end;
@@ -807,10 +808,11 @@ live_record_fun(Job, Runtime) ->
     end.
 
 remember_live_search_error(JobId, Reason) ->
-    Previous = case get({?MODULE, JobId, live_search_state}) of
-        State when is_map(State) -> State;
-        _ -> #{}
-    end,
+    Previous =
+        case get({?MODULE, JobId, live_search_state}) of
+            State when is_map(State) -> State;
+            _ -> #{}
+        end,
     put(
         {?MODULE, JobId, live_search_state},
         Previous#{live => false, search_ready => false, error => Reason}

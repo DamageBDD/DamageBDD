@@ -35,14 +35,21 @@ is_authorized(Req, State0) ->
 to_html(Req0, #{action := index} = State) ->
     Req = cowboy_req:set_resp_header(<<"cache-control">>, <<"no-store">>, Req0),
     AuthCtx = maps:merge(base_context(Req), State),
-    Ctx0 = AuthCtx#{tax_only_admin => maps:get(tax_admin, AuthCtx, false) =:= true
-                       andalso maps:get(node_admin, AuthCtx, false) =/= true},
+    Ctx0 = AuthCtx#{
+        tax_only_admin => maps:get(tax_admin, AuthCtx, false) =:= true andalso
+            maps:get(node_admin, AuthCtx, false) =/= true
+    },
     #{component := Comp0} = cowboy_req:match_qs([{component, [], undefined}], Req),
     case Comp0 of
         undefined ->
             {render_full_page(Ctx0), Req, State};
         _ ->
-            Comp = try binary_to_existing_atom(Comp0, utf8) catch error:badarg -> unknown end,
+            Comp =
+                try
+                    binary_to_existing_atom(Comp0, utf8)
+                catch
+                    error:badarg -> unknown
+                end,
             {render_component(Comp, Ctx0), Req, State}
     end.
 
@@ -103,10 +110,11 @@ render_full_page(Ctx) ->
     %% A guest sees the public onboarding experience immediately, rather than an
     %% auto-open sign-in dialog covering an otherwise empty dashboard.  The
     %% sign-in modal remains available via the guest actions.
-    AuthCtx = case maps:get(authenticated, Ctx, false) of
-        true -> Ctx;
-        _ -> Ctx#{auth_auto_open => <<"false">>, auth_allow_guest => true}
-    end,
+    AuthCtx =
+        case maps:get(authenticated, Ctx, false) of
+            true -> Ctx;
+            _ -> Ctx#{auth_auto_open => <<"false">>, auth_allow_guest => true}
+        end,
     AuthM = render_tpl(?TPL("auth_modal.mustache"), AuthCtx),
     GuestLanding = render_tpl(?TPL("guest_landing.mustache"), Ctx),
     LogOutM = render_tpl(?TPL("logout_modal.mustache"), Ctx),
@@ -127,10 +135,11 @@ render_full_page(Ctx) ->
     NodeTransactionsTab = render_tpl(?TPL("node_transactions_tab.mustache"), Ctx),
     NodeChannelsTab = render_tpl(?TPL("node_channels_tab.mustache"), Ctx),
     NodeClnAdminTab = render_tpl(?TPL("node_cln_admin.mustache"), Ctx),
-    NodeTaxReportsTab = case maps:get(tax_admin, Ctx, false) of
-        true -> render_tpl(?TPL("node_tax_reports_tab.mustache"), Ctx);
-        _ -> <<>>
-    end,
+    NodeTaxReportsTab =
+        case maps:get(tax_admin, Ctx, false) of
+            true -> render_tpl(?TPL("node_tax_reports_tab.mustache"), Ctx);
+            _ -> <<>>
+        end,
 
     %% pass the assembled parts into the shell
     PageCtx = Ctx#{

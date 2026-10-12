@@ -176,17 +176,29 @@ with_repo(Fun) ->
     ok = git(Base, ["config", "user.email", "ecai-test@example.invalid"]),
     ok = git(Base, ["config", "user.name", "ECAI Test"]),
     ok = git(Base, ["add", "."]),
-    ok = git(Base, ["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "base"]),
-    try Fun(Base)
-    after _ = file:del_dir_r(Base)
+    ok = git(Base, [
+        "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-qm", "base"
+    ]),
+    try
+        Fun(Base)
+    after
+        _ = file:del_dir_r(Base)
     end.
 
 commit(Repo, Message) ->
     File = filename:join(Repo, "history.txt"),
-    Existing = case file:read_file(File) of {ok, Bin} -> Bin; _ -> <<>> end,
-    ok = file:write_file(File, <<Existing/binary, (unicode:characters_to_binary(Message))/binary, "\n">>),
+    Existing =
+        case file:read_file(File) of
+            {ok, Bin} -> Bin;
+            _ -> <<>>
+        end,
+    ok = file:write_file(
+        File, <<Existing/binary, (unicode:characters_to_binary(Message))/binary, "\n">>
+    ),
     ok = git(Repo, ["add", "."]),
-    git(Repo, ["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-qm", Message]).
+    git(Repo, [
+        "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "-qm", Message
+    ]).
 
 git(Cwd, Args) ->
     case git_command(Cwd, Args) of
@@ -196,9 +208,12 @@ git(Cwd, Args) ->
 
 git_command(Cwd, Args) ->
     case os:find_executable("git") of
-        false -> {error, executable_not_found};
+        false ->
+            {error, executable_not_found};
         Exe ->
-            Port = open_port({spawn_executable, Exe}, [binary, exit_status, stderr_to_stdout, {args, ["-C", Cwd | Args]}]),
+            Port = open_port({spawn_executable, Exe}, [
+                binary, exit_status, stderr_to_stdout, {args, ["-C", Cwd | Args]}
+            ]),
             collect_git(Port, <<>>)
     end.
 
@@ -211,6 +226,10 @@ collect_git(Port, Acc) ->
         {Port, {exit_status, 0}} -> {ok, Acc};
         {Port, {exit_status, Status}} -> {error, {exit_status, Status, Acc}}
     after 30000 ->
-        try port_close(Port) catch _:_ -> ok end,
+        try
+            port_close(Port)
+        catch
+            _:_ -> ok
+        end,
         {error, timeout}
     end.

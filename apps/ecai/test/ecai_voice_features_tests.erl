@@ -3,13 +3,25 @@
 
 fft_reference_test() ->
     Plan = ecai_voice_dsp:plan(),
-    X = [{1.0, 0.0}, {2.0, 0.0}, {-1.0, 0.0}, {0.5, 0.0},
-         {3.0, 0.0}, {0.0, 0.0}, {4.0, 0.0}, {-2.0, 0.0}],
+    X = [
+        {1.0, 0.0},
+        {2.0, 0.0},
+        {-1.0, 0.0},
+        {0.5, 0.0},
+        {3.0, 0.0},
+        {0.0, 0.0},
+        {4.0, 0.0},
+        {-2.0, 0.0}
+    ],
     Actual = ecai_voice_dsp:fft(X, Plan),
     Expected = dft(X),
-    lists:foreach(fun({{AR, AI}, {ER, EI}}) ->
-        ?assert(abs(AR - ER) < 1.0e-9), ?assert(abs(AI - EI) < 1.0e-9)
-    end, lists:zip(Actual, Expected)).
+    lists:foreach(
+        fun({{AR, AI}, {ER, EI}}) ->
+            ?assert(abs(AR - ER) < 1.0e-9),
+            ?assert(abs(AI - EI) < 1.0e-9)
+        end,
+        lists:zip(Actual, Expected)
+    ).
 
 fft_invalid_length_test() ->
     Plan = ecai_voice_dsp:plan(),
@@ -28,11 +40,17 @@ quantile_test() ->
     ?assertEqual(7.0, ecai_voice_dsp:quantile([7], 0.25)).
 
 quality_gates_test() ->
-    ?assertEqual({error, {insufficient_audio, too_short}}, ecai_voice_features:extract(<<0:16000>>)),
-    ?assertEqual({error, {insufficient_audio, silence_or_too_quiet}},
-                 ecai_voice_features:extract(<<0:(32000 * 2 * 8)>>)),
+    ?assertEqual(
+        {error, {insufficient_audio, too_short}}, ecai_voice_features:extract(<<0:16000>>)
+    ),
+    ?assertEqual(
+        {error, {insufficient_audio, silence_or_too_quiet}},
+        ecai_voice_features:extract(<<0:(32000 * 2 * 8)>>)
+    ),
     Clipped = binary:copy(<<32767:16/little-signed>>, 32000),
-    ?assertEqual({error, {insufficient_audio, excessive_clipping}}, ecai_voice_features:extract(Clipped)),
+    ?assertEqual(
+        {error, {insufficient_audio, excessive_clipping}}, ecai_voice_features:extract(Clipped)
+    ),
     ?assertEqual({error, invalid_pcm16_or_duration}, ecai_voice_features:extract(<<1>>)),
     TooLong = <<0:(16000 * 2 * 31 * 8)>>,
     ?assertEqual({error, invalid_pcm16_or_duration}, ecai_voice_features:extract(TooLong)).
@@ -43,13 +61,44 @@ feature_reference_test_() ->
         {ok, F} = ecai_voice_features:extract(PCM),
         Q = maps:get(q, F),
         %% Independent NumPy/SciPy reference; one-bin tolerance for libm rounding.
-        Expected = [72,-17,4,8,-7,-7,4,-2,-6,-2,2,0,-2,8,8,7,9,4,3,3,2,2,4,6,1,1,-17,-17,-17,32],
+        Expected = [
+            72,
+            -17,
+            4,
+            8,
+            -7,
+            -7,
+            4,
+            -2,
+            -6,
+            -2,
+            2,
+            0,
+            -2,
+            8,
+            8,
+            7,
+            9,
+            4,
+            3,
+            3,
+            2,
+            2,
+            4,
+            6,
+            1,
+            1,
+            -17,
+            -17,
+            -17,
+            32
+        ],
         ?assertEqual(30, length(Q)),
         ?assert(lists:all(fun({A, B}) -> abs(A - B) =< 1 end, lists:zip(Q, Expected))),
         ?assertEqual(ecai_voice_features:version(), maps:get(frontend, F)),
         {ok, Again} = ecai_voice_features:extract(PCM),
         ?assertEqual(F, Again),
-        LowerGain = << <<(round(S * 0.4)):16/little-signed>> || <<S:16/little-signed>> <= PCM >>,
+        LowerGain = <<<<(round(S * 0.4)):16/little-signed>> || <<S:16/little-signed>> <= PCM>>,
         {ok, Low} = ecai_voice_features:extract(LowerGain),
         {ok, D} = ecai_voice_curve:integer_distance(Q, maps:get(q, Low)),
         ?assert(D =< 20)
@@ -69,11 +118,14 @@ same_pitch_different_envelope_test_() ->
 noise_rejection_test_() ->
     {timeout, 180, fun() ->
         PCM = noise(32000, 1, []),
-        ?assertEqual({error, {insufficient_audio, insufficient_periodicity}},
-                     ecai_voice_features:extract(PCM))
+        ?assertEqual(
+            {error, {insufficient_audio, insufficient_periodicity}},
+            ecai_voice_features:extract(PCM)
+        )
     end}.
 
-noise(0, _, Acc) -> iolist_to_binary(lists:reverse(Acc));
+noise(0, _, Acc) ->
+    iolist_to_binary(lists:reverse(Acc));
 noise(N, Seed, Acc) ->
     Next = (1103515245 * Seed + 12345) band 16#7FFFFFFF,
     S = ((Next bsr 8) rem 16001) - 8000,
@@ -82,8 +134,14 @@ noise(N, Seed, Acc) ->
 dft(X) ->
     N = length(X),
     Indexed = lists:zip(X, lists:seq(0, N - 1)),
-    [lists:foldl(fun({{R, I}, J}, {SR, SI}) ->
-        A = -2 * math:pi() * K * J / N,
-        {SR + R * math:cos(A) - I * math:sin(A),
-         SI + R * math:sin(A) + I * math:cos(A)}
-    end, {0.0, 0.0}, Indexed) || K <- lists:seq(0, N - 1)].
+    [
+        lists:foldl(
+            fun({{R, I}, J}, {SR, SI}) ->
+                A = -2 * math:pi() * K * J / N,
+                {SR + R * math:cos(A) - I * math:sin(A), SI + R * math:sin(A) + I * math:cos(A)}
+            end,
+            {0.0, 0.0},
+            Indexed
+        )
+     || K <- lists:seq(0, N - 1)
+    ].

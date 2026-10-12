@@ -427,9 +427,11 @@ authenticate_user(Email, Password) ->
     case check_credentials(Email, Password) of
         {ok, Account, PrivateKey} ->
             {ok, Token} = damage_access_token:generate_access_token(
-                #{public_key => Account, private_key => PrivateKey}),
+                #{public_key => Account, private_key => PrivateKey}
+            ),
             {ok, Account, Token};
-        Error -> Error
+        Error ->
+            Error
     end.
 
 %% Internal credential check shared by API tokens and revocable browser sessions.
@@ -439,9 +441,11 @@ check_credentials(Email, Password0) when is_binary(Email), is_binary(Password0) 
         {Account, Password, PrivateKey} -> {ok, Account, PrivateKey};
         _ -> {error, notauthorized}
     end;
-check_credentials(_, _) -> {error, notauthorized}.
+check_credentials(_, _) ->
+    {error, notauthorized}.
 
-browser_action(create, #{email := _} = Data) -> do_post_action(create, Data);
+browser_action(create, #{email := _} = Data) ->
+    do_post_action(create, Data);
 browser_action(reset_password, #{email := Email} = Data) ->
     case damage_utils:is_valid_email(Email) of
         true -> do_post_action(reset_password, Data);
@@ -511,8 +515,11 @@ do_post_action(
             {400, #{status => <<"failed">>, message => Message}}
     end;
 do_post_action(authenticate, _Unsupported) ->
-    {400, #{status => <<"failed">>, message =>
-        <<"Wallet sign-in requires /accounts/wallet/challenge and /accounts/wallet/verify.">>}};
+    {400, #{
+        status => <<"failed">>,
+        message =>
+            <<"Wallet sign-in requires /accounts/wallet/challenge and /accounts/wallet/verify.">>
+    }};
 do_post_action(
     reset_password,
     #{token := Token, new_password := NewPassword, new_password_confirm := NewPasswordConfirm}
@@ -805,7 +812,10 @@ from_json(Req, #{action := transfer, public_key := From} = State) ->
             {Status0, Response0} = transfer_damage_response(From, State, Data0),
             Req1 = cowboy_req:reply(
                 Status0,
-                #{<<"content-type">> => <<"application/json">>, <<"cache-control">> => <<"no-store">>},
+                #{
+                    <<"content-type">> => <<"application/json">>,
+                    <<"cache-control">> => <<"no-store">>
+                },
                 jsx:encode(Response0),
                 Req0
             ),
@@ -841,9 +851,15 @@ transfer_damage_response(From, _State, Data) ->
     Amount0 = map_get_any([amount, <<"amount">>], Data, undefined),
     case {valid_ae_account(To), positive_integer(Amount0)} of
         {false, _} ->
-            {400, #{status => <<"failed">>, message => <<"A valid recipient Aeternity address is required.">>}};
+            {400, #{
+                status => <<"failed">>,
+                message => <<"A valid recipient Aeternity address is required.">>
+            }};
         {true, error} ->
-            {400, #{status => <<"failed">>, message => <<"Transfer amount must be a positive atomic DAMAGE integer.">>}};
+            {400, #{
+                status => <<"failed">>,
+                message => <<"Transfer amount must be a positive atomic DAMAGE integer.">>
+            }};
         {true, Amount} ->
             try damage_ae:transfer_damage_tokens(From, To, Amount) of
                 Result ->
@@ -853,15 +869,25 @@ transfer_damage_response(From, _State, Data) ->
                             safe_invalidate_wallet(To),
                             {200, #{status => <<"ok">>, tx_hash => transfer_tx_hash(Result)}};
                         false ->
-                            ?LOG_WARNING("DAMAGE transfer failed from=~p to=~p result=~p", [From, To, Result]),
-                            {502, #{status => <<"failed">>, message => <<"Aeternity transfer was not accepted.">>}}
+                            ?LOG_WARNING("DAMAGE transfer failed from=~p to=~p result=~p", [
+                                From, To, Result
+                            ]),
+                            {502, #{
+                                status => <<"failed">>,
+                                message => <<"Aeternity transfer was not accepted.">>
+                            }}
                     end
             catch
                 Class:Reason:Stack ->
-                    ?LOG_ERROR("DAMAGE transfer crashed from=~p to=~p class=~p reason=~p stack=~p", [
-                        From, To, Class, Reason, Stack
-                    ]),
-                    {502, #{status => <<"failed">>, message => <<"Aeternity transfer could not be submitted.">>}}
+                    ?LOG_ERROR(
+                        "DAMAGE transfer crashed from=~p to=~p class=~p reason=~p stack=~p", [
+                            From, To, Class, Reason, Stack
+                        ]
+                    ),
+                    {502, #{
+                        status => <<"failed">>,
+                        message => <<"Aeternity transfer could not be submitted.">>
+                    }}
             end
     end.
 
@@ -870,27 +896,36 @@ map_get_any([K | Rest], Map, Default) ->
         {ok, V} -> V;
         error -> map_get_any(Rest, Map, Default)
     end;
-map_get_any([], _Map, Default) -> Default.
+map_get_any([], _Map, Default) ->
+    Default.
 
 positive_integer(I) when is_integer(I), I > 0 -> I;
 positive_integer(B) when is_binary(B) ->
     try binary_to_integer(B) of
         I when I > 0 -> I;
         _ -> error
-    catch _:_ -> error end;
+    catch
+        _:_ -> error
+    end;
 positive_integer(L) when is_list(L) ->
     try list_to_integer(L) of
         I when I > 0 -> I;
         _ -> error
-    catch _:_ -> error end;
-positive_integer(_) -> error.
+    catch
+        _:_ -> error
+    end;
+positive_integer(_) ->
+    error.
 
 valid_ae_account(Account) when is_binary(Account) ->
     try aeser_api_encoder:decode(account_pubkey, Account) of
         {account_pubkey, _} -> true;
         _ -> false
-    catch _:_ -> false end;
-valid_ae_account(_) -> false.
+    catch
+        _:_ -> false
+    end;
+valid_ae_account(_) ->
+    false.
 
 safe_invalidate_wallet(Account) ->
     try damage_ae:invalidate_cache(Account) of
@@ -900,9 +935,11 @@ safe_invalidate_wallet(Account) ->
     end.
 
 transfer_result_ok(Result) when is_map(Result) ->
-    map_get_any(["return_type", <<"return_type">>, return_type], Result, undefined) =:= "ok"
-        orelse map_get_any(["return_type", <<"return_type">>, return_type], Result, undefined) =:= <<"ok">>;
-transfer_result_ok(_) -> false.
+    map_get_any(["return_type", <<"return_type">>, return_type], Result, undefined) =:= "ok" orelse
+        map_get_any(["return_type", <<"return_type">>, return_type], Result, undefined) =:=
+            <<"ok">>;
+transfer_result_ok(_) ->
+    false.
 
 transfer_tx_hash(Result) when is_map(Result) ->
     case map_get_any(["tx_hash", <<"tx_hash">>, tx_hash], Result, null) of
@@ -910,7 +947,8 @@ transfer_tx_hash(Result) when is_map(Result) ->
         Hash when is_list(Hash) -> list_to_binary(Hash);
         Hash -> Hash
     end;
-transfer_tx_hash(_) -> null.
+transfer_tx_hash(_) ->
+    null.
 
 %% Decrypt account tokens without the deprecated `catch Expr` form and never
 %% decode untrusted external terms without the safe option.
@@ -1100,18 +1138,36 @@ balance(AeAccount) ->
 %% precision when balances exceed JavaScript's safe integer range.
 wallet_snapshot_for(#{auth_mode := wallet}, AeAccount) ->
     Public = damage_balance_cache:public_snapshot(AeAccount),
-    #{status => <<"partial">>, address => AeAccount,
-      updated_at => erlang:system_time(second),
-      balances => #{ae => public_balance(Public, ae, ?AE_DECIMALS, <<"AE">>),
-        damage => public_balance(Public, damage, ?DAMAGE_DECIMALS, <<"DAMAGE">>),
-        lightning => #{available => false, configured => false, symbol => <<"sat">>,
-          amount => null, reason => <<"Wallet-only NWC ledger lookup is not implemented without custody.">>}}};
-wallet_snapshot_for(_, AeAccount) -> wallet_snapshot(AeAccount).
+    #{
+        status => <<"partial">>,
+        address => AeAccount,
+        updated_at => erlang:system_time(second),
+        balances => #{
+            ae => public_balance(Public, ae, ?AE_DECIMALS, <<"AE">>),
+            damage => public_balance(Public, damage, ?DAMAGE_DECIMALS, <<"DAMAGE">>),
+            lightning => #{
+                available => false,
+                configured => false,
+                symbol => <<"sat">>,
+                amount => null,
+                reason => <<"Wallet-only NWC ledger lookup is not implemented without custody.">>
+            }
+        }
+    };
+wallet_snapshot_for(_, AeAccount) ->
+    wallet_snapshot(AeAccount).
 public_balance(Snapshot, Key, Decimals, Symbol) ->
     case maps:get(Key, Snapshot, null) of
-        N when is_integer(N), N >= 0 -> wallet_atomic_balance(N, Decimals, Symbol, <<"public_chain">>);
-        _ -> #{available => false, amount => null, decimals => Decimals,
-               symbol => Symbol, source => <<"public_chain">>}
+        N when is_integer(N), N >= 0 ->
+            wallet_atomic_balance(N, Decimals, Symbol, <<"public_chain">>);
+        _ ->
+            #{
+                available => false,
+                amount => null,
+                decimals => Decimals,
+                symbol => Symbol,
+                source => <<"public_chain">>
+            }
     end.
 
 -spec wallet_snapshot(binary()) -> map().

@@ -8,10 +8,15 @@ init(Req, #{table := Table} = State) ->
     Number = ets:update_counter(Table, count, 1),
     Request = jsx:decode(Body, [return_maps]),
     ets:insert(Table, {Number, #{path => cowboy_req:path(Req), body => Request}}),
-    {Status, Response} = case ets:lookup(Table, mode) of
-        [{mode, error}] -> {500, #{error => <<"provider-private-error-and-secret">>}};
-        _ -> {200, #{response => <<"Indexed evidence is available [S1].">>, done => true}}
-    end,
-    Req2 = cowboy_req:reply(Status, #{<<"content-type">> => <<"application/json">>},
-        jsx:encode(Response), Req1),
+    {Status, Response} =
+        case ets:lookup(Table, mode) of
+            [{mode, error}] -> {500, #{error => <<"provider-private-error-and-secret">>}};
+            _ -> {200, #{response => <<"Indexed evidence is available [S1].">>, done => true}}
+        end,
+    Req2 = cowboy_req:reply(
+        Status,
+        #{<<"content-type">> => <<"application/json">>},
+        jsx:encode(Response),
+        Req1
+    ),
     {ok, Req2, State}.

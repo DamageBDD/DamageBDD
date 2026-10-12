@@ -129,7 +129,6 @@ decoder_failure_is_not_silently_skipped_test() ->
         end
     end).
 
-
 loader_emits_record_and_live_count_callbacks_test() ->
     with_tmp(fun(Dir) ->
         SourcePath = filename:join(Dir, "callback-wikipedia.jsonl"),
@@ -141,8 +140,14 @@ loader_emits_record_and_live_count_callbacks_test() ->
         Ctx = ecai_search:new(),
         Self = self(),
         Opts = (loader_opts(Ctx, Dir))#{
-            record_fun => fun(Event) -> Self ! {live_record, Event}, ok end,
-            progress_fun => fun(Progress) -> Self ! {live_progress, Progress}, ok end
+            record_fun => fun(Event) ->
+                Self ! {live_record, Event},
+                ok
+            end,
+            progress_fun => fun(Progress) ->
+                Self ! {live_progress, Progress},
+                ok
+            end
         },
         try
             ok = ecai_wikipedia_loader:load(SourcePath, Opts),

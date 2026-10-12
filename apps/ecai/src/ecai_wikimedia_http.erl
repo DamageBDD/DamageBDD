@@ -41,8 +41,9 @@ init(Req, #{action := sample_file} = State) ->
 init(Req, State) ->
     {cowboy_rest, Req, State}.
 
-is_authorized(Req, #{action := Action} = State)
-    when Action =:= sample_status; Action =:= sample_catalog ->
+is_authorized(Req, #{action := Action} = State) when
+    Action =:= sample_status; Action =:= sample_catalog
+->
     {true, Req, State};
 is_authorized(Req, State) ->
     damage_http:is_authorized(Req, State).

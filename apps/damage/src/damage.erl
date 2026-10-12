@@ -320,11 +320,12 @@ execute_file_prepared(Config, Context, Filename) ->
             %% Publish only public evidence, never secrets or execution context.
             FeatureTitle = lists:nth(1, binary:split(Feature, <<"\n">>, [global])),
             PublicTags = public_gherkin_tags(Tags, Scenarios),
-            RunStatus = case FailReason of
-                none -> <<"passed">>;
-                0 -> <<"passed">>;
-                _ -> <<"failed">>
-            end,
+            RunStatus =
+                case FailReason of
+                    none -> <<"passed">>;
+                    0 -> <<"passed">>;
+                    _ -> <<"failed">>
+                end,
             %% Write meta BEFORE IPFS add so it is included in ReportHash.
             ok = write_run_meta(
                 RunDir,
@@ -423,10 +424,12 @@ execute_file_prepared(Config, Context, Filename) ->
                 end,
             PublicKey = maps:get(public_key, Context),
             RunCost =
-                case {
-                    proplists:get_value(dry_run, Config, false),
-                    proplists:get_value(settlement, Config, legacy)
-                } of
+                case
+                    {
+                        proplists:get_value(dry_run, Config, false),
+                        proplists:get_value(settlement, Config, legacy)
+                    }
+                of
                     {true, _} ->
                         maps:get(cost, FinalContext, 0);
                     {false, schedule_v2} ->
@@ -1503,10 +1506,12 @@ hits_to_damage(Hits) ->
 step_spend(Config, Context) ->
     Spend = maps:get(step_spend, Context, 1 * math:pow(10, ?DAMAGE_DECIMALS)),
     Context0 = maps:remove(step_spend, Context),
-    case {
-        proplists:get_value(dry_run, Config, false),
-        proplists:get_value(settlement, Config, legacy)
-    } of
+    case
+        {
+            proplists:get_value(dry_run, Config, false),
+            proplists:get_value(settlement, Config, legacy)
+        }
+    of
         {true, _} ->
             maps:put(cost, maps:get(cost, Context0, 0) + Spend, Context0);
         {false, schedule_v2} ->
@@ -1810,8 +1815,16 @@ require_context_ipfs(RunDir, Context) ->
 %% Extract feature + scenario Gherkin tags from tolerant parser shapes.
 %% Only @tags are public: do not serialize arbitrary parser/context terms.
 public_gherkin_tags(FeatureTags0, Scenarios0) ->
-    FeatureTags = case is_list(FeatureTags0) of true -> FeatureTags0; false -> [] end,
-    Scenarios = case is_list(Scenarios0) of true -> Scenarios0; false -> [] end,
+    FeatureTags =
+        case is_list(FeatureTags0) of
+            true -> FeatureTags0;
+            false -> []
+        end,
+    Scenarios =
+        case is_list(Scenarios0) of
+            true -> Scenarios0;
+            false -> []
+        end,
     ScenarioTags = lists:flatmap(
         fun
             ({_, _, Tags, _}) when is_list(Tags) -> Tags;
@@ -1821,23 +1834,28 @@ public_gherkin_tags(FeatureTags0, Scenarios0) ->
         Scenarios
     ),
     lists:usort([
-        Tag || Raw <- FeatureTags ++ ScenarioTags,
-               Tag <- [public_tag(Raw)], Tag =/= <<>>
+        Tag
+     || Raw <- FeatureTags ++ ScenarioTags,
+        Tag <- [public_tag(Raw)],
+        Tag =/= <<>>
     ]).
 
-public_tag({_, Value}) -> public_tag(Value);
+public_tag({_, Value}) ->
+    public_tag(Value);
 public_tag(Value) when is_binary(Value); is_list(Value) ->
     Tag = string:trim(to_bin(Value)),
     case re:run(Tag, <<"^@[A-Za-z0-9_.:-]+$">>, [{capture, none}]) of
         match -> Tag;
         nomatch -> <<>>
     end;
-public_tag(_) -> <<>>.
+public_tag(_) ->
+    <<>>.
 
 maybe_observe_analytics_run(#{dry_run := true}) ->
     ok;
 maybe_observe_analytics_run(RunRecord) ->
-    try damage_analytics_store:observe_run(RunRecord)
+    try
+        damage_analytics_store:observe_run(RunRecord)
     catch
         _:_ -> ok
     end.

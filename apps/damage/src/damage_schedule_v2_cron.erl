@@ -6,7 +6,6 @@
 -define(MAX_SCAN_MINUTES, 60 * 24 * 366 * 2).
 -define(MAX_OCCURRENCES, 100000).
 
-
 -spec parse(binary() | string()) -> {ok, map()} | {error, term()}.
 parse(Cron0) ->
     Cron = string:trim(to_list(Cron0)),
@@ -75,14 +74,17 @@ parse_base(Base, _Min, _Max) ->
                 true -> lists:seq(A, B);
                 false -> throw(invalid_range)
             end;
-        [V0] -> [parse_int(V0)];
-        _ -> throw(invalid_range)
+        [V0] ->
+            [parse_int(V0)];
+        _ ->
+            throw(invalid_range)
     end.
 
 take_step(Values, Step) ->
     take_step(Values, Step, 0, []).
 
-take_step([], _Step, _I, Acc) -> lists:reverse(Acc);
+take_step([], _Step, _I, Acc) ->
+    lists:reverse(Acc);
 take_step([V | Rest], Step, I, Acc) ->
     case I rem Step of
         0 -> take_step(Rest, Step, I + 1, [V | Acc]);
@@ -105,7 +107,8 @@ next_after(Cron, AfterEpoch) when is_integer(AfterEpoch) ->
         {ok, Parsed} ->
             Start = ((AfterEpoch div 60) + 1) * 60,
             scan_next(Parsed, Start, ?MAX_SCAN_MINUTES);
-        Error -> Error
+        Error ->
+            Error
     end.
 
 scan_next(_Parsed, _Epoch, 0) ->
@@ -133,7 +136,8 @@ occurrences0(Cron, Cursor, To, Acc, N) ->
             {ok, lists:reverse(Acc)};
         {error, no_occurrence_in_scan_window} ->
             {ok, lists:reverse(Acc)};
-        Error -> Error
+        Error ->
+            Error
     end.
 
 -spec matches(map(), integer()) -> boolean().
@@ -141,7 +145,11 @@ matches(Parsed, Epoch) when is_map(Parsed), is_integer(Epoch) ->
     {{Year, Month, Day}, {Hour, Minute, _Second}} = epoch_to_datetime(Epoch),
     _ = Year,
     Dow0 = calendar:day_of_the_week({Year, Month, Day}),
-    Dow = case Dow0 of 7 -> 0; N -> N end,
+    Dow =
+        case Dow0 of
+            7 -> 0;
+            N -> N
+        end,
     member(Minute, maps:get(minute, Parsed)) andalso
         member(Hour, maps:get(hour, Parsed)) andalso
         member(Day, maps:get(day, Parsed)) andalso
@@ -154,23 +162,34 @@ member(V, Values) -> lists:member(V, Values).
 human(Cron0) ->
     Cron = to_list(Cron0),
     case string:tokens(Cron, " \t") of
-        ["*/15", "*", "*", "*", "*"] -> <<"Every 15 minutes">>;
-        ["*/30", "*", "*", "*", "*"] -> <<"Every 30 minutes">>;
+        ["*/15", "*", "*", "*", "*"] ->
+            <<"Every 15 minutes">>;
+        ["*/30", "*", "*", "*", "*"] ->
+            <<"Every 30 minutes">>;
         [Min, "*", "*", "*", "*"] ->
             list_to_binary(io_lib:format("Every hour at :~2..0B UTC", [parse_int_safe(Min, 0)]));
         [Min, Hour, "*", "*", "*"] ->
             list_to_binary(
-                io_lib:format("Daily at ~2..0B:~2..0B UTC", [parse_int_safe(Hour, 0), parse_int_safe(Min, 0)])
+                io_lib:format("Daily at ~2..0B:~2..0B UTC", [
+                    parse_int_safe(Hour, 0), parse_int_safe(Min, 0)
+                ])
             );
         [Min, Hour, "*", "*", "1-5"] ->
             list_to_binary(
-                io_lib:format("Weekdays at ~2..0B:~2..0B UTC", [parse_int_safe(Hour, 0), parse_int_safe(Min, 0)])
+                io_lib:format("Weekdays at ~2..0B:~2..0B UTC", [
+                    parse_int_safe(Hour, 0), parse_int_safe(Min, 0)
+                ])
             );
-        _ -> to_bin(Cron0)
+        _ ->
+            to_bin(Cron0)
     end.
 
 parse_int_safe(S, Default) ->
-    try list_to_integer(S) catch _:_ -> Default end.
+    try
+        list_to_integer(S)
+    catch
+        _:_ -> Default
+    end.
 
 epoch_to_datetime(Epoch) ->
     calendar:gregorian_seconds_to_datetime(Epoch + ?UNIX_EPOCH_GREGORIAN).

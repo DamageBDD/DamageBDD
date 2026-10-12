@@ -4,16 +4,34 @@
 -export([editable/0, public/1, validate/2, from_json/1, defaults/0]).
 
 editable() ->
-    [poll_interval_ms, levels, base_half_spread_bps, level_step_bps,
-     volatility_weight, target_inventory_ratio, max_inventory_ratio,
-     max_skew_bps, maker_fee_bps, fee_buffer_bps,
-     max_order_notional, max_side_notional, max_price_jump_pct,
-     max_drawdown_pct, max_feed_age_ms].
+    [
+        poll_interval_ms,
+        levels,
+        base_half_spread_bps,
+        level_step_bps,
+        volatility_weight,
+        target_inventory_ratio,
+        max_inventory_ratio,
+        max_skew_bps,
+        maker_fee_bps,
+        fee_buffer_bps,
+        max_order_notional,
+        max_side_notional,
+        max_price_jump_pct,
+        max_drawdown_pct,
+        max_feed_age_ms
+    ].
 
 defaults() ->
-    maps:merge(ecai_mm_curve:defaults(),
-               #{poll_interval_ms => 10000, max_price_jump_pct => 25.0,
-                 max_drawdown_pct => 10.0, max_feed_age_ms => 20000}).
+    maps:merge(
+        ecai_mm_curve:defaults(),
+        #{
+            poll_interval_ms => 10000,
+            max_price_jump_pct => 25.0,
+            max_drawdown_pct => 10.0,
+            max_feed_age_ms => 20000
+        }
+    ).
 
 %% Public config must never include state_dir, paper_balances, credentials,
 %% network adapters or any as-yet-introduced private worker option.
@@ -25,9 +43,11 @@ from_json(Map) when is_map(Map), map_size(Map) > 0 ->
         false -> {error, invalid_config_keys};
         true -> from_json_fields(maps:to_list(Map), #{})
     end;
-from_json(_) -> {error, empty_or_invalid_patch}.
+from_json(_) ->
+    {error, empty_or_invalid_patch}.
 
-from_json_fields([], Acc) -> {ok, Acc};
+from_json_fields([], Acc) ->
+    {ok, Acc};
 from_json_fields([{Key, Val} | Tail], Acc) ->
     %% No conversion of untrusted user input into arbitrary atoms.
     case [Name || Name <- editable(), atom_to_binary(Name, utf8) =:= Key] of
@@ -37,16 +57,22 @@ from_json_fields([{Key, Val} | Tail], Acc) ->
 
 validate(Patch, Existing) when is_map(Patch), is_map(Existing), map_size(Patch) > 0 ->
     case [Key || Key <- maps:keys(Patch), not lists:member(Key, editable())] of
-        [Bad | _] -> {error, {unknown_field, Bad}};
+        [Bad | _] ->
+            {error, {unknown_field, Bad}};
         [] ->
             Merged = maps:merge(public(Existing), Patch),
-            case lists:dropwhile(fun(Key) -> field_ok(Key, maps:get(Key, Merged)) end,
-                                 editable()) of
+            case
+                lists:dropwhile(
+                    fun(Key) -> field_ok(Key, maps:get(Key, Merged)) end,
+                    editable()
+                )
+            of
                 [Bad | _] -> {error, {invalid_value, Bad}};
                 [] -> cross_validate(Patch, Merged, Existing)
             end
     end;
-validate(_, _) -> {error, empty_or_invalid_patch}.
+validate(_, _) ->
+    {error, empty_or_invalid_patch}.
 
 field_ok(poll_interval_ms, V) -> int_between(V, 2000, 120000);
 field_ok(max_feed_age_ms, V) -> int_between(V, 2000, 300000);
@@ -73,7 +99,8 @@ cross_validate(Patch, Values, Existing) ->
     Interval = maps:get(poll_interval_ms, Values),
     Age = maps:get(max_feed_age_ms, Values),
     case Interval =< Age of
-        false -> {error, poll_interval_exceeds_feed_age};
+        false ->
+            {error, poll_interval_exceeds_feed_age};
         true ->
             case Target < Max andalso Order >= Min andalso Side >= Order of
                 true -> {ok, Patch};

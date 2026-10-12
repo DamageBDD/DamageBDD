@@ -9,16 +9,36 @@
 -define(MAX_BODY, 262144).
 
 trails() ->
-    [trails:trail("/api/billing/[...]", ?MODULE, #{},
-       #{get => #{tags => ["Enterprise Billing"], produces => ["application/json", "application/pdf"]},
-         post => #{tags => ["Enterprise Billing"], produces => ["application/json"]},
-         put => #{tags => ["Enterprise Billing"], produces => ["application/json"]}})].
+    [
+        trails:trail(
+            "/api/billing/[...]",
+            ?MODULE,
+            #{},
+            #{
+                get => #{
+                    tags => ["Enterprise Billing"],
+                    produces => ["application/json", "application/pdf"]
+                },
+                post => #{tags => ["Enterprise Billing"], produces => ["application/json"]},
+                put => #{tags => ["Enterprise Billing"], produces => ["application/json"]}
+            }
+        )
+    ].
 
 init(Req0, _Opts) ->
-    Req = try handle(Req0) catch
-        throw:{http, Code, Message, R} -> json(Code, #{status => <<"error">>, message => Message}, R);
-        _:_ -> json(503, #{status => <<"error">>, message => <<"Billing service unavailable">>}, Req0)
-    end,
+    Req =
+        try
+            handle(Req0)
+        catch
+            throw:{http, Code, Message, R} ->
+                json(Code, #{status => <<"error">>, message => Message}, R);
+            _:_ ->
+                json(
+                    503,
+                    #{status => <<"error">>, message => <<"Billing service unavailable">>},
+                    Req0
+                )
+        end,
     {ok, Req, #{}}.
 
 handle(Req0) ->
@@ -31,18 +51,21 @@ handle(Req0) ->
                 {ok, Account} -> authenticated(Account, Req0);
                 {error, _} -> unauthorized(Req0)
             end;
-        error -> unauthorized(Req0)
+        error ->
+            unauthorized(Req0)
     end.
 
 %% Browser wallet sessions intentionally cannot become billing sessions. The
 %% dashboard already treats that mode as wallet-only; enforcing it here keeps
 %% the authorization boundary server-side as well. Custodial browser sessions
 %% and legacy/signed ae1 access tokens resolve to the authenticated account.
-auth_result({ok, #{
-    public_key := Account,
-    auth_type := browser_session,
-    auth_mode := custodial
-}}) when is_binary(Account) ->
+auth_result(
+    {ok, #{
+        public_key := Account,
+        auth_type := browser_session,
+        auth_mode := custodial
+    }}
+) when is_binary(Account) ->
     {ok, Account};
 auth_result({ok, #{auth_type := browser_session}}) ->
     {error, wallet_session_forbidden};
@@ -52,62 +75,105 @@ auth_result(_) ->
     {error, invalid_oauth}.
 bearer(<<"Bearer ", Token/binary>>) when byte_size(Token) > 0, byte_size(Token) =< 8192 ->
     {ok, Token};
-bearer(_) -> error.
+bearer(_) ->
+    error.
 unauthorized(Req) ->
-    json(401, #{status => <<"error">>, message => <<"An authenticated Bearer token is required">>},
-         cowboy_req:set_resp_header(<<"www-authenticate">>, <<"Bearer">>, Req)).
+    json(
+        401,
+        #{status => <<"error">>, message => <<"An authenticated Bearer token is required">>},
+        cowboy_req:set_resp_header(<<"www-authenticate">>, <<"Bearer">>, Req)
+    ).
 
 authenticated(Account, Req0) ->
-    Method = cowboy_req:method(Req0), Path = cowboy_req:path_info(Req0),
-    {Body, Req} = case Method of
-        <<"GET">> -> {maps:from_list(cowboy_req:parse_qs(Req0)), Req0};
-        <<"POST">> -> read_json(Req0);
-        <<"PUT">> -> read_json(Req0);
-        _ -> throw({http, 405, <<"Method not allowed">>,
-                    cowboy_req:set_resp_header(<<"allow">>, <<"GET, POST, PUT">>, Req0)})
-    end,
+    Method = cowboy_req:method(Req0),
+    Path = cowboy_req:path_info(Req0),
+    {Body, Req} =
+        case Method of
+            <<"GET">> ->
+                {maps:from_list(cowboy_req:parse_qs(Req0)), Req0};
+            <<"POST">> ->
+                read_json(Req0);
+            <<"PUT">> ->
+                read_json(Req0);
+            _ ->
+                throw(
+                    {http, 405, <<"Method not allowed">>,
+                        cowboy_req:set_resp_header(<<"allow">>, <<"GET, POST, PUT">>, Req0)}
+                )
+        end,
     try route(Method, Path, Body) of
         Command ->
             case damage_enterprise_invoices:request(Account, Command) of
-                {ok, Data} -> json(success_code(Command), #{status => <<"ok">>, data => Data}, Req);
+                {ok, Data} ->
+                    json(success_code(Command), #{status => <<"ok">>, data => Data}, Req);
                 {pdf, Number, PDF} ->
-                    Headers = (headers())#{<<"content-type">> => <<"application/pdf">>,
-                        <<"content-disposition">> => <<"attachment; filename=\"", Number/binary, ".pdf\"">>},
+                    Headers = (headers())#{
+                        <<"content-type">> => <<"application/pdf">>,
+                        <<"content-disposition">> =>
+                            <<"attachment; filename=\"", Number/binary, ".pdf\"">>
+                    },
                     cowboy_req:reply(200, Headers, PDF, Req);
-                {error, forbidden} -> json(403, error_body(<<"Invoice administrator permission is required">>), Req);
-                {error, not_found} -> json(404, error_body(<<"Billing record not found">>), Req);
-                {error, {validation, Msg}} -> json(400, error_body(Msg), Req);
-                {error, {conflict, Msg}} -> json(409, error_body(Msg), Req);
-                _ -> json(503, error_body(<<"Billing disabled, locked, or storage unavailable">>), Req)
+                {error, forbidden} ->
+                    json(403, error_body(<<"Invoice administrator permission is required">>), Req);
+                {error, not_found} ->
+                    json(404, error_body(<<"Billing record not found">>), Req);
+                {error, {validation, Msg}} ->
+                    json(400, error_body(Msg), Req);
+                {error, {conflict, Msg}} ->
+                    json(409, error_body(Msg), Req);
+                _ ->
+                    json(
+                        503, error_body(<<"Billing disabled, locked, or storage unavailable">>), Req
+                    )
             end
     catch
         throw:not_found -> json(404, error_body(<<"Billing route not found">>), Req);
         throw:{validation, ValidationMessage} -> json(400, error_body(ValidationMessage), Req)
     end.
 
-route(<<"GET">>, [<<"session">>], _) -> session;
-route(<<"GET">>, [<<"settings">>], _) -> settings;
-route(<<"PUT">>, [<<"settings">>], M) -> {save_settings, M};
-route(<<"GET">>, [<<"summary">>], _) -> summary;
-route(<<"GET">>, [<<"customers">>], _) -> {list, customers};
-route(<<"GET">>, [<<"plans">>], _) -> {list, plans};
-route(<<"GET">>, [<<"invoices">>], Q) -> {list_invoices, Q};
-route(<<"GET">>, [<<"invoices">>, Id], _) -> {get_invoice, valid_id(Id)};
-route(<<"GET">>, [<<"invoices">>, Id, <<"pdf">>], _) -> {get_pdf, valid_id(Id)};
-route(<<"POST">>, [<<"customers">>], M) -> {create_customer, M};
-route(<<"PUT">>, [<<"customers">>, Id], M) -> {save_customer, matching_id(Id, M), M};
-route(<<"POST">>, [<<"plans">>], M) -> {save_plan, body_id(M), M};
-route(<<"PUT">>, [<<"plans">>, Id], M) -> {save_plan, matching_id(Id, M), M};
-route(<<"POST">>, [<<"plans">>, Id, <<"generate">>], M) -> {generate, valid_id(Id), M};
-route(<<"PUT">>, [<<"invoices">>, Id], M) -> {edit_invoice, valid_id(Id), M};
+route(<<"GET">>, [<<"session">>], _) ->
+    session;
+route(<<"GET">>, [<<"settings">>], _) ->
+    settings;
+route(<<"PUT">>, [<<"settings">>], M) ->
+    {save_settings, M};
+route(<<"GET">>, [<<"summary">>], _) ->
+    summary;
+route(<<"GET">>, [<<"customers">>], _) ->
+    {list, customers};
+route(<<"GET">>, [<<"plans">>], _) ->
+    {list, plans};
+route(<<"GET">>, [<<"invoices">>], Q) ->
+    {list_invoices, Q};
+route(<<"GET">>, [<<"invoices">>, Id], _) ->
+    {get_invoice, valid_id(Id)};
+route(<<"GET">>, [<<"invoices">>, Id, <<"pdf">>], _) ->
+    {get_pdf, valid_id(Id)};
+route(<<"POST">>, [<<"customers">>], M) ->
+    {create_customer, M};
+route(<<"PUT">>, [<<"customers">>, Id], M) ->
+    {save_customer, matching_id(Id, M), M};
+route(<<"POST">>, [<<"plans">>], M) ->
+    {save_plan, body_id(M), M};
+route(<<"PUT">>, [<<"plans">>, Id], M) ->
+    {save_plan, matching_id(Id, M), M};
+route(<<"POST">>, [<<"plans">>, Id, <<"generate">>], M) ->
+    {generate, valid_id(Id), M};
+route(<<"PUT">>, [<<"invoices">>, Id], M) ->
+    {edit_invoice, valid_id(Id), M};
 route(<<"POST">>, [<<"invoices">>, Id, Action], M) ->
-    case lists:member(Action, [<<"issue">>, <<"send">>, <<"paid">>, <<"void">>, <<"settlement_nft">>]) of
+    case
+        lists:member(Action, [<<"issue">>, <<"send">>, <<"paid">>, <<"void">>, <<"settlement_nft">>])
+    of
         true -> {action, valid_id(Id), Action, M};
         false -> throw(not_found)
     end;
-route(<<"GET">>, [<<"admins">>], _) -> list_admins;
-route(<<"POST">>, [<<"admins">>], M) -> {set_admin, M};
-route(_, _, _) -> throw(not_found).
+route(<<"GET">>, [<<"admins">>], _) ->
+    list_admins;
+route(<<"POST">>, [<<"admins">>], M) ->
+    {set_admin, M};
+route(_, _, _) ->
+    throw(not_found).
 valid_id(Id) -> damage_invoice_model:id(Id).
 body_id(M) -> valid_id(maps:get(<<"id">>, M, <<>>)).
 matching_id(Id, M) ->
@@ -130,23 +196,31 @@ read_json(Req0) ->
     try jsx:decode(Raw, [return_maps]) of
         M when is_map(M) -> {M, Req};
         _ -> throw({http, 400, <<"Expected a JSON object">>, Req})
-    catch error:_ -> throw({http, 400, <<"Invalid JSON">>, Req}) end.
+    catch
+        error:_ -> throw({http, 400, <<"Invalid JSON">>, Req})
+    end.
 read_body(Req0, Acc, Size) ->
     case cowboy_req:read_body(Req0, #{length => 65536, period => 5000}) of
         {Tag, Chunk, Req} when Tag =:= ok; Tag =:= more ->
             Total = Size + byte_size(Chunk),
             case Total =< ?MAX_BODY of
-                false -> throw({http, 413, <<"Invoice request exceeds 256 KiB">>, Req});
-                true -> case Tag of
-                    ok -> {iolist_to_binary(lists:reverse([Chunk | Acc])), Req};
-                    more -> read_body(Req, [Chunk | Acc], Total)
-                end
+                false ->
+                    throw({http, 413, <<"Invoice request exceeds 256 KiB">>, Req});
+                true ->
+                    case Tag of
+                        ok -> {iolist_to_binary(lists:reverse([Chunk | Acc])), Req};
+                        more -> read_body(Req, [Chunk | Acc], Total)
+                    end
             end
     end.
 headers() ->
-    #{<<"content-type">> => <<"application/json; charset=utf-8">>,
-      <<"cache-control">> => <<"no-store, private">>, <<"pragma">> => <<"no-cache">>,
-      <<"vary">> => <<"Authorization">>, <<"x-content-type-options">> => <<"nosniff">>,
-      <<"referrer-policy">> => <<"no-referrer">>}.
+    #{
+        <<"content-type">> => <<"application/json; charset=utf-8">>,
+        <<"cache-control">> => <<"no-store, private">>,
+        <<"pragma">> => <<"no-cache">>,
+        <<"vary">> => <<"Authorization">>,
+        <<"x-content-type-options">> => <<"nosniff">>,
+        <<"referrer-policy">> => <<"no-referrer">>
+    }.
 error_body(Msg) -> #{status => <<"error">>, message => Msg}.
 json(Code, Data, Req) -> cowboy_req:reply(Code, headers(), jsx:encode(Data), Req).

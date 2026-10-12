@@ -17,12 +17,16 @@ api_catalog_rewrites_fixture_urls_case() ->
             [Pageview] = maps:get(pageview_sources, Catalog),
             ?assertMatch({0, _}, binary:match(maps:get(url, Content), Base)),
             ?assertMatch({0, _}, binary:match(maps:get(url, Pageview), Base)),
-            ?assert(ecai_wikimedia_sample:source_url_allowed(
-                uri_string:parse(maps:get(url, Content))
-            )),
-            ?assertNot(ecai_wikimedia_sample:source_url_allowed(
-                uri_string:parse(<<"http://127.0.0.1:19004/ecai/wikimedia/sample/files/x">>)
-            )),
+            ?assert(
+                ecai_wikimedia_sample:source_url_allowed(
+                    uri_string:parse(maps:get(url, Content))
+                )
+            ),
+            ?assertNot(
+                ecai_wikimedia_sample:source_url_allowed(
+                    uri_string:parse(<<"http://127.0.0.1:19004/ecai/wikimedia/sample/files/x">>)
+                )
+            ),
             {ok, Entry} = ecai_wikimedia_sample:file_entry(
                 <<"pageviews-202606-user.bz2">>
             ),
@@ -49,7 +53,8 @@ with_fixture_server(Fun) ->
                 ok = application:set_env(ecai, wikimedia_fixture_port, 0),
                 {ok, Pid} = ecai_wikimedia_fixture_server:start_link(),
                 unlink(Pid),
-                try Fun()
+                try
+                    Fun()
                 after
                     ok = ecai_wikimedia_fixture_server:stop(Pid)
                 end

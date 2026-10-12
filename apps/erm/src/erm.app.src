@@ -10,7 +10,20 @@
         {mod, {erm_app, []}},
         {
             applications,
-            [kernel, stdlib, inets, ssl, crypto, jsx, cowboy, trails, cowboy_swagger, gproc, erlexec, damage]
+            [
+                kernel,
+                stdlib,
+                inets,
+                ssl,
+                crypto,
+                jsx,
+                cowboy,
+                trails,
+                cowboy_swagger,
+                gproc,
+                erlexec,
+                damage
+            ]
         },
         {
             env,

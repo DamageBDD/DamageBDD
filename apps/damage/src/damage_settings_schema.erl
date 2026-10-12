@@ -4,16 +4,35 @@
 %%%-------------------------------------------------------------------
 -module(damage_settings_schema).
 
--export([apps/0, normalize_app/1, fields/1, field/2,
-         decode_changes/2, decode_existing/3, public_value/2,
-         validate_effective/1]).
+-export([
+    apps/0,
+    normalize_app/1,
+    fields/1,
+    field/2,
+    decode_changes/2,
+    decode_existing/3,
+    public_value/2,
+    validate_effective/1
+]).
 
 -define(B(K, L, A), #{key => K, label => L, type => boolean, apply => A}).
--define(I(K, L, Min, Max, A), #{key => K, label => L, type => integer,
-                              min => Min, max => Max, apply => A}).
+-define(I(K, L, Min, Max, A), #{
+    key => K,
+    label => L,
+    type => integer,
+    min => Min,
+    max => Max,
+    apply => A
+}).
 -define(S(K, L, A), #{key => K, label => L, type => string, apply => A}).
--define(P(K, L, Min, Max, A), #{key => K, label => L, type => parallelism,
-                                min => Min, max => Max, apply => A}).
+-define(P(K, L, Min, Max, A), #{
+    key => K,
+    label => L,
+    type => parallelism,
+    min => Min,
+    max => Max,
+    apply => A
+}).
 -define(SL(K, L, A), #{key => K, label => L, type => string_list, apply => A}).
 %% Preserve the binary public AE account type that CLN tax ingest requires.
 -define(AE(K, L, A), #{key => K, label => L, type => ae_account, apply => A}).
@@ -45,8 +64,10 @@ normalize_app(_) -> {error, unknown_application}.
 %% Every editable setting gets an explicit type and a feature group. The
 %% discovery catalog NEVER grants write access by itself.
 fields(App) ->
-    [F#{group => damage_settings_catalog:group(App, maps:get(key, F))}
-     || F <- base_fields(App)].
+    [
+        F#{group => damage_settings_catalog:group(App, maps:get(key, F))}
+     || F <- base_fields(App)
+    ].
 
 base_fields(damage) ->
     [
@@ -64,33 +85,83 @@ base_fields(damage) ->
         %% a node restart; the supervisor reads tax_enabled only at startup.
         %% Explicit maps avoid updating compile-time literals expanded by the
         %% generic settings macros (OTP emits "expression updates a literal").
-        #{key => tax_enabled, label => <<"Enable private tax reporting">>,
-          type => boolean, apply => restart, default => false,
-          help => <<"Start the private tax journal and report service after a node restart. Configure the CLN owner first.">>},
-        #{key => tax_cln_owner, label => <<"CLN tax owner (AE account)">>,
-          type => ae_account, apply => restart,
-          help => <<"Legal owner of this node's CLN transaction history. Must be an ak_ account; changing owner requires reconciliation and a restart.">>},
-        #{key => tax_data_dir, label => <<"Private tax evidence directory">>,
-          type => absolute_path, apply => restart,
-          default => <<"/var/lib/damage/tax">>,
-          help => <<"Absolute private directory owned by the DamageBDD service. Restart before changing this path; do not use shared or public storage.">>},
-        #{key => tax_backfill_on_start, label => <<"Backfill CLN history on startup">>,
-          type => boolean, apply => restart, default => false,
-          help => <<"Import history asynchronously after a node restart. Leave off until ownership and storage have been reviewed.">>},
-        #{key => tax_jurisdiction, label => <<"Default tax reporting country">>,
-          type => tax_jurisdiction, apply => hot, default => <<"AU">>,
-          help => <<"Default workpaper country for scheduled and manual backfills. This does not establish legal tax residence.">>},
-        #{key => tax_standard_utc_offset_minutes,
-          label => <<"Default reporting standard UTC offset (minutes)">>,
-          type => integer, min => -720, max => 840, apply => hot, default => 600,
-          help => <<"Fixed boundary offset for legacy AU backfills. Country-specific runs allow their own offset; does not account for daylight saving.">>},
-        #{key => tax_max_prices_per_backfill,
-          label => <<"Maximum historical price lookups per run">>,
-          type => integer, min => 1, max => 500, apply => hot, default => 200,
-          help => <<"Maximum public price requests per backfill. Missing quotes remain review-required, never estimated.">>},
-        #{key => tax_price_pause_ms, label => <<"Delay between price requests (ms)">>,
-          type => integer, min => 0, max => 5000, apply => hot, default => 250,
-          help => <<"Throttle requests to public historical pricing sources. Applies during subsequent lookups.">>},
+        #{
+            key => tax_enabled,
+            label => <<"Enable private tax reporting">>,
+            type => boolean,
+            apply => restart,
+            default => false,
+            help =>
+                <<"Start the private tax journal and report service after a node restart. Configure the CLN owner first.">>
+        },
+        #{
+            key => tax_cln_owner,
+            label => <<"CLN tax owner (AE account)">>,
+            type => ae_account,
+            apply => restart,
+            help =>
+                <<"Legal owner of this node's CLN transaction history. Must be an ak_ account; changing owner requires reconciliation and a restart.">>
+        },
+        #{
+            key => tax_data_dir,
+            label => <<"Private tax evidence directory">>,
+            type => absolute_path,
+            apply => restart,
+            default => <<"/var/lib/damage/tax">>,
+            help =>
+                <<"Absolute private directory owned by the DamageBDD service. Restart before changing this path; do not use shared or public storage.">>
+        },
+        #{
+            key => tax_backfill_on_start,
+            label => <<"Backfill CLN history on startup">>,
+            type => boolean,
+            apply => restart,
+            default => false,
+            help =>
+                <<"Import history asynchronously after a node restart. Leave off until ownership and storage have been reviewed.">>
+        },
+        #{
+            key => tax_jurisdiction,
+            label => <<"Default tax reporting country">>,
+            type => tax_jurisdiction,
+            apply => hot,
+            default => <<"AU">>,
+            help =>
+                <<"Default workpaper country for scheduled and manual backfills. This does not establish legal tax residence.">>
+        },
+        #{
+            key => tax_standard_utc_offset_minutes,
+            label => <<"Default reporting standard UTC offset (minutes)">>,
+            type => integer,
+            min => -720,
+            max => 840,
+            apply => hot,
+            default => 600,
+            help =>
+                <<"Fixed boundary offset for legacy AU backfills. Country-specific runs allow their own offset; does not account for daylight saving.">>
+        },
+        #{
+            key => tax_max_prices_per_backfill,
+            label => <<"Maximum historical price lookups per run">>,
+            type => integer,
+            min => 1,
+            max => 500,
+            apply => hot,
+            default => 200,
+            help =>
+                <<"Maximum public price requests per backfill. Missing quotes remain review-required, never estimated.">>
+        },
+        #{
+            key => tax_price_pause_ms,
+            label => <<"Delay between price requests (ms)">>,
+            type => integer,
+            min => 0,
+            max => 5000,
+            apply => hot,
+            default => 250,
+            help =>
+                <<"Throttle requests to public historical pricing sources. Applies during subsequent lookups.">>
+        },
         ?B(cln_enabled, <<"Core Lightning integration">>, restart),
         ?B(cln_websocket_enabled, <<"CLN WebSocket connection">>, restart),
         ?I(cln_restart_backoff_ms, <<"CLN restart backoff (ms)">>, 100, 3600000, restart),
@@ -110,13 +181,37 @@ base_fields(damage) ->
         ?I(bitcoin_rpc_timeout, <<"Bitcoin RPC timeout (ms)">>, 100, 3600000, hot),
         ?I(monero_poll_interval_ms, <<"Monero poll interval (ms)">>, 1000, 3600000, hot),
         ?I(quickstart_max_inflight, <<"Quickstart maximum concurrent requests">>, 1, 128, hot),
-        ?I(quickstart_max_generations_per_peer_hour, <<"Quickstart generations per peer/hour">>, 1, 100000, hot),
+        ?I(
+            quickstart_max_generations_per_peer_hour,
+            <<"Quickstart generations per peer/hour">>,
+            1,
+            100000,
+            hot
+        ),
         ?I(quickstart_max_peer_per_hour, <<"Quickstart requests per peer/hour">>, 1, 100000, hot),
-        ?I(settings_poll_interval_ms, <<"Configuration file poll interval (ms)">>, 500, 60000, restart),
+        ?I(
+            settings_poll_interval_ms,
+            <<"Configuration file poll interval (ms)">>,
+            500,
+            60000,
+            restart
+        ),
         ?I(ecai_log_recent_limit, <<"ECAI log learning recent entries">>, 1, 1024, restart),
         ?I(ecai_log_pending_limit, <<"ECAI log learning pending limit">>, 1, 100000, restart),
-        ?I(ecai_log_flush_interval_ms, <<"ECAI log learning flush interval (ms)">>, 100, 3600000, restart),
-        ?I(ecai_log_max_text_bytes, <<"ECAI log learning text limit (bytes)">>, 128, 1048576, restart)
+        ?I(
+            ecai_log_flush_interval_ms,
+            <<"ECAI log learning flush interval (ms)">>,
+            100,
+            3600000,
+            restart
+        ),
+        ?I(
+            ecai_log_max_text_bytes,
+            <<"ECAI log learning text limit (bytes)">>,
+            128,
+            1048576,
+            restart
+        )
     ];
 base_fields(ecai) ->
     [
@@ -137,7 +232,9 @@ base_fields(ecai) ->
         ?B(code_integration_run_eunit, <<"EUnit before integration">>, restart),
         ?B(code_integration_run_ct, <<"Common Test before integration">>, restart),
         ?P(code_learning_parallelism, <<"Code learning parallelism (or auto)">>, 1, 128, restart),
-        ?I(code_model_health_interval_ms, <<"Model health interval (ms)">>, 1000, 86400000, restart),
+        ?I(
+            code_model_health_interval_ms, <<"Model health interval (ms)">>, 1000, 86400000, restart
+        ),
         ?I(code_model_health_timeout_ms, <<"Model health timeout (ms)">>, 100, 3600000, restart),
         ?I(code_model_failure_threshold, <<"Model failure threshold">>, 1, 1000, restart),
         ?I(code_model_queue_timeout_ms, <<"Model queue timeout (ms)">>, 100, 3600000, restart),
@@ -145,23 +242,57 @@ base_fields(ecai) ->
         ?I(code_ollama_timeout_ms, <<"Ollama request timeout (ms)">>, 100, 3600000, restart),
         ?S(ollama_model, <<"General-purpose model name">>, restart),
         ?I(ingest_wal_max_batch_bytes, <<"Ingestion WAL batch bytes">>, 1024, 1073741824, restart),
-        ?I(ingest_max_source_bytes, <<"Maximum ingestion source bytes">>, 1024, 1073741824, restart),
+        ?I(
+            ingest_max_source_bytes, <<"Maximum ingestion source bytes">>, 1024, 1073741824, restart
+        ),
         ?I(ingest_max_source_chunks, <<"Maximum ingestion source chunks">>, 1, 1000000, restart),
-        ?I(code_patch_command_timeout_ms, <<"Repair command timeout (ms)">>, 1000, 86400000, restart),
+        ?I(
+            code_patch_command_timeout_ms,
+            <<"Repair command timeout (ms)">>,
+            1000,
+            86400000,
+            restart
+        ),
         ?I(code_patch_retry_tick_ms, <<"Repair retry tick (ms)">>, 100, 3600000, restart),
         ?I(code_patch_retry_base_ms, <<"Repair retry base delay (ms)">>, 100, 3600000, restart),
         ?I(code_patch_retry_max_ms, <<"Repair retry maximum delay (ms)">>, 100, 86400000, restart),
-        ?I(code_integration_interval_ms, <<"Integration cycle interval (ms)">>, 1000, 86400000, restart),
-        ?I(code_integration_command_timeout_ms, <<"Integration command timeout (ms)">>, 1000, 86400000, restart),
-        ?I(code_ollama_connect_timeout_ms, <<"Ollama connect timeout (ms)">>, 100, 3600000, restart),
+        ?I(
+            code_integration_interval_ms,
+            <<"Integration cycle interval (ms)">>,
+            1000,
+            86400000,
+            restart
+        ),
+        ?I(
+            code_integration_command_timeout_ms,
+            <<"Integration command timeout (ms)">>,
+            1000,
+            86400000,
+            restart
+        ),
+        ?I(
+            code_ollama_connect_timeout_ms, <<"Ollama connect timeout (ms)">>, 100, 3600000, restart
+        ),
         ?I(code_model_cluster_attempts, <<"Model cluster attempts">>, 1, 50, restart),
         ?B(code_health_monitor_enabled, <<"Enable code model health monitor">>, restart),
         ?B(code_repair_feedback_enabled, <<"Enable repair feedback">>, restart),
-        ?I(code_repair_feedback_replay_limit, <<"Repair feedback replay limit">>, 1, 100000, restart),
+        ?I(
+            code_repair_feedback_replay_limit,
+            <<"Repair feedback replay limit">>,
+            1,
+            100000,
+            restart
+        ),
         ?I(ecai_chat_max_body, <<"Chat maximum request bytes">>, 1024, 10485760, restart),
         ?I(ecai_chat_top_k, <<"Chat retrieval top K">>, 1, 1000, restart),
         ?B(relation_benchmark_enabled, <<"Enable relation benchmarking">>, restart),
-        ?I(vulnerability_scan_interval_ms, <<"Vulnerability scan interval (ms)">>, 1000, 86400000, restart)
+        ?I(
+            vulnerability_scan_interval_ms,
+            <<"Vulnerability scan interval (ms)">>,
+            1000,
+            86400000,
+            restart
+        )
     ];
 base_fields(nosternity) ->
     [
@@ -200,7 +331,13 @@ base_fields(nosternity) ->
         ?I(auth_max_sessions, <<"Maximum active sessions">>, 1, 100000, restart),
         ?I(auth_max_accounts, <<"Maximum accounts">>, 1, 1000000, restart),
         ?I(auth_attempts_per_minute, <<"Login attempts per minute">>, 1, 1000, restart),
-        ?I(ae_event_store_hydrate_page_size, <<"Event-store rehydration page size">>, 1, 100, restart)
+        ?I(
+            ae_event_store_hydrate_page_size,
+            <<"Event-store rehydration page size">>,
+            1,
+            100,
+            restart
+        )
     ];
 base_fields(erm) ->
     [
@@ -219,17 +356,24 @@ base_fields(bop) ->
     [
         ?I(port, <<"BOP HTTP port">>, 1, 65535, restart)
     ];
-base_fields(_) -> [].
+base_fields(_) ->
+    [].
 
 field(App, Name) ->
     case normalize_app(App) of
         {ok, ValidApp} ->
-            case [F || F <- fields(ValidApp),
-                       atom_to_binary(maps:get(key, F), utf8) =:= to_name(Name)] of
+            case
+                [
+                    F
+                 || F <- fields(ValidApp),
+                    atom_to_binary(maps:get(key, F), utf8) =:= to_name(Name)
+                ]
+            of
                 [F] -> {ok, F};
                 _ -> {error, not_editable}
             end;
-        Error -> Error
+        Error ->
+            Error
     end.
 
 %% JSON keys MUST be UTF-8 binaries. Atom-creation is never allowed.
@@ -238,9 +382,11 @@ decode_changes(App, Changes) when is_map(Changes), map_size(Changes) =< 100 ->
         {ok, ValidApp} -> decode_pairs(ValidApp, maps:to_list(Changes), []);
         Error -> Error
     end;
-decode_changes(_App, _Changes) -> {error, invalid_changes}.
+decode_changes(_App, _Changes) ->
+    {error, invalid_changes}.
 
-decode_pairs(_App, [], Acc) -> {ok, lists:reverse(Acc)};
+decode_pairs(_App, [], Acc) ->
+    {ok, lists:reverse(Acc)};
 decode_pairs(App, [{Name, Raw} | Rest], Acc) when is_binary(Name) ->
     case field(App, Name) of
         {ok, F} ->
@@ -248,9 +394,11 @@ decode_pairs(App, [{Name, Raw} | Rest], Acc) when is_binary(Name) ->
                 {ok, Value} -> decode_pairs(App, Rest, [{maps:get(key, F), Value} | Acc]);
                 {error, Why} -> {error, {invalid_value, Name, Why}}
             end;
-        {error, _} -> {error, {not_editable, Name}}
+        {error, _} ->
+            {error, {not_editable, Name}}
     end;
-decode_pairs(_App, [{_Name, _} | _], _Acc) -> {error, invalid_key_type}.
+decode_pairs(_App, [{_Name, _} | _], _Acc) ->
+    {error, invalid_key_type}.
 
 %% Reuse the exact same validation on existing sys.config/overlay Erlang values.
 decode_existing(App, Key, Existing) ->
@@ -260,26 +408,45 @@ decode_existing(App, Key, Existing) ->
                 {ok, JSON} -> decode(F, JSON);
                 {error, Why} -> {error, {invalid_existing_value, Key, Why}}
             end;
-        Error -> Error
+        Error ->
+            Error
     end.
 
-public_value(#{type := parallelism}, auto) -> {ok, <<"auto">>};
+public_value(#{type := parallelism}, auto) ->
+    {ok, <<"auto">>};
 public_value(#{type := parallelism}, N) when is_integer(N) -> {ok, N};
 public_value(#{type := boolean}, B) when is_boolean(B) -> {ok, B};
 public_value(#{type := integer}, I) when is_integer(I) -> {ok, I};
 public_value(#{type := tax_jurisdiction}, B) when is_binary(B) -> {ok, B};
 public_value(#{type := ae_account}, B) when is_binary(B) -> {ok, B};
 public_value(#{type := ae_account}, L) when is_list(L) ->
-    try {ok, unicode:characters_to_binary(L)} catch _:_ -> {error, not_ae_account} end;
+    try
+        {ok, unicode:characters_to_binary(L)}
+    catch
+        _:_ -> {error, not_ae_account}
+    end;
 public_value(#{type := absolute_path}, B) when is_binary(B) -> {ok, B};
 public_value(#{type := absolute_path}, L) when is_list(L) ->
-    try {ok, unicode:characters_to_binary(L)} catch _:_ -> {error, not_path} end;
+    try
+        {ok, unicode:characters_to_binary(L)}
+    catch
+        _:_ -> {error, not_path}
+    end;
 public_value(#{type := string}, B) when is_binary(B) -> {ok, B};
 public_value(#{type := string}, L) when is_list(L) ->
-    try {ok, unicode:characters_to_binary(L)} catch _:_ -> {error, not_string} end;
+    try
+        {ok, unicode:characters_to_binary(L)}
+    catch
+        _:_ -> {error, not_string}
+    end;
 public_value(#{type := string_list}, L) when is_list(L) ->
-    try {ok, [unicode:characters_to_binary(S) || S <- L]} catch _:_ -> {error, not_string_list} end;
-public_value(_, _) -> {error, wrong_type}.
+    try
+        {ok, [unicode:characters_to_binary(S) || S <- L]}
+    catch
+        _:_ -> {error, not_string_list}
+    end;
+public_value(_, _) ->
+    {error, wrong_type}.
 
 %% Country codes remain binary and can only come from the built-in registry.
 decode(#{type := tax_jurisdiction}, B) when is_binary(B) ->
@@ -287,44 +454,63 @@ decode(#{type := tax_jurisdiction}, B) when is_binary(B) ->
         true -> {ok, B};
         false -> {error, unsupported_tax_jurisdiction}
     end;
-decode(#{type := tax_jurisdiction}, _) -> {error, unsupported_tax_jurisdiction};
-
+decode(#{type := tax_jurisdiction}, _) ->
+    {error, unsupported_tax_jurisdiction};
 %% The tax importer and report catalog use the *binary* tenant identifier.
 %% Unlike generic string fields, do not convert this one to a charlist.
-decode(#{type := ae_account}, B) when is_binary(B),
-                                      byte_size(B) >= 16, byte_size(B) =< 128 ->
+decode(#{type := ae_account}, B) when
+    is_binary(B),
+    byte_size(B) >= 16,
+    byte_size(B) =< 128
+->
     case re:run(B, <<"^ak_[1-9A-HJ-NP-Za-km-z]+$">>, [{capture, none}]) of
         match -> {ok, B};
         nomatch -> {error, invalid_ae_account}
     end;
-decode(#{type := ae_account}, _) -> {error, invalid_ae_account};
-decode(#{type := absolute_path}, B) when is_binary(B),
-                                         byte_size(B) > 1, byte_size(B) =< 512 ->
+decode(#{type := ae_account}, _) ->
+    {error, invalid_ae_account};
+decode(#{type := absolute_path}, B) when
+    is_binary(B),
+    byte_size(B) > 1,
+    byte_size(B) =< 512
+->
     case decode(#{type => string}, B) of
         {ok, Path} ->
             Parts = [P || P <- filename:split(Path), P =/= "/", P =/= ""],
             %% Never chmod a top-level system folder as the tax evidence root.
             %% /tmp/<dedicated-folder> is permitted for tests/dev only.
-            Dedicated = case Parts of
-                ["tmp", _Subdir | _] -> true;
-                [_First, _Second, _Third | _] -> true;
-                _ -> false
-            end,
-            case filename:pathtype(Path) =:= absolute andalso Dedicated andalso
-                 not lists:any(fun(P) -> P =:= ".." orelse P =:= "." end,
-                               Parts) of
+            Dedicated =
+                case Parts of
+                    ["tmp", _Subdir | _] -> true;
+                    [_First, _Second, _Third | _] -> true;
+                    _ -> false
+                end,
+            case
+                filename:pathtype(Path) =:= absolute andalso Dedicated andalso
+                    not lists:any(
+                        fun(P) -> P =:= ".." orelse P =:= "." end,
+                        Parts
+                    )
+            of
                 true -> {ok, Path};
                 false -> {error, expected_safe_absolute_directory}
             end;
-        Error -> Error
+        Error ->
+            Error
     end;
-decode(#{type := absolute_path}, _) -> {error, expected_safe_absolute_directory};
-decode(#{type := parallelism}, <<"auto">>) -> {ok, auto};
-decode(#{type := parallelism, min := Min, max := Max}, N)
-  when is_integer(N), N >= Min, N =< Max -> {ok, N};
+decode(#{type := absolute_path}, _) ->
+    {error, expected_safe_absolute_directory};
+decode(#{type := parallelism}, <<"auto">>) ->
+    {ok, auto};
+decode(#{type := parallelism, min := Min, max := Max}, N) when
+    is_integer(N), N >= Min, N =< Max
+->
+    {ok, N};
 decode(#{type := boolean}, B) when is_boolean(B) -> {ok, B};
-decode(#{type := integer, min := Min, max := Max}, I)
-  when is_integer(I), I >= Min, I =< Max -> {ok, I};
+decode(#{type := integer, min := Min, max := Max}, I) when
+    is_integer(I), I >= Min, I =< Max
+->
+    {ok, I};
 decode(#{type := string}, B) when is_binary(B), byte_size(B) =< 512, byte_size(B) > 0 ->
     try
         S = unicode:characters_to_list(B),
@@ -332,10 +518,19 @@ decode(#{type := string}, B) when is_binary(B), byte_size(B) =< 512, byte_size(B
             true -> {error, contains_nul};
             false -> {ok, S}
         end
-    catch _:_ -> {error, invalid_utf8} end;
+    catch
+        _:_ -> {error, invalid_utf8}
+    end;
 decode(#{type := string_list}, L) when is_list(L), length(L) =< 64 ->
-    case lists:all(fun(S) -> is_binary(S) andalso byte_size(S) > 0 andalso
-                                byte_size(S) =< 256 end, L) of
+    case
+        lists:all(
+            fun(S) ->
+                is_binary(S) andalso byte_size(S) > 0 andalso
+                    byte_size(S) =< 256
+            end,
+            L
+        )
+    of
         true ->
             try
                 Strings = [unicode:characters_to_list(B) || B <- L],
@@ -343,10 +538,14 @@ decode(#{type := string_list}, L) when is_list(L), length(L) =< 64 ->
                     true -> {error, contains_nul};
                     false -> {ok, Strings}
                 end
-            catch _:_ -> {error, invalid_utf8} end;
-        false -> {error, invalid_list_item}
+            catch
+                _:_ -> {error, invalid_utf8}
+            end;
+        false ->
+            {error, invalid_list_item}
     end;
-decode(_F, _V) -> {error, wrong_type_or_range}.
+decode(_F, _V) ->
+    {error, wrong_type_or_range}.
 
 to_name(Name) when is_binary(Name) -> Name;
 to_name(Name) when is_atom(Name) -> atom_to_binary(Name, utf8);
@@ -359,11 +558,14 @@ validate_effective(All) when is_map(All) ->
     Default = maps:get(search_default_limit, N, 50),
     Max = maps:get(search_max_limit, N, 200),
     case Default =< Max of
-        true -> validate_tax_effective(maps:get(damage, All, #{}));
-        false -> {error, {invalid_setting_combination, nosternity,
-                          search_default_limit, search_max_limit}}
+        true ->
+            validate_tax_effective(maps:get(damage, All, #{}));
+        false ->
+            {error,
+                {invalid_setting_combination, nosternity, search_default_limit, search_max_limit}}
     end;
-validate_effective(_) -> {error, invalid_configuration}.
+validate_effective(_) ->
+    {error, invalid_configuration}.
 
 %% Enabling before assigning the legal CLN owner would create an apparently
 %% functional service that can never import transactions. Require both values
@@ -371,7 +573,7 @@ validate_effective(_) -> {error, invalid_configuration}.
 validate_tax_effective(#{tax_enabled := true} = Damage) ->
     case maps:get(tax_cln_owner, Damage, undefined) of
         <<"ak_", _/binary>> -> ok;
-        _ -> {error, {invalid_setting_combination, damage,
-                      tax_enabled, tax_cln_owner}}
+        _ -> {error, {invalid_setting_combination, damage, tax_enabled, tax_cln_owner}}
     end;
-validate_tax_effective(_) -> ok.
+validate_tax_effective(_) ->
+    ok.

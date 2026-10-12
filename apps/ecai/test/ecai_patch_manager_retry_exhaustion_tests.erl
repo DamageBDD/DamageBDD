@@ -126,7 +126,8 @@ terminalization_does_not_hide_store_failure_test() ->
             finding_version => <<"v1">>
         },
         ?assertError(
-            {repair_transition_failed, <<"failed-write">>, <<"v1">>, {error, injected_store_failure}},
+            {repair_transition_failed, <<"failed-write">>, <<"v1">>,
+                {error, injected_store_failure}},
             ecai_patch_manager:terminalize_exhausted_retry_wait(Repair, 6)
         ),
         ?assertEqual(1, meck:num_calls(ecai_learning_store, compare_and_put_repair, 4))
@@ -137,8 +138,11 @@ with_store_mock(Fun) ->
     %% node-global learning-store lifecycle. No original functions may run.
     ok = meck:new(ecai_learning_store, []),
     try
-        ok = meck:expect(ecai_learning_store, compare_and_put_repair,
-            fun(_, _, _, After) -> {ok, After} end),
+        ok = meck:expect(
+            ecai_learning_store,
+            compare_and_put_repair,
+            fun(_, _, _, After) -> {ok, After} end
+        ),
         Result = Fun(),
         ?assert(meck:validate(ecai_learning_store)),
         Result

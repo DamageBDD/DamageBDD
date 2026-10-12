@@ -55,7 +55,8 @@ bootstrap_node_only() ->
                 {error, _} = Error ->
                     Error
             end;
-        {error, _} = Error -> Error
+        {error, _} = Error ->
+            Error
     end.
 
 bootstrap_node_admin(NodeAdminAccount) ->
@@ -208,9 +209,11 @@ activate_schedule_vault(CtId) ->
         {ok, KeyPair} ->
             case validate_schedule_vault(KeyPair, CtId) of
                 true ->
-                    case ensure_local_contract_sources(
-                        ?SCHEDULE_VAULT_NAME, ?SCHEDULE_VAULT_ENV, CtId
-                    ) of
+                    case
+                        ensure_local_contract_sources(
+                            ?SCHEDULE_VAULT_NAME, ?SCHEDULE_VAULT_ENV, CtId
+                        )
+                    of
                         ok -> {ok, CtId};
                         {error, _} = Error -> Error
                     end;
@@ -232,12 +235,13 @@ deploy_schedule_vault() ->
                     schedule_vault,
                     damage_ae:contract_deploy(KeyPair, ContractPath, Args)
                 ),
-                case validate_deployed_contract(
-                    KeyPair, CtId, fun validate_schedule_vault/2
-                ) of
+                case
+                    validate_deployed_contract(
+                        KeyPair, CtId, fun validate_schedule_vault/2
+                    )
+                of
                     true -> activate_schedule_vault(CtId);
-                    false ->
-                        {error, {deployed_schedule_vault_validation_failed, CtId}}
+                    false -> {error, {deployed_schedule_vault_validation_failed, CtId}}
                 end
             catch
                 Class:Reason:Stacktrace ->
@@ -254,10 +258,12 @@ deploy_schedule_vault() ->
 validate_schedule_vault(KeyPair, CtId) ->
     ExpectedToken = damage_schedule_v2_contract:token_contract(),
     ExpectedExecutor = damage_utils:to_bin(maps:get(public_key, KeyPair)),
-    case {
-        schedule_vault_address(KeyPair, CtId, "token_contract", contract_pubkey),
-        schedule_vault_address(KeyPair, CtId, "executor", account_pubkey)
-    } of
+    case
+        {
+            schedule_vault_address(KeyPair, CtId, "token_contract", contract_pubkey),
+            schedule_vault_address(KeyPair, CtId, "executor", account_pubkey)
+        }
+    of
         {{ok, ExpectedToken}, {ok, ExpectedExecutor}} ->
             true;
         {TokenResult, ExecutorResult} ->
@@ -281,8 +287,9 @@ schedule_vault_address(KeyPair, CtId, Function, EncoderType) ->
             {error, {schedule_vault_query_failed, Function, Other}}
     end.
 
-normalize_schedule_vault_address({address, Raw}, EncoderType)
-    when is_binary(Raw), byte_size(Raw) =:= 32 ->
+normalize_schedule_vault_address({address, Raw}, EncoderType) when
+    is_binary(Raw), byte_size(Raw) =:= 32
+->
     try
         {ok, damage_utils:to_bin(aeser_api_encoder:encode(EncoderType, Raw))}
     catch
@@ -297,8 +304,9 @@ normalize_schedule_vault_address(Value, _EncoderType) ->
 
 node_keypair() ->
     try secrets:node_keypair() of
-        #{public_key := Pub, private_key := Priv} = KeyPair
-            when is_binary(Pub), is_binary(Priv) ->
+        #{public_key := Pub, private_key := Priv} = KeyPair when
+            is_binary(Pub), is_binary(Priv)
+        ->
             {ok, KeyPair};
         Other ->
             {error, {node_keypair_unavailable, Other}}

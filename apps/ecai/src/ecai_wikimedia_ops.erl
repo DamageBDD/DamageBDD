@@ -233,9 +233,11 @@ fixture_reload() ->
                         {ok, _Path, _Catalog} -> ecai_wikimedia_sample:status();
                         {error, _Reason} = Error -> Error
                     end;
-                {error, _Reason} = Error -> Error
+                {error, _Reason} = Error ->
+                    Error
             end;
-        {error, _Reason} = Error -> Error
+        {error, _Reason} = Error ->
+            Error
     end.
 
 -spec doctor() -> map().
@@ -259,10 +261,12 @@ default_project_dir(Project) when is_binary(Project) ->
     case valid_project_token(Project) of
         true ->
             Root = env_binary(wikimedia_index_root, <<"/var/lib/damage/ecai/wikimedia">>),
-            unicode:characters_to_binary(filename:join(
-                unicode:characters_to_list(Root),
-                unicode:characters_to_list(Project)
-            ));
+            unicode:characters_to_binary(
+                filename:join(
+                    unicode:characters_to_list(Root),
+                    unicode:characters_to_list(Project)
+                )
+            );
         false ->
             %% The canonical codec rejects the project token. Never join an
             %% unchecked client identifier into a server filesystem path.
@@ -271,13 +275,15 @@ default_project_dir(Project) when is_binary(Project) ->
 default_project_dir(_) ->
     default_project_dir(<<"enwiki">>).
 
-default_project_index_id(<<"enwiki">>) -> <<"ecai-open-knowledge-genesis">>;
+default_project_index_id(<<"enwiki">>) ->
+    <<"ecai-open-knowledge-genesis">>;
 default_project_index_id(Project) when is_binary(Project) ->
     case valid_project_token(Project) of
         true -> <<"ecai-wikimedia-", Project/binary>>;
         false -> <<"ecai-open-knowledge-genesis">>
     end;
-default_project_index_id(_) -> <<"ecai-open-knowledge-genesis">>.
+default_project_index_id(_) ->
+    <<"ecai-open-knowledge-genesis">>.
 
 default_pageview_project(Project) when is_binary(Project) ->
     case valid_project_token(Project) andalso byte_size(Project) > 4 of
@@ -286,24 +292,29 @@ default_pageview_project(Project) when is_binary(Project) ->
                 <<"wiki">> ->
                     Prefix = binary:part(Project, 0, byte_size(Project) - 4),
                     <<Prefix/binary, ".wikipedia">>;
-                _ -> <<"en.wikipedia">>
+                _ ->
+                    <<"en.wikipedia">>
             end;
-        false -> <<"en.wikipedia">>
+        false ->
+            <<"en.wikipedia">>
     end;
-default_pageview_project(_) -> <<"en.wikipedia">>.
+default_pageview_project(_) ->
+    <<"en.wikipedia">>.
 
-default_project_namespace(<<"enwiki">>) -> <<"org.damagebdd.wikimedia.en">>;
+default_project_namespace(<<"enwiki">>) ->
+    <<"org.damagebdd.wikimedia.en">>;
 default_project_namespace(Project) when is_binary(Project) ->
     case valid_project_token(Project) of
         true -> <<"org.damagebdd.wikimedia.", Project/binary>>;
         false -> <<"org.damagebdd.wikimedia.en">>
     end;
-default_project_namespace(_) -> <<"org.damagebdd.wikimedia.en">>.
+default_project_namespace(_) ->
+    <<"org.damagebdd.wikimedia.en">>.
 
 valid_project_token(Project) ->
     byte_size(Project) > 0 andalso byte_size(Project) =< 128 andalso
-    re:run(Project, <<"^[A-Za-z0-9][A-Za-z0-9._-]*$">>, [{capture, none}]) =:= match andalso
-    binary:match(Project, <<"..">>) =:= nomatch.
+        re:run(Project, <<"^[A-Za-z0-9][A-Za-z0-9._-]*$">>, [{capture, none}]) =:= match andalso
+        binary:match(Project, <<"..">>) =:= nomatch.
 
 default_idempotency_key(Spec) ->
     {ok, Hash} = ecai_index_job_codec:spec_hash(Spec),

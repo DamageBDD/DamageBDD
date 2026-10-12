@@ -16,9 +16,13 @@ dimension() -> 30.
 extract(PCM) ->
     case ecai_voice_wav:pcm(PCM) of
         {ok, Meta} ->
-            try extract_valid(PCM, maps:remove(pcm, Meta))
-            catch throw:{quality, R} -> {error, {insufficient_audio, R}} end;
-        Error -> Error
+            try
+                extract_valid(PCM, maps:remove(pcm, Meta))
+            catch
+                throw:{quality, R} -> {error, {insufficient_audio, R}}
+            end;
+        Error ->
+            Error
     end.
 
 extract_valid(PCM, Meta) ->
@@ -46,8 +50,10 @@ extract_valid(PCM, Meta) ->
     Ceps = [list_to_tuple(C) || {C, _} <- Rows],
     Columns = [[element(I, C) || C <- Ceps] || I <- lists:seq(1, 13)],
     Center = [ecai_voice_dsp:quantile(C, 0.5) / 6.0 || C <- Columns],
-    Spread = [(ecai_voice_dsp:quantile(C, 0.75) - ecai_voice_dsp:quantile(C, 0.25)) / 12.0
-              || C <- Columns],
+    Spread = [
+        (ecai_voice_dsp:quantile(C, 0.75) - ecai_voice_dsp:quantile(C, 0.25)) / 12.0
+     || C <- Columns
+    ],
     LogPitch = [math:log(P / 150) / math:log(2.0) || P <- Pitch],
     PF = [ecai_voice_dsp:quantile(LogPitch, Q) / 0.5 || Q <- [0.25, 0.5, 0.75]],
     D = Center ++ Spread ++ PF ++ [length(Pitch) / length(Active)],
@@ -57,19 +63,25 @@ extract_valid(PCM, Meta) ->
     Saturated = length([Q || Q <- RawQ, abs(Q) > 255]),
     quality(Saturated =< 3, out_of_feature_range),
     Qs = [max(-255, min(255, Q)) || Q <- RawQ],
-    {ok, #{frontend => ?VERSION, q => Qs,
-           quality => Meta#{rms => Rms, clipped_fraction => Clip,
-               active_seconds_approx => ActiveSeconds, periodic_seconds_approx => PeriodicSeconds,
-               pitch_median_hz => ecai_voice_dsp:quantile(Pitch, 0.5),
-               periodicity_median => ecai_voice_dsp:quantile(Strengths, 0.5),
-               saturated_coordinates => Saturated}}}.
+    {ok, #{
+        frontend => ?VERSION,
+        q => Qs,
+        quality => Meta#{
+            rms => Rms,
+            clipped_fraction => Clip,
+            active_seconds_approx => ActiveSeconds,
+            periodic_seconds_approx => PeriodicSeconds,
+            pitch_median_hz => ecai_voice_dsp:quantile(Pitch, 0.5),
+            periodicity_median => ecai_voice_dsp:quantile(Strengths, 0.5),
+            saturated_coordinates => Saturated
+        }
+    }}.
 
 quality(true, _) -> ok;
 quality(false, R) -> throw({quality, R}).
 
 frames(_, N, Acc) when N < ?FRAME -> lists:reverse(Acc);
-frames(Xs, N, Acc) ->
-    frames(lists:nthtail(?HOP, Xs), N - ?HOP, [lists:sublist(Xs, ?FRAME) | Acc]).
+frames(Xs, N, Acc) -> frames(lists:nthtail(?HOP, Xs), N - ?HOP, [lists:sublist(Xs, ?FRAME) | Acc]).
 
 pitch(Frame, #{window := Window} = Plan) ->
     Mean = lists:sum(Frame) / ?FRAME,
@@ -78,25 +90,31 @@ pitch(Frame, #{window := Window} = Plan) ->
     Denom = max(1.0e-20, hd(AC0)),
     AC = list_to_tuple([A / Denom || A <- AC0]),
     %% Lags 40..265, corresponding approximately to 60..400 Hz.
-    Peaks = [{K, element(K + 1, AC)} || K <- lists:seq(40, 265),
-             element(K + 1, AC) > element(K, AC),
-             element(K + 1, AC) >= element(K + 2, AC)],
+    Peaks = [
+        {K, element(K + 1, AC)}
+     || K <- lists:seq(40, 265),
+        element(K + 1, AC) > element(K, AC),
+        element(K + 1, AC) >= element(K + 2, AC)
+    ],
     pitch_peak(Peaks, AC).
 
-pitch_peak([], _) -> unvoiced;
+pitch_peak([], _) ->
+    unvoiced;
 pitch_peak(Peaks, AC) ->
     Peak = lists:max([V || {_, V} <- Peaks]),
     case Peak >= 0.35 of
-        false -> unvoiced;
+        false ->
+            unvoiced;
         true ->
             [{Lag, _} | _] = [{K, V} || {K, V} <- Peaks, V >= 0.90 * Peak],
             Left = element(Lag, AC),
             Mid = element(Lag + 1, AC),
             Right = element(Lag + 2, AC),
             Den = Left - 2 * Mid + Right,
-            Offset = case abs(Den) < 1.0e-12 of
-                true -> 0.0;
-                false -> max(-0.5, min(0.5, 0.5 * (Left - Right) / Den))
-            end,
+            Offset =
+                case abs(Den) < 1.0e-12 of
+                    true -> 0.0;
+                    false -> max(-0.5, min(0.5, 0.5 * (Left - Right) / Den))
+                end,
             {16000 / (Lag + Offset), Peak}
     end.

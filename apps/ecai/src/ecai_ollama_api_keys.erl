@@ -38,65 +38,83 @@ has_scope(_, _) -> false.
 
 init(Opts) ->
     DefaultPath = filename:join(ecai_paths:index_state_dir(), "ollama_api_keys.dets"),
-    Path = ecai_paths:normalize(maps:get(path, Opts,
-        application:get_env(ecai, ollama_api_keys_path, DefaultPath))),
+    Path = ecai_paths:normalize(
+        maps:get(
+            path,
+            Opts,
+            application:get_env(ecai, ollama_api_keys_path, DefaultPath)
+        )
+    ),
     ok = ecai_paths:ensure_parent(Path),
-    case dets:open_file(ecai_ollama_api_keys_dets,
-                        [{file, Path}, {type, set}, {auto_save, 1000}]) of
+    case
+        dets:open_file(
+            ecai_ollama_api_keys_dets,
+            [{file, Path}, {type, set}, {auto_save, 1000}]
+        )
+    of
         {ok, Table} -> {ok, #st{table = Table}};
         {error, Reason} -> {stop, {ollama_api_key_store_failed, Reason}}
     end.
 
 handle_call({list, Owner}, _From, State = #st{table = T}) ->
-    Entries = dets:foldl(fun
-        ({{key, _Id}, Entry}, Acc) ->
-            case maps:get(owner, Entry, undefined) =:= Owner of
-                true -> [public_entry(Entry) | Acc];
-                false -> Acc
-            end;
-        (_, Acc) -> Acc
-    end, [], T),
-    Sorted = lists:sort(fun(A, B) ->
-        maps:get(<<"created_at_ms">>, A, 0) > maps:get(<<"created_at_ms">>, B, 0)
-    end, Entries),
+    Entries = dets:foldl(
+        fun
+            ({{key, _Id}, Entry}, Acc) ->
+                case maps:get(owner, Entry, undefined) =:= Owner of
+                    true -> [public_entry(Entry) | Acc];
+                    false -> Acc
+                end;
+            (_, Acc) ->
+                Acc
+        end,
+        [],
+        T
+    ),
+    Sorted = lists:sort(
+        fun(A, B) ->
+            maps:get(<<"created_at_ms">>, A, 0) > maps:get(<<"created_at_ms">>, B, 0)
+        end,
+        Entries
+    ),
     {reply, {ok, Sorted}, State};
-
 handle_call({create, Owner, Params}, _From, State = #st{table = T}) ->
-    Reply = case validate_owner(Owner) of
-        ok -> create_key(T, Owner, Params, true);
-        Error -> {error, Error}
-    end,
+    Reply =
+        case validate_owner(Owner) of
+            ok -> create_key(T, Owner, Params, true);
+            Error -> {error, Error}
+        end,
     {reply, Reply, State};
-
 handle_call({rotate, Owner, Id}, _From, State = #st{table = T}) ->
-    Reply = case owned_entry(T, Owner, Id) of
-        {ok, Entry} ->
-            case entry_status(Entry, now_ms()) of
-                revoked -> {error, key_revoked};
-                _ -> rotate_key(T, Entry)
-            end;
-        Error -> Error
-    end,
+    Reply =
+        case owned_entry(T, Owner, Id) of
+            {ok, Entry} ->
+                case entry_status(Entry, now_ms()) of
+                    revoked -> {error, key_revoked};
+                    _ -> rotate_key(T, Entry)
+                end;
+            Error ->
+                Error
+        end,
     {reply, Reply, State};
-
 handle_call({revoke, Owner, Id}, _From, State = #st{table = T}) ->
-    Reply = case owned_entry(T, Owner, Id) of
-        {ok, Entry} ->
-            case maps:get(revoked_at_ms, Entry, null) of
-                Revoked when is_integer(Revoked) -> {ok, public_entry(Entry)};
-                _ ->
-                    New = Entry#{revoked_at_ms => now_ms()},
-                    save_entry(T, New, {ok, public_entry(New)})
-            end;
-        Error -> Error
-    end,
+    Reply =
+        case owned_entry(T, Owner, Id) of
+            {ok, Entry} ->
+                case maps:get(revoked_at_ms, Entry, null) of
+                    Revoked when is_integer(Revoked) -> {ok, public_entry(Entry)};
+                    _ ->
+                        New = Entry#{revoked_at_ms => now_ms()},
+                        save_entry(T, New, {ok, public_entry(New)})
+                end;
+            Error ->
+                Error
+        end,
     {reply, Reply, State};
-
 handle_call({authenticate, Token}, _From, State = #st{table = T}) ->
     Reply = authenticate_token(T, Token),
     {reply, Reply, State};
-
-handle_call(_, _From, State) -> {reply, {error, unsupported_operation}, State}.
+handle_call(_, _From, State) ->
+    {reply, {error, unsupported_operation}, State}.
 handle_cast(_, State) -> {noreply, State}.
 handle_info(_, State) -> {noreply, State}.
 terminate(_, #st{table = T}) -> dets:close(T).
@@ -109,9 +127,11 @@ create_key(T, Owner, Params, EnforceLimit) when is_map(Params) ->
                 true -> {error, active_key_limit_reached};
                 false -> issue_key(T, Owner, Label, Scopes, ExpiresAt)
             end;
-        Error -> Error
+        Error ->
+            Error
     end;
-create_key(_, _, _, _) -> {error, invalid_key_request}.
+create_key(_, _, _, _) ->
+    {error, invalid_key_request}.
 
 issue_key(T, Owner, Label, Scopes, ExpiresAt) ->
     Id = binary:encode_hex(crypto:strong_rand_bytes(10)),
@@ -150,7 +170,8 @@ rotate_key(T, Old) ->
                     _ = save_entry(T, Old, ok),
                     {error, Reason}
             end;
-        {error, _} = Error -> Error
+        {error, _} = Error ->
+            Error
     end.
 
 authenticate_token(T, Token) when is_binary(Token) ->
@@ -161,20 +182,25 @@ authenticate_token(T, Token) when is_binary(Token) ->
                 [{Key, Entry}] -> authenticate_entry(T, Entry, Secret);
                 _ -> {error, invalid_key}
             end;
-        error -> {error, invalid_key}
+        error ->
+            {error, invalid_key}
     end;
-authenticate_token(_, _) -> {error, invalid_key}.
+authenticate_token(_, _) ->
+    {error, invalid_key}.
 
 authenticate_entry(T, Entry, Secret) ->
     Expected = maps:get(secret_hash, Entry, <<>>),
     Actual = crypto:hash(sha256, Secret),
     case secure_equal(Expected, Actual) of
-        false -> {error, invalid_key};
+        false ->
+            {error, invalid_key};
         true ->
             Now = now_ms(),
             case entry_status(Entry, Now) of
-                revoked -> {error, key_revoked};
-                expired -> {error, key_expired};
+                revoked ->
+                    {error, key_revoked};
+                expired ->
+                    {error, key_expired};
                 active ->
                     Updated = maybe_touch(T, Entry, Now),
                     {ok, #{
@@ -191,8 +217,12 @@ maybe_touch(T, Entry, Now) ->
     case Last =:= null orelse (is_integer(Last) andalso Now - Last >= ?TOUCH_INTERVAL_MS) of
         true ->
             New = Entry#{last_used_at_ms => Now},
-            case save_entry(T, New, ok) of ok -> New; _ -> Entry end;
-        false -> Entry
+            case save_entry(T, New, ok) of
+                ok -> New;
+                _ -> Entry
+            end;
+        false ->
+            Entry
     end.
 
 owned_entry(T, Owner, Id) when is_binary(Id), byte_size(Id) =:= 20 ->
@@ -203,25 +233,36 @@ owned_entry(T, Owner, Id) when is_binary(Id), byte_size(Id) =:= 20 ->
                 true -> {ok, Entry};
                 false -> {error, key_not_found}
             end;
-        _ -> {error, key_not_found}
+        _ ->
+            {error, key_not_found}
     end;
-owned_entry(_, _, _) -> {error, key_not_found}.
+owned_entry(_, _, _) ->
+    {error, key_not_found}.
 
 active_count(T, Owner) ->
     Now = now_ms(),
-    dets:foldl(fun
-        ({{key, _}, Entry}, Acc) ->
-            case maps:get(owner, Entry, undefined) =:= Owner andalso entry_status(Entry, Now) =:= active of
-                true -> Acc + 1;
-                false -> Acc
-            end;
-        (_, Acc) -> Acc
-    end, 0, T).
+    dets:foldl(
+        fun
+            ({{key, _}, Entry}, Acc) ->
+                case
+                    maps:get(owner, Entry, undefined) =:= Owner andalso
+                        entry_status(Entry, Now) =:= active
+                of
+                    true -> Acc + 1;
+                    false -> Acc
+                end;
+            (_, Acc) ->
+                Acc
+        end,
+        0,
+        T
+    ).
 
 validate_create_params(Params) ->
     Allowed = [<<"label">>, <<"scopes">>, <<"expires_in_days">>],
     case lists:all(fun(K) -> lists:member(K, Allowed) end, maps:keys(Params)) of
-        false -> {error, unexpected_fields};
+        false ->
+            {error, unexpected_fields};
         true ->
             Label0 = maps:get(<<"label">>, Params, <<"Ollama client">>),
             Scopes0 = maps:get(<<"scopes">>, Params, ?ALLOWED_SCOPES),
@@ -229,9 +270,12 @@ validate_create_params(Params) ->
             case {validate_label(Label0), validate_scopes(Scopes0), expiry(Expiry0)} of
                 {{ok, Label}, {ok, Scopes}, {ok, ExpiresAt}} ->
                     {ok, Label, Scopes, ExpiresAt};
-                {{error, Reason}, _, _} -> {error, Reason};
-                {_, {error, Reason}, _} -> {error, Reason};
-                {_, _, {error, Reason}} -> {error, Reason}
+                {{error, Reason}, _, _} ->
+                    {error, Reason};
+                {_, {error, Reason}, _} ->
+                    {error, Reason};
+                {_, _, {error, Reason}} ->
+                    {error, Reason}
             end
     end.
 
@@ -241,7 +285,8 @@ validate_label(Label0) when is_binary(Label0) ->
         true -> {ok, Label};
         false -> {error, invalid_label}
     end;
-validate_label(_) -> {error, invalid_label}.
+validate_label(_) ->
+    {error, invalid_label}.
 
 validate_scopes(Scopes) when is_list(Scopes), Scopes =/= [] ->
     Unique = lists:usort(Scopes),
@@ -249,14 +294,19 @@ validate_scopes(Scopes) when is_list(Scopes), Scopes =/= [] ->
         true -> {ok, Unique};
         false -> {error, invalid_scopes}
     end;
-validate_scopes(_) -> {error, invalid_scopes}.
+validate_scopes(_) ->
+    {error, invalid_scopes}.
 
-expiry(null) -> {ok, null};
-expiry(undefined) -> {ok, null};
-expiry(0) -> {ok, null};
+expiry(null) ->
+    {ok, null};
+expiry(undefined) ->
+    {ok, null};
+expiry(0) ->
+    {ok, null};
 expiry(Days) when is_integer(Days), Days >= 1, Days =< ?MAX_EXPIRY_DAYS ->
     {ok, now_ms() + Days * 86400000};
-expiry(_) -> {error, invalid_expiry}.
+expiry(_) ->
+    {error, invalid_expiry}.
 
 validate_owner(Owner) when is_binary(Owner), byte_size(Owner) > 0, byte_size(Owner) =< 512 -> ok;
 validate_owner(_) -> invalid_owner.
@@ -294,7 +344,8 @@ save_entry(T, Entry, Response) ->
                 ok -> Response;
                 Error -> {error, {sync_failed, Error}}
             end;
-        Error -> {error, {write_failed, Error}}
+        Error ->
+            {error, {write_failed, Error}}
     end.
 
 parse_token(Token) when is_binary(Token) ->
@@ -303,21 +354,30 @@ parse_token(Token) when is_binary(Token) ->
     case Token of
         <<Prefix:PrefixSize/binary, Rest/binary>> ->
             case binary:split(Rest, <<".">>, [global]) of
-                [Id, Secret]
-                  when byte_size(Id) =:= 20,
-                       byte_size(Secret) >= 40,
-                       byte_size(Secret) =< 64 ->
+                [Id, Secret] when
+                    byte_size(Id) =:= 20,
+                    byte_size(Secret) >= 40,
+                    byte_size(Secret) =< 64
+                ->
                     {ok, Id, Secret};
-                _ -> error
+                _ ->
+                    error
             end;
-        _ -> error
+        _ ->
+            error
     end;
-parse_token(_) -> error.
+parse_token(_) ->
+    error.
 
 secure_equal(A, B) when is_binary(A), is_binary(B), byte_size(A) =:= byte_size(B) ->
-    0 =:= lists:foldl(fun({X, Y}, Acc) -> Acc bor (X bxor Y) end,
-                      0, lists:zip(binary_to_list(A), binary_to_list(B)));
-secure_equal(_, _) -> false.
+    0 =:=
+        lists:foldl(
+            fun({X, Y}, Acc) -> Acc bor (X bxor Y) end,
+            0,
+            lists:zip(binary_to_list(A), binary_to_list(B))
+        );
+secure_equal(_, _) ->
+    false.
 
 base64url(Bytes) ->
     Enc0 = base64:encode(Bytes),

@@ -28,14 +28,19 @@ get_trails() ->
 
 %% Trusted router tags select each listener's auth origin.
 routes() ->
-    Base = [{"/nostr", nosternity_websocket, #{}},
-        {"/branding/[...]", cowboy_static, {priv_dir, nosternity, "branding"}}] ++
-        trails:trails([nosternity_http, nosternity_search_http]),
+    Base =
+        [
+            {"/nostr", nosternity_websocket, #{}},
+            {"/branding/[...]", cowboy_static, {priv_dir, nosternity, "branding"}}
+        ] ++
+            trails:trails([nosternity_http, nosternity_search_http]),
     case nosternity_config:get(dashboard_enabled) of
-        false -> [{"/", nosternity_http, #{action => home_ui}} | Base];
-        true -> nosternity_dashboard:routes() ++ Base ++
-            nosternity_auth_http:trails() ++ nosternity_dashboard_api:trails() ++
-            nosternity_damage_http:trails() ++ damage_browser_auth_http:trails(nosternity)
+        false ->
+            [{"/", nosternity_http, #{action => home_ui}} | Base];
+        true ->
+            nosternity_dashboard:routes() ++ Base ++
+                nosternity_auth_http:trails() ++ nosternity_dashboard_api:trails() ++
+                nosternity_damage_http:trails() ++ damage_browser_auth_http:trails(nosternity)
     end.
 
 start_phase(start_trails_http, _StartType, []) ->
@@ -49,7 +54,8 @@ start_phase(os_tune, _StartType, []) ->
             ?LOG_INFO("Tuning os."),
             {ok, _} = exec:run("ulimit -n 1000000", [sync]),
             ok;
-        false -> ok
+        false ->
+            ok
     end.
 
 stop(_State) ->
@@ -70,15 +76,20 @@ start_http() ->
             case start_listener(get_trails()) of
                 ok ->
                     damage_metrics:init(),
-                    ?LOG_INFO("Started Nosternity HTTP/WebSocket listener on ~p:~p",
-                        [nosternity_config:get(ip), nosternity_config:get(port)]),
+                    ?LOG_INFO(
+                        "Started Nosternity HTTP/WebSocket listener on ~p:~p",
+                        [nosternity_config:get(ip), nosternity_config:get(port)]
+                    ),
                     ok;
-                {error, _} = Error -> Error
+                {error, _} = Error ->
+                    Error
             end;
-        {error, _} = Error -> Error
+        {error, _} = Error ->
+            Error
     end.
 
-ensure_dependencies([]) -> ok;
+ensure_dependencies([]) ->
+    ok;
 ensure_dependencies([App | Rest]) ->
     case application:ensure_all_started(App) of
         {ok, _} -> ensure_dependencies(Rest);
@@ -94,16 +105,21 @@ start_listener(Dispatch) ->
 
 transport_options() ->
     Ip = nosternity_config:get(ip),
-    Family = case tuple_size(Ip) of 8 -> [inet6]; 4 -> [] end,
+    Family =
+        case tuple_size(Ip) of
+            8 -> [inet6];
+            4 -> []
+        end,
     #{
         num_acceptors => nosternity_config:get(http_num_acceptors),
         %% Ranch applies max_connections per connection supervisor.
         num_conns_sups => 1,
         max_connections => nosternity_config:get(http_max_connections),
-        socket_opts => Family ++ [
-            {ip, Ip},
-            {port, nosternity_config:get(port)}
-        ]
+        socket_opts => Family ++
+            [
+                {ip, Ip},
+                {port, nosternity_config:get(port)}
+            ]
     }.
 
 protocol_options(Dispatch) ->

@@ -56,11 +56,13 @@ result(#{spec := Spec} = Job, Runtime, _Checkpoint, Result) ->
                 {ok, Receipt} -> {ok, maps:merge(Result, Receipt)};
                 {error, _} = Error -> Error
             end;
-        _ -> {ok, Result}
+        _ ->
+            {ok, Result}
     end.
 
-shard_replay(#{spec := #{target := #{mode := shard_search}}}, Runtime, _Checkpoint)
-  when not is_map_key(shard_started, Runtime) ->
+shard_replay(#{spec := #{target := #{mode := shard_search}}}, Runtime, _Checkpoint) when
+    not is_map_key(shard_started, Runtime)
+->
     {Runtime#{shard_started => true}, #{}};
 shard_replay(_Job, Runtime, Checkpoint) ->
     {Runtime, Checkpoint}.

@@ -228,16 +228,19 @@ handle_info(dispatch, State0 = #state{queue = [Item | Rest]}) ->
     Parent = self(),
     Ref = make_ref(),
     Opts = learning_opts(State0),
-    {Pid, MRef} = spawn_opt(fun() ->
-        Result =
-            try learn_item(Item, Opts) of
-                Value -> Value
-            catch
-                Class:Reason:Stack ->
-                    {retry, {incident_learning_exception, Class, Reason, trim_stack(Stack)}}
-            end,
-        Parent ! {log_learning_result, Ref, Result}
-    end, [link, monitor]),
+    {Pid, MRef} = spawn_opt(
+        fun() ->
+            Result =
+                try learn_item(Item, Opts) of
+                    Value -> Value
+                catch
+                    Class:Reason:Stack ->
+                        {retry, {incident_learning_exception, Class, Reason, trim_stack(Stack)}}
+                end,
+            Parent ! {log_learning_result, Ref, Result}
+        end,
+        [link, monitor]
+    ),
     Current = #{item => Item, pid => Pid, mref => MRef, ref => Ref},
     State1 = persist_state(State0#state{
         queue = Rest,
@@ -620,8 +623,13 @@ normalize_event(Event) when is_map(Event) ->
     App = maps:get(application, Event, undefined),
     Module = maps:get(module, Event, undefined),
     Fingerprint = optional_binary(maps:get(fingerprint, Event, undefined)),
-    case {is_atom(App) andalso App =/= undefined,
-          is_atom(Module) andalso Module =/= undefined, Fingerprint} of
+    case
+        {
+            is_atom(App) andalso App =/= undefined,
+            is_atom(Module) andalso Module =/= undefined,
+            Fingerprint
+        }
+    of
         {true, true, Fp} when is_binary(Fp), byte_size(Fp) > 0 ->
             {ok, #{
                 schema => <<"damage.ecai-log-event">>,

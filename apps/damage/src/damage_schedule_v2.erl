@@ -110,14 +110,11 @@ handle_call(load_all_schedules, _From, State0) ->
             ?LOG_WARNING("Schedule loading deferred because vault bootstrap failed: ~p", [Why]),
             {reply, {error, Why}, State1}
     end;
-
 handle_call({ensure_vault, Owner}, _From, State) ->
     Reply = ensure_vault_for_owner(Owner),
     {reply, Reply, State};
-
 handle_call(setup_vault, _From, State) ->
     {reply, damage_schedule_v2_contract:setup(), State};
-
 handle_call({preview, Owner, Spec0}, _From, State) ->
     Reply =
         case owner_busy(Owner, State) of
@@ -125,7 +122,6 @@ handle_call({preview, Owner, Spec0}, _From, State) ->
             false -> do_preview(Owner, Spec0)
         end,
     {reply, Reply, State};
-
 handle_call({create, Owner, Spec0}, _From, State0) ->
     case owner_busy(Owner, State0) of
         true ->
@@ -139,15 +135,12 @@ handle_call({create, Owner, Spec0}, _From, State0) ->
                     {reply, Error, State0}
             end
     end;
-
 handle_call({submit_tx, Owner, TxSpec}, _From, State0) ->
     {Reply, State1} = do_submit_tx(Owner, TxSpec, State0),
     {reply, Reply, State1};
-
 handle_call({list, Owner}, _From, State) ->
     Schedules = [public_schedule(enrich_schedule(S)) || S <- owner_schedules(Owner)],
     {reply, {ok, Schedules}, State};
-
 handle_call({get, Owner, ScheduleId}, _From, State) ->
     Reply =
         case lookup({schedule, ScheduleId}) of
@@ -156,7 +149,6 @@ handle_call({get, Owner, ScheduleId}, _From, State) ->
             not_found -> {error, not_found}
         end,
     {reply, Reply, State};
-
 handle_call({runs, Owner, ScheduleId, Limit0}, _From, State) ->
     Limit = erlang:min(100, positive_int(Limit0, 20)),
     Reply =
@@ -171,15 +163,15 @@ handle_call({runs, Owner, ScheduleId, Limit0}, _From, State) ->
                     Runs0
                 ),
                 {ok, [json_value(R) || R <- lists:sublist(Runs, Limit)]};
-            {ok, _} -> {error, forbidden};
-            not_found -> {error, not_found}
+            {ok, _} ->
+                {error, forbidden};
+            not_found ->
+                {error, not_found}
         end,
     {reply, Reply, State};
-
 handle_call({action, Owner, ScheduleId, Action}, _From, State0) ->
     {Reply, State1} = do_action(Owner, ScheduleId, Action, State0),
     {reply, Reply, State1};
-
 handle_call({run_now, Owner, ScheduleId}, _From, State) ->
     Reply =
         case lookup({schedule, ScheduleId}) of
@@ -188,17 +180,17 @@ handle_call({run_now, Owner, ScheduleId}, _From, State) ->
                 {ok, #{status => queued, schedule_id => ScheduleId}};
             {ok, #{owner := Owner, status := Status}} ->
                 {error, {schedule_not_active, Status}};
-            {ok, _} -> {error, forbidden};
-            not_found -> {error, not_found}
+            {ok, _} ->
+                {error, forbidden};
+            not_found ->
+                {error, not_found}
         end,
     {reply, Reply, State};
-
 handle_call({analytics, Owner, From0, To0}, _From, State) ->
     Now = erlang:system_time(second),
     From = int_value(From0, Now - 30 * 86400),
     To = int_value(To0, Now),
     {reply, {ok, build_analytics(Owner, From, To)}, State};
-
 handle_call({prepare_token_upgrade, NewToken}, _From, State0) ->
     %% Migration is intentionally global. Refuse it while a local Schedule V2
     %% execution is running/queued, then stop timers before burning the V1
@@ -219,18 +211,15 @@ handle_call({prepare_token_upgrade, NewToken}, _From, State0) ->
                             ),
                             {reply, Ok, State1};
                         false ->
-                            {reply,
-                                {error, {prepare_token_upgrade_failed, Result}},
+                            {reply, {error, {prepare_token_upgrade_failed, Result}},
                                 rearm_all(State1)}
                     end;
                 Error ->
                     {reply, Error, rearm_all(State1)}
             end
     end;
-
 handle_call(claim_token_upgrade, _From, State) ->
     {reply, damage_schedule_v2_contract:claim_token_upgrade(), State};
-
 handle_call(finish_token_upgrade, _From, State0) ->
     case damage_schedule_v2_contract:finish_token_upgrade() of
         {ok, Result} = Ok ->
@@ -241,9 +230,9 @@ handle_call(finish_token_upgrade, _From, State0) ->
                 false ->
                     {reply, {error, {finish_token_upgrade_failed, Result}}, State0}
             end;
-        Error -> {reply, Error, State0}
+        Error ->
+            {reply, Error, State0}
     end;
-
 handle_call(_Other, _From, State) ->
     {reply, {error, unsupported_call}, State}.
 
@@ -285,7 +274,6 @@ close_table() ->
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
-
 ensure_vault_for_owner(Owner) ->
     case damage_schedule_v2_contract:contract_address() of
         {ok, _Contract} = Ok ->
@@ -293,7 +281,9 @@ ensure_vault_for_owner(Owner) ->
         {error, schedule_v2_contract_not_configured} = Error ->
             case damage_schedule_v2_contract:is_custodial_wallet(Owner) of
                 true ->
-                    ?LOG_INFO("Auto-initializing Schedule V2 vault for custodial account ~p", [Owner]),
+                    ?LOG_INFO("Auto-initializing Schedule V2 vault for custodial account ~p", [
+                        Owner
+                    ]),
                     damage_schedule_v2_contract:setup();
                 false ->
                     Error
@@ -350,19 +340,40 @@ do_preview(Owner, Spec0) ->
     StartAt = maps:get(start_at, Spec, erlang:system_time(second)),
     EndAt0 = maps:get(end_at, Spec, 0),
     HorizonDays = maps:get(horizon_days, Spec, ?DEFAULT_HORIZON_DAYS),
-    BudgetEnd = case EndAt0 of 0 -> StartAt + HorizonDays * 86400; _ -> EndAt0 end,
+    BudgetEnd =
+        case EndAt0 of
+            0 -> StartAt + HorizonDays * 86400;
+            _ -> EndAt0
+        end,
     Concurrency = positive_int(maps:get(concurrency, Spec, 1), 1),
     Safety = bounded_percent(maps:get(safety_percent, Spec, ?DEFAULT_SAFETY_PERCENT)),
     RunSafety = bounded_percent(maps:get(run_safety_percent, Spec, ?DEFAULT_RUN_SAFETY_PERCENT)),
     case Concurrency =:= 1 of
-        false -> {error, schedule_v2_concurrency_must_be_one};
-        true -> do_preview_validated(Owner, Spec, Feature, Cron, StartAt, EndAt0, BudgetEnd, Concurrency, Safety, RunSafety)
+        false ->
+            {error, schedule_v2_concurrency_must_be_one};
+        true ->
+            do_preview_validated(
+                Owner,
+                Spec,
+                Feature,
+                Cron,
+                StartAt,
+                EndAt0,
+                BudgetEnd,
+                Concurrency,
+                Safety,
+                RunSafety
+            )
     end.
 
-do_preview_validated(Owner, _Spec, Feature, Cron, StartAt, EndAt0, BudgetEnd, Concurrency, Safety, RunSafety) ->
+do_preview_validated(
+    Owner, _Spec, Feature, Cron, StartAt, EndAt0, BudgetEnd, Concurrency, Safety, RunSafety
+) ->
     case {byte_size(Feature) > 0, damage_schedule_v2_cron:parse(Cron)} of
-        {false, _} -> {error, feature_required};
-        {_, {error, Why}} -> {error, {invalid_cron, Why}};
+        {false, _} ->
+            {error, feature_required};
+        {_, {error, Why}} ->
+            {error, {invalid_cron, Why}};
         {true, {ok, _}} ->
             case dry_run_feature(Owner, Feature, Concurrency) of
                 {ok, Dry} ->
@@ -380,7 +391,9 @@ do_preview_validated(Owner, _Spec, Feature, Cron, StartAt, EndAt0, BudgetEnd, Co
                                 dry_run => #{
                                     cost_per_run => Cost,
                                     feature_hash => maps:get(feature_hash, Dry, <<>>),
-                                    feature_title => maps:get(feature_title, Dry, feature_title(Feature)),
+                                    feature_title => maps:get(
+                                        feature_title, Dry, feature_title(Feature)
+                                    ),
                                     report_hash => maps:get(report_hash, Dry, <<>>)
                                 },
                                 window => #{
@@ -401,9 +414,11 @@ do_preview_validated(Owner, _Spec, Feature, Cron, StartAt, EndAt0, BudgetEnd, Co
                                     run_safety_percent => RunSafety
                                 }
                             }};
-                        Error -> Error
+                        Error ->
+                            Error
                     end;
-                Error -> Error
+                Error ->
+                    Error
             end
     end.
 
@@ -414,10 +429,13 @@ do_prepare_create(Owner, Spec0) ->
             Dry = maps:get(dry_run, Preview),
             Budget = maps:get(budget, Preview),
             Window = maps:get(window, Preview),
-            LockAmount = amount_value(maps:get(lock_amount, Spec, maps:get(recommended_lock, Budget))),
+            LockAmount = amount_value(
+                maps:get(lock_amount, Spec, maps:get(recommended_lock, Budget))
+            ),
             MinLock = maps:get(max_cost_per_run, Budget),
             case LockAmount >= MinLock andalso LockAmount > 0 of
-                false -> {error, {invalid_lock_amount, #{minimum => MinLock}}};
+                false ->
+                    {error, {invalid_lock_amount, #{minimum => MinLock}}};
                 true ->
                     ScheduleId = new_schedule_id(Owner),
                     Now = erlang:system_time(second),
@@ -445,7 +463,8 @@ do_prepare_create(Owner, Spec0) ->
                         last_run => undefined
                     }}
             end;
-        Error -> Error
+        Error ->
+            Error
     end.
 
 complete_custodial_funding(Owner, Draft) ->
@@ -456,7 +475,8 @@ complete_custodial_funding(Owner, Draft) ->
                 true -> fund_custodial(Owner, Draft);
                 false -> {error, {allowance_failed, ApproveResult}}
             end;
-        Error -> Error
+        Error ->
+            Error
     end.
 
 fund_custodial(Owner, Draft) ->
@@ -468,7 +488,8 @@ fund_custodial(Owner, Draft) ->
                 true -> {ok, Draft#{status => active}};
                 false -> {error, {fund_schedule_failed, FundResult}}
             end;
-        Error -> Error
+        Error ->
+            Error
     end.
 
 %% ------------------------------------------------------------------
@@ -487,12 +508,15 @@ do_submit_tx(Owner, TxSpec0, State0) ->
                         true -> next_wallet_stage(Owner, ScheduleId, Stage, Draft, State0);
                         false -> {{error, {signed_transaction_failed, ChainResult}}, State0}
                     end;
-                Error -> {Error, State0}
+                Error ->
+                    {Error, State0}
             end;
         not_found ->
             case lookup({pending_action, Owner, ScheduleId}) of
-                {ok, Pending} -> finish_wallet_action(Owner, ScheduleId, Stage, Pending, TxSpec, State0);
-                not_found -> {{error, pending_schedule_not_found}, State0}
+                {ok, Pending} ->
+                    finish_wallet_action(Owner, ScheduleId, Stage, Pending, TxSpec, State0);
+                not_found ->
+                    {{error, pending_schedule_not_found}, State0}
             end
     end.
 
@@ -510,7 +534,8 @@ next_wallet_stage(Owner, ScheduleId, create_schedule, Draft, State) ->
                 allowance => maps:without([tx], Approval)
             },
             {{ok, Reply}, State};
-        Error -> {Error, State}
+        Error ->
+            {Error, State}
     end;
 next_wallet_stage(Owner, ScheduleId, approve_allowance, Draft, State) ->
     prepare_wallet_fund(Owner, ScheduleId, Draft, State);
@@ -526,28 +551,44 @@ next_wallet_stage(_Owner, _ScheduleId, Stage, _Draft, State) ->
 
 prepare_wallet_fund(Owner, ScheduleId, Draft, State) ->
     Lock = maps:get(funded, Draft),
-    case damage_schedule_v2_contract:prepare_user_call(
-        Owner, "fund_schedule", [to_s(ScheduleId), integer_to_list(Lock)]
-    ) of
+    case
+        damage_schedule_v2_contract:prepare_user_call(
+            Owner, "fund_schedule", [to_s(ScheduleId), integer_to_list(Lock)]
+        )
+    of
         {ok, Tx} ->
-            {{ok, #{status => signing_required, schedule_id => ScheduleId, stage => fund_schedule, tx => Tx}}, State};
-        Error -> {Error, State}
+            {
+                {ok, #{
+                    status => signing_required,
+                    schedule_id => ScheduleId,
+                    stage => fund_schedule,
+                    tx => Tx
+                }},
+                State
+            };
+        Error ->
+            {Error, State}
     end.
 
 finish_wallet_action(Owner, ScheduleId, Stage, Pending, TxSpec, State0) ->
     ExpectedStage = maps:get(stage, Pending),
     case Stage =:= ExpectedStage of
-        false -> {{error, {unexpected_wallet_stage, Stage, ExpectedStage}}, State0};
+        false ->
+            {{error, {unexpected_wallet_stage, Stage, ExpectedStage}}, State0};
         true ->
             case finalize_chain_tx(TxSpec) of
                 {ok, ChainResult} ->
                     case damage_schedule_v2_contract:call_result_ok(ChainResult) of
                         true ->
                             ok = delete({pending_action, Owner, ScheduleId}),
-                            apply_local_action(Owner, ScheduleId, maps:get(action, Pending), State0);
-                        false -> {{error, {signed_transaction_failed, ChainResult}}, State0}
+                            apply_local_action(
+                                Owner, ScheduleId, maps:get(action, Pending), State0
+                            );
+                        false ->
+                            {{error, {signed_transaction_failed, ChainResult}}, State0}
                     end;
-                Error -> {Error, State0}
+                Error ->
+                    {Error, State0}
             end
     end.
 
@@ -581,11 +622,22 @@ do_action(Owner, ScheduleId, Action0, State0) ->
                     Stage = normalize_stage(Stage0),
                     Pending = #{action => Action, stage => Stage},
                     ok = store({pending_action, Owner, ScheduleId}, Pending),
-                    {{ok, #{status => signing_required, schedule_id => ScheduleId, stage => Stage, tx => Tx}}, State0};
-                Error -> {Error, State0}
+                    {
+                        {ok, #{
+                            status => signing_required,
+                            schedule_id => ScheduleId,
+                            stage => Stage,
+                            tx => Tx
+                        }},
+                        State0
+                    };
+                Error ->
+                    {Error, State0}
             end;
-        {ok, _} -> {{error, forbidden}, State0};
-        not_found -> {{error, not_found}, State0}
+        {ok, _} ->
+            {{error, forbidden}, State0};
+        not_found ->
+            {{error, not_found}, State0}
     end.
 
 action_contract_call(pause, Owner, Id) -> damage_schedule_v2_contract:pause_schedule(Owner, Id);
@@ -598,7 +650,11 @@ apply_local_action(Owner, ScheduleId, Action, State0) ->
         {ok, #{owner := Owner} = Schedule0} ->
             {Schedule1, State1} =
                 case Action of
-                    pause -> {Schedule0#{status => paused, next_run_at => undefined}, cancel_timer(ScheduleId, State0)};
+                    pause ->
+                        {
+                            Schedule0#{status => paused, next_run_at => undefined},
+                            cancel_timer(ScheduleId, State0)
+                        };
                     resume ->
                         S = Schedule0#{status => active},
                         {S, maybe_arm(S, cancel_timer(ScheduleId, State0))};
@@ -612,8 +668,12 @@ apply_local_action(Owner, ScheduleId, Action, State0) ->
                         {S, cancel_timer(ScheduleId, State0)}
                 end,
             ok = store({schedule, ScheduleId}, Schedule1),
-            {{ok, #{status => ok, schedule => public_schedule(enrich_schedule(Schedule1))}}, State1};
-        _ -> {{error, not_found}, State0}
+            {
+                {ok, #{status => ok, schedule => public_schedule(enrich_schedule(Schedule1))}},
+                State1
+            };
+        _ ->
+            {{error, not_found}, State0}
     end.
 
 %% ------------------------------------------------------------------
@@ -628,7 +688,8 @@ execute_worker(ScheduleId, ScheduledAt) ->
                 false -> ok;
                 true -> execute_active_schedule(Schedule0, ScheduledAt)
             end;
-        _ -> ok
+        _ ->
+            ok
     end.
 
 execute_active_schedule(Schedule0, ScheduledAt) ->
@@ -640,7 +701,9 @@ execute_active_schedule(Schedule0, ScheduledAt) ->
     case remaining(Schedule0) >= ReserveAmount of
         false ->
             _ = damage_schedule_v2_contract:mark_exhausted(ScheduleId),
-            update_schedule(ScheduleId, fun(S) -> S#{status => exhausted, next_run_at => undefined} end),
+            update_schedule(ScheduleId, fun(S) ->
+                S#{status => exhausted, next_run_at => undefined}
+            end),
             record_run(Schedule0, #{
                 run_id => new_run_id(ScheduleId, ScheduledAt),
                 scheduled_at => ScheduledAt,
@@ -665,7 +728,8 @@ execute_active_schedule(Schedule0, ScheduledAt) ->
                                 cost => DryCost,
                                 duration_ms => 0
                             });
-                        true -> reserve_and_execute(Schedule0, ScheduledAt, Dry)
+                        true ->
+                            reserve_and_execute(Schedule0, ScheduledAt, Dry)
                     end;
                 {error, Why} ->
                     record_run(Schedule0, #{
@@ -689,7 +753,9 @@ reserve_and_execute(Schedule0, ScheduledAt, Dry) ->
         {ok, ReserveResult} ->
             case damage_schedule_v2_contract:call_result_ok(ReserveResult) of
                 true ->
-                    update_schedule(Id, fun(S) -> S#{reserved => maps:get(reserved, S, 0) + ReserveAmount} end),
+                    update_schedule(Id, fun(S) ->
+                        S#{reserved => maps:get(reserved, S, 0) + ReserveAmount}
+                    end),
                     execute_reserved(Schedule0, ScheduledAt, RunId, ReserveAmount, Dry);
                 false ->
                     record_run(Schedule0, #{
@@ -739,9 +805,11 @@ execute_reserved(Schedule0, ScheduledAt, RunId, ReserveAmount, _Dry) ->
             case ActualCost =< ReserveAmount of
                 true ->
                     #{public_key := NodeAccount} = secrets:node_keypair(),
-                    case damage_schedule_v2_contract:settle_run(
-                        Id, RunId, NodeAccount, ActualCost, FeatureHash, ReportHash
-                    ) of
+                    case
+                        damage_schedule_v2_contract:settle_run(
+                            Id, RunId, NodeAccount, ActualCost, FeatureHash, ReportHash
+                        )
+                    of
                         {ok, SettleResult} ->
                             case damage_schedule_v2_contract:call_result_ok(SettleResult) of
                                 true ->
@@ -823,7 +891,9 @@ execute_reserved(Schedule0, ScheduledAt, RunId, ReserveAmount, _Dry) ->
 
 release_reservation(Id, RunId, ReserveAmount) ->
     _ = damage_schedule_v2_contract:release_run(Id, RunId),
-    update_schedule(Id, fun(S) -> S#{reserved => erlang:max(0, maps:get(reserved, S, 0) - ReserveAmount)} end).
+    update_schedule(Id, fun(S) ->
+        S#{reserved => erlang:max(0, maps:get(reserved, S, 0) - ReserveAmount)}
+    end).
 
 update_after_settlement(Id, ReserveAmount, ActualCost, Result) ->
     update_schedule(Id, fun(S) ->
@@ -884,7 +954,9 @@ safe_map(Fun) ->
     try Fun() of
         M when is_map(M) -> M;
         _ -> #{}
-    catch _:_ -> #{} end.
+    catch
+        _:_ -> #{}
+    end.
 
 %% ------------------------------------------------------------------
 %% Per-account execution serialization
@@ -913,12 +985,14 @@ queue_or_start_execution(ScheduleId, ScheduledAt, State0) ->
                 true -> queue_pending(Owner, {ScheduleId, ScheduledAt}, State0);
                 false -> start_execution(Owner, ScheduleId, ScheduledAt, State0)
             end;
-        _ -> State0
+        _ ->
+            State0
     end.
 
 start_execution(Owner, ScheduleId, ScheduledAt, State0) ->
     _Pid = spawn(fun() ->
-        try execute_worker(ScheduleId, ScheduledAt)
+        try
+            execute_worker(ScheduleId, ScheduledAt)
         after
             gen_server:cast(?SERVER, {execution_complete, Owner})
         end
@@ -946,7 +1020,8 @@ start_next_pending(Owner, State0) ->
                     _ -> maps:put(Owner, Rest, Pending0)
                 end,
             start_execution(Owner, ScheduleId, ScheduledAt, State0#{pending => Pending1});
-        [] -> State0
+        [] ->
+            State0
     end.
 
 %% ------------------------------------------------------------------
@@ -964,9 +1039,11 @@ maybe_arm(#{status := active} = Schedule0, State0) ->
             Delay = erlang:min(?MAX_TIMER_MS, Delay0),
             Ref = erlang:send_after(Delay, self(), {schedule_due, Id, Next}),
             put_timer(Id, Ref, State0);
-        _ -> State0
+        _ ->
+            State0
     end;
-maybe_arm(_Schedule, State) -> State.
+maybe_arm(_Schedule, State) ->
+    State.
 
 enrich_next_run(Schedule) ->
     Cron = maps:get(cron_spec, Schedule),
@@ -990,7 +1067,8 @@ remove_timer(Id, State) ->
 cancel_timer(Id, State0) ->
     Timers0 = maps:get(timers, State0, #{}),
     case maps:get(Id, Timers0, undefined) of
-        undefined -> State0;
+        undefined ->
+            State0;
         Ref ->
             _ = erlang:cancel_timer(Ref),
             State0#{timers => maps:remove(Id, Timers0)}
@@ -1014,10 +1092,18 @@ within_window(Schedule, ScheduledAt, Now) ->
 %% ------------------------------------------------------------------
 
 store(Key, Value) ->
-    case dets:insert(?TABLE, {Key, Value}) of true -> ok; ok -> ok; Other -> Other end.
+    case dets:insert(?TABLE, {Key, Value}) of
+        true -> ok;
+        ok -> ok;
+        Other -> Other
+    end.
 
 delete(Key) ->
-    case dets:delete(?TABLE, Key) of true -> ok; ok -> ok; Other -> Other end.
+    case dets:delete(?TABLE, Key) of
+        true -> ok;
+        ok -> ok;
+        Other -> Other
+    end.
 
 delete_draft(Draft) -> delete({draft, maps:get(owner, Draft), maps:get(id, Draft)}).
 
@@ -1049,7 +1135,8 @@ update_schedule(Id, Fun) ->
             S1 = Fun(S0),
             store({schedule, Id}, S1),
             {ok, S1};
-        not_found -> {error, not_found}
+        not_found ->
+            {error, not_found}
     end.
 
 record_run(Schedule, Run0) ->
@@ -1075,8 +1162,12 @@ runs_for_owner(Owner, From, To) ->
         fun
             ({{run, _Id, _RunId}, #{owner := Owner0} = Run}, Acc) when Owner0 =:= Owner ->
                 At = maps:get(ended_at, Run, maps:get(started_at, Run, 0)),
-                case At >= From andalso At =< To of true -> [Run | Acc]; false -> Acc end;
-            (_, Acc) -> Acc
+                case At >= From andalso At =< To of
+                    true -> [Run | Acc];
+                    false -> Acc
+                end;
+            (_, Acc) ->
+                Acc
         end,
         [],
         ?TABLE
@@ -1086,7 +1177,11 @@ enrich_schedule(Schedule) ->
     Runs = runs_for_schedule(maps:get(id, Schedule)),
     Total = length(Runs),
     Success = length([R || R <- Runs, maps:get(status, R, unknown) =:= success]),
-    Rate = case Total of 0 -> 0.0; _ -> (Success * 100.0) / Total end,
+    Rate =
+        case Total of
+            0 -> 0.0;
+            _ -> (Success * 100.0) / Total
+        end,
     Schedule#{
         remaining => remaining(Schedule),
         success_rate => Rate,
@@ -1111,10 +1206,17 @@ build_analytics(Owner, From, To) ->
     Failed = Total - Success,
     Spend = lists:sum([maps:get(cost, R, 0) || R <- Runs]),
     DurationTotal = lists:sum([maps:get(duration_ms, R, 0) || R <- Runs]),
-    AvgDuration = case Total of 0 -> 0; _ -> DurationTotal div Total end,
+    AvgDuration =
+        case Total of
+            0 -> 0;
+            _ -> DurationTotal div Total
+        end,
     Buckets = analytics_buckets(Runs),
     Active = length([S || S <- owner_schedules(Owner), maps:get(status, S, undefined) =:= active]),
-    Locked = lists:sum([remaining(S) || S <- owner_schedules(Owner), maps:get(status, S, undefined) =/= cancelled]),
+    Locked = lists:sum([
+        remaining(S)
+     || S <- owner_schedules(Owner), maps:get(status, S, undefined) =/= cancelled
+    ]),
     #{
         from => From,
         to => To,
@@ -1123,7 +1225,11 @@ build_analytics(Owner, From, To) ->
             runs => Total,
             success => Success,
             failed => Failed,
-            success_rate => case Total of 0 -> 0.0; _ -> (Success * 100.0) / Total end,
+            success_rate =>
+                case Total of
+                    0 -> 0.0;
+                    _ -> (Success * 100.0) / Total
+                end,
             spend => Spend,
             average_duration_ms => AvgDuration,
             budget_available => Locked
@@ -1167,7 +1273,8 @@ remaining(S) ->
 
 normalize_input(M) when is_map(M) ->
     maps:from_list([{normalize_key(K), normalize_value(V)} || {K, V} <- maps:to_list(M)]);
-normalize_input(_) -> #{}.
+normalize_input(_) ->
+    #{}.
 
 normalize_key(K) when is_atom(K) -> K;
 normalize_key(K) when is_binary(K) ->
@@ -1192,7 +1299,8 @@ normalize_key(K) when is_binary(K) ->
         <<"to">> -> to;
         _ -> K
     end;
-normalize_key(K) -> K.
+normalize_key(K) ->
+    K.
 
 normalize_value(V) when is_map(V) -> normalize_input(V);
 normalize_value(V) -> V.
@@ -1248,24 +1356,45 @@ feature_title(Feature) ->
 amount_value(V) when is_integer(V) -> V;
 amount_value(V) when is_float(V) -> round(V);
 amount_value(V) when is_binary(V) ->
-    try binary_to_integer(V) catch _:_ -> 0 end;
+    try
+        binary_to_integer(V)
+    catch
+        _:_ -> 0
+    end;
 amount_value(V) when is_list(V) ->
-    try list_to_integer(V) catch _:_ -> 0 end;
-amount_value(_) -> 0.
+    try
+        list_to_integer(V)
+    catch
+        _:_ -> 0
+    end;
+amount_value(_) ->
+    0.
 
 number_value(V) when is_integer(V); is_float(V) -> V;
 number_value(_) -> 0.
 
 positive_int(V, Default) ->
     I = int_value(V, Default),
-    case I > 0 of true -> I; false -> Default end.
+    case I > 0 of
+        true -> I;
+        false -> Default
+    end.
 
 int_value(V, _Default) when is_integer(V) -> V;
 int_value(V, Default) when is_binary(V) ->
-    try binary_to_integer(V) catch _:_ -> Default end;
+    try
+        binary_to_integer(V)
+    catch
+        _:_ -> Default
+    end;
 int_value(V, Default) when is_list(V) ->
-    try list_to_integer(V) catch _:_ -> Default end;
-int_value(_, Default) -> Default.
+    try
+        list_to_integer(V)
+    catch
+        _:_ -> Default
+    end;
+int_value(_, Default) ->
+    Default.
 
 bounded_percent(V) ->
     I = int_value(V, ?DEFAULT_SAFETY_PERCENT),
@@ -1294,9 +1423,11 @@ bool_int(false) -> 0.
 day_key(Epoch) when is_integer(Epoch), Epoch > 0 ->
     {{Y, M, D}, _} = calendar:system_time_to_universal_time(Epoch, second),
     list_to_binary(io_lib:format("~4..0B-~2..0B-~2..0B", [Y, M, D]));
-day_key(_) -> <<"unknown">>.
+day_key(_) ->
+    <<"unknown">>.
 
-json_value(undefined) -> null;
+json_value(undefined) ->
+    null;
 json_value(V) when is_atom(V) -> atom_to_binary(V, utf8);
 json_value(V) when is_map(V) -> maps:map(fun(_K, X) -> json_value(X) end, V);
 json_value(V) when is_list(V) ->
@@ -1304,7 +1435,8 @@ json_value(V) when is_list(V) ->
         true -> unicode:characters_to_binary(V);
         false -> [json_value(X) || X <- V]
     end;
-json_value(V) -> V.
+json_value(V) ->
+    V.
 
 term_bin(V) when is_binary(V) -> V;
 term_bin(V) -> iolist_to_binary(io_lib:format("~p", [V])).
