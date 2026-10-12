@@ -99,9 +99,12 @@ init(Req, Opts) -> {cowboy_rest, Req, Opts}.
 is_authorized(Req, #{action := setup} = State) ->
     case damage_http:is_authorized(Req, State) of
         {true, Req1, AuthState} ->
-            case maps:get(node_admin, AuthState, false) of
+            Owner = maps:get(public_key, AuthState, undefined),
+            NodeAdmin = maps:get(node_admin, AuthState, false),
+            Custodial = damage_schedule_v2_contract:is_custodial_wallet(Owner),
+            case NodeAdmin orelse Custodial of
                 true -> {true, Req1, AuthState};
-                false -> {{false, <<"Node admin required">>}, Req1, AuthState}
+                false -> {{false, <<"Custodial wallet or node admin required">>}, Req1, AuthState}
             end;
         Other -> Other
     end;
@@ -122,13 +125,15 @@ content_types_provided(Req, State) ->
 content_types_accepted(Req, State) ->
     {[{{<<"application">>, <<"json">>, '*'}, from_json}], Req, State}.
 
-to_json(Req, #{action := status} = State) ->
+to_json(Req, #{action := status, public_key := Owner} = State) ->
+    Custodial = damage_schedule_v2_contract:is_custodial_wallet(Owner),
     Body =
         case damage_schedule_v2_contract:contract_address() of
             {ok, Contract} ->
                 #{
                     status => <<"ok">>,
                     version => 2,
+                    custodial => Custodial,
                     contract => Contract,
                     token_contract => damage_schedule_v2_contract:token_contract()
                 };
@@ -136,6 +141,8 @@ to_json(Req, #{action := status} = State) ->
                 #{
                     status => <<"not_configured">>,
                     version => 2,
+                    custodial => Custodial,
+                    auto_setup => Custodial,
                     reason => term_bin(Reason),
                     token_contract => damage_schedule_v2_contract:token_contract()
                 }
@@ -159,9 +166,14 @@ to_json(Req, #{action := analytics, public_key := Owner} = State) ->
 to_json(Req, State) ->
     {jsx:encode(#{status => <<"notok">>, error => <<"unsupported_get">>}), Req, State}.
 
-from_json(Req, #{action := setup} = State) ->
+from_json(Req, #{action := setup, public_key := Owner} = State) ->
+    Reply0 =
+        case maps:get(node_admin, State, false) of
+            true -> damage_schedule_v2:setup_vault();
+            false -> damage_schedule_v2:ensure_vault(Owner)
+        end,
     Reply =
-        case damage_schedule_v2_contract:setup() of
+        case Reply0 of
             {ok, Contract} ->
                 {ok, #{contract => Contract, token_contract => damage_schedule_v2_contract:token_contract()}};
             {error, _} = Error -> Error

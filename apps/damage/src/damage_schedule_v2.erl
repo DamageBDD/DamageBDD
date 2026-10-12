@@ -5,6 +5,8 @@
 -export([
     start_link/0,
     load_all_schedules/0,
+    ensure_vault/1,
+    setup_vault/0,
     preview/2,
     create/2,
     submit_tx/2,
@@ -36,6 +38,12 @@ start_link() ->
 
 load_all_schedules() ->
     gen_server:call(?SERVER, load_all_schedules, 30000).
+
+ensure_vault(Owner) ->
+    gen_server:call(?SERVER, {ensure_vault, to_bin(Owner)}, 120000).
+
+setup_vault() ->
+    gen_server:call(?SERVER, setup_vault, 120000).
 
 preview(Owner, Spec) ->
     gen_server:call(?SERVER, {preview, to_bin(Owner), Spec}, 120000).
@@ -103,6 +111,13 @@ handle_call(load_all_schedules, _From, State0) ->
             {reply, {error, Why}, State1}
     end;
 
+handle_call({ensure_vault, Owner}, _From, State) ->
+    Reply = ensure_vault_for_owner(Owner),
+    {reply, Reply, State};
+
+handle_call(setup_vault, _From, State) ->
+    {reply, damage_schedule_v2_contract:setup(), State};
+
 handle_call({preview, Owner, Spec0}, _From, State) ->
     Reply =
         case owner_busy(Owner, State) of
@@ -116,8 +131,13 @@ handle_call({create, Owner, Spec0}, _From, State0) ->
         true ->
             {reply, {error, schedule_execution_in_progress}, State0};
         false ->
-            {Reply, State1} = do_create_call(Owner, Spec0, State0),
-            {reply, Reply, State1}
+            case ensure_vault_for_owner(Owner) of
+                {ok, _Contract} ->
+                    {Reply, State1} = do_create_call(Owner, Spec0, State0),
+                    {reply, Reply, State1};
+                {error, _} = Error ->
+                    {reply, Error, State0}
+            end
     end;
 
 handle_call({submit_tx, Owner, TxSpec}, _From, State0) ->
@@ -265,6 +285,22 @@ close_table() ->
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
+
+ensure_vault_for_owner(Owner) ->
+    case damage_schedule_v2_contract:contract_address() of
+        {ok, _Contract} = Ok ->
+            Ok;
+        {error, schedule_v2_contract_not_configured} = Error ->
+            case damage_schedule_v2_contract:is_custodial_wallet(Owner) of
+                true ->
+                    ?LOG_INFO("Auto-initializing Schedule V2 vault for custodial account ~p", [Owner]),
+                    damage_schedule_v2_contract:setup();
+                false ->
+                    Error
+            end;
+        {error, _} = Error ->
+            Error
+    end.
 
 do_create_call(Owner, Spec0, State0) ->
     case do_prepare_create(Owner, Spec0) of

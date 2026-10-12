@@ -4,6 +4,7 @@
     contract_address/0,
     ensure_contract/0,
     setup/0,
+    is_custodial_wallet/1,
     deploy/0,
     create_schedule/2,
     fund_schedule/3,
@@ -296,13 +297,18 @@ call_result_ok(Result) when is_map(Result) ->
     Value =:= "ok" orelse Value =:= <<"ok">> orelse Value =:= ok;
 call_result_ok(_) -> false.
 
-is_custodial(Owner) ->
-    try damage_ae:is_custodial(Owner) of
+is_custodial_wallet(undefined) ->
+    false;
+is_custodial_wallet(Owner) ->
+    try damage_ae:is_custodial(to_bin(Owner)) of
         true -> true;
         _ -> false
     catch
         _:_ -> false
     end.
+
+is_custodial(Owner) ->
+    is_custodial_wallet(Owner).
 
 safe_eval(Fun) when is_function(Fun, 0) ->
     try Fun() of

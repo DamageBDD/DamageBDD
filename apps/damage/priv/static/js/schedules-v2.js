@@ -8,6 +8,8 @@ let currentRangeDays = 30;
 let previewState = null;
 let modalReturnFocus = null;
 let modalKeyHandler = null;
+let vaultCustodial = false;
+let vaultAutoInitAttempted = false;
 
 export async function updateSchedulesTable() {
   ensureStyles();
@@ -83,7 +85,7 @@ function mount(root) {
   `;
 
   root.querySelector("#sv2-new").addEventListener("click", openCreateModal);
-  root.querySelector("#sv2-setup").addEventListener("click", initializeVault);
+  root.querySelector("#sv2-setup").addEventListener("click", () => initializeVault());
   root.querySelector("#sv2-refresh").addEventListener("click", updateSchedulesTable);
   root.querySelectorAll(".sv2-range button[data-days]").forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -113,17 +115,30 @@ async function loadStatus() {
   const setup = host.querySelector("#sv2-setup");
   try {
     const r = await apiFetch(`${API}/status`);
+    vaultCustodial = r.custodial === true;
     if (r.status === "ok") {
       pill.textContent = `Vault ${short(r.contract)}`;
       pill.className = "sv2-chain-pill ok";
       pill.title = r.contract;
       setup.hidden = true;
-    } else {
-      pill.textContent = "Vault setup required";
-      pill.className = "sv2-chain-pill warn";
-      pill.title = r.reason || "Schedule V2 vault has not been deployed";
-      setup.hidden = !isNodeAdmin();
+      return;
     }
+
+    if (r.auto_setup === true && vaultCustodial && !vaultAutoInitAttempted) {
+      vaultAutoInitAttempted = true;
+      pill.textContent = "Initializing vault…";
+      pill.className = "sv2-chain-pill";
+      pill.title = "Custodial wallet detected; deploying the Schedule V2 vault";
+      setup.hidden = true;
+      await initializeVault({automatic: true});
+      return;
+    }
+
+    pill.textContent = vaultCustodial ? "Vault initialization required" : "Vault setup required";
+    pill.className = "sv2-chain-pill warn";
+    pill.title = r.reason || "Schedule V2 vault has not been deployed";
+    setup.textContent = vaultCustodial ? "Retry vault" : "Initialize vault";
+    setup.hidden = !(vaultCustodial || isNodeAdmin());
   } catch (e) {
     pill.textContent = "Vault unavailable";
     pill.className = "sv2-chain-pill warn";
@@ -132,17 +147,29 @@ async function loadStatus() {
   }
 }
 
-async function initializeVault() {
+async function initializeVault({automatic = false} = {}) {
   const btn = host?.querySelector("#sv2-setup");
-  if (!btn || !isNodeAdmin()) return;
-  if (!confirm("Deploy the Schedule V2 vault using the node account?")) return;
+  if (!btn || !(vaultCustodial || isNodeAdmin())) return false;
+  if (!automatic && !confirm("Deploy the Schedule V2 vault using the node account?")) return false;
   setBusy(btn, true);
   try {
     const r = await apiFetch(`${API}/setup`, {method: "POST", body: "{}"});
-    toast(`Schedule V2 vault ready: ${short(r.contract || r.data?.contract || "")}`, "success");
+    if (!automatic) {
+      toast(`Schedule V2 vault ready: ${short(r.contract || r.data?.contract || "")}`, "success");
+    }
     await loadStatus();
+    return true;
   } catch (e) {
+    const pill = host?.querySelector("#sv2-chain-status");
+    if (pill) {
+      pill.textContent = "Vault initialization failed";
+      pill.className = "sv2-chain-pill warn";
+      pill.title = e.message || "Schedule V2 vault deployment failed";
+    }
+    btn.textContent = "Retry vault";
+    btn.hidden = false;
     toast(e.message, "error");
+    return false;
   } finally {
     setBusy(btn, false);
   }
