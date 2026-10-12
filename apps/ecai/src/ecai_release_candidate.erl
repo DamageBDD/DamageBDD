@@ -19,6 +19,10 @@
     tag_release/1
 ]).
 
+-ifdef(TEST).
+-export([create_annotated_tag/5, learning_status_ready/1]).
+-endif.
+
 -define(DEFAULT_TIMEOUT_MS, 30000).
 -define(DEFAULT_INITIAL_VERSION, {0, 1, 0}).
 -define(DEFAULT_TAG_LIMIT, 50).
@@ -111,18 +115,72 @@ tag(Kind0, Opts) when is_map(Opts) ->
         {error, _} = Error ->
             Error;
         Kind ->
-            ProposalResult =
-                case Kind of
-                    rc -> propose(Opts);
-                    stable -> propose_release(Opts)
-                end,
-            case ProposalResult of
-                {error, _} = Error ->
-                    Error;
-                {ok, Proposal} ->
-                    create_tag(Kind, Proposal, Opts)
+            case ensure_learning_quiescent(Opts) of
+                ok -> tag_attempt(Kind, Opts, 0);
+                {error, _} = Error -> Error
             end
     end.
+
+tag_attempt(Kind, Opts, Attempt) ->
+    ProposalResult =
+        case Kind of
+            rc -> propose(Opts);
+            stable -> propose_release(Opts)
+        end,
+    case ProposalResult of
+        {error, _} = Error ->
+            Error;
+        {ok, Proposal} ->
+            case create_tag(Kind, Proposal, Opts) of
+                {error, {learning_snapshot_evidence_mismatch, _}} = Error ->
+                    RetryLimit = non_negative_int(maps:get(learning_snapshot_retry_count, Opts, 1), 1),
+                    case Attempt < RetryLimit of
+                        false -> Error;
+                        true ->
+                            case ensure_learning_quiescent(Opts) of
+                                ok -> tag_attempt(Kind, Opts, Attempt + 1);
+                                {error, _} = ReadyError -> ReadyError
+                            end
+                    end;
+                Result ->
+                    Result
+            end
+    end.
+
+ensure_learning_quiescent(Opts) ->
+    case {
+        maps:get(require_learning_reference, Opts, true),
+        maps:get(require_learning_quiescent, Opts, true)
+    } of
+        {false, _} ->
+            ok;
+        {_, false} ->
+            ok;
+        {true, true} ->
+            try ecai_codebase_learner:status() of
+                Status when is_map(Status) ->
+                    case learning_status_ready(Status) of
+                        true -> ok;
+                        false -> {error, {learning_not_quiescent, Status}}
+                    end;
+                {error, Reason} ->
+                    {error, {learning_status_unavailable, Reason}};
+                Other ->
+                    {error, {unexpected_learning_status, Other}}
+            catch
+                Class:Reason:Stack ->
+                    {error, {learning_status_failed, Class, Reason, Stack}}
+            end
+    end.
+
+learning_status_ready(Status) when is_map(Status) ->
+    maps:get(phase, Status, undefined) =:= idle andalso
+        maps:get(ready, Status, false) =:= true andalso
+        maps:get(inflight_count, Status, 0) =:= 0 andalso
+        maps:get(queued, Status, 0) =:= 0 andalso
+        maps:get(refresh_requested, Status, false) =:= false;
+learning_status_ready(_) ->
+    false.
 
 normalize_release_kind(rc) -> rc;
 normalize_release_kind(release_candidate) -> rc;
@@ -276,7 +334,11 @@ ensure_module_references([Ref | Rest], Analyses, Cards) ->
         _ ->
             case module_reference_current(Ref, Analyses, Cards) of
                 true -> ensure_module_references(Rest, Analyses, Cards);
-                false -> {error, {learning_snapshot_evidence_mismatch, Ref}}
+                false ->
+                    {error, {
+                        learning_snapshot_evidence_mismatch,
+                        module_reference_diagnostics(Ref, Analyses, Cards)
+                    }}
             end
     end.
 
@@ -310,6 +372,30 @@ module_reference_current(Ref, Analyses, Cards) ->
         Cards
     ),
     AnalysisMatches andalso CardMatches.
+
+module_reference_diagnostics(Ref, Analyses, Cards) ->
+    App = maps:get(application, Ref, undefined),
+    Module = maps:get(module, Ref, undefined),
+    SnapshotAnalyses = [
+        maps:with([source_sha256, analysis_sha256], Analysis)
+        || Analysis <- Analyses,
+           maps:get(application, Analysis, undefined) =:= App,
+           maps:get(module, Analysis, undefined) =:= Module
+    ],
+    SnapshotCards = [
+        #{
+            source_sha256 => mget(<<"source_sha256">>, Card, undefined),
+            analysis_sha256 => mget(<<"analysis_sha256">>, Card, undefined),
+            knowledge_sha256 => knowledge_card_digest(Card)
+        }
+        || Card <- Cards,
+           maps:get(application, Card, undefined) =:= App,
+           maps:get(module, Card, undefined) =:= Module
+    ],
+    Ref#{
+        snapshot_analyses => SnapshotAnalyses,
+        snapshot_knowledge => SnapshotCards
+    }.
 
 knowledge_card_digest(Card) when is_map(Card) ->
     deterministic_digest(maps:without([application, module], Card));
@@ -535,10 +621,55 @@ create_annotated_tag(Repo, Tag, Target, Annotation, Opts) ->
             {true, Key} when Key =/= undefined -> ["-u", to_binary(Key)];
             _ -> []
         end,
-    Args = ["tag", TagMode] ++ SigningArgs ++ [Tag, Target, "-m", Annotation],
-    case git(Repo, Args, Opts) of
-        {ok, _} -> ok;
-        {error, _} = Error -> Error
+    case write_tag_message_file(Annotation, Opts) of
+        {error, _} = Error ->
+            Error;
+        {ok, MessagePath} ->
+            try
+                Args =
+                    ["tag", TagMode] ++ SigningArgs ++
+                        ["-F", MessagePath, Tag, Target],
+                case git(Repo, Args, Opts) of
+                    {ok, _} -> ok;
+                    {error, _} = Error -> Error
+                end
+            after
+                _ = file:delete(MessagePath)
+            end
+    end.
+
+write_tag_message_file(Annotation, Opts) ->
+    Dir = tag_message_tmp_dir(Opts),
+    Name = lists:flatten(
+        io_lib:format(
+            "ecai-release-tag-~B-~B.txt",
+            [erlang:system_time(microsecond), erlang:unique_integer([positive, monotonic])]
+        )
+    ),
+    Path = filename:join(Dir, Name),
+    case filelib:ensure_dir(Path) of
+        {error, Reason} ->
+            {error, {tag_message_directory_failed, Dir, Reason}};
+        ok ->
+            case file:write_file(Path, Annotation, [binary]) of
+                {error, Reason} ->
+                    {error, {tag_message_write_failed, Path, Reason}};
+                ok ->
+                    _ = file:change_mode(Path, 8#600),
+                    {ok, Path}
+            end
+    end.
+
+tag_message_tmp_dir(Opts) ->
+    case maps:get(tag_message_tmp_dir, Opts, undefined) of
+        undefined ->
+            case os:getenv("TMPDIR") of
+                false -> "/tmp";
+                "" -> "/tmp";
+                Dir -> Dir
+            end;
+        Dir ->
+            path_to_list(Dir)
     end.
 
 tag_result(Repo, Kind, Proposal, Target, Annotation, Reference, Opts) ->
@@ -1111,10 +1242,24 @@ git_lines(Repo, Args, Opts) ->
         {ok, Output} -> {ok, lines(Output)};
         {error, _} = Error -> Error
     end.
-git(Repo, Args, Opts) -> ecai_repair_git:run(Repo, Args, command_timeout(Opts)).
+git(Repo, Args, Opts) ->
+    case ecai_repair_git:run(Repo, Args, command_timeout(Opts)) of
+        {ok, _} = Ok ->
+            Ok;
+        {error, Reason} ->
+            {error, {
+                git_command_failed,
+                #{
+                    args => [to_binary(Arg) || Arg <- Args],
+                    reason => Reason
+                }
+            }}
+    end.
 command_timeout(Opts) -> positive_int(maps:get(command_timeout_ms, Opts, application:get_env(ecai, code_patch_command_timeout_ms, ?DEFAULT_TIMEOUT_MS)), ?DEFAULT_TIMEOUT_MS).
 positive_int(N, _Default) when is_integer(N), N > 0 -> N;
 positive_int(_, Default) -> Default.
+non_negative_int(N, _Default) when is_integer(N), N >= 0 -> N;
+non_negative_int(_, Default) -> Default.
 lines(Bin) -> [Line || Part <- binary:split(Bin, <<"\n">>, [global]), Line <- [trim(Part)], Line =/= <<>>].
 trim(Bin) -> unicode:characters_to_binary(string:trim(binary_to_list(Bin))).
 sha256_hex(Bin) ->

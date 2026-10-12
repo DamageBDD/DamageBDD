@@ -135,6 +135,36 @@ explicit_release_version_test() ->
         ?assertEqual(explicit, maps:get(proposal_source, Proposal))
     end).
 
+large_tag_annotation_uses_message_file_test() ->
+    with_repo(fun(Repo) ->
+        {ok, Head0} = git_command(Repo, ["rev-parse", "HEAD"]),
+        Head = trim_bin(Head0),
+        Annotation = binary:copy(<<"large-release-provenance\n">>, 10000),
+        ok = ecai_release_candidate:create_annotated_tag(
+            Repo,
+            <<"v9.9.9-rc.1">>,
+            Head,
+            Annotation,
+            #{}
+        ),
+        {ok, Object} = git_command(Repo, ["cat-file", "-p", "v9.9.9-rc.1"]),
+        ?assert(binary:match(Object, <<"large-release-provenance">>) =/= nomatch)
+    end).
+
+learning_status_readiness_test() ->
+    Ready = #{
+        phase => idle,
+        ready => true,
+        inflight_count => 0,
+        queued => 0,
+        refresh_requested => false
+    },
+    ?assert(ecai_release_candidate:learning_status_ready(Ready)),
+    ?assertNot(ecai_release_candidate:learning_status_ready(Ready#{phase => queued})),
+    ?assertNot(ecai_release_candidate:learning_status_ready(Ready#{ready => false})),
+    ?assertNot(ecai_release_candidate:learning_status_ready(Ready#{inflight_count => 1})),
+    ?assertNot(ecai_release_candidate:learning_status_ready(Ready#{refresh_requested => true})).
+
 with_repo(Fun) ->
     Base = filename:join(
         "/tmp",
