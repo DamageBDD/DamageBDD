@@ -94,7 +94,7 @@ render_full_page(Ctx) ->
     Top = render_tpl(?TPL("topbar.mustache"), Ctx),
     Exec = render_tpl(?TPL("execution_tab.mustache"), Ctx),
     Activity = render_tpl(?TPL("activity_tab.mustache"), history_context(Ctx)),
-    Anal = render_tpl(?TPL("analytics_tab.mustache"), Ctx),
+    Anal = render_tpl(?TPL("analytics_tab.mustache"), history_context(Ctx)),
     Sched = render_tpl(?TPL("schedules_tab.mustache"), Ctx),
     Billing = render_tpl(?TPL("billing_tab.mustache"), Ctx),
     Sets = render_tpl(?TPL("settings_tab.mustache"), Ctx),
@@ -186,7 +186,7 @@ render_component(execution_tab, Ctx) ->
 render_component(activity_tab, Ctx) ->
     render_tpl(?TPL("activity_tab.mustache"), history_context(Ctx));
 render_component(analytics_tab, Ctx) ->
-    render_tpl(?TPL("analytics_tab.mustache"), Ctx);
+    render_tpl(?TPL("analytics_tab.mustache"), history_context(Ctx));
 render_component(schedules_tab, Ctx) ->
     render_tpl(?TPL("schedules_tab.mustache"), Ctx);
 render_component(billing_tab, Ctx) ->

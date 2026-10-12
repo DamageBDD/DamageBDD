@@ -1,38 +1,96 @@
-<!-- -*- mode: html -*- -->
-<section class="workspace-page analytics-workspace" aria-labelledby="analytics-heading">
-  <div class="workspace-heading">
+<section id="analytics-workspace"
+         class="workspace-page analytics-workspace"
+         aria-labelledby="analytics-heading"
+         data-account="{{run_history_account}}"
+         data-node="{{run_history_node}}">
+  <header class="workspace-heading analytics-heading">
     <div>
-      <p class="workspace-eyebrow">ON-CHAIN OBSERVABILITY</p>
-      <h1 id="analytics-heading">DamageBDD analytics</h1>
-      <p>Recent verification activity derived from Æternity middleware contract logs.</p>
+      <span class="workspace-eyebrow">Verification intelligence</span>
+      <h1 id="analytics-heading">Analytics</h1>
+      <p>Operational signals derived from published DamageBDD verification evidence.</p>
     </div>
-    <span id="lastUpdated" class="workspace-muted analytics-updated"></span>
+    <div class="analytics-heading-meta">
+      <label class="analytics-range-label" for="analytics-range">Window</label>
+      <select id="analytics-range" class="workspace-select" aria-label="Analytics time window">
+        <option value="7">7 days</option>
+        <option value="30" selected>30 days</option>
+        <option value="90">90 days</option>
+      </select>
+      <button id="analytics-refresh" class="workspace-button" type="button">Refresh</button>
+      <span id="analytics-updated" class="workspace-muted" aria-live="polite"></span>
+    </div>
+  </header>
+
+  <div id="analytics-status" class="analytics-status workspace-muted" role="status" aria-live="polite">
+    Loading published verification evidence…
   </div>
 
-  <div id="kpis" class="analytics-kpis" aria-label="Analytics summary">
-    <div class="workspace-card analytics-kpi"></div>
-    <div class="workspace-card analytics-kpi"></div>
-    <div class="workspace-card analytics-kpi"></div>
-    <div class="workspace-card analytics-kpi"></div>
-  </div>
+  <section id="analytics-kpis" class="analytics-kpis" aria-label="Verification summary">
+    <article class="workspace-card analytics-kpi" data-kpi="runs">
+      <span class="analytics-kpi-label">Observed runs</span><strong>—</strong><small>Published evidence in window</small>
+    </article>
+    <article class="workspace-card analytics-kpi" data-kpi="pass-rate">
+      <span class="analytics-kpi-label">Pass rate</span><strong>—</strong><small>Known outcomes only</small>
+    </article>
+    <article class="workspace-card analytics-kpi" data-kpi="duration">
+      <span class="analytics-kpi-label">Median duration</span><strong>—</strong><small>Runs with timing metadata</small>
+    </article>
+    <article class="workspace-card analytics-kpi" data-kpi="active-days">
+      <span class="analytics-kpi-label">Active days</span><strong>—</strong><small>Days with published runs</small>
+    </article>
+  </section>
 
-  <div class="analytics-layout">
-    <section class="workspace-card analytics-card" aria-labelledby="runs-chart-heading">
-      <div class="workspace-section-heading">
-        <div>
-          <h2 id="runs-chart-heading">Runs / day</h2>
-          <p>Last 30 days from the configured runs contract.</p>
+  <div class="analytics-grid analytics-grid-primary">
+    <section class="workspace-card analytics-panel" aria-labelledby="analytics-activity-heading">
+      <div class="workspace-card-body">
+        <div class="workspace-section-heading analytics-panel-heading">
+          <div>
+            <h2 id="analytics-activity-heading">Verification activity</h2>
+            <p>Passed, failed, and unknown outcomes by day.</p>
+          </div>
+          <div id="analytics-legend" class="analytics-legend" aria-label="Chart legend"></div>
+        </div>
+        <div id="analytics-activity-chart" class="analytics-chart" role="img" aria-label="Verification activity chart"></div>
+      </div>
+    </section>
+
+    <section class="workspace-card analytics-panel analytics-health" aria-labelledby="analytics-health-heading">
+      <div class="workspace-card-body">
+        <div class="workspace-section-heading">
+          <div><h2 id="analytics-health-heading">Verification health</h2><p>Signal quality for the selected window.</p></div>
+        </div>
+        <dl class="analytics-health-list">
+          <div><dt>Passed</dt><dd id="analytics-passed">—</dd></div>
+          <div><dt>Failed</dt><dd id="analytics-failed">—</dd></div>
+          <div><dt>Unknown outcome</dt><dd id="analytics-unknown">—</dd></div>
+          <div><dt>P95 duration</dt><dd id="analytics-p95">—</dd></div>
+          <div><dt>Unique features</dt><dd id="analytics-features">—</dd></div>
+        </dl>
+        <div class="analytics-evidence-note">
+          <strong>Evidence coverage</strong>
+          <span id="analytics-coverage">—</span>
         </div>
       </div>
-      <canvas id="runsChart" width="800" height="220" aria-label="Runs, passes and failures over the last 30 days"></canvas>
-      <div id="legend" class="analytics-legend"></div>
-    </section>
-
-    <section class="workspace-card analytics-card" aria-labelledby="analytics-recent-heading">
-      <div class="workspace-section-heading">
-        <div><h2 id="analytics-recent-heading">Recent</h2><p>Latest contract log records.</p></div>
-      </div>
-      <div id="recent" class="analytics-recent"></div>
     </section>
   </div>
+
+  <section class="workspace-card analytics-panel" aria-labelledby="analytics-recent-heading">
+    <div class="workspace-card-body">
+      <div class="workspace-section-heading analytics-panel-heading">
+        <div>
+          <h2 id="analytics-recent-heading">Recent verifications</h2>
+          <p>Human-readable run evidence, linked back to immutable reports and chain transactions.</p>
+        </div>
+        <a class="workspace-button" href="#activity-tab" data-dashboard-panel="activity-tab">Open run history</a>
+      </div>
+      <div class="workspace-table-wrap analytics-table-wrap">
+        <table class="workspace-table analytics-table">
+          <thead><tr><th>Result</th><th>Feature</th><th>When</th><th>Duration</th><th>Node</th><th>Evidence</th></tr></thead>
+          <tbody id="analytics-recent-body">
+            <tr><td colspan="6" class="workspace-empty">Loading verification evidence…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
 </section>

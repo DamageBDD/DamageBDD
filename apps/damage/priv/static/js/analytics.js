@@ -1,239 +1,294 @@
-  // === Config ===
-  const MDW = "https://mainnet.aeternity.io/mdw/v3";
+/* DamageBDD analytics — derived from the same public verification evidence used
+ * by Run history. No direct cross-origin middleware calls and no raw contract
+ * log JSON is rendered into the dashboard.
+ */
+import {
+  aeAddress, normalizeSpend, plausibleRunTransaction, normalizeRunMeta,
+  txHashOf, DEFAULT_TOKEN_CONTRACT
+} from './run-history-model.js';
+import {aggregateRuns} from './analytics-model.js';
 
-  // Put your real contracts here (or fetch them from your own config endpoint):
-  const CONTRACT_ID_RUNS = "ct_m3Cty31JxWHmJFMGuFCTpedDHuMLCit2Qup57qawmEWmcJnCk";     // emits Run/Result events
-  // Optional: token contract etc
-  // const CONTRACT_ID_DAMAGE = "ct_YOUR_DAMAGE_TOKEN_CONTRACT_ID";
+const $ = id => document.getElementById(id);
+const text = value => String(value ?? '').trim();
+const compact = (value, n = 8) => {
+  const s = text(value);
+  return s.length > n * 2 + 3 ? `${s.slice(0, n)}…${s.slice(-n)}` : s;
+};
+const state = {rows: [], rawRows: new Map(), config: null, loading: false, chart: null, scanned: 0, loaded: false};
+const MAX_RECENT = 12;
+const TX_PARALLEL = 7;
+const EVIDENCE_PARALLEL = 6;
 
-  // How many logs to pull (MDW is paginated; start with a chunk and iterate if you need more)
-  const LOG_LIMIT = 10;
+function host() { return $('analytics-workspace'); }
+function isActive() { const panel = $('analytics-tab'); return !!panel && !panel.hidden; }
+function setStatus(message, tone = '') {
+  const el = $('analytics-status');
+  if (!el) return;
+  el.textContent = message;
+  if (tone) el.dataset.tone = tone; else delete el.dataset.tone;
+}
+function safeAccount(value) { return aeAddress(value, ['ak_']); }
+function reportUrl(cid) { return `/reports/${encodeURIComponent(cid)}/`; }
+function txUrl(hash) { return `https://aescan.io/transactions/${encodeURIComponent(hash)}`; }
 
-  // === Helpers ===
-  async function fetchJson(url) {
-    const res = await fetch(url, { headers: { "accept": "application/json" } });
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText} for ${url}`);
-    return await res.json();
+async function fetchJson(url, opts = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), opts.timeout || 11000);
+  try {
+    const res = await fetch(url, {credentials: opts.credentials || 'same-origin', signal: controller.signal,
+      headers: {accept: 'application/json'}});
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  } finally { clearTimeout(timer); }
+}
+
+async function config() {
+  if (state.config) return state.config;
+  let remote = {};
+  try { remote = await fetchJson('/api/analytics/config'); } catch { /* compatibility with older nodes */ }
+  const h = host();
+  state.config = {
+    account: safeAccount(remote.account) || safeAccount(h?.dataset.account),
+    node: aeAddress(remote.node) || aeAddress(h?.dataset.node),
+    token: aeAddress(remote.token_contract, ['ct_']) || DEFAULT_TOKEN_CONTRACT,
+    pageLimit: Math.min(100, Math.max(10, Number(remote.page_limit) || 100)),
+    maxPages: Math.min(8, Math.max(1, Number(remote.max_pages) || 4))
+  };
+  return state.config;
+}
+
+function proxyPath(path) {
+  return `/api/run-history/activities?path=${encodeURIComponent(path)}`;
+}
+async function publicPage(path) { return fetchJson(proxyPath(path), {credentials: 'omit'}); }
+async function transaction(hash) {
+  if (!hash) return null;
+  if (!state.rawRows.has(hash)) {
+    state.rawRows.set(hash, publicPage(`/v3/transactions/${encodeURIComponent(hash)}`).catch(() => null));
+  }
+  return state.rawRows.get(hash);
+}
+async function runMeta(cid) {
+  try { return await fetchJson(`${reportUrl(cid)}run.meta`, {credentials: 'omit'}); }
+  catch { return null; }
+}
+async function taskQueue(items, count, fn) {
+  let index = 0;
+  await Promise.all(Array.from({length: Math.min(count, items.length)}, async () => {
+    while (index < items.length) { const i = index++; await fn(items[i], i); }
+  }));
+}
+
+async function normalizeCandidate(item, trusted, token) {
+  if (!plausibleRunTransaction(item, token)) return null;
+  let row = normalizeSpend(item, {contract: token, trustedContractScope: trusted});
+  const hash = txHashOf(item);
+  if (!row && hash) {
+    const full = await transaction(hash);
+    if (full) row = normalizeSpend(full, {contract: token, trustedContractScope: trusted});
+  }
+  return row;
+}
+
+async function scanEvidence(cfg) {
+  const account = cfg.account;
+  if (!account) throw new Error('No authenticated account is available for analytics');
+  const base = `/v3/transactions?contract=${encodeURIComponent(cfg.token)}&type=contract_call&type=paying_for&direction=backward&limit=${cfg.pageLimit}`;
+  const accountPath = `/v3/accounts/${encodeURIComponent(account)}/activities?owned_only=false&type=transactions&direction=backward&limit=${cfg.pageLimit}`;
+  const sources = [
+    {next: base, trusted: true, pages: 0, done: false},
+    {next: accountPath, trusted: false, pages: 0, done: false}
+  ];
+  const candidates = [];
+  let scanned = 0;
+  for (let round = 0; round < cfg.maxPages; round++) {
+    const active = sources.filter(s => !s.done);
+    if (!active.length) break;
+    const pages = await Promise.all(active.map(async source => {
+      try { return {source, page: await publicPage(source.next)}; }
+      catch (error) { return {source, error}; }
+    }));
+    for (const result of pages) {
+      const source = result.source;
+      source.pages += 1;
+      if (result.error) { source.done = true; continue; }
+      const data = Array.isArray(result.page?.data) ? result.page.data : [];
+      scanned += data.length;
+      candidates.push(...data.map(row => ({row, trusted: source.trusted})));
+      const next = result.page?.next;
+      source.next = next ? normalizeNext(next) : null;
+      source.done = !source.next || source.pages >= cfg.maxPages;
+    }
   }
 
-  function isoDay(tsMs) {
-    const d = new Date(tsMs);
-    const y = d.getUTCFullYear();
-    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-    const day = String(d.getUTCDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
-  }
-
-  // MDW log rows differ slightly by version/deployment; try common time fields.
-  function pickTimestampMs(row) {
-    // common candidates seen across MDW deployments:
-    // - row.micro_time (µs) or row.time (ms/sec) or row.block_time (sec)
-    if (row.micro_time != null) {
-      const v = Number(row.micro_time);
-      return v > 1e14 ? Math.floor(v / 1000) : v; // if already ms, keep
-    }
-    if (row.time != null) {
-      const v = Number(row.time);
-      return v > 1e12 ? v : v * 1000; // if seconds -> ms
-    }
-    if (row.block_time != null) return Number(row.block_time) * 1000;
-    // fall back: now
-    return Date.now();
-  }
-
-  function cssColor(name, fallback) {
-    const value = getComputedStyle(document.body).getPropertyValue(name).trim();
-    return value || fallback;
-  }
-
-  function drawLineChart(canvas, series, opts = {}) {
-    // series: [{name, values:[{xLabel, y}], stroke}]
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    const W = canvas.width, H = canvas.height;
-    ctx.clearRect(0, 0, W, H);
-
-    const pad = { l: 40, r: 10, t: 10, b: 28 };
-    const plotW = W - pad.l - pad.r;
-    const plotH = H - pad.t - pad.b;
-
-    const labels = series[0]?.values.map(v => v.xLabel) ?? [];
-    const allY = series.flatMap(s => s.values.map(v => v.y));
-    const yMax = Math.max(1, ...allY);
-    const yMin = 0;
-
-    // Axes
-    ctx.strokeStyle = "rgba(167,182,201,0.35)";
-    ctx.beginPath();
-    ctx.moveTo(pad.l, pad.t);
-    ctx.lineTo(pad.l, pad.t + plotH);
-    ctx.lineTo(pad.l + plotW, pad.t + plotH);
-    ctx.stroke();
-
-    // Y ticks
-    ctx.fillStyle = cssColor("--ws-muted", "#a7b6c9");
-    ctx.font = "12px system-ui, sans-serif";
-    const ticks = 4;
-    for (let i = 0; i <= ticks; i++) {
-      const y = yMax * (i / ticks);
-      const py = pad.t + plotH - (y / yMax) * plotH;
-      ctx.strokeStyle = "rgba(167,182,201,0.14)";
-      ctx.beginPath();
-      ctx.moveTo(pad.l, py);
-      ctx.lineTo(pad.l + plotW, py);
-      ctx.stroke();
-      ctx.fillText(String(Math.round(y)), 6, py + 4);
-    }
-
-    // X tick labels (sparse)
-    const stride = Math.max(1, Math.floor(labels.length / 6));
-    labels.forEach((lab, i) => {
-      if (i % stride !== 0 && i !== labels.length - 1) return;
-      const px = pad.l + (i / Math.max(1, labels.length - 1)) * plotW;
-      ctx.fillStyle = cssColor("--ws-muted", "#a7b6c9");
-      ctx.fillText(lab.slice(5), px - 12, pad.t + plotH + 18); // show MM-DD
-    });
-
-    // Series
-    for (const s of series) {
-      ctx.strokeStyle = s.stroke || cssColor("--ws-text", "#eef3fa");
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      s.values.forEach((v, i) => {
-        const px = pad.l + (i / Math.max(1, labels.length - 1)) * plotW;
-        const py = pad.t + plotH - (v.y / yMax) * plotH;
-        if (i === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
-      });
-      ctx.stroke();
-    }
-  }
-
-  function setKpis({ topHeight, totalRuns, passRate, activeDays }) {
-    const kpis = document.querySelectorAll("#kpis .analytics-kpi");
-    const cards = [
-      { label: "Top height", value: topHeight ?? "—" },
-      { label: "Total runs (sample)", value: totalRuns ?? "—" },
-      { label: "Pass rate (sample)", value: passRate ?? "—" },
-      { label: "Active days (30d)", value: activeDays ?? "—" },
-    ];
-    cards.forEach((card, i) => {
-      if (!kpis[i]) return;
-      const label = document.createElement("div");
-      label.className = "kpiLabel";
-      label.textContent = card.label;
-      const value = document.createElement("div");
-      value.className = "kpiValue";
-      value.textContent = String(card.value);
-      kpis[i].replaceChildren(label, value);
-    });
-  }
-
-  async function main() {
-    // 1) Network/MDW status
-    // MDW has a status endpoint; if your deployment differs, fall back to node status.
-    // (You can swap this out if you prefer /v3/status from the node API.)
-    let topHeight = null;
-    try {
-      const st = await fetchJson(`${MDW}/status`);
-      topHeight = st.top_block_height ?? st.topHeight ?? null;
-    } catch (_e) {}
-
-    // 2) Pull recent logs for your runs contract
-    // Endpoint documented in MDW swagger as contracts/logs with contract_id, limit, direction. :contentReference[oaicite:10]{index=10}
-    const logsResp = await fetchJson(
-      `${MDW}/contracts/logs?contract_id=${encodeURIComponent(CONTRACT_ID_RUNS)}&direction=backward&limit=${LOG_LIMIT}`
-    );
-
-    const rows = Array.isArray(logsResp.data) ? logsResp.data : (logsResp.data ?? logsResp); // tolerate shape differences
-    const now = Date.now();
-    const since30 = now - 30 * 24 * 3600 * 1000;
-
-    // Aggregate per day
-    const perDay = new Map(); // day -> {runs, pass, fail}
-    let totalRuns = 0, pass = 0, fail = 0;
-
-    // Your best UX is to standardize an emitted event like:
-    // { event: "run_result", result: "success"|"failed", feature_hash, exec_ms, cost_damage, ... }
-    // So we try to read result from common keys.
-    for (const r of rows) {
-      const ts = pickTimestampMs(r);
-      if (ts < since30) continue;
-
-      const day = isoDay(ts);
-      const cur = perDay.get(day) || { runs: 0, pass: 0, fail: 0 };
-      cur.runs++;
-
-      // Try likely fields; adjust to your emitted schema.
-      const result =
-        (r.result ?? r.result_status ?? r.event_result ?? r.name ?? "").toString().toLowerCase();
-
-      if (result.includes("success") || result.includes("pass")) { cur.pass++; pass++; }
-      else if (result.includes("fail")) { cur.fail++; fail++; }
-
-      totalRuns++;
-      perDay.set(day, cur);
-    }
-
-    // Build a complete day axis (last 30 days)
-    const days = [];
-    for (let i = 29; i >= 0; i--) {
-      const d = new Date(Date.now() - i * 24 * 3600 * 1000);
-      days.push(`${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,"0")}-${String(d.getUTCDate()).padStart(2,"0")}`);
-    }
-
-    const seriesRuns = days.map(d => ({ xLabel: d, y: perDay.get(d)?.runs ?? 0 }));
-    const seriesPass = days.map(d => ({ xLabel: d, y: perDay.get(d)?.pass ?? 0 }));
-    const seriesFail = days.map(d => ({ xLabel: d, y: perDay.get(d)?.fail ?? 0 }));
-
-    const activeDays = days.filter(d => (perDay.get(d)?.runs ?? 0) > 0).length;
-    const passRate = totalRuns > 0 ? `${Math.round((pass / totalRuns) * 100)}%` : "—";
-
-    setKpis({ topHeight, totalRuns, passRate, activeDays });
-
-    // Recent list (top 8 rows)
-    const recentEl = document.getElementById("recent");
-    if (recentEl) {
-      const items = rows.slice(0, 8).map((r) => {
-        const item = document.createElement("div");
-        item.className = "analytics-recent-item";
-        const time = document.createElement("div");
-        time.className = "analytics-recent-time";
-        time.textContent = new Date(pickTimestampMs(r)).toISOString().replace("T", " ").replace(".000Z", "Z");
-        const value = document.createElement("div");
-        value.className = "analytics-recent-value";
-        const json = JSON.stringify(r);
-        value.textContent = `${json.slice(0, 140)}${json.length > 140 ? "…" : ""}`;
-        item.append(time, value);
-        return item;
-      });
-      recentEl.replaceChildren(...items);
-    }
-
-    const canvas = document.getElementById("runsChart");
-    drawLineChart(canvas, [
-      { name: "runs", values: seriesRuns, stroke: cssColor("--ws-text", "#eef3fa") },
-      { name: "pass", values: seriesPass, stroke: "#b0e274" },
-      { name: "fail", values: seriesFail, stroke: "#ff8f8f" },
-    ]);
-
-    const legend = document.getElementById("legend");
-    if (legend) legend.textContent = "Runs · pass · fail";
-    const updated = document.getElementById("lastUpdated");
-    if (updated) updated.textContent = `Updated ${new Date().toISOString().slice(0,19).replace("T"," ")}Z`;
-  }
-
-  // Run
-  main().catch(err => {
-    console.error(err);
-    const kpis = document.getElementById("kpis");
-    if (!kpis) return;
-    const error = document.createElement("div");
-    error.className = "analytics-error";
-    const title = document.createElement("strong");
-    title.textContent = "Analytics fetch failed";
-    const detail = document.createElement("div");
-    detail.textContent = err.message;
-    error.append(title, detail);
-    kpis.replaceChildren(error);
+  const normalized = [];
+  await taskQueue(candidates, TX_PARALLEL, async candidate => {
+    const row = await normalizeCandidate(candidate.row, candidate.trusted, cfg.token).catch(() => null);
+    if (row) normalized.push(row);
   });
+
+  const distinct = new Map();
+  for (const row of normalized) {
+    const key = row.txHash || `${row.reportCid}:${row.callerId}:${row.nodePublicKey}`;
+    const old = distinct.get(key);
+    const score = r => (r.callerId ? 2 : 0) + (r.nodePublicKey ? 2 : 0) + (r.createdMs ? 1 : 0);
+    if (!old || score(row) > score(old)) distinct.set(key, row);
+  }
+  const rows = [...distinct.values()];
+  await taskQueue(rows, EVIDENCE_PARALLEL, async (row, i) => {
+    const meta = await runMeta(row.reportCid);
+    rows[i] = normalizeRunMeta(row, meta);
+  });
+  return {rows: rows.filter(r => r.callerId === account), scanned};
+}
+
+function normalizeNext(next) {
+  try {
+    const u = new URL(next, location.origin);
+    const marker = '/v3/';
+    const idx = u.pathname.indexOf(marker);
+    if (idx >= 0) return u.pathname.slice(idx) + u.search;
+    const mdw = '/mdw/v3/';
+    const midx = u.pathname.indexOf(mdw);
+    if (midx >= 0) return '/v3/' + u.pathname.slice(midx + mdw.length) + u.search;
+    return null;
+  } catch { return null; }
+}
+
+function fmtPercent(value) { return value == null ? '—' : `${Math.round(value * 100)}%`; }
+function fmtDuration(value) {
+  if (value == null || !Number.isFinite(value)) return '—';
+  if (value < 1) return `${Math.round(value * 1000)} ms`;
+  if (value < 60) return `${value.toFixed(value < 10 ? 2 : 1)} s`;
+  return `${(value / 60).toFixed(1)} min`;
+}
+function setKpi(name, value, detail) {
+  const el = document.querySelector(`[data-kpi="${name}"]`);
+  if (!el) return;
+  const strong = el.querySelector('strong'); if (strong) strong.textContent = value;
+  const small = el.querySelector('small'); if (small && detail) small.textContent = detail;
+}
+function statusBadge(status) {
+  const span = document.createElement('span');
+  const normalized = ['passed', 'failed'].includes(status) ? status : 'unknown';
+  span.className = `analytics-result analytics-result-${normalized}`;
+  span.textContent = normalized === 'passed' ? 'Passed' : normalized === 'failed' ? 'Failed' : 'Unknown';
+  return span;
+}
+function appendLink(cell, label, href) {
+  const a = document.createElement('a'); a.textContent = label; a.href = href;
+  if (/^https?:/.test(href)) { a.target = '_blank'; a.rel = 'noopener noreferrer'; }
+  cell.append(a);
+}
+
+function renderRecent(summary) {
+  const body = $('analytics-recent-body'); if (!body) return;
+  body.replaceChildren();
+  const rows = summary.rows.slice(0, MAX_RECENT);
+  if (!rows.length) {
+    const tr = document.createElement('tr'), td = document.createElement('td');
+    td.colSpan = 6; td.className = 'workspace-empty'; td.textContent = 'No published verification evidence was observed in this window.';
+    tr.append(td); body.append(tr); return;
+  }
+  for (const row of rows) {
+    const tr = document.createElement('tr');
+    const result = document.createElement('td'); result.append(statusBadge(row.status));
+    const feature = document.createElement('td');
+    const title = document.createElement('strong'); title.textContent = row.featureTitle || compact(row.featureCid, 10) || 'Untitled feature';
+    feature.append(title);
+    if (row.featureTitle && row.featureCid) {
+      const cid = document.createElement('small'); cid.textContent = compact(row.featureCid, 8); feature.append(cid);
+    }
+    const when = document.createElement('td'); when.textContent = row.createdMs ? new Date(row.createdMs).toLocaleString() : 'Unknown';
+    const duration = document.createElement('td'); duration.textContent = fmtDuration(Number(row.duration));
+    const node = document.createElement('td'); node.textContent = row.nodePublicKey ? compact(row.nodePublicKey, 8) : 'Unresolved';
+    const evidence = document.createElement('td'); evidence.className = 'analytics-evidence-links';
+    if (row.reportCid) appendLink(evidence, 'Report', reportUrl(row.reportCid));
+    if (row.txHash) appendLink(evidence, 'Chain', txUrl(row.txHash));
+    tr.append(result, feature, when, duration, node, evidence); body.append(tr);
+  }
+}
+
+function renderChart(summary) {
+  const el = $('analytics-activity-chart'); if (!el || !window.echarts) return;
+  state.chart ||= window.echarts.init(el);
+  const muted = getComputedStyle(document.body).getPropertyValue('--ws-muted').trim() || '#93a5bb';
+  const line = getComputedStyle(document.body).getPropertyValue('--ws-line').trim() || '#293648';
+  state.chart.setOption({
+    animationDuration: 250,
+    tooltip: {trigger: 'axis'},
+    grid: {left: 38, right: 16, top: 18, bottom: 34},
+    xAxis: {type: 'category', data: summary.series.map(x => x.day.slice(5)), axisLabel: {color: muted}, axisLine: {lineStyle: {color: line}}},
+    yAxis: {type: 'value', minInterval: 1, axisLabel: {color: muted}, splitLine: {lineStyle: {color: line}}},
+    series: [
+      {name: 'Passed', type: 'bar', stack: 'runs', data: summary.series.map(x => x.passed), itemStyle: {color: '#87c95f'}},
+      {name: 'Failed', type: 'bar', stack: 'runs', data: summary.series.map(x => x.failed), itemStyle: {color: '#db6b78'}},
+      {name: 'Unknown', type: 'bar', stack: 'runs', data: summary.series.map(x => x.unknown), itemStyle: {color: '#718096'}}
+    ]
+  }, true);
+  const legend = $('analytics-legend');
+  if (legend) legend.innerHTML = '<span data-tone="passed">Passed</span><span data-tone="failed">Failed</span><span data-tone="unknown">Unknown</span>';
+}
+
+function render(summary, scanned) {
+  setKpi('runs', String(summary.total), `${scanned} public transactions scanned`);
+  setKpi('pass-rate', fmtPercent(summary.passRate), `${summary.known} run${summary.known === 1 ? '' : 's'} with known outcome`);
+  setKpi('duration', fmtDuration(summary.medianDuration), `${summary.medianDuration == null ? 'No' : 'Published'} timing metadata`);
+  setKpi('active-days', String(summary.activeDays), `Days with published runs in window`);
+  $('analytics-passed').textContent = String(summary.passed);
+  $('analytics-failed').textContent = String(summary.failed);
+  $('analytics-unknown').textContent = String(summary.unknown);
+  $('analytics-p95').textContent = fmtDuration(summary.p95Duration);
+  $('analytics-features').textContent = String(summary.uniqueFeatures);
+  $('analytics-coverage').textContent = summary.evidenceCoverage == null ? 'No runs observed' :
+    `${fmtPercent(summary.evidenceCoverage)} include run.meta evidence`;
+  renderChart(summary); renderRecent(summary);
+  $('analytics-updated').textContent = `Updated ${new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}`;
+}
+
+async function refresh() {
+  if (state.loading || !isActive()) return;
+  state.loading = true;
+  $('analytics-refresh').disabled = true;
+  setStatus('Reading published run evidence…');
+  try {
+    const cfg = await config();
+    const {rows, scanned} = await scanEvidence(cfg);
+    state.rows = rows;
+    state.scanned = scanned;
+    state.loaded = true;
+    const days = Math.max(1, Number($('analytics-range').value) || 30);
+    const summary = aggregateRuns(rows, {days});
+    render(summary, scanned);
+    const unknownNote = summary.unknown ? ` ${summary.unknown} outcome${summary.unknown === 1 ? '' : 's'} could not be established from published metadata.` : '';
+    setStatus(`${summary.total} published verification run${summary.total === 1 ? '' : 's'} observed for this account.${unknownNote}`);
+  } catch (error) {
+    console.error('Analytics refresh failed', error);
+    setStatus(`Analytics unavailable: ${error.message}`, 'error');
+  } finally {
+    state.loading = false;
+    $('analytics-refresh').disabled = false;
+  }
+}
+
+function reaggregate() {
+  const days = Math.max(1, Number($('analytics-range').value) || 30);
+  const summary = aggregateRuns(state.rows, {days});
+  render(summary, state.scanned);
+  setStatus(`${summary.total} published verification runs in the selected window.`);
+}
+
+function init() {
+  if (!host()) return;
+  $('analytics-refresh')?.addEventListener('click', () => { state.config = null; refresh(); });
+  $('analytics-range')?.addEventListener('change', reaggregate);
+  document.addEventListener('damage:panelchange', event => {
+    if (event.detail?.id === 'analytics-tab' && !state.loaded) refresh();
+  });
+  const observer = new MutationObserver(() => { if (isActive() && !state.loaded) refresh(); });
+  const panel = $('analytics-tab'); if (panel) observer.observe(panel, {attributes: true, attributeFilter: ['hidden']});
+  window.addEventListener('resize', () => state.chart?.resize());
+  if (isActive()) refresh();
+}
+
+document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', init) : init();
