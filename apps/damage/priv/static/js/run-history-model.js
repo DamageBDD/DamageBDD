@@ -126,6 +126,39 @@ function callerOf(candidates) {
   }
   return '';
 }
+function isPayingFor(x) {
+  return /paying.?for/i.test(txt(x?.type ?? x?.tx_type ?? x?.kind));
+}
+function paymentIdentity(candidates) {
+  const payingFor = candidates.some(isPayingFor);
+  if (!payingFor) return {payingFor: false, payerId: ''};
+  // The *outer* PayingForTx pays transaction fees. It is NOT necessarily the
+  // owner/caller of the nested DamageToken.spend contract call.
+  for (const x of candidates) {
+    if (!isPayingFor(x)) continue;
+    for (const k of ['payer_id', 'fee_payer_id', 'payer']) {
+      const id = aeAddress(txt(x[k]), ['ak_']);
+      if (id) return {payingFor, payerId: id};
+    }
+  }
+  return {payingFor, payerId: ''};
+}
+function spendCallerOf(spend, candidates, contract, payingFor) {
+  // An explicit caller/sender on the inner ContractCallTx (or decoded spend
+  // call info) is the run account. Do not take sender_id from the outer
+  // PayingForTx: that address may be the sponsoring DamageBDD node.
+  for (const x of [spend, ...candidates]) {
+    if (isPayingFor(x)) continue;
+    const contractCall = x === spend || methodName(x) === 'spend' ||
+      (contractOf(x) === contract && /contract.?call/i.test(txt(x.type ?? x.tx_type)));
+    if (!contractCall) continue;
+    const id = callerOf([x]);
+    if (id) return id;
+  }
+  // Direct (unwrapped) transactions may only expose the signer on the root
+  // response. A wrapped transaction must *not* infer its caller this way.
+  return payingFor ? '' : callerOf(candidates);
+}
 
 /** Only accept a spend with two IPFS CIDs and a matching token contract.
  * The `trustedContractScope` flag is used exclusively for responses to the
@@ -134,6 +167,7 @@ function callerOf(candidates) {
 export function normalizeSpend(root, {contract = DEFAULT_TOKEN_CONTRACT, trustedContractScope = false} = {}) {
   if (!root || typeof root !== 'object') return null;
   const candidates = txCandidates(root);
+  const payment = paymentIdentity(candidates);
   for (const candidate of candidates) {
     const args = argsOf(candidate);
     if (args.length < 4 || !isCid(txt(args[2])) || !isCid(txt(args[3]))) continue;
@@ -145,9 +179,10 @@ export function normalizeSpend(root, {contract = DEFAULT_TOKEN_CONTRACT, trusted
     if (methodName(candidate) !== 'spend' && !trustedContractScope && observedContract !== contract) continue;
     const nodePublicKey = aeAddress(txt(args[0]));
     if (!nodePublicKey) continue;
-    const caller = callerOf([candidate, ...candidates]);
+    const caller = spendCallerOf(candidate, candidates, contract, payment.payingFor);
     return {
       txHash: txHashOf(root), nodePublicKey, callerId: caller,
+      payerId: payment.payerId, payingFor: payment.payingFor,
       featureCid: txt(args[2]), reportCid: txt(args[3]),
       amountRaw: txt(args[1]), createdMs: timestamp(root),
       featureTitle: '', tags: [], status: 'unknown', evidenceLoaded: false
@@ -165,7 +200,9 @@ export function normalizeSpend(root, {contract = DEFAULT_TOKEN_CONTRACT, trusted
     const [featureCid, reportCid] = cidsFromCallData(candidate.call_data);
     if (!featureCid || !reportCid) continue;
     return {
-      txHash: txHashOf(root), nodePublicKey: '', callerId: callerOf([candidate, ...candidates]),
+      txHash: txHashOf(root), nodePublicKey: '',
+      callerId: spendCallerOf(candidate, candidates, contract, payment.payingFor),
+      payerId: payment.payerId, payingFor: payment.payingFor,
       featureCid, reportCid, amountRaw: '', createdMs: timestamp(root),
       featureTitle: '', tags: [], status: 'unknown', evidenceLoaded: false,
       nodeSource: 'unresolved', spendEvidence: 'token_calldata'
@@ -222,14 +259,20 @@ export function normalizeRunMeta(row, meta) {
   const createdMs = timeMs(meta.start_time_hires ?? meta.completed_at) || row.createdMs;
   const metaNode = aeAddress(meta.node_public_key, ['ak_']);
   const metaAccount = aeAddress(meta.public_key, ['ak_']);
+  const chainCaller = aeAddress(row.callerId, ['ak_']);
+  // The manifest contains the execution account for hosted runs. Only use it
+  // if the inner contract caller is unavailable; this is public evidence, not
+  // an authenticated assertion about account ownership.
   return {...row,
     featureTitle: String(meta.feature_title || row.featureTitle || ''),
     tags, createdMs, status: metadataStatus(meta), evidenceLoaded: true,
     runId: String(meta.run_id || ''), duration: Number(meta.execution_time_hires || 0),
     nodePublicKey: row.nodePublicKey || metaNode || '',
-    callerId: row.callerId || metaAccount || '',
+    callerId: chainCaller || metaAccount || '',
+    reportedAccount: metaAccount || '',
+    accountMismatch: !!(chainCaller && metaAccount && chainCaller !== metaAccount),
     nodeSource: row.nodePublicKey ? 'chain_arguments' : metaNode ? 'report_manifest' : 'unresolved',
-    callerSource: row.callerId ? 'chain_arguments' : metaAccount ? 'report_manifest' : 'unresolved'
+    callerSource: chainCaller ? 'chain_arguments' : metaAccount ? 'report_manifest' : 'unresolved'
   };
 }
 

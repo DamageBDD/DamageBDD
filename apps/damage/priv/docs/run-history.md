@@ -14,16 +14,27 @@ execution context is used for these reads.
    miss ordinary `ContractCallTx` and wrapped `PayingForTx` transactions.
 2. Preserve the legacy, successful payer scan alongside the token index:
    `/v3/accounts/<NODE_AK>/activities?owned_only=true&type=transactions&direction=backward&limit=50`.
-   My account also searches that account's activity, with
-   `owned_only=false`. The node, not the user, may be the payer of a wrapped
-   run transaction, so account history additionally scans the token index.
+   My account searches that account's activity with `owned_only=false`,
+   **and the `owned_only=true` activity of up to eight known node fee payers**
+   (this node, selected and followed nodes, and other observed nodes). The
+   outer `PayingForTx` is owned by the sponsoring node and is not necessarily
+   indexed under the user account at all. The global token index remains an
+   additional network-wide source, not a substitute for node-payer history.
 3. The reader unwraps nested `PayingForTx` records and validates the configured
    token contract's `spend(node_address, amount, feature_hash, report_hash)`
-   call, as defined in `apps/damage/priv/contracts/token.aes`. Transaction
+   call, as defined in `apps/damage/priv/contracts/token.aes`. The *inner*
+   `ContractCallTx.caller_id` is the user whose token balance is spent; the
+   **outer `PayingForTx.payer_id` pays transaction gas fees** (normally the
+   DamageBDD node). These identities are kept separate, and a wrapped
+   transaction's outer sender is never assigned as the run account. Transaction
    details are hydrated when necessary. For transactions exposing only encoded
    `cb_` calldata, a **best-effort** extraction accepts exactly two unique
    IPFS CIDs, restricted to the configured token contract. This cannot replace
    full FATE ABI decoding or authenticate the claimed node/runner in `run.meta`.
+   The signed inner caller takes precedence over `run.meta.public_key`; when
+   caller identity cannot be decoded, `run.meta.public_key` is used only as a
+   **labeled, unverified public claim** for account filtering. Conflicting
+   claims are flagged in run details.
 4. This **DamageBDD node's already-exposed IPFS-backed routes** are used:
    - `GET /reports/<report_hash>/run.meta`: public JSON manifest at the IPFS
      report CID root (new runs). It may legitimately be 404 for legacy runs.
@@ -44,10 +55,13 @@ execution context is used for these reads.
 
 - **This node**: the executing node's public `ak_` identity from the dashboard
   configuration; only records whose `spend` node argument matches are shown.
-- **My account**: authenticated wallet/account's public `ak_` identity;
-  both account activity and global token calls are scanned and filtered by
-  the on-chain caller. The account address is public; no private session API
-  is needed for run evidence.
+- **My account**: authenticated wallet/account's public `ak_` identity.
+  Node-sponsored `PayingForTx` runs are found by scanning the known node-payer
+  account activity as well as public token transactions and the selected
+  user's own activities. Filter by **inner spend caller** (not the outer gas
+  payer), falling back to clearly marked `run.meta.public_key` when the inner
+  caller is unavailable. For unfamiliar remote nodes, discovery or following
+  that node adds its payer activity source; the known-node scan is bounded.
 - **Followed nodes**: selected public node identities stored locally in the
   browser. Following grants no access and does not assert registry membership.
 - **Discover nodes**: the observed node arguments in recent token spends

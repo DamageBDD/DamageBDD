@@ -48,7 +48,7 @@ def init(page, node='', hidden=False, session=ACCOUNT, legacy=False, scenario='d
         // Simulate a legacy dashboard configuration. Run history must ignore
         // this cross-origin IPFS gateway even when the local manifest is 404.
         window.DamageActivity = {ipfsGateway:'https://ipfs.io/ipfs/'};
-        window.__mock = {proxy:0, remote:0, missingNodes:0, tokenCalls:0, legacy,
+        window.__mock = {proxy:0, remote:0, missingNodes:0, tokenCalls:0, nodePayerCalls:0, legacy,
                          registryCalls:0, accountCalls:0, nodeIpfs:0, externalIpfs:0, scenario, down:scenario === 'retry'};
         const json = (data, status=200) => new Response(JSON.stringify(data),
           {status, headers:{'content-type':'application/json'}});
@@ -71,10 +71,14 @@ def init(page, node='', hidden=False, session=ACCOUNT, legacy=False, scenario='d
                   return json({error:'temporary middleware failure'}, 503);
                 if (scenario === 'duplicate') return json({data:[{
                   hash:'th_'+'H'.repeat(40),micro_time:now,
-                  tx:{type:'ContractCallTx',contract_id:contract,
-                    call_data:'cb_'+btoa('X'+feature+'\x00'+report+'Y')}
+                  // A flattened token-index record wrongly names the outer
+                  // node as caller; prefer the fully decoded nested sponsor.
+                  tx:{type:'ContractCallTx',contract_id:contract, caller_id:node,
+                    function:'spend',arguments:[{type:'address',value:node},
+                      {type:'int',value:'100000000'},{type:'string',value:feature},
+                      {type:'string',value:report}]}
                 }],next:null});
-                if (scenario === 'payer') return json({data:[], next:null});
+                if (['payer','sponsored','sponsored-meta-only'].includes(scenario)) return json({data:[], next:null});
                 // A middleware page may have no matching transactions but still
                 // advertise an older cursor. Follow it without manual clicking.
                 if (scenario === 'sparse' && !path.includes('cursor=older'))
@@ -111,18 +115,20 @@ def init(page, node='', hidden=False, session=ACCOUNT, legacy=False, scenario='d
             }
             if (path.includes('/activities')) {
               window.__mock.accountCalls++;
-              if ((scenario === 'payer' || scenario === 'duplicate') && path.includes('/accounts/'+node+'/activities'))
+              if (['payer','duplicate','sponsored','sponsored-meta-only'].includes(scenario) && path.includes('/accounts/'+node+'/activities')) {
+                window.__mock.nodePayerCalls++;
                 return json({data:[{
-                  type:'PayingForTxEvent', payload:{
+                  type:'PayingForTxEvent', sender_id:node, payload:{
                     hash:'th_'+(scenario === 'duplicate'?'H':'G').repeat(40), micro_time:now,
-                    tx:{type:'PayingForTx', payer_id:node, tx:{type:'SignedTx', tx:{
+                    tx:{type:'PayingForTx', payer_id:node, sender_id:node, tx:{type:'SignedTx', tx:{
                       type:'ContractCallTx', contract_id:contract, function:'spend',
-                      caller_id:account,
+                      ...(scenario === 'sponsored-meta-only' ? {} : {caller_id:account}),
                       arguments:[{type:'address',value:node},{type:'int',value:'100000000'},
                         {type:'string',value:feature},{type:'string',value:report}]
                     }}}
                   }
                 }], next:null});
+              }
               return json({data:[],next:null});
             }
             if (path.includes('/v3/transactions/')) return json({tx:{caller_id:account},micro_time:now});
@@ -241,6 +247,32 @@ def run():
         print('PASS legacy nested PayingForTx from node-payer account activity when contract index is empty')
         page.close()
 
+        for sponsored_scenario in ('sponsored', 'sponsored-meta-only'):
+            page = browser.new_page()
+            page.on('pageerror', lambda e: errors.append(str(e)))
+            init(page, node=NODE, scenario=sponsored_scenario)
+            page.locator('.activity-item').first.wait_for(timeout=14000)
+            assert page.locator('.activity-item').count() == 1
+            page.locator('[data-history-scope="account"]').click()
+            page.wait_for_function('''() => document.querySelector('[data-history-scope="account"]').getAttribute('aria-pressed') === 'true'
+                && document.querySelector('#activity-status').textContent.includes('run(s)')''', timeout=15000)
+            page.locator('.activity-item').first.wait_for(timeout=14000)
+            assert page.locator('.activity-item').count() == 1, sponsored_scenario
+            assert page.evaluate('window.__mock.tokenCalls') >= 2
+            assert page.evaluate('window.__mock.nodePayerCalls') >= 2
+            page.locator('.activity-details summary').first.click()
+            detail = page.locator('.history-run-details').first.inner_text()
+            assert ACCOUNT in detail and NODE in detail
+            assert 'Transaction fee payer' in detail
+            assert 'Run account (inner spend caller)' in detail
+            if sponsored_scenario.endswith('meta-only'):
+                assert 'Claimed by IPFS run.meta' in detail
+                assert page.locator('.activity-meta a').filter(has_text='Reported account').count() == 1
+            else:
+                assert 'Inner on-chain contract caller' in detail
+            print('PASS hosted account runs appear in My account via node-sponsored PayingForTx (' + sponsored_scenario + ')')
+            page.close()
+
         page = browser.new_page()
         page.on('pageerror', lambda e: errors.append(str(e)))
         init(page, scenario='encoded')
@@ -260,8 +292,15 @@ def run():
         page.locator('.activity-item').first.wait_for(timeout=14000)
         assert page.locator('.activity-item').count() == 1
         page.locator('.activity-details summary').first.click()
-        assert 'On-chain decoded arguments' in page.locator('.history-run-details').first.inner_text()
-        print('PASS deduplicates token and payer activity by tx hash, preferring decoded chain node identity')
+        detail = page.locator('.history-run-details').first.inner_text()
+        assert 'On-chain decoded arguments' in detail
+        assert 'Run account (inner spend caller)' in detail
+        assert 'Transaction fee payer' in detail
+        assert ACCOUNT in detail and NODE in detail
+        page.locator('[data-history-scope="account"]').click()
+        page.locator('.activity-item').first.wait_for(timeout=14000)
+        assert page.locator('.activity-item').count() == 1
+        print('PASS duplicate flattened payer identity does not override the nested signed run account')
         page.close()
 
         page = browser.new_page()

@@ -43,6 +43,7 @@ const TX_PARALLEL = 8;
 const EVIDENCE_PARALLEL = 6;
 const MAX_BYTES = 128 * 1024;
 const AUTO_SCAN_PAGES = 3; // Continue beyond empty first pages; Load more for older history.
+const ACCOUNT_PAYER_NODE_LIMIT = 8; // Bounded known node-payer activity for hosted accounts.
 const DEFAULT_SCOPE = 'node';
 
 function localPreferences() {
@@ -332,16 +333,30 @@ function pageLimit() {
 function scanSources(state) {
   const f = filtersFromControls(state);
   const limit = pageLimit(), token = config().token;
-  const build = (path, trustedContractScope) => ({path, trustedContractScope, next: path, done: false, error: null, visited: new Set()});
+  const build = (path, trustedContractScope, payerNode = '') => ({
+    path, trustedContractScope, payerNode, next: path, done: false, error: null, visited: new Set()
+  });
   // The /contracts/calls index describes *internal* calls, NOT the ordinary
   // ContractCallTx/PayingForTx that publish DamageBDD reports. Use the actual
   // transaction index; retain the legacy payer's account activities as well.
   const contractPath = `/v3/transactions?contract=${encodeURIComponent(token)}&type=contract_call&type=paying_for&direction=backward&limit=${limit}`;
   const accountPath = (id, owned = false) => `/v3/accounts/${encodeURIComponent(id)}/activities?owned_only=${owned}&type=transactions&direction=backward&limit=${limit}`;
-  // When a node submits the PayingForTx on behalf of a user, the outer
-  // transaction might not be owned by the user. Search both indices.
-  if (state.scope === 'account') return f.account ?
-    [build(contractPath, true), build(accountPath(f.account), false)] : [];
+  // Hosted account runs: DamageBDD's node signs the outer PayingForTx,
+  // while the user signs the nested token spend. The user's account activity
+  // does NOT necessarily index that outer transaction. Search known node-payer
+  // feeds as well as public token calls and the user's own activities.
+  if (state.scope === 'account') {
+    if (!f.account) return [];
+    const sources = [build(contractPath, true), build(accountPath(f.account), false)];
+    // Local node first, then the selected/followed/observed nodes. This is a
+    // bounded fallback; the global token index provides network-wide coverage.
+    const knownNodes = [...new Set([
+      state.localNode, state.targetNode, ...state.followed, ...state.registryNodes.keys()
+    ])].filter(id => aeAddress(id, ['ak_']) && id !== f.account)
+      .slice(0, ACCOUNT_PAYER_NODE_LIMIT);
+    for (const id of knownNodes) sources.push(build(accountPath(id, true), false, id));
+    return sources;
+  }
   // Discover always scans recent public token transactions, regardless of the
   // local selected node. Users can choose a node from a result afterward.
   if (state.scope === 'discover') return [build(contractPath, true)];
@@ -349,8 +364,8 @@ function scanSources(state) {
   const sources = [build(contractPath, true)];
   // Preserve the original, working node-payer transaction activity path.
   // This catches wrapped transactions omitted by a generic contract index.
-  for (const id of f.nodeIds.slice(0, 8)) {
-    if (id.startsWith('ak_')) sources.push(build(accountPath(id, true), false));
+  for (const id of f.nodeIds.slice(0, ACCOUNT_PAYER_NODE_LIMIT)) {
+    if (id.startsWith('ak_')) sources.push(build(accountPath(id, true), false, id));
   }
   return sources;
 }
@@ -481,9 +496,15 @@ async function normalizeTxRow(state, item, source) {
       {...full, payload: {tx: item}}, opts);
   }
   if (!row) return null;
+  // A node-owned activity page containing a PayingForTx establishes the node
+  // as its outer fee payer even if middleware omits payer_id in that page.
+  if (row.payingFor && !row.payerId && source.payerNode) {
+    row.payerId = source.payerNode;
+    row.payerSource = 'node_activity';
+  }
   // Transaction pages sometimes omit the enclosing caller/time information.
   // Hydrate missing fields before applying account or time filters.
-  if (hash && (!row.callerId || !row.createdMs)) {
+  if (hash && (!row.callerId || !row.createdMs || (row.payingFor && !row.payerId))) {
     const full = await getTx(state, hash);
     if (full) {
       const combined = {...full, ...item, tx: full.tx || item.tx,
@@ -492,6 +513,9 @@ async function normalizeTxRow(state, item, source) {
       if (hydrated) row = {
         ...row, ...hydrated, txHash: hash,
         callerId: hydrated.callerId || row.callerId,
+        payerId: hydrated.payerId || row.payerId,
+        payerSource: hydrated.payerId ? 'chain_wrapper' : row.payerSource,
+        payingFor: hydrated.payingFor || row.payingFor,
         nodePublicKey: hydrated.nodePublicKey || row.nodePublicKey,
         createdMs: hydrated.createdMs || row.createdMs
       };
@@ -532,7 +556,11 @@ function renderRun(row, ul, state) {
   const meta = node('div', 'activity-meta');
   meta.append(safeLink('Report', reportUrl(row.reportCid)), safeLink('Feature', featureUrl(row.featureCid)));
   if (row.txHash) meta.append(safeLink('Transaction', publicTxUrl(row.txHash)));
-  if (row.callerId) meta.append(safeLink(`Account ${compact(row.callerId)}`, accountUrl(row.callerId)));
+  if (row.callerId) meta.append(safeLink(
+    `${row.callerSource === 'report_manifest' ? 'Reported account' : 'Run account'} ${compact(row.callerId)}`,
+    accountUrl(row.callerId)));
+  if (row.payingFor) meta.append(node('span', 'history-fee-payer',
+    `Fee payer ${row.payerId ? compact(row.payerId) : 'not decoded'}`));
   if (row.nodePublicKey) meta.append(safeLink(
     `${row.nodeSource === 'report_manifest' ? 'Reported node' : 'Node'} ${compact(row.nodePublicKey)}`,
     accountUrl(row.nodePublicKey)));
@@ -553,7 +581,15 @@ function renderRun(row, ul, state) {
   details.append(toggle);
   const data = node('dl', 'history-run-details');
   for (const [key, value] of [
-    ['Node', row.nodePublicKey || 'Not decoded'], ['Account', row.callerId || 'Not indexed'],
+    ['Executing node', row.nodePublicKey || 'Not decoded'],
+    ['Run account (inner spend caller)', row.callerId || 'Not decoded'],
+    ['Transaction fee payer', row.payingFor ? (row.payerId || 'Not decoded') : 'Direct contract call'],
+    ...(row.payingFor && row.payerId ? [['Fee payer evidence',
+      row.payerSource === 'node_activity' ? 'Inferred from node-owned public activity' : 'Outer PayingForTx payer_id']] : []),
+    ['Run account evidence', row.callerSource === 'report_manifest' ? 'Claimed by IPFS run.meta (not signer-verified)' :
+      row.callerId ? 'Inner on-chain contract caller' : 'Not decoded'],
+    ...(row.accountMismatch ? [['Account identity conflict',
+      'IPFS run.meta account differs from the inner on-chain signer; using the on-chain signer']] : []),
     ['Feature CID', row.featureCid], ['Report CID', row.reportCid],
     ['Transaction', row.txHash || 'Not indexed'], ['Run ID', row.runId || 'Legacy'],
     ['Node evidence', row.nodeSource === 'report_manifest' ? 'Claimed by IPFS run.meta (not chain-verified)' :
@@ -654,7 +690,10 @@ async function loadMore(state) {
     // calldata fallback. Otherwise the first result can hide a real node run.
     const distinct = new Map();
     const score = row => (row.nodePublicKey ? 4 : 0) + (row.callerId ? 2 : 0) +
-      (row.amountRaw ? 1 : 0) + (row.createdMs ? 1 : 0);
+      (row.amountRaw ? 1 : 0) + (row.createdMs ? 1 : 0) +
+      // A decoded inner caller + separate outer payer provides stronger
+      // account attribution than a flattened index record with only a caller.
+      (row.payingFor && row.payerId && row.callerId && row.callerId !== row.payerId ? 4 : 0);
     for (const row of discovered) {
       const key = row.txHash || `${row.reportCid}:${row.callerId}:${row.nodePublicKey}`;
       if (state.seen.has(key)) continue;

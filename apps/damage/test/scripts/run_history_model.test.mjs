@@ -198,3 +198,46 @@ test('run.meta can label unresolved identities but never override decoded chain 
   assert.equal(verified.callerId, otherNode);
   assert.equal(verified.nodeSource, 'chain_arguments');
 });
+
+
+test('node-sponsored PayingForTx records the inner account separately from fee payer', () => {
+  const wrapped = {
+    hash: 'th_sponsored', sender_id: nodeId,
+    payload: {tx: {type: 'PayingForTx', payer_id: nodeId, sender_id: nodeId,
+      tx: {type: 'SignedTx', tx: {type: 'ContractCallTx', contract_id: contract,
+        function: 'spend', caller_id: accountId, arguments: args}}}}
+  };
+  const parsed = normalizeSpend(wrapped);
+  assert.equal(parsed?.callerId, accountId);
+  assert.equal(parsed?.payerId, nodeId);
+  assert.equal(parsed?.nodePublicKey, nodeId);
+  assert.equal(parsed?.payingFor, true);
+  assert.equal(matchesRun(parsed, {account: accountId}), true);
+  assert.equal(matchesRun(parsed, {account: nodeId}), false);
+});
+
+test('outer node sender cannot substitute for missing inner caller', () => {
+  const wrapped = {sender_id: nodeId, tx: {type: 'PayingForTx', payer_id: nodeId,
+    tx: {type: 'SignedTx', tx: {type: 'ContractCallTx', contract_id: contract,
+      function: 'spend', arguments: args}}}};
+  const parsed = normalizeSpend(wrapped);
+  assert.equal(parsed?.callerId, '');
+  assert.equal(parsed?.payerId, nodeId);
+  const withReport = normalizeRunMeta(parsed, {public_key: accountId, status: 'passed'});
+  assert.equal(withReport.callerId, accountId);
+  assert.equal(withReport.callerSource, 'report_manifest');
+  assert.equal(withReport.payerId, nodeId);
+  assert.equal(matchesRun(withReport, {account: accountId}), true);
+});
+
+test('direct spends have no fee sponsor, and conflicting report claims cannot override signer', () => {
+  const direct = normalizeSpend({type:'ContractCallTx', contract_id:contract,
+    caller_id:accountId, function:'spend', arguments:args});
+  assert.equal(direct?.callerId, accountId);
+  assert.equal(direct?.payingFor, false);
+  assert.equal(direct?.payerId, '');
+  const withReport = normalizeRunMeta(direct, {public_key:nodeId});
+  assert.equal(withReport.callerId, accountId);
+  assert.equal(withReport.callerSource, 'chain_arguments');
+  assert.equal(withReport.accountMismatch, true);
+});

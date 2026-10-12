@@ -29,7 +29,7 @@
           </select>
         </div>
         <div class="history-field" id="activity-account-field" hidden>
-          <label for="activity-account">Public account activity</label>
+          <label for="activity-account">Run account</label>
           <input id="activity-account" class="workspace-input" type="text"
                  placeholder="ak_..." autocomplete="off" spellcheck="false">
           <select id="activity-account-known" class="workspace-input" aria-label="Select known public account">
@@ -79,7 +79,7 @@
       </div>
       <div class="history-advanced">
         <div class="history-field" id="activity-account-filter-field">
-          <label for="activity-account-filter">Filter by runner account</label>
+          <label for="activity-account-filter">Filter by run account</label>
           <input id="activity-account-filter" class="workspace-input" type="text"
                  placeholder="Any account (ak_...)" spellcheck="false">
         </div>
@@ -98,7 +98,7 @@
           </select>
         </div>
       </div>
-      <p id="activity-filter-hint" class="workspace-muted">Feature, tags and status come from public run evidence; some older reports lack these fields.</p>
+      <p id="activity-filter-hint" class="workspace-muted">Hosted runs can have a different node fee payer and run account. Account filtering uses the inner contract caller, or a labeled IPFS claim if it is not decoded. Older reports may lack metadata.</p>
     </div>
 
     <div class="history-results-head">
