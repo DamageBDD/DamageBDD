@@ -317,6 +317,14 @@ execute_file_prepared(Config, Context, Filename) ->
             ContextUrl = maps:get(context_url, ContextIpfs, ContextIpfsUrl),
             ReleaseInfo = damage_release:info(),
 
+            %% Publish only public evidence, never secrets or execution context.
+            FeatureTitle = lists:nth(1, binary:split(Feature, <<"\n">>, [global])),
+            PublicTags = public_gherkin_tags(Tags, Scenarios),
+            RunStatus = case FailReason of
+                none -> <<"passed">>;
+                0 -> <<"passed">>;
+                _ -> <<"failed">>
+            end,
             %% Write meta BEFORE IPFS add so it is included in ReportHash.
             ok = write_run_meta(
                 RunDir,
@@ -327,7 +335,12 @@ execute_file_prepared(Config, Context, Filename) ->
                     start_time_hires => StartTimestamp,
                     end_time_hires => EndTimestamp,
                     execution_time_hires => (EndTimestamp - StartTimestamp),
+                    status => RunStatus,
                     result => Result,
+                    feature_title => FeatureTitle,
+                    tags => PublicTags,
+                    public_key => maps:get(public_key, Context, <<>>),
+                    node_public_key => maps:get(node_public_key, FinalContext0, <<>>),
                     release => ReleaseInfo,
                     context_ipfs_hash => ContextIpfsHash,
                     context_ipfs_uri => ContextIpfsUri,
@@ -376,7 +389,6 @@ execute_file_prepared(Config, Context, Filename) ->
                         }
                     )
             end,
-            FeatureTitle = lists:nth(1, binary:split(Feature, <<"\n">>, [global])),
             FinalContext =
                 maps:merge(
                     FinalContext0,
@@ -434,6 +446,9 @@ execute_file_prepared(Config, Context, Filename) ->
                             false -> false
                         end,
                     result => Result,
+                    status => RunStatus,
+                    tags => PublicTags,
+                    completed_at => CompletedAtSec,
                     public_key => PublicKey,
                     result_status => ResultStatus,
                     token_contract => maps:get(token_contract, FinalContext),
@@ -443,6 +458,7 @@ execute_file_prepared(Config, Context, Filename) ->
                     spend => maps:get(step_spend, FinalContext, 0)
                 },
             RunRecord = maps:merge(RunRecord0, release_record_fields(ReleaseInfo)),
+            maybe_observe_analytics_run(RunRecord),
             damage_webhooks:trigger_webhooks(RunRecord),
             %?LOG_DEBUG("RunRecord ~p", [RunRecord]),
             RunRecord;
@@ -1770,6 +1786,41 @@ require_context_ipfs(RunDir, Context) ->
             throw({context_ipfs_publish_failed, Reason});
         Other ->
             throw({context_ipfs_publish_failed, {unexpected_result, Other}})
+    end.
+
+%% Extract feature + scenario Gherkin tags from tolerant parser shapes.
+%% Only @tags are public: do not serialize arbitrary parser/context terms.
+public_gherkin_tags(FeatureTags0, Scenarios0) ->
+    FeatureTags = case is_list(FeatureTags0) of true -> FeatureTags0; false -> [] end,
+    Scenarios = case is_list(Scenarios0) of true -> Scenarios0; false -> [] end,
+    ScenarioTags = lists:flatmap(
+        fun
+            ({_, _, Tags, _}) when is_list(Tags) -> Tags;
+            ({_, _, Tags, _, _}) when is_list(Tags) -> Tags;
+            (_) -> []
+        end,
+        Scenarios
+    ),
+    lists:usort([
+        Tag || Raw <- FeatureTags ++ ScenarioTags,
+               Tag <- [public_tag(Raw)], Tag =/= <<>>
+    ]).
+
+public_tag({_, Value}) -> public_tag(Value);
+public_tag(Value) when is_binary(Value); is_list(Value) ->
+    Tag = string:trim(to_bin(Value)),
+    case re:run(Tag, <<"^@[A-Za-z0-9_.:-]+$">>, [{capture, none}]) of
+        match -> Tag;
+        nomatch -> <<>>
+    end;
+public_tag(_) -> <<>>.
+
+maybe_observe_analytics_run(#{dry_run := true}) ->
+    ok;
+maybe_observe_analytics_run(RunRecord) ->
+    try damage_analytics_store:observe_run(RunRecord)
+    catch
+        _:_ -> ok
     end.
 
 write_run_meta(RunDir, MetaMap) ->

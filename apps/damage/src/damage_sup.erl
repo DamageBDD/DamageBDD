@@ -216,6 +216,30 @@ init([]) ->
                     modules => [damage_aemdw]
                 },
                 #{
+                    id => damage_analytics_store,
+                    start => {damage_analytics_store, start_link, []},
+                    restart => permanent,
+                    shutdown => 10000,
+                    type => worker,
+                    modules => [damage_analytics_store]
+                },
+                #{
+                    id => damage_analytics_ecai_worker,
+                    start => {damage_analytics_ecai_worker, start_link, []},
+                    restart => permanent,
+                    shutdown => 5000,
+                    type => worker,
+                    modules => [damage_analytics_ecai_worker]
+                },
+                #{
+                    id => damage_analytics_indexer,
+                    start => {damage_analytics_indexer, start_link, []},
+                    restart => permanent,
+                    shutdown => 10000,
+                    type => worker,
+                    modules => [damage_analytics_indexer]
+                },
+                #{
                     id => damage_balance_cache,
                     start => {damage_balance_cache, start_link, []},
                     restart => permanent,

@@ -73,7 +73,8 @@
 .damage-dashboard .dashboard-panel:focus, .damage-dashboard .dashboard-main:focus { outline: none; }
 /* Run history is a first-class dashboard panel, not a legacy tab card.
  * Override main.css's high-specificity #activity-tab purple frame. */
-.damage-dashboard #activity-tab {
+.damage-dashboard #activity-tab,
+.damage-dashboard #analytics-tab {
   background: transparent;
   border: 0;
   border-radius: 0;
@@ -83,7 +84,8 @@
   overflow-x: visible;
 }
 @media (max-width: 620px) {
-  .damage-dashboard #activity-tab { padding: 20px 0; }
+  .damage-dashboard #activity-tab,
+  .damage-dashboard #analytics-tab { padding: 20px 0; }
 }
 
 .damage-dashboard .dashboard-topbar {

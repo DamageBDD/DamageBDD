@@ -1,64 +1,110 @@
-import {timeMs} from './run-history-model.js';
-
-export function isoDay(ms) {
-  if (!Number.isFinite(ms) || ms <= 0) return '';
-  const d = new Date(ms);
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+/* Pure presentation helpers for the server-side analytics materialized view. */
+export function number(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
 }
 
-export function percentile(values, p) {
-  const numbers = values.filter(Number.isFinite).filter(v => v >= 0).sort((a, b) => a - b);
-  if (!numbers.length) return null;
-  const idx = Math.max(0, Math.min(numbers.length - 1, Math.ceil(p * numbers.length) - 1));
-  return numbers[idx];
+export function percent(value, digits = 0) {
+  if (value == null || value === '') return '—';
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  return `${(n * 100).toFixed(digits)}%`;
 }
 
-export function aggregateRuns(rows, {days = 30, now = Date.now()} = {}) {
-  const dayMs = 86400000;
-  const start = now - days * dayMs;
-  const filtered = rows.filter(row => Number.isFinite(row.createdMs) && row.createdMs >= start && row.createdMs <= now + dayMs);
-  const buckets = new Map();
-  const axis = [];
-  for (let i = days - 1; i >= 0; i--) {
-    const key = isoDay(now - i * dayMs);
-    axis.push(key);
-    buckets.set(key, {day: key, passed: 0, failed: 0, unknown: 0, total: 0});
-  }
-  for (const row of filtered) {
-    const key = isoDay(row.createdMs);
-    const bucket = buckets.get(key);
-    if (!bucket) continue;
-    const status = ['passed', 'failed'].includes(row.status) ? row.status : 'unknown';
-    bucket[status] += 1;
-    bucket.total += 1;
-  }
-  const passed = filtered.filter(r => r.status === 'passed').length;
-  const failed = filtered.filter(r => r.status === 'failed').length;
-  const unknown = filtered.length - passed - failed;
-  const known = passed + failed;
-  const durations = filtered.map(r => Number(r.duration)).filter(v => Number.isFinite(v) && v >= 0);
-  const features = new Set(filtered.map(r => r.featureCid).filter(Boolean));
-  const evidence = filtered.filter(r => r.evidenceLoaded).length;
+export function duration(ms) {
+  const n = Number(ms);
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  if (n < 1000) return `${Math.round(n)} ms`;
+  if (n < 60000) return `${(n / 1000).toFixed(n < 10000 ? 1 : 0)} s`;
+  return `${(n / 60000).toFixed(1)} min`;
+}
+
+export function compact(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '0';
+  return new Intl.NumberFormat(undefined, {notation: n >= 10000 ? 'compact' : 'standard', maximumFractionDigits: 1}).format(n);
+}
+
+export function cacheAge(freshness = {}) {
+  const age = Number(freshness.age_seconds);
+  if (!Number.isFinite(age) || age < 0) return freshness.syncing ? 'Syncing' : 'Not synced';
+  if (age < 60) return `${Math.round(age)}s`;
+  if (age < 3600) return `${Math.round(age / 60)}m`;
+  return `${(age / 3600).toFixed(1)}h`;
+}
+
+export function ecaiTone(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'active') return 'active';
+  if (s === 'degraded') return 'degraded';
+  return 'unavailable';
+}
+
+export function trendLabel(trend = {}) {
+  const delta = Number(trend.pass_rate_delta);
+  if (!Number.isFinite(delta)) return 'No prior-window comparison';
+  const pp = delta * 100;
+  if (Math.abs(pp) < 0.05) return 'Pass rate unchanged vs previous window';
+  return `${pp > 0 ? '+' : ''}${pp.toFixed(1)} pp vs previous window`;
+}
+
+export function chartSeries(summary = {}) {
+  return Array.isArray(summary.series) ? summary.series.map(row => ({
+    day: String(row.day || ''),
+    passed: Math.max(0, number(row.passed)),
+    failed: Math.max(0, number(row.failed)),
+    unknown: Math.max(0, number(row.unknown)),
+    total: Math.max(0, number(row.total))
+  })) : [];
+}
+
+export function viewModel(summary = {}) {
+  const totals = summary.totals || {};
+  const durations = summary.durations || {};
+  const evidence = summary.evidence || {};
+  const ecai = summary.ecai || {};
+  const freshness = summary.freshness || {};
+  const known = number(totals.known);
+  const runs = number(totals.runs);
   return {
-    rows: filtered.sort((a, b) => b.createdMs - a.createdMs),
-    series: axis.map(day => buckets.get(day)),
-    total: filtered.length,
-    passed, failed, unknown, known,
-    passRate: known ? passed / known : null,
-    activeDays: [...buckets.values()].filter(b => b.total > 0).length,
-    medianDuration: percentile(durations, 0.5),
-    p95Duration: percentile(durations, 0.95),
-    uniqueFeatures: features.size,
-    evidenceCoverage: filtered.length ? evidence / filtered.length : null
+    runs,
+    passed: number(totals.passed),
+    failed: number(totals.failed),
+    unknown: number(totals.unknown),
+    known,
+    passRate: percent(totals.pass_rate, runs >= 100 ? 1 : 0),
+    median: duration(durations.median_ms),
+    p95: duration(durations.p95_ms),
+    activeDays: number(totals.active_days),
+    uniqueFeatures: number(totals.unique_features),
+    evidenceCoverage: percent(evidence.report_coverage, 0),
+    evidenceCoverageNumber: Number.isFinite(Number(evidence.report_coverage)) ? Math.max(0, Math.min(1, Number(evidence.report_coverage))) : 0,
+    chainCoverage: percent(evidence.chain_coverage, 0),
+    trend: trendLabel(summary.trend),
+    ecai: {
+      status: String(ecai.status || 'unavailable'),
+      tone: ecaiTone(ecai.status),
+      indexed: number(ecai.indexed_runs),
+      coverage: percent(ecai.index_coverage, 0),
+      relations: number(ecai.relation_count),
+      curves: number(ecai.curve_feature_count),
+      geometry: String(ecai.geometry_status || 'unavailable'),
+      geometryBackend: String(ecai.geometry_backend || 'unavailable'),
+      projectionPending: number(ecai.projection?.pending)
+    },
+    cacheAge: cacheAge(freshness),
+    stale: freshness.stale === true,
+    syncing: freshness.syncing === true,
+    sourceHeight: freshness.source_height ?? null,
+    scannedTransactions: number(freshness.scanned_transactions),
+    decodedRuns: number(freshness.decoded_runs),
+    hydratedRuns: number(freshness.hydrated_runs),
+    backfill: freshness.backfill && typeof freshness.backfill === 'object' ? freshness.backfill : {},
+    degradedSources: Array.isArray(freshness.degraded_sources) ? freshness.degraded_sources.map(String) : [],
+    lastUpdatedMs: number(freshness.last_updated_ms),
+    lastSyncMs: number(freshness.last_sync_ms),
+    series: chartSeries(summary),
+    recent: Array.isArray(summary.recent) ? summary.recent : [],
+    signals: Array.isArray(summary.signals) ? summary.signals : []
   };
-}
-
-export function durationSeconds(meta) {
-  const v = Number(meta?.execution_time_hires ?? meta?.execution_time ?? 0);
-  return Number.isFinite(v) && v >= 0 ? v : null;
-}
-
-export function createdMsFromMeta(meta, fallback = null) {
-  if (!meta || typeof meta !== 'object') return fallback;
-  return timeMs(meta.start_time_hires ?? meta.completed_at ?? meta.end_time_hires) || fallback;
 }

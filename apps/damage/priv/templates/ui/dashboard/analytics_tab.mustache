@@ -1,96 +1,165 @@
-<section id="analytics-workspace"
-         class="workspace-page analytics-workspace"
-         aria-labelledby="analytics-heading"
-         data-account="{{run_history_account}}"
-         data-node="{{run_history_node}}">
-  <header class="workspace-heading analytics-heading">
+<!-- -*- mode: html -*- -->
+<section class="workspace-page analytics-workspace" aria-labelledby="analytics-heading" data-analytics-root>
+  <div class="workspace-heading analytics-heading">
     <div>
-      <span class="workspace-eyebrow">Verification intelligence</span>
+      <p class="workspace-eyebrow">VERIFICATION INTELLIGENCE</p>
       <h1 id="analytics-heading">Analytics</h1>
-      <p>Operational signals derived from published DamageBDD verification evidence.</p>
+      <p>Cached operational signals derived from published DamageBDD verification evidence.</p>
     </div>
-    <div class="analytics-heading-meta">
-      <label class="analytics-range-label" for="analytics-range">Window</label>
-      <select id="analytics-range" class="workspace-select" aria-label="Analytics time window">
-        <option value="7">7 days</option>
-        <option value="30" selected>30 days</option>
-        <option value="90">90 days</option>
-      </select>
-      <button id="analytics-refresh" class="workspace-button" type="button">Refresh</button>
-      <span id="analytics-updated" class="workspace-muted" aria-live="polite"></span>
+    <div class="analytics-controls" aria-label="Analytics controls">
+      <label class="analytics-window-control" for="analytics-window">
+        <span>Window</span>
+        <select id="analytics-window" class="workspace-select">
+          <option value="7">7 days</option>
+          <option value="30" selected>30 days</option>
+          <option value="90">90 days</option>
+        </select>
+      </label>
+      <div class="analytics-control-row">
+        <button id="analytics-refresh" class="workspace-button" type="button">Refresh</button>
+        <span id="analytics-last-updated" class="workspace-muted analytics-updated" aria-live="polite"></span>
+      </div>
     </div>
-  </header>
-
-  <div id="analytics-status" class="analytics-status workspace-muted" role="status" aria-live="polite">
-    Loading published verification evidence…
   </div>
 
-  <section id="analytics-kpis" class="analytics-kpis" aria-label="Verification summary">
-    <article class="workspace-card analytics-kpi" data-kpi="runs">
-      <span class="analytics-kpi-label">Observed runs</span><strong>—</strong><small>Published evidence in window</small>
+  <div id="analytics-status" class="workspace-status analytics-status" aria-live="polite"></div>
+
+  <div class="analytics-kpis" aria-label="Analytics summary">
+    <article class="workspace-card analytics-kpi">
+      <span class="analytics-kpi-label">Observed runs</span>
+      <strong id="analytics-kpi-runs" class="analytics-kpi-value">—</strong>
+      <small id="analytics-kpi-runs-note">Materialized verification evidence</small>
     </article>
-    <article class="workspace-card analytics-kpi" data-kpi="pass-rate">
-      <span class="analytics-kpi-label">Pass rate</span><strong>—</strong><small>Known outcomes only</small>
+    <article class="workspace-card analytics-kpi">
+      <span class="analytics-kpi-label">Pass rate</span>
+      <strong id="analytics-kpi-pass-rate" class="analytics-kpi-value">—</strong>
+      <small id="analytics-kpi-pass-note">Known outcomes only</small>
     </article>
-    <article class="workspace-card analytics-kpi" data-kpi="duration">
-      <span class="analytics-kpi-label">Median duration</span><strong>—</strong><small>Runs with timing metadata</small>
+    <article class="workspace-card analytics-kpi">
+      <span class="analytics-kpi-label">Median duration</span>
+      <strong id="analytics-kpi-duration" class="analytics-kpi-value">—</strong>
+      <small id="analytics-kpi-duration-note">Approximate histogram percentile</small>
     </article>
-    <article class="workspace-card analytics-kpi" data-kpi="active-days">
-      <span class="analytics-kpi-label">Active days</span><strong>—</strong><small>Days with published runs</small>
+    <article class="workspace-card analytics-kpi">
+      <span class="analytics-kpi-label">Active days</span>
+      <strong id="analytics-kpi-active" class="analytics-kpi-value">—</strong>
+      <small id="analytics-kpi-active-note">Days with published runs</small>
     </article>
+  </div>
+
+  <div class="analytics-primary-grid">
+    <section class="workspace-card analytics-card analytics-activity-card" aria-labelledby="analytics-activity-heading">
+      <div class="workspace-section-heading">
+        <div>
+          <h2 id="analytics-activity-heading">Verification activity</h2>
+          <p>Passed, failed, and unknown outcomes by UTC day.</p>
+        </div>
+        <div class="analytics-chart-legend" aria-label="Chart legend">
+          <span><i data-series="passed"></i>Passed</span>
+          <span><i data-series="failed"></i>Failed</span>
+          <span><i data-series="unknown"></i>Unknown</span>
+        </div>
+      </div>
+      <div class="analytics-chart-frame">
+        <canvas id="analytics-chart" width="900" height="300" aria-label="Verification activity chart"></canvas>
+      </div>
+    </section>
+
+    <aside class="workspace-card analytics-card analytics-health" aria-labelledby="analytics-health-heading">
+      <div class="workspace-section-heading">
+        <div>
+          <h2 id="analytics-health-heading">Verification health</h2>
+          <p>Signal quality for the selected window.</p>
+        </div>
+      </div>
+      <dl class="analytics-stat-list">
+        <div><dt>Passed</dt><dd id="analytics-health-passed">—</dd></div>
+        <div><dt>Failed</dt><dd id="analytics-health-failed">—</dd></div>
+        <div><dt>Unknown outcome</dt><dd id="analytics-health-unknown">—</dd></div>
+        <div><dt>P95 duration</dt><dd id="analytics-health-p95">—</dd></div>
+        <div><dt>Unique features</dt><dd id="analytics-health-features">—</dd></div>
+      </dl>
+      <div class="analytics-coverage-block">
+        <div class="analytics-coverage-heading">
+          <strong>Evidence coverage</strong>
+          <span id="analytics-evidence-percent">—</span>
+        </div>
+        <div class="analytics-meter" aria-hidden="true"><span id="analytics-evidence-meter"></span></div>
+        <small id="analytics-evidence-note">Report metadata and chain confirmation are reconciled in the background.</small>
+      </div>
+    </aside>
+  </div>
+
+  <section class="workspace-card analytics-card analytics-ecai-card" aria-labelledby="analytics-ecai-heading">
+    <div class="workspace-section-heading analytics-ecai-heading">
+      <div>
+        <div class="analytics-title-row">
+          <h2 id="analytics-ecai-heading">ECAI verification intelligence</h2>
+          <span id="analytics-ecai-status" class="analytics-pill" data-tone="muted">Checking</span>
+        </div>
+        <p>Verification runs are projected into ECAI search records and deterministic typed relations when ECAI is available.</p>
+      </div>
+      <span id="analytics-ecai-geometry" class="analytics-experimental">Curve geometry: checking</span>
+    </div>
+    <div class="analytics-ecai-grid">
+      <div class="analytics-ecai-metric">
+        <span>Indexed runs</span>
+        <strong id="analytics-ecai-indexed">—</strong>
+        <small id="analytics-ecai-coverage">Search projection coverage</small>
+      </div>
+      <div class="analytics-ecai-metric">
+        <span>Deterministic relations</span>
+        <strong id="analytics-ecai-relations">—</strong>
+        <small>Inspectable subject / predicate / object facts</small>
+      </div>
+      <div class="analytics-ecai-metric">
+        <span>Curve features</span>
+        <strong id="analytics-ecai-curves">—</strong>
+        <small id="analytics-ecai-curve-note">Measured relation transforms; not treated as semantic similarity</small>
+      </div>
+      <div class="analytics-ecai-metric">
+        <span>Cache freshness</span>
+        <strong id="analytics-cache-age">—</strong>
+        <small id="analytics-cache-source">Server-side materialized read model</small>
+      </div>
+    </div>
+    <div class="analytics-signal-layout">
+      <div>
+        <h3>Deterministic signals</h3>
+        <div id="analytics-signals" class="analytics-signals"></div>
+      </div>
+      <div class="analytics-ecai-note">
+        <strong>How ECAI is used</strong>
+        <p>Run evidence remains authoritative in the analytics cache. ECAI adds retrieval identities, relation proofs and optional geometric measurements without blocking execution or dashboard reads.</p>
+      </div>
+    </div>
   </section>
 
-  <div class="analytics-grid analytics-grid-primary">
-    <section class="workspace-card analytics-panel" aria-labelledby="analytics-activity-heading">
-      <div class="workspace-card-body">
-        <div class="workspace-section-heading analytics-panel-heading">
-          <div>
-            <h2 id="analytics-activity-heading">Verification activity</h2>
-            <p>Passed, failed, and unknown outcomes by day.</p>
-          </div>
-          <div id="analytics-legend" class="analytics-legend" aria-label="Chart legend"></div>
-        </div>
-        <div id="analytics-activity-chart" class="analytics-chart" role="img" aria-label="Verification activity chart"></div>
+  <section class="workspace-card analytics-card analytics-recent-card" aria-labelledby="analytics-recent-heading">
+    <div class="workspace-section-heading">
+      <div>
+        <h2 id="analytics-recent-heading">Recent verifications</h2>
+        <p>Human-readable run evidence from the local materialized cache.</p>
       </div>
-    </section>
-
-    <section class="workspace-card analytics-panel analytics-health" aria-labelledby="analytics-health-heading">
-      <div class="workspace-card-body">
-        <div class="workspace-section-heading">
-          <div><h2 id="analytics-health-heading">Verification health</h2><p>Signal quality for the selected window.</p></div>
-        </div>
-        <dl class="analytics-health-list">
-          <div><dt>Passed</dt><dd id="analytics-passed">—</dd></div>
-          <div><dt>Failed</dt><dd id="analytics-failed">—</dd></div>
-          <div><dt>Unknown outcome</dt><dd id="analytics-unknown">—</dd></div>
-          <div><dt>P95 duration</dt><dd id="analytics-p95">—</dd></div>
-          <div><dt>Unique features</dt><dd id="analytics-features">—</dd></div>
-        </dl>
-        <div class="analytics-evidence-note">
-          <strong>Evidence coverage</strong>
-          <span id="analytics-coverage">—</span>
-        </div>
-      </div>
-    </section>
-  </div>
-
-  <section class="workspace-card analytics-panel" aria-labelledby="analytics-recent-heading">
-    <div class="workspace-card-body">
-      <div class="workspace-section-heading analytics-panel-heading">
-        <div>
-          <h2 id="analytics-recent-heading">Recent verifications</h2>
-          <p>Human-readable run evidence, linked back to immutable reports and chain transactions.</p>
-        </div>
-        <a class="workspace-button" href="#activity-tab" data-dashboard-panel="activity-tab">Open run history</a>
-      </div>
-      <div class="workspace-table-wrap analytics-table-wrap">
-        <table class="workspace-table analytics-table">
-          <thead><tr><th>Result</th><th>Feature</th><th>When</th><th>Duration</th><th>Node</th><th>Evidence</th></tr></thead>
-          <tbody id="analytics-recent-body">
-            <tr><td colspan="6" class="workspace-empty">Loading verification evidence…</td></tr>
-          </tbody>
-        </table>
-      </div>
+      <a class="workspace-button" href="#activity-tab">Open run history</a>
+    </div>
+    <div class="workspace-table-wrap analytics-table-wrap">
+      <table class="workspace-table analytics-table">
+        <thead>
+          <tr>
+            <th scope="col">Result</th>
+            <th scope="col">Feature</th>
+            <th scope="col">When</th>
+            <th scope="col">Duration</th>
+            <th scope="col">Node</th>
+            <th scope="col">ECAI</th>
+            <th scope="col">Evidence</th>
+          </tr>
+        </thead>
+        <tbody id="analytics-recent-body">
+          <tr><td colspan="7" class="workspace-empty">Open Analytics to load cached verification intelligence.</td></tr>
+        </tbody>
+      </table>
     </div>
   </section>
 </section>
