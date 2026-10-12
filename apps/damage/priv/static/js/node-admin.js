@@ -3,6 +3,14 @@
 
 window.nodeAdmin = (() => {
 	const transactionState = { core: null, aeternity: null, lastUpdated: null };
+	const clnAdminState = {
+		channels: null,
+		invoiceCounts: null,
+		peerSummary: null,
+		recentInvoices: null,
+		unpaidInvoices: null,
+		lastUpdated: null
+	};
 
 	function byId(id) {
 		return document.getElementById(id);
@@ -1173,6 +1181,126 @@ window.nodeAdmin = (() => {
 		}
 	}
 
+	function setHtml(id, value) {
+		const el = byId(id);
+		if (el) el.innerHTML = value;
+	}
+
+	function msatNumber(value) {
+		const raw = scalarValue(value);
+		const n = Number(String(raw ?? "").replace(/msat$/i, "").trim());
+		return Number.isFinite(n) ? n : 0;
+	}
+
+	function clnCount(rows, wanted) {
+		return (Array.isArray(rows) ? rows : []).reduce((sum, row) => {
+			const status = String(row?.status ?? "").toLowerCase();
+			return wanted.includes(status) ? sum + Number(row?.count || 0) : sum;
+		}, 0);
+	}
+
+	function updateClnAdminSummary() {
+		const channels = clnAdminState.channels;
+		const balance = channels?.balance || {};
+		const channelRows = Array.isArray(channels?.channels?.channels)
+			? channels.channels.channels
+			: Array.isArray(channels?.channels) ? channels.channels : [];
+		const countRows = clnAdminState.invoiceCounts?.counts || [];
+		const peerRows = clnAdminState.peerSummary?.summary || [];
+		const paid = clnCount(countRows, ["paid", "complete", "settled"]);
+		const unpaid = clnCount(countRows, ["unpaid", "pending"]);
+		const totalInvoices = (Array.isArray(countRows) ? countRows : []).reduce((sum, row) => sum + Number(row?.count || 0), 0);
+		const peerChannelCount = (Array.isArray(peerRows) ? peerRows : []).reduce((sum, row) => sum + Number(row?.channel_count || 0), 0) || channelRows.length;
+
+		setHtml("cln-kpi-onchain", channels ? formatMsat(balance.spendable_msat ?? balance.onchain_msat) : "—");
+		setHtml("cln-kpi-channels", channels ? formatMsat(balance.channels_msat ?? balance.channel_msat) : "—");
+		setHtml("cln-kpi-invoices", clnAdminState.invoiceCounts ? `${totalInvoices.toLocaleString()} <span class="cln-kpi-unit">tracked</span>` : "—");
+		setHtml("cln-kpi-peers", clnAdminState.peerSummary || channels ? `${peerChannelCount.toLocaleString()} <span class="cln-kpi-unit">channels</span>` : "—");
+
+		const onchainNote = byId("cln-kpi-onchain-note");
+		if (onchainNote && channels) onchainNote.textContent = `${formatSats(msatNumber(balance.onchain_msat) / 1000).replace(/<[^>]*>/g, "")} total on-chain`;
+		const channelNote = byId("cln-kpi-channels-note");
+		if (channelNote && channels) channelNote.textContent = `${channelRows.length} local channel${channelRows.length === 1 ? "" : "s"}`;
+		const invoiceNote = byId("cln-kpi-invoices-note");
+		if (invoiceNote && clnAdminState.invoiceCounts) invoiceNote.textContent = `${paid} paid · ${unpaid} unpaid/pending`;
+		const peerNote = byId("cln-kpi-peers-note");
+		if (peerNote && peerRows.length) peerNote.textContent = `${peerRows.length} peer state group${peerRows.length === 1 ? "" : "s"}`;
+
+		const updated = byId("cln-admin-updated");
+		if (updated && clnAdminState.lastUpdated) {
+			updated.textContent = `Updated ${clnAdminState.lastUpdated.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
+		}
+	}
+
+	function setClnAdminStatus(message, tone = "") {
+		const el = byId("cln-admin-status");
+		if (!el) return;
+		el.textContent = message;
+		if (tone) el.dataset.tone = tone; else delete el.dataset.tone;
+	}
+
+	function activateClnTab(name, { focus = false } = {}) {
+		const tabs = [...document.querySelectorAll("[data-cln-tab]")];
+		const panels = [...document.querySelectorAll("[data-cln-panel]")];
+		for (const tab of tabs) {
+			const active = tab.dataset.clnTab === name;
+			tab.classList.toggle("is-active", active);
+			tab.setAttribute("aria-selected", active ? "true" : "false");
+			tab.tabIndex = active ? 0 : -1;
+			if (active && focus) tab.focus();
+		}
+		for (const panel of panels) panel.hidden = panel.dataset.clnPanel !== name;
+	}
+
+	function bindClnTabs() {
+		const tabs = [...document.querySelectorAll("[data-cln-tab]")];
+		for (const tab of tabs) {
+			tab.addEventListener("click", () => activateClnTab(tab.dataset.clnTab));
+			tab.addEventListener("keydown", (event) => {
+				if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+				event.preventDefault();
+				const index = tabs.indexOf(tab);
+				let next = index;
+				if (event.key === "ArrowLeft") next = (index - 1 + tabs.length) % tabs.length;
+				if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
+				if (event.key === "Home") next = 0;
+				if (event.key === "End") next = tabs.length - 1;
+				activateClnTab(tabs[next].dataset.clnTab, { focus: true });
+			});
+		}
+	}
+
+	function syncClnAccountFilters() {
+		const account = getValue("cln-account-name", "").trim();
+		const tag = getValue("cln-account-tag", "").trim();
+		const accountHidden = byId("cln-account-summary-name");
+		const tagHidden = byId("cln-account-summary-tag");
+		if (accountHidden) accountHidden.value = account;
+		if (tagHidden) tagHidden.value = tag;
+		return { account, tag };
+	}
+
+	async function refreshClnAdmin() {
+		const button = byId("refresh-cln-admin");
+		if (button) button.disabled = true;
+		setClnAdminStatus("Refreshing Core Lightning operational data…");
+		const results = await Promise.allSettled([
+			refreshChannels(),
+			refreshRecentInvoices(),
+			refreshUnpaidInvoices(),
+			refreshInvoiceStatusCounts(),
+			refreshPeerchannelSummary()
+		]);
+		clnAdminState.lastUpdated = new Date();
+		updateClnAdminSummary();
+		const failures = results.filter((r) => r.status === "rejected").length;
+		setClnAdminStatus(
+			failures ? `${failures} Core Lightning data source${failures === 1 ? "" : "s"} could not be refreshed.` : "Core Lightning operational data is current.",
+			failures ? "warning" : ""
+		);
+		if (button) button.disabled = false;
+	}
+
 	async function refreshChannels() {
 		const channelsEl = byId("cln-channels-json");
 		setLoading(channelsEl, "Loading channels...");
@@ -1180,6 +1308,8 @@ window.nodeAdmin = (() => {
 		try {
 			const data = await getChannels();
 			if (channelsEl) channelsEl.innerHTML = renderChannels(data);
+			clnAdminState.channels = data;
+			updateClnAdminSummary();
 			return data;
 		} catch (err) {
 			setError(channelsEl, err);
@@ -1202,6 +1332,8 @@ window.nodeAdmin = (() => {
 				${renderJsonBlock("Raw recent invoices response", data)}
 			`;
 		}
+		clnAdminState.recentInvoices = data;
+		updateClnAdminSummary();
 		return data;
 	} catch (err) {
 		setError(el, err);
@@ -1225,6 +1357,8 @@ async function refreshUnpaidInvoices() {
 				${renderJsonBlock("Raw unpaid invoices response", data)}
 			`;
 		}
+		clnAdminState.unpaidInvoices = data;
+		updateClnAdminSummary();
 		return data;
 	} catch (err) {
 		setError(el, err);
@@ -1245,6 +1379,8 @@ async function refreshInvoiceStatusCounts() {
 				${renderJsonBlock("Raw invoice counts response", data)}
 			`;
 		}
+		clnAdminState.invoiceCounts = data;
+		updateClnAdminSummary();
 		return data;
 	} catch (err) {
 		setError(el, err);
@@ -1283,8 +1419,7 @@ async function refreshAccountEvents() {
 
 async function refreshAccountSummary() {
 	const el = byId("cln-account-summary-json");
-	const account = getValue("cln-account-summary-name", "").trim();
-	const tag = getValue("cln-account-summary-tag", "").trim();
+	const { account, tag } = syncClnAccountFilters();
 
 	if (!account) {
 		renderResultBox(el, { ok: false, error: "Account is required" });
@@ -1322,6 +1457,8 @@ async function refreshPeerchannelSummary() {
 				${renderJsonBlock("Raw peerchannel summary response", data)}
 			`;
 		}
+		clnAdminState.peerSummary = data;
+		updateClnAdminSummary();
 		return data;
 	} catch (err) {
 		setError(el, err);
@@ -1450,6 +1587,7 @@ async function refreshPeerchannelSummary() {
 
 	async function bindDefaultUi() {
 		bindButton("refresh-node-transactions", refreshAllTransactions);
+		bindButton("refresh-cln-admin", refreshClnAdmin);
 		bindButton("refresh-node-onchain", refreshTransactions);
 		bindButton("refresh-node-lightning", refreshTransactions);
 		bindButton("refresh-node-aeternity", refreshAeternityTransactions);
@@ -1466,6 +1604,11 @@ async function refreshPeerchannelSummary() {
 		bindButton("refresh-cln-peerchannel-summary", refreshPeerchannelSummary);
 		bindCopyHandlers();
 		bindTransactionTabs();
+		bindClnTabs();
+		for (const id of ["cln-account-name", "cln-account-tag"]) {
+			const input = byId(id);
+			if (input) input.addEventListener("input", syncClnAccountFilters);
+		}
 		const limitSelect = byId("node-transaction-limit");
 		if (limitSelect) {
 			limitSelect.addEventListener("change", () => {
@@ -1475,11 +1618,7 @@ async function refreshPeerchannelSummary() {
 
 		await Promise.allSettled([
 			refreshAllTransactions(),
-			refreshChannels(),
-			refreshRecentInvoices(),
-			refreshUnpaidInvoices(),
-			refreshInvoiceStatusCounts(),
-			refreshPeerchannelSummary()
+			refreshClnAdmin()
 		]);
 	}
 

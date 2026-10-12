@@ -80,6 +80,7 @@ export function viewModel(summary = {}) {
     evidenceCoverage: percent(evidence.report_coverage, 0),
     evidenceCoverageNumber: Number.isFinite(Number(evidence.report_coverage)) ? Math.max(0, Math.min(1, Number(evidence.report_coverage))) : 0,
     chainCoverage: percent(evidence.chain_coverage, 0),
+    chainCoverageNumber: Number.isFinite(Number(evidence.chain_coverage)) ? Math.max(0, Math.min(1, Number(evidence.chain_coverage))) : 0,
     trend: trendLabel(summary.trend),
     ecai: {
       status: String(ecai.status || 'unavailable'),

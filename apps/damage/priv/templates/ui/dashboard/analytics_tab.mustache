@@ -47,6 +47,32 @@
     </article>
   </div>
 
+  <div class="analytics-visual-strip" aria-label="Analytics visual summary">
+    <article class="workspace-card analytics-visual-card analytics-outcome-card">
+      <div class="analytics-visual-copy">
+        <span class="analytics-kpi-label">Outcome mix</span>
+        <strong id="analytics-outcome-label">Awaiting runs</strong>
+        <small id="analytics-outcome-note">Passed, failed and unknown outcomes</small>
+      </div>
+      <div id="analytics-outcome-ring" class="analytics-outcome-ring" role="img" aria-label="Outcome mix chart">
+        <span id="analytics-outcome-rate">—</span>
+      </div>
+    </article>
+    <article class="workspace-card analytics-visual-card analytics-coverage-card">
+      <div class="analytics-visual-heading"><span class="analytics-kpi-label">Evidence quality</span><strong id="analytics-coverage-label">—</strong></div>
+      <div class="analytics-mini-meter"><span id="analytics-report-coverage-bar"></span></div>
+      <div class="analytics-mini-row"><span>Report metadata</span><strong id="analytics-report-coverage-value">—</strong></div>
+      <div class="analytics-mini-meter analytics-mini-meter-secondary"><span id="analytics-chain-coverage-bar"></span></div>
+      <div class="analytics-mini-row"><span>Chain confirmed</span><strong id="analytics-chain-coverage-value">—</strong></div>
+    </article>
+    <article class="workspace-card analytics-visual-card analytics-velocity-card">
+      <span class="analytics-kpi-label">Run intensity</span>
+      <strong id="analytics-run-intensity">—</strong>
+      <div class="analytics-spark-bars" id="analytics-spark-bars" aria-hidden="true"></div>
+      <small id="analytics-run-intensity-note">Average observed runs per active day</small>
+    </article>
+  </div>
+
   <div class="analytics-primary-grid">
     <section class="workspace-card analytics-card analytics-activity-card" aria-labelledby="analytics-activity-heading">
       <div class="workspace-section-heading">

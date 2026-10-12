@@ -1,76 +1,132 @@
 <!-- -*- mode: html -*- -->
-<section class="admin-tab" aria-labelledby="cln-admin-heading">
-  <div class="admin-heading workspace-heading">
+<section class="workspace-page cln-admin-workspace" aria-labelledby="cln-admin-heading" data-cln-admin-root>
+  <div class="workspace-heading cln-admin-heading">
     <div>
-      <p class="workspace-eyebrow">NODE ADMINISTRATION</p>
-      <h1 id="cln-admin-heading">CLN analytics &amp; operations</h1>
-      <p>Read-only canned-query views for invoices, accounts and peer/channel state.</p>
+      <p class="workspace-eyebrow">NODE ADMINISTRATION · CORE LIGHTNING</p>
+      <h1 id="cln-admin-heading">Lightning operations</h1>
+      <p>Operational overview for liquidity, invoices, peers and CLN account activity.</p>
+    </div>
+    <div class="cln-admin-heading-actions">
+      <button id="refresh-cln-admin" class="workspace-button" type="button">Refresh all</button>
+      <span id="cln-admin-updated" class="workspace-muted cln-admin-updated" aria-live="polite">Waiting for data</span>
     </div>
   </div>
 
-  <section class="admin-card" aria-labelledby="cln-recent-heading">
-    <div class="admin-card-header">
-      <h2 id="cln-recent-heading">Recent invoices</h2>
-      <button id="refresh-cln-invoices-recent" class="workspace-button" type="button">Refresh</button>
+  <div id="cln-admin-status" class="workspace-status cln-admin-status" aria-live="polite"></div>
+
+  <div class="cln-admin-kpis" id="cln-admin-summary" aria-label="Core Lightning summary">
+    <article class="workspace-card cln-admin-kpi">
+      <span>Spendable on-chain</span>
+      <strong id="cln-kpi-onchain">—</strong>
+      <small id="cln-kpi-onchain-note">Bitcoin outputs available to CLN</small>
+    </article>
+    <article class="workspace-card cln-admin-kpi">
+      <span>Channel balance</span>
+      <strong id="cln-kpi-channels">—</strong>
+      <small id="cln-kpi-channels-note">Local channel funds</small>
+    </article>
+    <article class="workspace-card cln-admin-kpi">
+      <span>Invoices</span>
+      <strong id="cln-kpi-invoices">—</strong>
+      <small id="cln-kpi-invoices-note">Paid and unpaid invoice state</small>
+    </article>
+    <article class="workspace-card cln-admin-kpi">
+      <span>Peer channels</span>
+      <strong id="cln-kpi-peers">—</strong>
+      <small id="cln-kpi-peers-note">Connected channel topology</small>
+    </article>
+  </div>
+
+  <div class="cln-admin-tabs" role="tablist" aria-label="Core Lightning administration views">
+    <button id="cln-tab-overview" class="cln-admin-tab is-active" type="button" role="tab" aria-selected="true" aria-controls="cln-panel-overview" tabindex="0" data-cln-tab="overview">Overview</button>
+    <button id="cln-tab-invoices" class="cln-admin-tab" type="button" role="tab" aria-selected="false" aria-controls="cln-panel-invoices" tabindex="-1" data-cln-tab="invoices">Invoices</button>
+    <button id="cln-tab-accounts" class="cln-admin-tab" type="button" role="tab" aria-selected="false" aria-controls="cln-panel-accounts" tabindex="-1" data-cln-tab="accounts">Accounts</button>
+  </div>
+
+  <section id="cln-panel-overview" class="cln-admin-panel" role="tabpanel" aria-labelledby="cln-tab-overview" data-cln-panel="overview">
+    <div class="cln-admin-grid cln-admin-grid-overview">
+      <article class="workspace-card cln-admin-card" aria-labelledby="cln-peer-summary-heading">
+        <div class="workspace-section-heading">
+          <div>
+            <h2 id="cln-peer-summary-heading">Peer &amp; channel health</h2>
+            <p>Human-readable CLN peer-channel state and capacity summary.</p>
+          </div>
+          <button id="refresh-cln-peerchannel-summary" class="workspace-button" type="button">Refresh</button>
+        </div>
+        <div id="cln-peerchannel-summary-json" class="admin-data"><div class="admin-loading">Loading…</div></div>
+      </article>
+
+      <article class="workspace-card cln-admin-card" aria-labelledby="cln-counts-heading">
+        <div class="workspace-section-heading">
+          <div>
+            <h2 id="cln-counts-heading">Invoice health</h2>
+            <p>Quick status mix across the node invoice history.</p>
+          </div>
+          <button id="refresh-cln-invoice-counts" class="workspace-button" type="button">Refresh</button>
+        </div>
+        <div id="cln-invoice-counts-json" class="admin-data"><div class="admin-loading">Loading…</div></div>
+      </article>
     </div>
-    <label for="cln-invoices-prefix">Label prefix</label>
-    <input id="cln-invoices-prefix" placeholder="damage:" autocomplete="off">
-    <label for="cln-invoices-limit">Limit</label>
-    <input id="cln-invoices-limit" type="number" min="1" value="50">
-    <div id="cln-invoices-recent-json" class="admin-data"><div class="admin-loading">Loading…</div></div>
   </section>
 
-  <section class="admin-card" aria-labelledby="cln-unpaid-heading">
-    <div class="admin-card-header">
-      <h2 id="cln-unpaid-heading">Unpaid invoices</h2>
-      <button id="refresh-cln-invoices-unpaid" class="workspace-button" type="button">Refresh</button>
+  <section id="cln-panel-invoices" class="cln-admin-panel" role="tabpanel" aria-labelledby="cln-tab-invoices" data-cln-panel="invoices" hidden>
+    <div class="cln-admin-filterbar" aria-label="Invoice filters">
+      <label for="cln-invoices-prefix"><span>Label prefix</span><input id="cln-invoices-prefix" placeholder="damage:" autocomplete="off"></label>
+      <label for="cln-invoices-limit"><span>Recent limit</span><input id="cln-invoices-limit" type="number" min="1" max="500" value="50"></label>
+      <label for="cln-unpaid-prefix"><span>Unpaid prefix</span><input id="cln-unpaid-prefix" placeholder="damage:" autocomplete="off"></label>
+      <label for="cln-unpaid-limit"><span>Unpaid limit</span><input id="cln-unpaid-limit" type="number" min="1" max="500" value="50"></label>
     </div>
-    <label for="cln-unpaid-prefix">Label prefix</label>
-    <input id="cln-unpaid-prefix" placeholder="damage:" autocomplete="off">
-    <label for="cln-unpaid-limit">Limit</label>
-    <input id="cln-unpaid-limit" type="number" min="1" value="50">
-    <div id="cln-invoices-unpaid-json" class="admin-data"><div class="admin-loading">Loading…</div></div>
+
+    <div class="cln-admin-stack">
+      <article class="workspace-card cln-admin-card" aria-labelledby="cln-recent-heading">
+        <div class="workspace-section-heading">
+          <div><h2 id="cln-recent-heading">Recent invoices</h2><p>Newest incoming Lightning invoices and settlement state.</p></div>
+          <button id="refresh-cln-invoices-recent" class="workspace-button" type="button">Refresh</button>
+        </div>
+        <div id="cln-invoices-recent-json" class="admin-data"><div class="admin-loading">Loading…</div></div>
+      </article>
+
+      <article class="workspace-card cln-admin-card" aria-labelledby="cln-unpaid-heading">
+        <div class="workspace-section-heading">
+          <div><h2 id="cln-unpaid-heading">Unpaid invoices</h2><p>Invoices still awaiting settlement or expiry.</p></div>
+          <button id="refresh-cln-invoices-unpaid" class="workspace-button" type="button">Refresh</button>
+        </div>
+        <div id="cln-invoices-unpaid-json" class="admin-data"><div class="admin-loading">Loading…</div></div>
+      </article>
+    </div>
   </section>
 
-  <section class="admin-card" aria-labelledby="cln-counts-heading">
-    <div class="admin-card-header">
-      <h2 id="cln-counts-heading">Invoice status counts</h2>
-      <button id="refresh-cln-invoice-counts" class="workspace-button" type="button">Refresh</button>
+  <section id="cln-panel-accounts" class="cln-admin-panel" role="tabpanel" aria-labelledby="cln-tab-accounts" data-cln-panel="accounts" hidden>
+    <div class="cln-admin-account-controls">
+      <div>
+        <h2>CLN account ledger</h2>
+        <p>Inspect account-plugin events without exposing raw payloads as the primary view.</p>
+      </div>
+      <div class="cln-admin-filterbar cln-admin-filterbar-account">
+        <label for="cln-account-name"><span>Account</span><input id="cln-account-name" placeholder="wallet" autocomplete="off"></label>
+        <label for="cln-account-tag"><span>Tag</span><input id="cln-account-tag" placeholder="optional tag" autocomplete="off"></label>
+        <label for="cln-account-events-limit"><span>Events</span><input id="cln-account-events-limit" type="number" min="1" max="500" value="100"></label>
+      </div>
     </div>
-    <div id="cln-invoice-counts-json" class="admin-data"><div class="admin-loading">Loading…</div></div>
-  </section>
 
-  <section class="admin-card" aria-labelledby="cln-peer-summary-heading">
-    <div class="admin-card-header">
-      <h2 id="cln-peer-summary-heading">Peer/channel summary</h2>
-      <button id="refresh-cln-peerchannel-summary" class="workspace-button" type="button">Refresh</button>
-    </div>
-    <div id="cln-peerchannel-summary-json" class="admin-data"><div class="admin-loading">Loading…</div></div>
-  </section>
+    <div class="cln-admin-grid cln-admin-grid-accounts">
+      <article class="workspace-card cln-admin-card" aria-labelledby="cln-account-summary-heading">
+        <div class="workspace-section-heading">
+          <div><h2 id="cln-account-summary-heading">Account summary</h2><p>Aggregate movements and account state.</p></div>
+          <button id="refresh-cln-account-summary" class="workspace-button" type="button">Load summary</button>
+        </div>
+        <input id="cln-account-summary-name" type="hidden" value="">
+        <input id="cln-account-summary-tag" type="hidden" value="">
+        <div id="cln-account-summary-json" class="admin-data"><div class="admin-empty">Choose an account to load its summary.</div></div>
+      </article>
 
-  <section class="admin-card" aria-labelledby="cln-account-events-heading">
-    <div class="admin-card-header">
-      <h2 id="cln-account-events-heading">Account events</h2>
-      <button id="refresh-cln-account-events" class="workspace-button" type="button">Refresh</button>
+      <article class="workspace-card cln-admin-card" aria-labelledby="cln-account-events-heading">
+        <div class="workspace-section-heading">
+          <div><h2 id="cln-account-events-heading">Recent account events</h2><p>Newest account-plugin events in readable columns.</p></div>
+          <button id="refresh-cln-account-events" class="workspace-button" type="button">Load events</button>
+        </div>
+        <div id="cln-account-events-json" class="admin-data"><div class="admin-empty">Choose an account to load its events.</div></div>
+      </article>
     </div>
-    <label for="cln-account-name">Account</label>
-    <input id="cln-account-name" placeholder="wallet" autocomplete="off">
-    <label for="cln-account-tag">Tag</label>
-    <input id="cln-account-tag" placeholder="optional tag" autocomplete="off">
-    <label for="cln-account-events-limit">Limit</label>
-    <input id="cln-account-events-limit" type="number" min="1" value="100">
-    <div id="cln-account-events-json" class="admin-data"><div class="admin-loading">Loading…</div></div>
-  </section>
-
-  <section class="admin-card" aria-labelledby="cln-account-summary-heading">
-    <div class="admin-card-header">
-      <h2 id="cln-account-summary-heading">Account summary</h2>
-      <button id="refresh-cln-account-summary" class="workspace-button" type="button">Refresh</button>
-    </div>
-    <label for="cln-account-summary-name">Account</label>
-    <input id="cln-account-summary-name" placeholder="wallet" autocomplete="off">
-    <label for="cln-account-summary-tag">Tag</label>
-    <input id="cln-account-summary-tag" placeholder="optional tag" autocomplete="off">
-    <div id="cln-account-summary-json" class="admin-data"><div class="admin-loading">Loading…</div></div>
   </section>
 </section>

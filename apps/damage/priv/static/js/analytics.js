@@ -127,6 +127,8 @@ function initAnalytics(panel) {
     if (meter) meter.style.width = pctWidth(vm.evidenceCoverageNumber);
     setText('analytics-evidence-note', `Report evidence ${vm.evidenceCoverage} · chain-confirmed ${vm.chainCoverage}`);
 
+    renderVisualStats(vm);
+
     const ecaiStatus = $('analytics-ecai-status');
     if (ecaiStatus) {
       const baseStatus = vm.ecai.status === 'active' ? 'Active' : vm.ecai.status === 'degraded' ? 'Degraded' : 'Unavailable';
@@ -158,6 +160,50 @@ function initAnalytics(panel) {
       status(`Historical import scanned ${vm.scannedTransactions} transaction${vm.scannedTransactions === 1 ? '' : 's'} · ${vm.decodedRuns} verification run${vm.decodedRuns === 1 ? '' : 's'} decoded${pending ? ` · ${pending} source${pending === 1 ? '' : 's'} still backfilling` : ''}`);
     }
     else status(`${vm.runs} published verification run${vm.runs === 1 ? '' : 's'} observed for this account.`);
+  }
+
+  function renderVisualStats(vm) {
+    const total = Math.max(0, vm.runs || 0);
+    const passedShare = total ? vm.passed / total : 0;
+    const failedShare = total ? vm.failed / total : 0;
+    const knownRate = vm.known ? vm.passed / vm.known : 0;
+    const ring = $('analytics-outcome-ring');
+    if (ring) {
+      const passStop = Math.max(0, Math.min(100, passedShare * 100));
+      const failStop = Math.max(passStop, Math.min(100, (passedShare + failedShare) * 100));
+      ring.style.setProperty('--analytics-pass-stop', `${passStop}%`);
+      ring.style.setProperty('--analytics-fail-stop', `${failStop}%`);
+      ring.setAttribute('aria-label', total
+        ? `${vm.passed} passed, ${vm.failed} failed and ${vm.unknown} unknown verification outcomes`
+        : 'No verification outcomes in this window');
+    }
+    setText('analytics-outcome-rate', vm.known ? `${Math.round(knownRate * 100)}%` : '—');
+    setText('analytics-outcome-label', total ? `${vm.passed} passed · ${vm.failed} failed` : 'Awaiting runs');
+    setText('analytics-outcome-note', total ? `${vm.unknown} unknown outcome${vm.unknown === 1 ? '' : 's'} · known outcomes ${vm.known}` : 'Passed, failed and unknown outcomes');
+
+    setText('analytics-coverage-label', `${vm.evidenceCoverage} reports`);
+    setText('analytics-report-coverage-value', vm.evidenceCoverage);
+    setText('analytics-chain-coverage-value', vm.chainCoverage);
+    const reportBar = $('analytics-report-coverage-bar');
+    if (reportBar) reportBar.style.width = pctWidth(vm.evidenceCoverageNumber);
+    const chainBar = $('analytics-chain-coverage-bar');
+    if (chainBar) chainBar.style.width = pctWidth(vm.chainCoverageNumber);
+
+    const intensity = vm.activeDays ? vm.runs / vm.activeDays : 0;
+    setText('analytics-run-intensity', intensity ? `${intensity.toFixed(intensity < 10 ? 1 : 0)} / active day` : '—');
+    setText('analytics-run-intensity-note', vm.activeDays
+      ? `${vm.activeDays} active day${vm.activeDays === 1 ? '' : 's'} · ${vm.uniqueFeatures} unique feature${vm.uniqueFeatures === 1 ? '' : 's'}`
+      : 'Average observed runs per active day');
+    const spark = $('analytics-spark-bars');
+    if (spark) {
+      spark.replaceChildren(...vm.series.slice(-14).map(row => {
+        const bar = document.createElement('i');
+        const max = Math.max(1, ...vm.series.slice(-14).map(item => Number(item.total) || 0));
+        bar.style.height = `${Math.max(8, ((Number(row.total) || 0) / max) * 100)}%`;
+        bar.title = `${row.day}: ${row.total} run${row.total === 1 ? '' : 's'}`;
+        return bar;
+      }));
+    }
   }
 
   function renderSignals(signals) {
