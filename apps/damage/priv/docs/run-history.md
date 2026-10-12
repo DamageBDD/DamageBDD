@@ -1,109 +1,86 @@
-# Dashboard run history (public execution evidence)
+# Run history — public æternity/IPFS evidence
 
-The **Run history** dashboard panel defaults to the current node when the
-node AE public address is available. If the wallet is locked and there is no
-configured public node identifier, the page waits for the asynchronous browser
-session, then automatically selects the signed-in account. Without either
-identity, **Discover nodes** shows recent public network runs (not mislabeled
-as local-node runs). The first history request starts on initial direct/history
-navigation or first activation of the panel; no Refresh click is required.
-Published evidence is read-only: no bearer token, signing key or private run
-context is needed by the history API.
+The dashboard **does not require** `/api/run-history/nodes` or a private
+execution-history API. Published run evidence is read from the public æternity
+middleware and immutable IPFS objects. No wallet access token, private key, or
+execution context is used for these reads.
 
-## Views
+## How a run is found
 
-- **This node:** published DAMAGE `spend` events for the configured node ID.
-- **My account:** public account transaction activities for the authenticated
-  account, or another `ak_...` account selected or entered in the field.
-- **Followed nodes:** nodes followed via the authenticated browser's local
-  preferences (account-scoped `localStorage`). Follow is allowed only after a
-  NodeRegistry lookup verifies the registration; previous follows can be removed.
-- **Discover nodes:** recently published network runs plus a collapsed registry
-  directory that can be expanded for NodeRegistry registration discovery,
-  owner `ak_...` search or node `ak_...` / `ct_...` lookup. Direct owner/node
-  lookup works for older registrations.
+1. The primary public index is
+   `GET https://mainnet.aeternity.io/mdw/v3/contracts/calls?contract_id=<DAMAGE_TOKEN_CONTRACT>&direction=backward&limit=50`.
+   Only the configured DAMAGE token contract is trusted as a run source.
+2. The original `reports.js` fallback remains available: a selected node
+   account is scanned at
+   `/v3/accounts/<NODE_AK>/activities?owned_only=true&type=transactions&direction=backward&limit=50`.
+   The account view additionally scans that user's activities with
+   `owned_only=false`, **and** the contract-call index because `PayingForTx`
+   transactions can be submitted by the node instead of the user.
+3. Contract call/transaction records are inspected for the `spend` entrypoint
+   with the four arguments defined by `apps/damage/priv/contracts/token.aes`:
+   `(node_address, amount, feature_hash, report_hash)`. Both hashes must be
+   valid IPFS CIDs and the contract must match the configured token contract.
+   Middleware transaction details are fetched when a call index omits the
+   user/caller or timestamp. Pagination follows middleware `next` links.
+4. Feature title/tags are read from
+   `https://ipfs.io/ipfs/<feature_hash>`. New runs contain JSON metadata at
+   `https://ipfs.io/ipfs/<report_hash>/run.meta`. The existing report browser
+   (`damage_reports.erl`) serves the report *files* from the immutable
+   `reports/` directory via `/reports/<report_hash>/`; the root `run.meta`
+   must not be assumed to exist at `/reports/<report_hash>/run.meta` on an
+   older deployed server.
+5. If run metadata is missing, feature title and Gherkin tags can still be
+   obtained from the immutable feature file. An unknown legacy result remains
+   `unknown` instead of assuming success.
 
-Feature title or CID, Gherkin tags (space-separated AND semantics), result
-(passed/failed/unknown), account, and time range (24h, 7d, 30d, all or custom)
-are available. Results are paged and sorted newest first. Each row links to
-its immutable feature, full report, on-chain transaction, node and public
-account activity.
+## Nodes, discovery, and following
 
-## Read-only registry API
+- **This node**: the executing node's public `ak_` identity from the dashboard
+  configuration; only records whose `spend` node argument matches are shown.
+- **My account**: authenticated wallet/account's public `ak_` identity;
+  both account activity and global token calls are scanned and filtered by
+  the on-chain caller. The account address is public; no private session API
+  is needed for run evidence.
+- **Followed nodes**: selected public node identities stored locally in the
+  browser. Following grants no access and does not assert registry membership.
+- **Discover nodes**: the observed node arguments in recent token spends
+  plus a **bounded** scan of public NodeRegistry `register_node` contract
+  calls (up to three pages). A registration transaction proves only that a
+  registration was observed historically, not that a node is currently
+  enabled or still owned by the same account. The NodeRegistry v2 contract
+  does not offer a global enumerable state method. Owner lookup is limited
+  to the scanned history, not exhaustive. Viewing public runs by node ID
+  works even when registry scanning fails.
 
-`GET /api/run-history/nodes?owner=ak_...` — registered nodes owned by the
-supplied account (maximum 64 returned, check `total` and `complete`).
+The standard registry contract address is defined by
+`damage_node_registry.erl` and as `DEFAULT_REGISTRY_CONTRACT` in
+`run-history-model.js`. If using another deployment, supply
+the OTP `damage` configuration tuple
+`{run_history_registry_contract, <<"ct_YOUR_REGISTRY">>}` or
+`window.DamageActivity.nodeRegistryContract` as a public `ct_` ID.
+Likewise the token contract and middleware/gateway may be overridden with
+`window.DamageActivity.damageTokenContract`, `.mdwBase`, and `.ipfsGateway`.
 
-`GET /api/run-history/nodes?node=ak_...` — verify and retrieve a single node.
+## Compatibility and availability
 
-`GET /api/run-history/nodes?discover=1` — browse *recent* registration
-transactions. Its `complete:false` signals that NodeRegistry v2 does **not**
-expose a global enumeration API. This discovery scan is intentionally bounded:
-it is not a complete registry listing. For reliable historical lookup, use the
-owner-account or node-ID route. Read methods may return 503 while the node
-registry is unreachable or the node keypair needed by its existing read path
-is unavailable. No node is labeled as registered based only on middleware
-transaction metadata.
+Reads go **directly to public AEMDW**. A same-origin, path-restricted
+`/api/run-history/activities` proxy can be used as an optional CORS fallback
+when deployed; its absence or a 404 does not prevent using the direct chain
+source. The proxy allowlist includes `/v3/contracts/calls`, individual
+transactions, and public account activities. `GET /api/run-history/nodes`
+may still exist on upgraded nodes but is **not called by the browser**.
 
-## Same-origin activity fallback
+Only executions with a public token `spend` and reachable IPFS evidence are
+listed in this view; unpaid, local-only, and unconfirmed runs require a
+separate durable index. Client-side feature/tag/time filtering applies to
+retrieved records; load more pages to examine older runs. A network failure
+must not be presented as an empty public activity history.
 
-`GET /api/run-history/activities?path=/v3/transactions?...` retrieves public
-Aeternity middleware pages through DamageBDD only when direct browser reads fail
-(e.g. cross-origin restrictions). It also supports the same account activities
-and transaction-detail routes needed by the UI. Paths and query parameters are
-allowlisted to prevent arbitrary URL proxying; pagination stays on the configured
-middleware connection, responses are bounded, and reads are rate-limited. No
-credentials or private wallet data are forwarded to the middleware.
-
-## Run metadata
-
-Every newly published run contains a JSON `run.meta` at the IPFS **report
-root**, with stable fields: `status`, `feature_title`, `tags`, `public_key`,
-`node_public_key`, `start_time_hires`, `execution_time_hires`, and the
-pre-existing release/context proof fields. The additional fields are public
-and do not include secrets or execution context. Older reports fall back to
-reading public Gherkin and plain-text report evidence; an unavailable or
-ambiguous result stays `unknown` rather than being reported as passed.
-
-`GET /reports/:cid/run.meta` now serves the public root manifest directly on
-the same origin as raw JSON (`Accept: application/json` or `text/html`). The
-UI falls back to the IPFS gateway's `/<report-cid>/run.meta` for older nodes
-that have not deployed the updated route.
-
-Only **public runs represented by DAMAGE token spend transactions** are
-indexed by this iteration. Unpaid/dry runs and locally retained runs with no
-public transaction are **not** listed; they need a separate durable local or
-published event index before being advertised as full execution history.
-For large federated deployments, replace per-browser transaction scanning with
-an indexed run-event service keyed by node, account, feature and tag.
-
-## Configuration
-
-Optional OTP `sys.config` setting, inside the `damage` application's tuple
-list, if the normal `secrets:node_keypair/0` path cannot yield a public node
-address during locked-node startup:
-
-```erlang
-{run_history_node_account, <<"ak_REPLACE_WITH_NODE_ACCOUNT">>}
-```
-
-Set the address to the **executing node account**, never to the logged-in
-user's wallet. The dashboard does not need the node private key to display
-its identity, although the current NodeRegistry read implementation uses it
-for contract dry calls. The same-origin activity API is available while the
-node's signing key is locked if the configured middleware is reachable.
-
-## Validation
+## Tests
 
 ```sh
 node --test apps/damage/test/scripts/run_history_model.test.mjs
-node --experimental-vm-modules --test apps/damage/test/scripts/*.test.mjs
 python apps/damage/test/scripts/run_history_browser_test.py
 rebar3 compile
 rebar3 eunit --module=damage_run_history_http_tests
 ```
-
-The wider Node suite in the provided archive has one pre-existing test
-(`quickstart_ui.test.mjs`) with a path assuming invocation from the repository
-root; it cannot resolve its module when run from `apps/damage`. Run from the
-monorepo root to exercise it there.

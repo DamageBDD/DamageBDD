@@ -1,11 +1,13 @@
-/* DamageBDD Run history — public, read-only, registry-aware.
- * Sources: NodeRegistry via same-origin read-only endpoint; AEMDW public
- * transactions; immutable run.meta/feature/report artifacts via IPFS.
- * Nothing here reads a browser auth token, wallet key or private run context.
+/* DamageBDD Run history — public, read-only, on-chain evidence.
+ * Sources: AEMDW token-contract calls and node/account activities;
+ * optional recent NodeRegistry contract-call discovery; immutable IPFS
+ * feature source, run.meta, and reports. No new DamageBDD API is required.
+ * Nothing here reads an auth token, signing key or private run context.
  */
 import {
   aeAddress, isCid, txHashOf, normalizeSpend, parseFeature, normalizeRunMeta,
   parseLegacyStatus, parseTagFilter, rangeBounds, matchesRun, middlewareUrl,
+  registryRegistration, DEFAULT_REGISTRY_CONTRACT,
   DEFAULT_TOKEN_CONTRACT, DEFAULT_MDW, DEFAULT_GATEWAY
 } from './run-history-model.js';
 import {TokenManager} from './wallet-switcher.js';
@@ -35,6 +37,8 @@ const tokenAmount = raw => {
   return `${integral}${decimal ? '.' + decimal : ''} DAMAGE`;
 };
 const SOURCE_PAGE_LIMIT = 100;
+const REGISTRY_SCAN_PAGES = 3; // A bounded recent-history index, not contract state.
+const REGISTRY_DETAIL_LIMIT = 24;
 const TX_PARALLEL = 8;
 const EVIDENCE_PARALLEL = 6;
 const MAX_BYTES = 128 * 1024;
@@ -47,7 +51,9 @@ function config() {
   return {
     mdw: window.DamageActivity?.mdwBase || DEFAULT_MDW,
     ipfs: window.DamageActivity?.ipfsGateway || DEFAULT_GATEWAY,
-    token: window.DamageActivity?.damageTokenContract || DEFAULT_TOKEN_CONTRACT
+    token: window.DamageActivity?.damageTokenContract || DEFAULT_TOKEN_CONTRACT,
+    registry: aeAddress($('run-history-workspace')?.dataset.registry, ['ct_']) ||
+      aeAddress(window.DamageActivity?.nodeRegistryContract, ['ct_']) || DEFAULT_REGISTRY_CONTRACT
   };
 }
 function ipfsUrl(cid, path = '') {
@@ -121,7 +127,8 @@ function createState(host) {
     followed: loadFollowed(owner), registryNodes: new Map(), knownAccounts: new Set(owner ? [owner] : []),
     sources: [], rows: [], seen: new Set(), txCache: new Map(),
     metaCache: new Map(), featureCache: new Map(), statusCache: new Map(),
-    version: 0, loading: false, ready: false, range: prefs.range, explicitScope: false
+    version: 0, loading: false, ready: false, range: prefs.range, explicitScope: false,
+    registryScan: null, registryScanPromise: null
   };
   if (localNode) state.registryNodes.set(localNode, {id: localNode, name: 'This node', registered: false});
   return state;
@@ -133,7 +140,7 @@ function setScope(state, scope, {refresh = true} = {}) {
   if (!['node', 'account', 'followed', 'discover'].includes(scope)) return;
   state.scope = scope;
   $('activity-directory-heading').textContent = scope === 'discover' ?
-    'Discover registered nodes' : 'Browse node registry';
+    'Discover public nodes' : 'Browse public node activity';
   // Registry controls are supplementary to the run list. Open on demand.
   $('activity-directory').open = scope === 'discover';
   for (const b of document.querySelectorAll('[data-history-scope]')) {
@@ -145,7 +152,7 @@ function setScope(state, scope, {refresh = true} = {}) {
   $('activity-account-filter-field').hidden = scope === 'account';
   if (scope === 'account') $('activity-account').value = state.accountTarget;
   if (scope === 'followed' && !state.followed.length) {
-    registryStatus('No followed nodes yet. Look up a node, then choose Follow.');
+    registryStatus('No followed nodes yet. Select an observed or known public node, then choose Follow.');
   }
   fillNodeOptions(state);
   if (refresh) startSearch(state);
@@ -194,10 +201,6 @@ function fillNodeOptions(state) {
   ctl.value = chosen;
 }
 function follow(state, id) {
-  if (!state.followed.includes(id) && !state.registryNodes.get(id)?.registered) {
-    registryStatus('Verify this node using NodeRegistry before following.');
-    return;
-  }
   if (!state.followed.includes(id)) state.followed.push(id);
   else state.followed = state.followed.filter(x => x !== id);
   saveFollowed(state);
@@ -207,8 +210,9 @@ function follow(state, id) {
 }
 function viewNode(state, id) {
   state.targetNode = id;
+  state.explicitScope = true;
   $('activity-node-manual').value = id;
-  setScope(state, state.scope === 'account' ? 'node' : state.scope);
+  setScope(state, 'node');
 }
 function renderRegistryNodes(state) {
   const ul = $('activity-node-results'); if (!ul) return;
@@ -217,65 +221,100 @@ function renderRegistryNodes(state) {
     const li = node('li', 'history-node');
     const info = node('div', 'history-node-info');
     info.append(node('strong', '', n.name && n.name !== n.id ? n.name :
-      n.registered ? 'Registered node' : n.id === state.localNode ? 'This node (unverified)' : 'Unverified node'));
+      n.observed ? 'Registration observed on chain' : n.id === state.localNode ? 'This node' : 'Public node'));
     info.append(node('code', '', compact(n.id, 12)));
-    if (n.location || n.version) info.append(node('small', '', [n.location, n.version].filter(Boolean).join(' · ')));
+    if (n.location || n.version || n.owner) info.append(node('small', '',
+      [n.location, n.version, n.owner ? `Historical owner ${compact(n.owner)}` : ''].filter(Boolean).join(' · ')));
     li.append(info);
     const actions = node('div', 'history-node-actions');
     const open = node('button', 'workspace-button', 'View runs'); open.type = 'button';
     open.addEventListener('click', () => viewNode(state, n.id));
     const toggle = node('button', 'workspace-button', state.followed.includes(n.id) ? 'Following ✓' : '+ Follow');
     toggle.type = 'button'; toggle.setAttribute('aria-pressed', String(state.followed.includes(n.id)));
-    toggle.disabled = !state.followed.includes(n.id) && !n.registered;
-    if (toggle.disabled) toggle.title = 'Lookup and verify this node before following';
+    toggle.title = 'Following a public node does not imply current NodeRegistry registration';
     toggle.addEventListener('click', () => follow(state, n.id));
     actions.append(open, toggle); li.append(actions); ul.append(li);
   }
 }
-async function queryRegistry(state, query) {
-  const params = new URLSearchParams(query);
-  const data = await fetchPublic(`/api/run-history/nodes?${params.toString()}`);
-  if (!Array.isArray(data?.nodes)) throw new Error(data?.error || 'Invalid registry reply');
-  addRegistryNodes(state, data.nodes);
-  renderRegistryNodes(state);
-  return data;
+// Node discovery reads historical registration calls directly from public
+// AEMDW; it never depends on a /api/run-history/nodes application route.
+// NodeRegistry v2 lacks an enumerable global state API, so these results are
+// explicitly recent *observations*, not a current/complete registry snapshot.
+async function scanRegistry(state) {
+  if (state.registryScanPromise) return state.registryScanPromise;
+  state.registryScanPromise = (async () => {
+    const registry = config().registry;
+    if (!aeAddress(registry, ['ct_'])) throw new Error('NodeRegistry contract not configured');
+    const results = new Map();
+    let scanned = 0, pages = 0, next =
+      `/v3/contracts/calls?contract_id=${encodeURIComponent(registry)}&direction=backward&limit=100`;
+    while (next && pages < REGISTRY_SCAN_PAGES) {
+      const page = await fetchActivity(middlewareUrl(config().mdw, next));
+      const calls = Array.isArray(page?.data) ? page.data : [];
+      pages += 1;
+      scanned += calls.length;
+      // Calls include function information but may omit decoded arguments.
+      const candidates = calls.filter(row =>
+        String(row?.function || row?.entrypoint || row?.function_name || '').split('.').pop() === 'register_node');
+      await taskQueue(candidates.slice(0, REGISTRY_DETAIL_LIMIT), TX_PARALLEL, async row => {
+        let parsed = registryRegistration(row, {registryContract: registry, trustedRegistryScope: true});
+        if (!parsed) {
+          const hash = txHashOf(row);
+          if (hash) {
+            const full = await getTx(state, hash);
+            parsed = registryRegistration(full, {registryContract: registry,
+              trustedRegistryScope: true});
+          }
+        }
+        if (parsed) results.set(parsed.id, parsed);
+      });
+      const following = page?.next ? middlewareUrl(config().mdw, page.next) : null;
+      next = following && following !== middlewareUrl(config().mdw, next) && calls.length ? following : null;
+    }
+    const data = {nodes: [...results.values()], scanned, pages, complete: !next};
+    state.registryScan = data;
+    addRegistryNodes(state, data.nodes);
+    renderRegistryNodes(state);
+    return data;
+  })();
+  try { return await state.registryScanPromise; }
+  catch (error) { state.registryScanPromise = null; throw error; }
 }
 async function ownerLookup(state, owner, {quiet = false} = {}) {
-  const account = aeAddress(owner, ['ak_']); if (!account) return;
-  if (!quiet) registryStatus('Looking up operator nodes on the registry…');
+  const account = aeAddress(owner, ['ak_']); if (!account) return [];
+  if (!quiet) registryStatus('Looking for historical registration calls on public æternity middleware…');
   try {
-    const data = await queryRegistry(state, {owner: account});
-    if (!quiet) registryStatus(`${data.nodes.length} currently registered node(s) for ${compact(account)}.`);
-    return data.nodes;
+    const data = await scanRegistry(state);
+    const rows = data.nodes.filter(n => n.owner === account);
+    if (!quiet) registryStatus(`${rows.length} node registration(s) observed for ${compact(account)} ` +
+      `in ${data.scanned} recently scanned contract calls. Older records may not be included.`);
+    return rows;
   } catch (err) {
-    if (!quiet) registryStatus(`Registry lookup failed: ${err.message}`);
-    return null;
+    if (!quiet) registryStatus(`Public NodeRegistry history unavailable: ${err.message}`);
+    return [];
   }
 }
 async function doRegistryLookup(state) {
   const id = aeAddress($('activity-registry-query').value);
-  if (!id) { registryStatus('Enter a valid ak_ account or ak_/ct_ node ID.'); return; }
+  if (!id) { registryStatus('Enter an ak_ account or ak_/ct_ node address.'); return; }
   $('activity-registry-lookup').disabled = true;
   try {
-    let found = null;
-    if (id.startsWith('ak_')) found = await ownerLookup(state, id, {quiet: true});
-    if (!found?.length) {
-      const data = await queryRegistry(state, {node: id});
-      found = data.nodes;
-    }
-    registryStatus(found.length ? `${found.length} node(s) verified against NodeRegistry.` : 'No matching registered nodes.');
-  } catch (err) { registryStatus(`Registry lookup failed: ${err.message}`); }
+    const data = await scanRegistry(state);
+    const found = data.nodes.filter(n => n.id === id || n.owner === id);
+    registryStatus(found.length ? `${found.length} historical registration(s) observed in public chain records.` :
+      'No registration in the recent scan. You can still enter a node address to view its published runs.');
+  } catch (err) { registryStatus(`Public NodeRegistry history unavailable: ${err.message}`); }
   finally { $('activity-registry-lookup').disabled = false; }
 }
 async function discover(state) {
-  const b = $('activity-discover'); b.disabled = true;
-  registryStatus('Scanning recent registry transactions and verifying registered nodes…');
+  const button = $('activity-discover'); button.disabled = true;
+  registryStatus('Reading recent public NodeRegistry contract calls…');
   try {
-    const data = await queryRegistry(state, {discover: '1'});
-    registryStatus(`${data.nodes.length} verified recently registered node(s) from ${data.scanned} transactions. ` +
-      'For an older node, search by owner account or node ID.');
-  } catch (e) { registryStatus(`Discovery unavailable: ${e.message}. Search by owner or node ID.`); }
-  finally { b.disabled = false; }
+    const data = await scanRegistry(state);
+    registryStatus(`${data.nodes.length} historical registration(s) found across ${data.scanned} calls ` +
+      `(${data.pages} pages). This is not a complete list or a current-registration check.`);
+  } catch (err) { registryStatus(`Public NodeRegistry history unavailable: ${err.message}. Run history remains usable.`); }
+  finally { button.disabled = false; }
 }
 
 function filtersFromControls(state) {
@@ -284,7 +323,8 @@ function filtersFromControls(state) {
   const ownerFilter = aeAddress($('activity-account-filter').value, ['ak_']);
   const nodeChoice = $('activity-node').value;
   let nodeIds = [];
-  if (state.scope === 'node' || state.scope === 'discover') nodeIds = state.targetNode ? [state.targetNode] : [];
+  if (state.scope === 'node') nodeIds = state.targetNode ? [state.targetNode] : [];
+  // Discover deliberately scans the public network, never silently the local node.
   if (state.scope === 'followed') {
     nodeIds = nodeChoice === 'all' ? state.followed.slice() : (state.followed.includes(nodeChoice) ? [nodeChoice] : []);
   }
@@ -301,19 +341,23 @@ function scanSources(state) {
   const f = filtersFromControls(state);
   const limit = pageLimit(), token = config().token;
   const build = (path, trustedContractScope) => ({path, trustedContractScope, next: path, done: false, error: null});
-  const contractPath = `/v3/transactions?type=contract_call&contract=${encodeURIComponent(token)}&direction=backward&limit=${limit}`;
-  const accountPath = id => `/v3/accounts/${encodeURIComponent(id)}/activities?owned_only=false&type=transactions&direction=backward&limit=${limit}`;
-  if (state.scope === 'account') return f.account ? [build(accountPath(f.account), false)] : [];
-  // When the local node identity is sealed and there is no signed-in account,
-  // the Discover scope still loads recent public run activity. Never label
-  // these runs as belonging to "This node" until its address is known.
-  if (state.scope === 'discover' && !f.nodeIds.length) return [build(contractPath, true)];
+  // AEMDW public contract-call index exposes decoded entrypoints/arguments;
+  // the original reports.js account activity path remains the node-payer fallback.
+  const contractPath = `/v3/contracts/calls?contract_id=${encodeURIComponent(token)}&direction=backward&limit=${limit}`;
+  const accountPath = (id, owned = false) => `/v3/accounts/${encodeURIComponent(id)}/activities?owned_only=${owned}&type=transactions&direction=backward&limit=${limit}`;
+  // When the node pays on behalf of an account, that PayingFor transaction
+  // might not be indexed under the account. Scan contract spends as well.
+  if (state.scope === 'account') return f.account ?
+    [build(contractPath, true), build(accountPath(f.account), false)] : [];
+  // Discover always scans recent public token calls, regardless of the
+  // local selected node. Users can choose a node from a result afterward.
+  if (state.scope === 'discover') return [build(contractPath, true)];
   if (!f.nodeIds.length) return [];
   const sources = [build(contractPath, true)];
   // PayingFor outer transactions may be indexed under the node payer rather
   // than the token contract. Include those activities as a second source.
   for (const id of f.nodeIds.slice(0, 8)) {
-    if (id.startsWith('ak_')) sources.push(build(accountPath(id), false));
+    if (id.startsWith('ak_')) sources.push(build(accountPath(id, true), false));
   }
   return sources;
 }
@@ -349,15 +393,23 @@ function readHistoryUrl(state) {
     $('activity-tags').value = params.get('rh_tags') || '';
   } catch { /* Untrusted URL parameters must not break the page. */ }
 }
-// Public reads prefer AEMDW directly. A same-origin, path-restricted read-only
-// proxy avoids browsers failing all scans on CORS, corporate firewalls or CSP.
+// Public reads prefer AEMDW directly. The same-origin activity proxy is an
+// optional deployment compatibility fallback, not required for history.
+// Cache a missing route so old nodes don't repeatedly issue 404 requests.
+let activityProxyAvailable = true;
 async function fetchActivity(url) {
   try { return await fetchPublic(url); }
   catch (remoteError) {
+    if (!activityProxyAvailable) throw remoteError;
     const parsed = new URL(url);
     const mdw = new URL(config().mdw);
     if (parsed.origin !== mdw.origin) throw remoteError;
-    return fetchPublic(`/api/run-history/activities?path=${encodeURIComponent(parsed.pathname + parsed.search)}`);
+    try {
+      return await fetchPublic(`/api/run-history/activities?path=${encodeURIComponent(parsed.pathname + parsed.search)}`);
+    } catch (proxyError) {
+      if (/HTTP (404|400)/.test(String(proxyError?.message))) activityProxyAvailable = false;
+      throw remoteError;
+    }
   }
 }
 async function getTx(state, hash) {
@@ -370,10 +422,10 @@ async function getTx(state, hash) {
 }
 async function readMeta(state, cid) {
   if (!state.metaCache.has(cid)) {
-    const job = firstSuccessful([
-      async () => JSON.parse(await fetchPublic(`${reportUrl(cid)}run.meta`, {as: 'text', accept: 'text/html'})),
-      async () => JSON.parse(await fetchPublic(ipfsUrl(cid, 'run.meta'), {as: 'text'}))
-    ]).catch(() => null);
+    // run.meta is at the IPFS report root. /reports/:cid/:path serves files
+    // from /reports/ inside that CID and cannot serve the root manifest.
+    const job = fetchPublic(ipfsUrl(cid, 'run.meta'), {as: 'text'})
+      .then(JSON.parse).catch(() => null);
     state.metaCache.set(cid, job);
   }
   return state.metaCache.get(cid);
@@ -381,8 +433,8 @@ async function readMeta(state, cid) {
 async function readFeature(state, cid) {
   if (!state.featureCache.has(cid)) {
     const job = firstSuccessful([
-      () => fetchPublic(featureUrl(cid), {as: 'text', accept: 'text/plain'}),
-      () => fetchPublic(ipfsUrl(cid), {as: 'text'})
+      () => fetchPublic(ipfsUrl(cid), {as: 'text'}),
+      () => fetchPublic(featureUrl(cid), {as: 'text', accept: 'text/plain'})
     ]).then(parseFeature).catch(() => ({title: '', tags: []}));
     state.featureCache.set(cid, job);
   }
@@ -394,7 +446,8 @@ async function readLegacyStatus(state, cid) {
       try {
         const listing = await fetchPublic(reportUrl(cid), {accept: 'application/json'});
         if (!Array.isArray(listing)) return 'unknown';
-        const file = listing.map(String).find(n => /^[\w.\-]+\.plain\.txt$/.test(n));
+        const file = listing.map(item => typeof item === 'string' ? item :
+          String(item?.Name || item?.name || '')).find(n => /^[\w.\-]+\.plain\.txt$/.test(n));
         if (!file) return 'unknown';
         const body = await fetchPublic(reportUrl(cid) + encodeURIComponent(file),
           {as: 'text', accept: 'text/html'});
@@ -428,6 +481,17 @@ async function normalizeTxRow(state, item, source) {
       {...full, payload: {tx: item}}, opts);
   }
   if (!row) return null;
+  // Contract call indexes can expose the decoded spend without a caller ID or
+  // block time. Hydrate the enclosing transaction before account/time filtering.
+  if (hash && (!row.callerId || !row.createdMs)) {
+    const full = await getTx(state, hash);
+    if (full) {
+      const combined = {...full, ...item, tx: full.tx || item.tx,
+        micro_time: item.micro_time || full.micro_time};
+      const hydrated = normalizeSpend(combined, opts);
+      if (hydrated) row = {...row, ...hydrated, txHash: hash};
+    }
+  }
   if (!row.txHash) row.txHash = hash;
   return row;
 }
@@ -520,7 +584,7 @@ function startSearch(state) {
   }
   if (!state.sources.length) {
     status(state.scope === 'account' ? 'Choose an account to view its public activity.' :
-      state.scope === 'followed' ? 'Follow a registered node to begin.' :
+      state.scope === 'followed' ? 'Follow a public node to begin.' :
       "This node’s public ID is unavailable. Use My account or browse nodes below.");
     renderRuns(state); return;
   }
@@ -576,8 +640,14 @@ async function loadMore(state) {
   });
   if (version !== state.version) return;
   state.rows.push(...fresh);
-  for (const row of fresh) if (row.callerId) state.knownAccounts.add(row.callerId);
-  fillKnownAccounts(state);
+  for (const row of fresh) {
+    if (row.callerId) state.knownAccounts.add(row.callerId);
+    if (row.nodePublicKey && !state.registryNodes.has(row.nodePublicKey)) {
+      state.registryNodes.set(row.nodePublicKey,
+        {id: row.nodePublicKey, name: row.nodePublicKey, source: 'public_spend'});
+    }
+  }
+  fillNodeOptions(state); renderRegistryNodes(state); fillKnownAccounts(state);
   showLoading(state, false); renderRuns(state);
   const more = state.sources.some(s => !s.done);
   if (errors.length) {
@@ -623,11 +693,8 @@ function setupInteractions(state) {
     if (!id) { status('Enter a valid public node address.'); return; }
     state.registryNodes.set(id, state.registryNodes.get(id) || {id, name: id});
     viewNode(state, id);
-    // Verify asynchronously. Unregistered IDs may still have historical
-    // published activity, but only verified IDs join registry discovery.
-    queryRegistry(state, {node: id}).then(data => registryStatus(data.nodes.length ?
-      'Node verified by registry.' : 'Node not registered; displaying public activity only.'))
-      .catch(() => registryStatus('Node lookup could not be verified; displaying public activity only.'));
+    registryStatus('Showing published on-chain runs for this public node. ' +
+      'Following it does not require a registry lookup.');
   });
   $('activity-registry-lookup').addEventListener('click', () => doRegistryLookup(state));
   $('activity-registry-query').addEventListener('keydown', e => {
@@ -696,7 +763,7 @@ function syncAccount(state, address) {
   } else if (state.scope === 'account' && activePanel()) {
     startSearch(state);
   }
-  if (account) ownerLookup(state, account, {quiet: true});
+  // NodeRegistry discovery is intentionally lazy; run history needs no registry read.
 }
 
 export function initRunHistory() {
@@ -713,10 +780,8 @@ export function initRunHistory() {
   addRegistryNodes(state, state.followed.map(id => ({id, name: id})));
   renderRegistryNodes(state);
   fillKnownAccounts(state);
-  // Show nodes owned by the signed-in account without requiring a private API.
-  if (state.owner) ownerLookup(state, state.owner, {quiet: true}).then(() => renderRegistryNodes(state));
-  if (state.localNode) queryRegistry(state, {node: state.localNode})
-    .then(() => renderRegistryNodes(state)).catch(() => {});
+  // Read the historical registry only when the user opens node discovery.
+  // Run history is independent of NodeRegistry lookups; discovery is optional.
   // Start the first read whenever the history panel is already displayed,
   // including direct #activity-tab navigation that ran before this module.
   if (activePanel()) { state.ready = true; startSearch(state); }

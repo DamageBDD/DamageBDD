@@ -65,13 +65,35 @@ logo_image() ->
             <<"/static/img/logo.png">>
     end.
 
+%% Do not substitute a user wallet as the node identity. A locked node
+%% deliberately leaves the default empty instead of silently scanning another account.
+history_context(Ctx) ->
+    Ctx#{
+        run_history_account => maps:get(public_key, Ctx, <<>>),
+        run_history_node => history_node_id(),
+        run_history_registry => application:get_env(damage, run_history_registry_contract, <<>>)
+    }.
+
+history_node_id() ->
+    case application:get_env(damage, run_history_node_account, undefined) of
+        Account when is_binary(Account), Account =/= <<>> -> Account;
+        Account when is_list(Account), Account =/= [] -> list_to_binary(Account);
+        _ ->
+            try secrets:node_keypair() of
+                #{public_key := PublicKey} -> damage_utils:to_bin(PublicKey);
+                _ -> <<>>
+            catch
+                _:_ -> <<>>
+            end
+    end.
+
 %% -------------------------- Page -----------------------------
 render_full_page(Ctx) ->
     %% Assemble from mustache fragments so you can also SSR each piece independently
     %% page_shell.mustache should call {{{topbar}}}, {{{sidebar}}}, etc. (triple-stache = HTML safe)
     Top = render_tpl(?TPL("topbar.mustache"), Ctx),
     Exec = render_tpl(?TPL("execution_tab.mustache"), Ctx),
-    Activity = render_tpl(?TPL("activity_tab.mustache"), Ctx),
+    Activity = render_tpl(?TPL("activity_tab.mustache"), history_context(Ctx)),
     Anal = render_tpl(?TPL("analytics_tab.mustache"), Ctx),
     Sched = render_tpl(?TPL("schedules_tab.mustache"), Ctx),
     Billing = render_tpl(?TPL("billing_tab.mustache"), Ctx),
@@ -162,7 +184,7 @@ render_component(tabs, Ctx) ->
 render_component(execution_tab, Ctx) ->
     render_tpl(?TPL("execution_tab.mustache"), Ctx);
 render_component(activity_tab, Ctx) ->
-    render_tpl(?TPL("activity_tab.mustache"), Ctx);
+    render_tpl(?TPL("activity_tab.mustache"), history_context(Ctx));
 render_component(analytics_tab, Ctx) ->
     render_tpl(?TPL("analytics_tab.mustache"), Ctx);
 render_component(schedules_tab, Ctx) ->

@@ -75,7 +75,7 @@ reply_public_json(Req, State, {Status, Body}) ->
         #{<<"content-type">> => <<"application/json; charset=utf-8">>},
         jsx:encode(Body), Req1), State}.
 
-%% Only AEMDW v3 transaction and account-activity reads are exposed. Accept
+%% Only AEMDW v3 contract calls, transaction and account-activity reads are exposed. Accept
 %% middleware pagination paths (/mdw/v3/...) but never origins, arbitrary
 %% routes, traversal, user-provided hosts or unbounded queries.
 -spec validate_activity_path(binary() | list()) -> {ok, binary()} | {error, invalid_path}.
@@ -118,12 +118,15 @@ validate_activity_path(_) -> {error, invalid_path}.
 public_activity_route(Path) ->
     (re:run(Path, <<"^/v3/transactions(/th_[1-9A-HJ-NP-Za-km-z]{20,70})?/?$">>,
             [{capture, none}]) =:= match) orelse
+    (re:run(Path, <<"^/v3/contracts/calls/?$">>, [{capture, none}]) =:= match) orelse
     (re:run(Path, <<"^/v3/accounts/ak_[1-9A-HJ-NP-Za-km-z]{20,70}/activities/?$">>,
             [{capture, none}]) =:= match).
 
 valid_activity_param({"direction", "backward"}) -> true;
 valid_activity_param({"type", T}) -> lists:member(T, ["contract_call", "transactions"]);
 valid_activity_param({"owned_only", V}) -> lists:member(V, ["true", "false"]);
+valid_activity_param({"contract_id", V}) -> registry_account(V) =/= error andalso
+    lists:prefix("ct_", V);
 valid_activity_param({"contract", V}) -> registry_account(V) =/= error andalso
     lists:prefix("ct_", V);
 valid_activity_param({"limit", V}) ->

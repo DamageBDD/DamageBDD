@@ -1,12 +1,13 @@
 <!-- Public verification evidence: no private account, context or wallet data is fetched. -->
 <section class="workspace-page run-history" id="run-history-workspace"
          data-account="{{run_history_account}}" data-node="{{run_history_node}}"
+         data-registry="{{run_history_registry}}"
          aria-labelledby="activity-heading">
   <div class="workspace-heading activity-heading">
     <div>
       <p class="workspace-eyebrow">EXECUTION EVIDENCE</p>
       <h1 id="activity-heading">Run history</h1>
-      <p>Browse published verification evidence from this node, your account, and other public nodes.</p>
+      <p>Browse immutable execution evidence from æternity transactions and IPFS, across this node and the public network.</p>
     </div>
     <button id="activity-refresh" class="workspace-button" type="button">↻ Refresh</button>
   </div>
@@ -111,13 +112,13 @@
       <span id="run-reports-info" class="activity-pagerinfo workspace-muted"></span>
     </div>
     <details class="history-directory" id="activity-directory">
-      <summary class="history-directory-toggle"><span id="activity-directory-heading">Browse node registry</span><small>Find registered nodes by operator or node ID</small></summary>
+      <summary class="history-directory-toggle"><span id="activity-directory-heading">Discover public nodes</span><small>Recent on-chain registrations and observed runners</small></summary>
       <div class="history-directory-head">
         <div>
-          <h2>Registered nodes</h2>
-          <p>Look up registered nodes by operator account or node ID, or browse recent registrations.</p>
+          <h2>Public node directory</h2>
+          <p>Browse observed runner addresses and recent NodeRegistry registrations. Historical transactions do not prove current registration or ownership.</p>
         </div>
-        <button id="activity-discover" class="workspace-button" type="button">Discover recent nodes</button>
+        <button id="activity-discover" class="workspace-button" type="button">Scan recent registrations</button>
       </div>
       <div class="history-inline history-directory-search">
         <label class="visually-hidden" for="activity-registry-query">Registry owner or node</label>

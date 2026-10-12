@@ -5,7 +5,7 @@
 -define(CONTRACT, "ct_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB").
 
 public_contract_scan_test() ->
-    Path = iolist_to_binary(["/v3/transactions?type=contract_call&contract=", ?CONTRACT,
+    Path = iolist_to_binary(["/v3/contracts/calls?contract_id=", ?CONTRACT,
                             "&direction=backward&limit=50"]),
     ?assertMatch({ok, _}, damage_run_history_http:validate_activity_path(Path)).
 
@@ -21,6 +21,8 @@ public_activity_path_restrictions_test() ->
         <<"https://evil.invalid/v3/transactions">>,
         <<"/v3/../../secrets">>,
         <<"/v3/contracts/logs">>,
+        <<"/v3/contracts/calls?contract_id=ct_invalid&limit=50">>,
+        <<"/v3/contracts/calls?contract_id=ct_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB&next=https%3A%2F%2Fevil.invalid">>,
         <<"/v3/transactions?contract=ct_bad&limit=9999">>,
         <<"/v3/transactions?limit=1000">>,
         <<"/v3/transactions?direction=forward">>,
