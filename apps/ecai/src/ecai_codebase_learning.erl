@@ -35,7 +35,13 @@
     incidents/1,
     incidents/2,
     events/2,
-    events/3
+    events/3,
+    release_candidate/0,
+    release_candidate/1,
+    release_candidate_tags/0,
+    release_candidate_tags/1,
+    release_candidate_tag_description/0,
+    release_candidate_tag_description/1
 ]).
 
 refresh() ->
@@ -124,6 +130,14 @@ incidents(App, Module) -> ecai_log_learning:incidents(App, Module).
 
 events(Type, Id) -> ecai_learning_store:events(Type, Id).
 events(Type, Id, Limit) -> ecai_learning_store:events(Type, Id, Limit).
+
+release_candidate() -> ecai_release_candidate:propose().
+release_candidate(Opts) when is_map(Opts) -> ecai_release_candidate:propose(Opts).
+release_candidate_tags() -> ecai_release_candidate:tags().
+release_candidate_tags(Opts) when is_map(Opts) -> ecai_release_candidate:tags(Opts).
+release_candidate_tag_description() -> ecai_release_candidate:description().
+release_candidate_tag_description(Opts) when is_map(Opts) ->
+    ecai_release_candidate:description(Opts).
 
 checkpoint_summary({ok, Checkpoint}) when is_map(Checkpoint) ->
     {ok, maps:without([queue, inflight_entries], Checkpoint)};

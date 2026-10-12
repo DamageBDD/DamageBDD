@@ -66,13 +66,16 @@ class ConsoleContractTests(unittest.TestCase):
 
     def test_dashboard_views_have_navigation(self):
         views = {'overview','search','chat','video','indexing','wikimedia',
-                 'knowledge','marketplace','market-maker','operations','code','api','network'}
+                 'knowledge','marketplace','market-maker','operations','code','api','network','compute','keys'}
         self.assertEqual(set(self.markup.views), views)
-        self.assertEqual(set(self.markup.panels), views)
+        # Compute and Keys are rendered as dashboard fragments into the shell.
+        self.assertEqual(set(self.markup.panels), views - {'compute', 'keys'})
+        self.assertIn('data-panel="compute"', (APP/'priv/templates/ui/dashboard/compute_settings.mustache').read_text())
+        self.assertIn('data-panel="keys"', (APP/'priv/templates/ui/dashboard/ollama_keys.mustache').read_text())
 
     def test_api_catalog_matches_cowboy_routes(self):
         catalog = set(re.findall(r'method:\s*"(GET|POST|SSE|WS)",\s*path:\s*"([^"]+)"', self.js))
-        self.assertEqual(len(catalog), 81)
+        self.assertEqual(len(catalog), 93)
         declared = {
             ('GET','/ecai/auth/session'),
             ('POST','/ecai/search'), ('GET','/ecai/chat'), ('POST','/ecai/chat'),
@@ -93,6 +96,11 @@ class ConsoleContractTests(unittest.TestCase):
         declared |= {('POST',f'/yelp/{action}') for action in ('chunk','chunk_async','chunk_cancel','assign','ipfs','headers','manifest')}
         declared |= {('GET',f'/ecai/admin/code/{action}') for action in ('status','repairs','reviews')}
         declared |= {('POST',f'/ecai/admin/code/{action}') for action in ('learn','scan','propose','integrate')}
+        declared |= {('GET', p) for p in ('/ecai/compute/settings','/ecai/compute/eligible-sources','/ecai/compute/mintable')}
+        declared |= {('POST', p) for p in ('/ecai/compute/policy','/ecai/compute/quote','/ecai/compute/reservations')}
+        declared |= {('GET','/ecai/keys/ollama'), ('GET','/ecai/keys/ollama/quick-config'),
+                     ('POST','/ecai/keys/ollama'), ('POST','/ecai/keys/ollama/quick-config'),
+                     ('POST','/ecai/keys/ollama/:id/rotate'), ('POST','/ecai/keys/ollama/:id/revoke')}
         declared.add(('GET','/ecai/admin/code/reviews/:id'))
         declared |= {('POST',f'/ecai/admin/code/reviews/:id/{action}') for action in ('approve','reject','publish')}
         declared |= {('GET', '/ecai/admin/index-pool' + p) for p in ('/status', '/jobs/:id/contract')}
@@ -288,7 +296,7 @@ class ConsoleAuthContractTests(unittest.TestCase):
         self.assertNotIn('            damage_accounts,', source)
         for forbidden in ('/accounts/create', '/accounts/reset_password'):
             self.assertNotIn(forbidden, source)
-        self.assertIn('] ++ code_admin_handlers() ++ marketplace_handlers()', source)
+        self.assertIn('] ++ ollama_api_handlers() ++ code_admin_handlers() ++ marketplace_handlers()', source)
 
     def test_session_probe_is_present_and_non_billable(self):
         source = (APP/'src/ecai_auth_http.erl').read_text(encoding='utf-8')
