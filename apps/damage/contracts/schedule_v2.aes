@@ -1,0 +1,386 @@
+// DamageBDD Schedule V2 escrow and settlement contract.
+//
+// Initial release deliberately supports the current DAMAGE token's legacy
+// Call.origin transfer behaviour without depending on transfer/2. All V1
+// escrow exits use transfer_allowance from the vault's own balance. Token V2
+// can switch the vault to normal Call.caller transfer semantics after a 1:1
+// swap/claim migration.
+//
+// THIS CONTRACT HAS NOT BEEN SECURITY AUDITED.
+
+@compiler >= 6
+
+include "Option.aes"
+include "String.aes"
+
+contract interface DamageTokenV1 =
+  entrypoint balance : address => option(int)
+  stateful entrypoint transfer_allowance : (address, address, int) => unit
+  stateful entrypoint create_allowance : (address, int) => unit
+  stateful entrypoint change_allowance : (address, int) => unit
+  stateful entrypoint swap : () => unit
+  entrypoint check_swap : address => int
+
+contract interface DamageTokenV2 =
+  entrypoint balance : address => option(int)
+  stateful entrypoint transfer_allowance : (address, address, int) => unit
+  stateful entrypoint transfer : (address, int) => unit
+  stateful entrypoint claim_v1 : () => int
+
+main contract DamageScheduleV2 =
+
+  // status: 0 active, 1 paused, 2 cancelling, 3 cancelled, 4 exhausted
+  // token_mode: 1 current DAMAGE V1 compatibility, 2 standard V2, 3 migrating
+  record schedule =
+    { owner            : address
+    , feature_hash     : string
+    , feature_title    : string
+    , cron_spec        : string
+    , start_at         : int
+    , end_at           : int
+    , concurrency      : int
+    , max_cost_per_run : int
+    , funded           : int
+    , spent            : int
+    , reserved         : int
+    , refunded         : int
+    , status           : int
+    , run_count        : int
+    , created_at       : int }
+
+  record reservation =
+    { schedule_id : string
+    , amount      : int
+    , created_at  : int }
+
+  record settlement =
+    { schedule_id  : string
+    , node         : address
+    , amount       : int
+    , feature_hash : string
+    , report_hash  : string
+    , settled_at   : int }
+
+  record state =
+    { owner                     : address
+    , executor                  : address
+    , token_contract            : address
+    , token_mode                : int
+    , legacy_self_allowance_set : bool
+    , schedules                 : map(string, schedule)
+    , reservations              : map(string, reservation)
+    , settlements               : map(string, settlement)
+    , total_reserved            : int
+    , migration_target          : option(address)
+    , migration_amount          : int }
+
+  // Sophia events support at most three indexed values plus one payload value.
+  // We therefore keep the full settlement record in state and use the single
+  // string event field as the schedule/run identifier.
+  datatype event =
+      ScheduleCreated(address, string)
+    | ScheduleFunded(address, int, string)
+    | ScheduleStatus(int, string)
+    | RunReserved(int, string)
+    | RunSettled(address, int, string)
+    | RunReleased(int, string)
+    | ScheduleRefunded(address, int, string)
+    | TokenMigrationPrepared(address, address, int)
+    | TokenMigrationFinished(address, address, int)
+
+  entrypoint init(token_contract : address, executor : address) =
+    { owner                     = Call.caller
+    , executor                  = executor
+    , token_contract            = token_contract
+    , token_mode                = 1
+    , legacy_self_allowance_set = false
+    , schedules                 = {}
+    , reservations              = {}
+    , settlements               = {}
+    , total_reserved            = 0
+    , migration_target          = None
+    , migration_amount          = 0 }
+
+  entrypoint owner() : address = state.owner
+  entrypoint executor() : address = state.executor
+  entrypoint token_contract() : address = state.token_contract
+  entrypoint token_mode() : int = state.token_mode
+  entrypoint migration_target() : option(address) = state.migration_target
+  entrypoint migration_amount() : int = state.migration_amount
+  entrypoint total_reserved() : int = state.total_reserved
+
+  entrypoint get_schedule(schedule_id : string) : option(schedule) =
+    Map.lookup(schedule_id, state.schedules)
+
+  entrypoint remaining(schedule_id : string) : int =
+    let s = require_schedule(schedule_id)
+    schedule_remaining(s)
+
+  entrypoint get_reservation(run_id : string) : option(reservation) =
+    Map.lookup(run_id, state.reservations)
+
+  entrypoint get_settlement(run_id : string) : option(settlement) =
+    Map.lookup(run_id, state.settlements)
+
+  stateful entrypoint set_executor(executor : address) =
+    require_owner()
+    require(state.token_mode != 3, "TOKEN_MIGRATION_IN_PROGRESS")
+    put(state{ executor = executor })
+
+  stateful entrypoint create_schedule(
+      schedule_id : string,
+      feature_hash : string,
+      feature_title : string,
+      cron_spec : string,
+      start_at : int,
+      end_at : int,
+      concurrency : int,
+      max_cost_per_run : int) =
+    require(state.token_mode != 3, "TOKEN_MIGRATION_IN_PROGRESS")
+    require(!Map.member(schedule_id, state.schedules), "SCHEDULE_ALREADY_EXISTS")
+    require(String.length(schedule_id) > 0, "SCHEDULE_ID_REQUIRED")
+    require(String.length(feature_hash) > 0, "FEATURE_HASH_REQUIRED")
+    require(start_at >= 0, "INVALID_START")
+    require(end_at == 0 || end_at >= start_at, "INVALID_END")
+    require(concurrency > 0, "INVALID_CONCURRENCY")
+    require(max_cost_per_run > 0, "INVALID_MAX_COST")
+    let s =
+      { owner            = Call.caller
+      , feature_hash     = feature_hash
+      , feature_title    = feature_title
+      , cron_spec        = cron_spec
+      , start_at         = start_at
+      , end_at           = end_at
+      , concurrency      = concurrency
+      , max_cost_per_run = max_cost_per_run
+      , funded           = 0
+      , spent            = 0
+      , reserved         = 0
+      , refunded         = 0
+      , status           = 0
+      , run_count        = 0
+      , created_at       = Chain.timestamp }
+    put(state{ schedules[schedule_id] = s })
+    Chain.event(ScheduleCreated(Call.caller, schedule_id))
+
+  stateful entrypoint fund_schedule(schedule_id : string, amount : int) =
+    require(state.token_mode != 3, "TOKEN_MIGRATION_IN_PROGRESS")
+    require(amount > 0, "INVALID_AMOUNT")
+    let s = require_schedule(schedule_id)
+    require(Call.caller == s.owner, "ONLY_SCHEDULE_OWNER")
+    require(s.status != 3, "SCHEDULE_CANCELLED")
+
+    // AEX-9 allowance pull works for both V1 and a future standards-correct V2.
+    let token : DamageTokenV1 = Address.to_contract(state.token_contract)
+    token.transfer_allowance(Call.caller, Contract.address, amount)
+    ensure_legacy_self_allowance(amount)
+
+    let status1 = if(s.status == 4) 0 else s.status
+    let s1 = s{ funded = s.funded + amount, status = status1 }
+    put(state{ schedules[schedule_id] = s1 })
+    Chain.event(ScheduleFunded(Call.caller, amount, schedule_id))
+
+  stateful entrypoint pause_schedule(schedule_id : string) =
+    let s = require_owned_schedule(schedule_id)
+    require(s.status == 0 || s.status == 4, "SCHEDULE_NOT_ACTIVE")
+    let s1 = s{ status = 1 }
+    put(state{ schedules[schedule_id] = s1 })
+    Chain.event(ScheduleStatus(1, schedule_id))
+
+  stateful entrypoint resume_schedule(schedule_id : string) =
+    let s = require_owned_schedule(schedule_id)
+    require(s.status == 1 || s.status == 4, "SCHEDULE_NOT_PAUSED")
+    let next_status = if(schedule_remaining(s) > 0) 0 else 4
+    let s1 = s{ status = next_status }
+    put(state{ schedules[schedule_id] = s1 })
+    Chain.event(ScheduleStatus(next_status, schedule_id))
+
+  stateful entrypoint cancel_schedule(schedule_id : string) =
+    require(state.token_mode != 3, "TOKEN_MIGRATION_IN_PROGRESS")
+    let s = require_owned_schedule(schedule_id)
+    require(s.status != 3, "SCHEDULE_ALREADY_CANCELLED")
+    require(s.reserved == 0, "RUNS_STILL_RESERVED")
+    let refund = schedule_remaining(s)
+    if(refund > 0)
+      token_send(s.owner, refund)
+    let s1 = s{ refunded = s.refunded + refund, status = 3 }
+    put(state{ schedules[schedule_id] = s1 })
+    Chain.event(ScheduleRefunded(s.owner, refund, schedule_id))
+    Chain.event(ScheduleStatus(3, schedule_id))
+
+  stateful entrypoint reserve_run(
+      schedule_id : string,
+      run_id : string,
+      amount : int) =
+    require_executor()
+    require(state.token_mode != 3, "TOKEN_MIGRATION_IN_PROGRESS")
+    require(!Map.member(run_id, state.reservations), "RUN_ALREADY_RESERVED")
+    require(!Map.member(run_id, state.settlements), "RUN_ALREADY_SETTLED")
+    require(amount > 0, "INVALID_AMOUNT")
+    let s = require_schedule(schedule_id)
+    require(s.status == 0, "SCHEDULE_NOT_ACTIVE")
+    require(amount <= s.max_cost_per_run, "RUN_COST_CAP_EXCEEDED")
+    require(schedule_remaining(s) >= amount, "SCHEDULE_BUDGET_EXHAUSTED")
+    let r = { schedule_id = schedule_id, amount = amount, created_at = Chain.timestamp }
+    let s1 = s{ reserved = s.reserved + amount }
+    put(state{
+      schedules[schedule_id] = s1,
+      reservations[run_id] = r,
+      total_reserved = state.total_reserved + amount
+    })
+    Chain.event(RunReserved(amount, run_id))
+
+  stateful entrypoint settle_run(
+      schedule_id : string,
+      run_id : string,
+      node : address,
+      actual_amount : int,
+      feature_hash : string,
+      report_hash : string) =
+    require_executor()
+    require(state.token_mode != 3, "TOKEN_MIGRATION_IN_PROGRESS")
+    let s = require_schedule(schedule_id)
+    let r = require_reservation(run_id)
+    require(r.schedule_id == schedule_id, "RUN_SCHEDULE_MISMATCH")
+    require(!Map.member(run_id, state.settlements), "RUN_ALREADY_SETTLED")
+    require(actual_amount >= 0, "INVALID_AMOUNT")
+    require(actual_amount <= r.amount, "RUN_RESERVATION_EXCEEDED")
+    require(actual_amount <= s.max_cost_per_run, "RUN_COST_CAP_EXCEEDED")
+    require(feature_hash == s.feature_hash, "FEATURE_HASH_MISMATCH")
+
+    if(actual_amount > 0)
+      token_send(node, actual_amount)
+
+    let settlement =
+      { schedule_id  = schedule_id
+      , node         = node
+      , amount       = actual_amount
+      , feature_hash = feature_hash
+      , report_hash  = report_hash
+      , settled_at   = Chain.timestamp }
+    let s1 = s{
+      reserved = s.reserved - r.amount,
+      spent = s.spent + actual_amount,
+      run_count = s.run_count + 1
+    }
+    put(state{
+      schedules[schedule_id] = s1,
+      reservations = Map.delete(run_id, state.reservations),
+      settlements[run_id] = settlement,
+      total_reserved = state.total_reserved - r.amount
+    })
+    Chain.event(RunSettled(node, actual_amount, run_id))
+
+  stateful entrypoint release_run(schedule_id : string, run_id : string) =
+    require_executor()
+    let s = require_schedule(schedule_id)
+    let r = require_reservation(run_id)
+    require(r.schedule_id == schedule_id, "RUN_SCHEDULE_MISMATCH")
+    let s1 = s{ reserved = s.reserved - r.amount }
+    put(state{
+      schedules[schedule_id] = s1,
+      reservations = Map.delete(run_id, state.reservations),
+      total_reserved = state.total_reserved - r.amount
+    })
+    Chain.event(RunReleased(r.amount, run_id))
+
+  stateful entrypoint mark_exhausted(schedule_id : string) =
+    require_executor()
+    let s = require_schedule(schedule_id)
+    require(s.status == 0, "SCHEDULE_NOT_ACTIVE")
+    let s1 = s{ status = 4 }
+    put(state{ schedules[schedule_id] = s1 })
+    Chain.event(ScheduleStatus(4, schedule_id))
+
+  // Token migration is contract-owner controlled and globally quiesces new work.
+  stateful entrypoint prepare_token_upgrade(new_token : address) =
+    require_owner()
+    require(state.token_mode == 1, "NOT_LEGACY_TOKEN_MODE")
+    require(state.total_reserved == 0, "RUNS_STILL_RESERVED")
+    let old_token : DamageTokenV1 = Address.to_contract(state.token_contract)
+    let amount = Option.default(0, old_token.balance(Contract.address))
+    old_token.swap()
+    put(state{
+      token_mode = 3,
+      migration_target = Some(new_token),
+      migration_amount = amount,
+      legacy_self_allowance_set = false
+    })
+    Chain.event(TokenMigrationPrepared(state.token_contract, new_token, amount))
+
+  stateful entrypoint claim_token_upgrade() : int =
+    require_owner()
+    require(state.token_mode == 3, "NOT_MIGRATING")
+    let new_token_addr = require_migration_target()
+    let new_token : DamageTokenV2 = Address.to_contract(new_token_addr)
+    let claimed = new_token.claim_v1()
+    require(claimed == state.migration_amount, "MIGRATION_AMOUNT_MISMATCH")
+    claimed
+
+  stateful entrypoint finish_token_upgrade() =
+    require_owner()
+    require(state.token_mode == 3, "NOT_MIGRATING")
+    let old_token = state.token_contract
+    let new_token_addr = require_migration_target()
+    let new_token : DamageTokenV2 = Address.to_contract(new_token_addr)
+    let balance = Option.default(0, new_token.balance(Contract.address))
+    require(balance == state.migration_amount, "NEW_TOKEN_BALANCE_MISMATCH")
+    put(state{
+      token_contract = new_token_addr,
+      token_mode = 2,
+      migration_target = None,
+      migration_amount = 0
+    })
+    Chain.event(TokenMigrationFinished(old_token, new_token_addr, balance))
+
+  // ----- internal -----------------------------------------------------------
+
+  function require_owner() =
+    require(Call.caller == state.owner, "ONLY_OWNER")
+
+  function require_executor() =
+    require(Call.caller == state.executor, "ONLY_EXECUTOR")
+
+  function require_schedule(schedule_id : string) : schedule =
+    switch(Map.lookup(schedule_id, state.schedules))
+      Some(s) => s
+      None => abort("SCHEDULE_NOT_FOUND")
+
+  function require_owned_schedule(schedule_id : string) : schedule =
+    let s = require_schedule(schedule_id)
+    require(Call.caller == s.owner, "ONLY_SCHEDULE_OWNER")
+    s
+
+  function require_reservation(run_id : string) : reservation =
+    switch(Map.lookup(run_id, state.reservations))
+      Some(r) => r
+      None => abort("RUN_NOT_RESERVED")
+
+  function schedule_remaining(s : schedule) : int =
+    s.funded - s.spent - s.reserved - s.refunded
+
+  function require_migration_target() : address =
+    switch(state.migration_target)
+      Some(a) => a
+      None => abort("MIGRATION_TARGET_REQUIRED")
+
+  stateful function ensure_legacy_self_allowance(amount : int) =
+    if(state.token_mode == 1)
+      let token : DamageTokenV1 = Address.to_contract(state.token_contract)
+      if(state.legacy_self_allowance_set)
+        token.change_allowance(Contract.address, amount)
+      else
+        token.create_allowance(Contract.address, amount)
+        put(state{ legacy_self_allowance_set = true })
+    else
+      ()
+
+  stateful function token_send(to : address, amount : int) =
+    if(state.token_mode == 1)
+      let token : DamageTokenV1 = Address.to_contract(state.token_contract)
+      token.transfer_allowance(Contract.address, to, amount)
+    else if(state.token_mode == 2)
+      let token : DamageTokenV2 = Address.to_contract(state.token_contract)
+      token.transfer(to, amount)
+    else
+      abort("TOKEN_MIGRATION_IN_PROGRESS")

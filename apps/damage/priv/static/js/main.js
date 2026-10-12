@@ -2,7 +2,7 @@ import { initDashboardNavigation } from "./dashboard-navigation.js";
 import * as wallet from "/static/js/wallet.js";
 import * as nwc from "/static/js/nwc.js";
 import { showLightningQR } from '/static/js/damage-lightning-ui.js';
-import { updateSchedulesTable } from '/static/js/schedules.js';
+import { updateSchedulesTable } from '/static/js/schedules-v2.js';
 import { initDamageBDDPicker, rememberRecentFeature } from "./featurePicker.js";
 import { createIpfsFilePicker } from "/static/js/ipfs-filepicker.js";
 import "/static/js/balances.js";

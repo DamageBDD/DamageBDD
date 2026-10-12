@@ -1,0 +1,22 @@
+%% Merge these entries into the existing damage application environment.
+%% The Schedule V2 contract is deliberately separate from the current DAMAGE token.
+[
+    {damage, [
+        %% Persist the node-local Schedule V2 read model and feature source used by
+        %% scheduled executions. Keep this on persistent storage in releases.
+        {schedule_v2_data_dir, "/var/lib/damage/schedules-v2"},
+
+        %% Source compiled/deployed by damage_ae helpers.
+        {schedule_v2_contract_source, "contracts/schedule_v2.aes"},
+        {damage_token_contract_source, "contracts/token.aes"},
+
+        %% Preferred production setting: deploy explicitly once, then pin ct_...
+        %% here. If omitted, damage_schedule_v2_contract also checks the encrypted
+        %% secret `schedule_v2_contract`.
+        {schedule_v2_contract, "ct_REPLACE_WITH_DEPLOYED_SCHEDULE_V2"},
+
+        %% Development/bootstrap convenience only. Production should normally pin
+        %% the deployed contract above instead of redeploying automatically.
+        {schedule_v2_auto_deploy, false}
+    ]}
+].

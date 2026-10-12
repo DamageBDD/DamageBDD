@@ -113,20 +113,12 @@ init([]) ->
                     modules => [damage_bdd_service]
                 },
                 #{
-                    id => damage_schedule,
-                    start => {damage_schedule, start_link, []},
-                    restart => permanent,
-                    shutdown => 5000,
-                    type => worker,
-                    modules => [damage_schedule]
-                },
-                #{
-                    id => schedule_index,
-                    start => {damage_schedule_index, start_link, []},
+                    id => damage_schedule_v2,
+                    start => {damage_schedule_v2, start_link, []},
                     restart => permanent,
                     shutdown => 10000,
                     type => worker,
-                    modules => [damage_schedule_index]
+                    modules => [damage_schedule_v2]
                 },
                 #{
                     id => damage_quickstart_store,

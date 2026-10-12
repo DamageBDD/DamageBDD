@@ -423,9 +423,20 @@ execute_file_prepared(Config, Context, Filename) ->
                 end,
             PublicKey = maps:get(public_key, Context),
             RunCost =
-                case proplists:get_value(dry_run, Config, false) of
-                    true -> maps:get(cost, FinalContext, 0);
-                    false -> safe_get_spend(PublicKey, maps:get(cost, FinalContext, 0))
+                case {
+                    proplists:get_value(dry_run, Config, false),
+                    proplists:get_value(settlement, Config, legacy)
+                } of
+                    {true, _} ->
+                        maps:get(cost, FinalContext, 0);
+                    {false, schedule_v2} ->
+                        %% Schedule V2 performs its own escrow settlement after
+                        %% execution. step_spend/2 accumulates the measured cost
+                        %% directly in the run context instead of touching the
+                        %% legacy per-account spend accumulator.
+                        maps:get(cost, FinalContext, 0);
+                    {false, _} ->
+                        safe_get_spend(PublicKey, maps:get(cost, FinalContext, 0))
                 end,
             RunRecord0 =
                 #{
@@ -1492,10 +1503,18 @@ hits_to_damage(Hits) ->
 step_spend(Config, Context) ->
     Spend = maps:get(step_spend, Context, 1 * math:pow(10, ?DAMAGE_DECIMALS)),
     Context0 = maps:remove(step_spend, Context),
-    case proplists:get_value(dry_run, Config, false) of
-        true ->
+    case {
+        proplists:get_value(dry_run, Config, false),
+        proplists:get_value(settlement, Config, legacy)
+    } of
+        {true, _} ->
             maps:put(cost, maps:get(cost, Context0, 0) + Spend, Context0);
-        false ->
+        {false, schedule_v2} ->
+            %% Schedule V2 reserves and settles DAMAGE through its escrow
+            %% contract. Keep exact step metering in this run context and do
+            %% not mutate the legacy wallet-process spend accumulator.
+            maps:put(cost, maps:get(cost, Context0, 0) + Spend, Context0);
+        {false, _} ->
             damage_ae:spend(maps:get(public_key, Context), Spend),
             Context0
     end.

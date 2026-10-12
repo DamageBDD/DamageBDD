@@ -52,7 +52,7 @@ get_trails() ->
             damage_install_http,
             damage_http_unlock,
             damage_market,
-            damage_schedule,
+            damage_schedule_v2_http,
             damage_invoicing,
             damage_invoice_http,
             damage_accounts,
@@ -311,7 +311,7 @@ maybe_load_schedules() ->
             ?LOG_INFO("Schedule loading deferred until secrets are unlocked.", []),
             deferred;
         true ->
-            try damage_schedule:load_all_schedules() of
+            try damage_schedule_v2:load_all_schedules() of
                 Result -> Result
             catch
                 Class:Reason:Stacktrace ->
