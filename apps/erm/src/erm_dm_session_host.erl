@@ -37,7 +37,7 @@ handle_cast(_, S) -> {noreply, S}.
 
 handle_info(start_session, S0) ->
     case erm_dm_xorg:start_user_display() of
-        {ok, X = #{port := XPort, display := Display, xauthority := XA}} ->
+        {ok, #{port := XPort, display := Display, xauthority := XA}} ->
             link(XPort),
             case publish_env(Display, XA, maps:get(desktop, S0#state.session)) of
                 ok ->
@@ -97,7 +97,7 @@ snapshot(S) -> #{phase => S#state.phase, display => S#state.display,
                  xorg_alive => is_port(S#state.xorg), wm_alive => is_port(S#state.wm),
                  session => maps:with([id,label,desktop], S#state.session)}.
 close_port(undefined) -> ok;
-close_port(P) when is_port(P) -> catch port_close(P), ok.
+close_port(P) when is_port(P) -> _ = try port_close(P) catch _:_ -> ok end, ok.
 default_session_id() ->
     Config = application:get_env(erm, display_manager, []),
     unicode:characters_to_binary(proplists:get_value(default_session, Config, "herbstluftwm")).

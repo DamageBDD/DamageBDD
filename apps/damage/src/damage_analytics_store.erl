@@ -202,8 +202,8 @@ terminate(_Reason, State) ->
     case maps:get(dets, State, undefined) of
         undefined -> ok;
         Dets ->
-            catch dets:sync(Dets),
-            catch dets:close(Dets),
+            _ = try dets:sync(Dets) catch _:_ -> ok end,
+            _ = try dets:close(Dets) catch _:_ -> ok end,
             ok
     end.
 
@@ -327,7 +327,7 @@ put_derived(_Old, Run) ->
     true = ets:insert(?RUNS_TAB, {ReportCid, Run}),
     case day_key(Run) of
         undefined -> ok;
-        {Account, Day} = Key ->
+        {Account, _Day} = Key ->
             Bucket0 = day_bucket(Key),
             Bucket = bucket_add(Bucket0, Run),
             true = ets:insert(?DAYS_TAB, {Key, Bucket}),
@@ -342,7 +342,7 @@ remove_derived(Old) ->
     ReportCid = maps:get(report_cid, Old, <<>>),
     case day_key(Old) of
         undefined -> ok;
-        {Account, Day} = Key ->
+        {Account, _Day} = Key ->
             Bucket0 = day_bucket(Key),
             Bucket = bucket_remove(Bucket0, Old),
             case maps:get(total, Bucket, 0) =< 0 of

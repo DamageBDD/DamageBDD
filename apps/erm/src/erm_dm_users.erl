@@ -44,7 +44,7 @@ collect_port(Port, Acc, Timeout) ->
         {Port, {exit_status, 0}} -> {ok, Acc};
         {Port, {exit_status, Status}} -> {error, {getent_failed, Status}}
     after Timeout ->
-        catch port_close(Port),
+        _ = try port_close(Port) catch _:_ -> ok end,
         {error, getent_timeout}
     end.
 

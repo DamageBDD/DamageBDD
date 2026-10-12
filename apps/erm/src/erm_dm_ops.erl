@@ -30,7 +30,7 @@ collect(Port, Acc, Timeout) ->
         {Port, {data, D}} -> collect(Port, <<Acc/binary, D/binary>>, Timeout);
         {Port, {exit_status, 0}} -> {ok, trim_output(Acc)};
         {Port, {exit_status, Status}} -> {error, {exit_status, Status, truncate(Acc)}}
-    after Timeout -> catch port_close(Port), {error, timeout}
+    after Timeout -> _ = try port_close(Port) catch _:_ -> ok end, {error, timeout}
     end.
 truncate(B) when byte_size(B) =< 1024 -> B;
 truncate(B) -> binary:part(B, 0, 1024).

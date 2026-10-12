@@ -109,8 +109,8 @@ helper_event(_Unknown, S) -> S.
 
 cancel_helper(S = #state{port = undefined}) -> S#state{phase = idle};
 cancel_helper(S = #state{port = Port}) ->
-    catch port_command(Port, <<"cancel\n">>),
-    catch port_close(Port),
+    _ = try port_command(Port, <<"cancel\n">>) catch _:_ -> false end,
+    _ = try port_close(Port) catch _:_ -> ok end,
     S#state{phase = idle, port = undefined}.
 
 public_status(S) -> #{user => S#state.user, session => S#state.session,

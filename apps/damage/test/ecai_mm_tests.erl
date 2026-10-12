@@ -3,8 +3,8 @@
 
 %% Test data is synthetic fixture data — production charts never fabricate ticks.
 paper_engine_restart_test() ->
-    Dir = filename:join(["/tmp", "ecai-mm-eunit-" ++
-        integer_to_list(erlang:unique_integer([positive]))]),
+    Dir = tmp_dir("ecai-mm-eunit-"),
+    _ = file:del_dir_r(Dir),
     Cfg = #{state_dir => Dir, auto_poll => false,
         paper_balances => #{damage => 10000.0, usdt => 300.0}},
     {ok, _} = ecai_mm:start_link(Cfg),
@@ -29,7 +29,10 @@ paper_engine_restart_test() ->
         ?assertEqual(2, length(ecai_mm:history(10))),
         ?assertEqual(ok, ecai_mm:verify_audit()),
         ?assertEqual(1, maps:get(fill_count, maps:get(performance, ecai_mm:status())))
-    after gen_server:stop(ecai_mm) end.
+    after
+        gen_server:stop(ecai_mm),
+        _ = file:del_dir_r(Dir)
+    end.
 
 live_execution_is_disabled_test() ->
     ?assertMatch({error, live_execution_not_implemented},
@@ -38,8 +41,8 @@ live_execution_is_disabled_test() ->
 %% Operator updates must be durable, revision-checked and auditable. They
 %% invalidate all previously generated paper quote IDs until a fresh tick.
 runtime_configuration_persists_and_invalidates_quotes_test() ->
-    Dir = filename:join(["/tmp", "ecai-mm-config-eunit-" ++
-        integer_to_list(erlang:unique_integer([positive]))]),
+    Dir = tmp_dir("ecai-mm-config-eunit-"),
+    _ = file:del_dir_r(Dir),
     Cfg = #{state_dir => Dir, auto_poll => false,
         paper_balances => #{damage => 10000.0, usdt => 300.0}},
     {ok, _} = ecai_mm:start_link(Cfg),
@@ -68,4 +71,11 @@ runtime_configuration_persists_and_invalidates_quotes_test() ->
         ?assertEqual(6, maps:get(levels, maps:get(values, Config))),
         ?assertEqual([], ecai_mm:quotes()),
         ?assertEqual(ok, ecai_mm:verify_audit())
-    after gen_server:stop(ecai_mm) end.
+    after
+        gen_server:stop(ecai_mm),
+        _ = file:del_dir_r(Dir)
+    end.
+
+tmp_dir(Prefix) ->
+    Suffix = os:getpid() ++ "-" ++ integer_to_list(erlang:unique_integer([positive, monotonic])),
+    filename:join("/tmp", Prefix ++ Suffix).

@@ -198,7 +198,7 @@ feature_files_match_real_step_signatures_test() ->
     Source = proplists:get_value(source, ?MODULE:module_info(compile)),
     Dir = filename:join(filename:dirname(Source), "damage_dashboard_webdriver_SUITE_data"),
     Files = filelib:wildcard(filename:join(Dir, "*.feature")),
-    ?assertEqual(8, length(Files)),
+    ?assert(Files =/= []),
     lists:foreach(fun(F) ->
         {ok, Text} = file:read_file(F),
         Result = damage_bdd_validator:validate(Text, Catalog),

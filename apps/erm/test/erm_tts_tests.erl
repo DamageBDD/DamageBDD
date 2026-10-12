@@ -14,7 +14,12 @@ response_test() ->
     ?assertEqual(
         <<"hello">>, erm_tts:response({ok, #{action => answer, text => <<"hello">>}}, "ask")
     ).
-lifecycle_test_() -> {timeout, 20, fun lifecycle/0}.
+lifecycle_test_() ->
+    case os:getenv("ERM_TTS_TEST_DIR") of
+        false -> [];
+        "" -> [];
+        _ -> {timeout, 20, fun lifecycle/0}
+    end.
 lifecycle() ->
     Root = os:getenv("ERM_TTS_TEST_DIR"),
     application:set_env(erm, whisper_trigger, [{length_ms, 10}, {keep_ms, 10}, {step_ms, 10}]),

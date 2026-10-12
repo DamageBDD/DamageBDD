@@ -18,6 +18,6 @@ erlc -pa "$BUILD" -I "$REPO/apps/erm/src" -o "$BUILD" \
   "$REPO/apps/erm/src/erm_log.erl" "$REPO/apps/erm/src/gtknode4.erl" \
   "$REPO/apps/erm/src/gtknode4_fake.erl" "$REPO/apps/erm/src/gtknode4_sup.erl" \
   "$REPO/apps/erm/src/gtkgs.erl"
-erl -noshell -pa "$BUILD" "$JSX_EBIN" -eval \
+ERM_SHARE_ISOLATED_TEST=1 erl -noshell -pa "$BUILD" "$JSX_EBIN" -eval \
   'case eunit:test(erm_share_tests, [verbose]) of ok -> halt(0); _ -> halt(1) end.'
 python3 "$REPO/apps/erm/test/share_isolated/test_omdrop_hook.py"

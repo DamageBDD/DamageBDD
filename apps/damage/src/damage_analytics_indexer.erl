@@ -567,7 +567,7 @@ mdw_get_json(Path0) ->
             catch
                 Class:Reason -> {error, {Class, Reason}}
             after
-                _ = catch gun:close(ConnPid)
+                _ = try gun:close(ConnPid) catch _:_ -> ok end
             end;
         Other -> {error, Other}
     end.
@@ -643,7 +643,7 @@ account_id(B) when is_binary(B) ->
 account_id(L) when is_list(L) -> account_id(unicode:characters_to_binary(L));
 account_id(_) -> <<>>.
 
-positive_int(V, Default) when is_integer(V), V > 0 -> V;
+positive_int(V, _Default) when is_integer(V), V > 0 -> V;
 positive_int(_, Default) -> Default.
 clamp(V, Min, _Max) when V < Min -> Min;
 clamp(V, _Min, Max) when V > Max -> Max;

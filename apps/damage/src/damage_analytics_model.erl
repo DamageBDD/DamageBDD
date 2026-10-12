@@ -591,14 +591,14 @@ first_text([V | Rest], Prefix) ->
     end;
 first_text([], _Prefix) -> <<>>.
 
-first_positive([V | Rest]) when is_integer(V), V > 0 -> V;
+first_positive([V | _Rest]) when is_integer(V), V > 0 -> V;
 first_positive([_ | Rest]) -> first_positive(Rest);
 first_positive([]) -> 0.
 
 prefer_text(A, B) -> case text(A) of <<>> -> text(B); V -> V end.
 prefer_list([], B) -> B;
 prefer_list(A, _B) -> A.
-prefer_number(A, B) when is_number(A), A > 0 -> integer_value(A);
+prefer_number(A, _B) when is_number(A), A > 0 -> integer_value(A);
 prefer_number(_A, B) -> integer_value(B).
 
 number(V) when is_integer(V); is_float(V) -> V;

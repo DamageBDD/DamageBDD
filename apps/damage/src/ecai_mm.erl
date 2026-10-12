@@ -16,7 +16,10 @@ start_link() ->
         _ -> #{}
     end,
     start_link(Cfg).
-start_link(Cfg) -> gen_server:start_link({local, ?MODULE}, ?MODULE, Cfg, []).
+start_link(#{mode := Mode}) when Mode =/= paper ->
+    {error, live_execution_not_implemented};
+start_link(Cfg) ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, Cfg, []).
 status() -> gen_server:call(?MODULE, status).
 quotes() -> gen_server:call(?MODULE, quotes).
 history(N) -> gen_server:call(?MODULE, {history, N}, 15000).

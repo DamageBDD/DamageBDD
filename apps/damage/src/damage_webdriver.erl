@@ -1,6 +1,7 @@
 %% Isolated W3C WebDriver client for Selenium Grid/ChromeDriver and Appium web.
 %% Profiles are trusted operator configuration, never feature-supplied capabilities.
 -module(damage_webdriver).
+-compile({no_auto_import, [element/2]}).
 -behaviour(gen_server).
 -export([start/1, perform/3, close/1, options/1, capabilities/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,

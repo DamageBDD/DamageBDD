@@ -2,17 +2,22 @@
 -include_lib("eunit/include/eunit.hrl").
 
 share_test_() ->
-    {foreach, fun setup/0, fun cleanup/1, [
-        fun(C) -> ?_test(durable_review(C)) end,
-        fun(C) -> ?_test(kde_events(C)) end,
-        fun(C) -> ?_test(airdrop_events(C)) end,
-        fun(C) -> ?_test(path_boundary(C)) end,
-        fun(C) -> ?_test(quotas(C)) end,
-        fun(C) -> ?_test(ingest_retry(C)) end,
-        fun(C) -> ?_test(tamper(C)) end,
-        fun(C) -> ?_test(unsupported(C)) end,
-        fun(C) -> ?_test(ui_review(C)) end
-    ]}.
+    case os:getenv("ERM_SHARE_ISOLATED_TEST") of
+        "1" ->
+            {foreach, fun setup/0, fun cleanup/1, [
+                fun(C) -> ?_test(durable_review(C)) end,
+                fun(C) -> ?_test(kde_events(C)) end,
+                fun(C) -> ?_test(airdrop_events(C)) end,
+                fun(C) -> ?_test(path_boundary(C)) end,
+                fun(C) -> ?_test(quotas(C)) end,
+                fun(C) -> ?_test(ingest_retry(C)) end,
+                fun(C) -> ?_test(tamper(C)) end,
+                fun(C) -> ?_test(unsupported(C)) end,
+                fun(C) -> ?_test(ui_review(C)) end
+            ]};
+        _ ->
+            []
+    end.
 setup() ->
     {ok, _} = application:ensure_all_started(crypto),
     Root = "/tmp/erm-share-" ++ binary_to_list(erm_share_files:hex(crypto:strong_rand_bytes(8))),

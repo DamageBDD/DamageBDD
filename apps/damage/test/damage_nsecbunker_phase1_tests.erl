@@ -30,13 +30,6 @@ plain_ping_fails_closed_when_backend_missing_test() ->
     Policy = damage_nsecbunker:policy(Config),
     Vault = damage_nsecbunker_vault:init(Config, Policy),
     VaultState = damage_nsecbunker_vault:guard_state(Vault),
-    Request = #{
-        requester_pubkey => <<"client">>,
-        request_id => <<"ping-1">>,
-        method => <<"ping">>,
-        created_at => erlang:system_time(second),
-        params => []
-    },
     ?assertEqual(
         {error, vault_sealed},
         damage_nsecbunker_vault_guard:assert_ready(VaultState, maps:get(bunker_pubkey_hex, Policy))

@@ -172,11 +172,11 @@ aad_context_roundtrip() ->
     WrongAADContext = AADContext#{<<"owner_at_mint">> := <<"ak_wrong">>},
 
     WrongContextResult =
-        catch secrets_pqc:decrypt(?DEFAULT_KEM, Envelope, PrivateKey, WrongAADContext),
+        caught(fun() -> secrets_pqc:decrypt(?DEFAULT_KEM, Envelope, PrivateKey, WrongAADContext) end),
     ?assertNotEqual(Plaintext, WrongContextResult),
 
     MissingContextResult =
-        catch secrets_pqc:decrypt(?DEFAULT_KEM, Envelope, PrivateKey),
+        caught(fun() -> secrets_pqc:decrypt(?DEFAULT_KEM, Envelope, PrivateKey) end),
     ?assertNotEqual(Plaintext, MissingContextResult).
 
 ciphertexts_are_randomized() ->
@@ -207,6 +207,15 @@ missing_exports(Module, Exports) ->
         not erlang:function_exported(Module, Function, Arity)
     ].
 
+caught(Fun) when is_function(Fun, 0) ->
+    try Fun() of
+        Value -> Value
+    catch
+        throw:Reason -> Reason;
+        exit:Reason -> {'EXIT', Reason};
+        error:Reason:Stacktrace -> {'EXIT', {Reason, Stacktrace}}
+    end.
+
 %% ------------------------------------------------------------------
 %% Fake PQC backend
 %% ------------------------------------------------------------------
@@ -235,7 +244,7 @@ encapsulate(Kem, _PublicKey) ->
 decapsulate(?DEFAULT_KEM, KemCiphertext, PrivateKey) when
     is_binary(KemCiphertext), is_binary(PrivateKey)
 ->
-    case catch binary_to_term(PrivateKey) of
+    case caught(fun() -> binary_to_term(PrivateKey) end) of
         {?MODULE, ?DEFAULT_KEM, PublicKey, _Seed} when is_binary(PublicKey) ->
             shared_secret(?DEFAULT_KEM, PublicKey, KemCiphertext);
         _ ->
@@ -299,12 +308,12 @@ envelope_shape_and_authentication() ->
     ?assertEqual(Plaintext, secrets_pqc:decrypt(Envelope, PrivateKey)),
 
     %% Wrong PQC private key must not decrypt.
-    WrongResult = catch secrets_pqc:decrypt(Envelope, WrongPrivateKey),
+    WrongResult = caught(fun() -> secrets_pqc:decrypt(Envelope, WrongPrivateKey) end),
     ?assertNotEqual(Plaintext, WrongResult),
 
     %% Tampered ciphertext must not decrypt.
     TamperedEnvelope = Envelope#{ct := flip_first_byte(Ct)},
-    TamperedResult = catch secrets_pqc:decrypt(TamperedEnvelope, PrivateKey),
+    TamperedResult = caught(fun() -> secrets_pqc:decrypt(TamperedEnvelope, PrivateKey) end),
     ?assertNotEqual(Plaintext, TamperedResult),
 
     ?assertEqual(

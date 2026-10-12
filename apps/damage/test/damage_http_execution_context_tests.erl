@@ -367,7 +367,7 @@ with_raw_mocks(Opts0, TestFun) when is_list(Opts0) ->
         TestFun(Trace)
     after
         lists:foreach(fun unload_mock/1, lists:reverse(Modules)),
-        catch ets:delete(Trace)
+        _ = try ets:delete(Trace) catch _:_ -> ok end
     end.
 
 default_mock_opts() ->
@@ -391,14 +391,14 @@ merge_opts(Defaults, Overrides) ->
 mock_modules(Modules) ->
     lists:foreach(
         fun(Module) ->
-            catch meck:unload(Module),
+            _ = try meck:unload(Module) catch _:_ -> ok end,
             ok = meck:new(Module, [passthrough, non_strict])
         end,
         Modules
     ).
 
 unload_mock(Module) ->
-    catch meck:unload(Module),
+    _ = try meck:unload(Module) catch _:_ -> ok end,
     ok.
 
 install_expectations(Trace, Opts) ->

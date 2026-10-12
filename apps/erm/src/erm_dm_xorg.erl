@@ -25,7 +25,7 @@ start(N, AuthName) ->
                             Port = open_port({spawn_executable, Xorg}, [binary, exit_status, stderr_to_stdout, {args, Args}]),
                             case wait_socket(N, Port, 10000) of
                                 ok -> {ok, #{port => Port, display => list_to_binary(Display), xauthority => list_to_binary(XA)}};
-                                Error -> catch port_close(Port), file:delete(XA), Error
+                                Error -> _ = try port_close(Port) catch _:_ -> ok end, file:delete(XA), Error
                             end;
                         Error -> file:delete(XA), Error
                     end;
@@ -55,7 +55,7 @@ display_number() ->
     Config = application:get_env(erm, display_manager, []),
     proplists:get_value(display_number, Config, 0).
 
-wait_socket(N, Port, Remaining) when Remaining =< 0 -> {error, xorg_start_timeout};
+wait_socket(_N, _Port, Remaining) when Remaining =< 0 -> {error, xorg_start_timeout};
 wait_socket(N, Port, Remaining) ->
     receive
         {Port, {exit_status, Status}} -> {error, {xorg_exit, Status}};
@@ -69,5 +69,5 @@ wait_socket(N, Port, Remaining) ->
     end.
 
 run(Exec, Args, Timeout) -> collect(open_port({spawn_executable, Exec}, [binary, exit_status, stderr_to_stdout, {args, Args}]), <<>>, Timeout).
-collect(P, A, T) -> receive {P,{data,D}} -> collect(P,<<A/binary,D/binary>>,T); {P,{exit_status,0}} -> {ok,A}; {P,{exit_status,S}} -> {error,{exit_status,S}} after T -> catch port_close(P), {error,timeout} end.
+collect(P, A, T) -> receive {P,{data,D}} -> collect(P,<<A/binary,D/binary>>,T); {P,{exit_status,0}} -> {ok,A}; {P,{exit_status,S}} -> {error,{exit_status,S}} after T -> _ = try port_close(P) catch _:_ -> ok end, {error,timeout} end.
 hex_cookie(Bin) -> lists:flatten([io_lib:format("~2.16.0b", [B]) || <<B>> <= Bin]).

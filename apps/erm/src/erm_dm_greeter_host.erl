@@ -31,7 +31,8 @@ handle_info(start_gtk,S) ->
     erlang:send_after(250,self(),show_ui),
     {noreply,S};
 handle_info(show_ui,S) ->
-    case catch erm_dm_ui:show() of
+    Result = try erm_dm_ui:show() catch _:_ -> error end,
+    case Result of
         ok -> {noreply,S#state{phase=running}};
         _ -> erlang:send_after(500,self(),show_ui), {noreply,S}
     end;
@@ -39,7 +40,7 @@ handle_info({P,{exit_status,Status}},S=#state{xorg=P}) -> {stop,{xorg_exit,Statu
 handle_info({'EXIT',P,Reason},S=#state{xorg=P}) -> {stop,{xorg_exit,Reason},S};
 handle_info(_,S) -> {noreply,S}.
 terminate(_,S) ->
-    case S#state.xorg of undefined->ok; P when is_port(P)->catch port_close(P) end,
+    case S#state.xorg of undefined->ok; P when is_port(P)->try port_close(P) catch _:_ -> ok end end,
     case S#state.xauthority of undefined->ok; XA->file:delete(binary_to_list(XA)) end,
     ok.
 code_change(_,S,_) -> {ok,S}.

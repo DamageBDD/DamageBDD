@@ -36,7 +36,7 @@ init_per_suite(Cfg) ->
 
 end_per_suite(Cfg) ->
     Ctx = ?config(ctx, Cfg),
-    catch cdp_client:stop(maps:get(cdp_pid, Ctx)),
+    _ = try cdp_client:stop(maps:get(cdp_pid, Ctx)) catch _:_ -> ok end,
     stop_chrome(maps:get(chrome_port, Ctx)),
     ok.
 
@@ -106,7 +106,7 @@ start_chrome(Bin, UserDataDir) ->
     {DevToolsPort, Port}.
 
 stop_chrome(Port) ->
-    catch port_close(Port),
+    _ = try port_close(Port) catch _:_ -> ok end,
     ok.
 
 %% ---- read "DevTools listening on ws://127.0.0.1:<port>/..." from Chrome output

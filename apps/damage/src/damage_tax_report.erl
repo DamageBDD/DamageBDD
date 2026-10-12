@@ -328,10 +328,13 @@ to_csv(#{<<"manifest">> := #{<<"entries">> := Entries} = Manifest}) ->
             <<"cgt_raw_gain_loss_minor_units">>, <<"cost_base_minor_units">>,
             <<"acquired_at">>, <<"cost_basis_reference">>, <<"reviewer">>,
             <<"price_provider">>, <<"price_body_sha256">>, <<"review_reasons">>],
-    Header = [<<"jurisdiction">>, <<"fiat_currency">> | Keys],
+    Header = [<<"jurisdiction">>, <<"fiat_currency">> | [csv_header(K) || K <- Keys]],
     Rows = [[Region, Currency | [csv_value(K, maps:get(K, E, null)) || K <- Keys]]
             || E <- Entries],
     iolist_to_binary([csv_row(Header) | [csv_row(Row) || Row <- Rows]]).
+
+csv_header(<<"id">>) -> <<"event_id">>;
+csv_header(Key) -> Key.
 
 csv_value(<<"review_reasons">>, Values) when is_list(Values) ->
     iolist_to_binary(lists:join(<<";">>, Values));
