@@ -203,8 +203,6 @@ render_component(signup_modal, Ctx) ->
     render_tpl(?TPL("signup_modal.mustache"), Ctx);
 render_component(logout_modal, Ctx) ->
     render_tpl(?TPL("logout_modal.mustache"), Ctx);
-render_component(schedule_modal, _Ctx) ->
-    <<>>;
 render_component(node_public_key_modal, Ctx) ->
     render_tpl(?TPL("node_public_key_modal.mustache"), Ctx);
 render_component(install_modal, Ctx) ->

@@ -134,7 +134,7 @@ async function loadSchedules() {
     const schedules = response.data || [];
     host.querySelector("#sv2-count").textContent = `${schedules.length} schedule${schedules.length === 1 ? "" : "s"}`;
     if (!schedules.length) {
-      list.innerHTML = `<div class="sv2-empty"><strong>No scheduled verification yet.</strong><span>Legacy schedules are intentionally not imported. Create a new budgeted schedule.</span><button type="button" class="sv2-primary" id="sv2-empty-create">Create schedule</button></div>`;
+      list.innerHTML = `<div class="sv2-empty"><strong>No scheduled verification yet.</strong><span>Create a budgeted schedule to run verification automatically.</span><button type="button" class="sv2-primary" id="sv2-empty-create">Create schedule</button></div>`;
       list.querySelector("#sv2-empty-create")?.addEventListener("click", openCreateModal);
       return;
     }

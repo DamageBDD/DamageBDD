@@ -13,7 +13,7 @@
 
 -include_lib("kernel/include/logger.hrl").
 
--define(TRAILS_TAG, ["Schedules V2"]).
+-define(TRAILS_TAG, ["Schedules"]).
 
 trails() ->
     [

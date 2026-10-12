@@ -1,6 +1,6 @@
-/* Schedule V2 dashboard workspace.
- * Keep this file scoped to #schedules-tab so none of the legacy scheduler
- * rules in main.css can leak into other dashboard views. */
+/* Scheduled verification dashboard workspace.
+ * Keep this file scoped to #schedules-tab so its controls remain isolated
+ * from global application styles. */
 .damage-dashboard #schedules-tab {
   background: transparent;
   border: 0;
@@ -393,7 +393,7 @@
 .damage-dashboard #schedules-tab .sv2-empty.error { color: #ffc2c8; border-color: #75454c; }
 .damage-dashboard #schedules-tab .sv2-empty .sv2-primary { margin-top: 8px; }
 
-/* V2 owns its own dialog; the old MicroModal scheduler is no longer rendered. */
+/* Scheduling uses its own accessible dialog within the dashboard workspace. */
 .damage-dashboard #schedules-tab .sv2-modal { position: fixed; inset: 0; z-index: 5000; }
 .damage-dashboard #schedules-tab .sv2-modal[hidden] { display: none !important; }
 .damage-dashboard #schedules-tab .sv2-modal-backdrop {

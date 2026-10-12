@@ -73,7 +73,7 @@
 .damage-dashboard .dashboard-panel:focus, .damage-dashboard .dashboard-main:focus { outline: none; }
 /* First-class dashboard panels, not legacy tab cards.
  * Override main.css's high-specificity purple frames for history, analytics
- * and the Schedule V2 workspace. */
+ * and the schedules workspace. */
 .damage-dashboard #activity-tab,
 .damage-dashboard #analytics-tab,
 .damage-dashboard #schedules-tab {
