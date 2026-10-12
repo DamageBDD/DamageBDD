@@ -28,6 +28,18 @@ trails() ->
             }
         ),
         trails:trail(
+            "/api/node_admin/aeternity/transactions",
+            damage_node_admin_http,
+            #{action => aeternity_transactions},
+            #{
+                get => #{
+                    tags => ?TRAILS_TAG,
+                    description => "Recent Aeternity transactions for the DamageBDD node account.",
+                    produces => ["application/json"]
+                }
+            }
+        ),
+        trails:trail(
             "/api/node_admin/channels",
             damage_node_admin_http,
             #{action => channels},
@@ -135,6 +147,7 @@ allowed_methods(Req, State = #{action := Action}) ->
     Methods =
         case Action of
             transactions -> [<<"GET">>];
+            aeternity_transactions -> [<<"GET">>];
             channels -> [<<"GET">>];
             best_peers -> [<<"GET">>];
             invoices_recent -> [<<"GET">>];
@@ -177,7 +190,7 @@ is_authorized(Req, State) ->
 
 to_json(Req, #{action := transactions} = State) ->
     #{limit := LimitBin} = cowboy_req:match_qs([{limit, [], <<"50">>}], Req),
-    Limit =
+    Limit0 =
         case LimitBin of
             B when is_binary(B) ->
                 try
@@ -190,6 +203,7 @@ to_json(Req, #{action := transactions} = State) ->
             _ ->
                 50
         end,
+    Limit = erlang:min(limit(Limit0), 100),
 
     Funds0 = cln_map_or(
         fun damage_cln:list_funds/0,
@@ -240,6 +254,11 @@ to_json(Req, #{action := transactions} = State) ->
             }
         },
     {jsx:encode(Body), Req, State};
+to_json(Req, #{action := aeternity_transactions} = State) ->
+    {Limit0, Req1} = qs_int(Req, <<"limit">>, 50),
+    Limit = erlang:min(limit(Limit0), 100),
+    Body = aeternity_transactions(Limit),
+    safe_json(Req1, State, Body);
 to_json(Req, #{action := channels} = State) ->
     Channels0 = cln_list_or(fun damage_cln:list_channels/0, list_channels),
     SortedChannels = damage_cln:sort_peerchannels_desc(Channels0),
@@ -391,6 +410,135 @@ from_json(Req, #{action := open_best_channels} = State) ->
     Data = jsx:decode(Raw, [return_maps, {labels, atom}]),
     Reply = cln_json_result(damage_cln:open_channels_with_best_peers(Data)),
     reply_json(Req1, State, #{ok => true, result => Reply}).
+
+aeternity_transactions(Limit) ->
+    case node_ae_account() of
+        {ok, AeAccount} ->
+            case fetch_aeternity_account_activity(AeAccount, Limit) of
+                {ok, Rows} ->
+                    #{
+                        ok => true,
+                        account => AeAccount,
+                        transactions => Rows,
+                        count => length(Rows),
+                        source => <<"aemdw">>
+                    };
+                {error, Reason} ->
+                    ?LOG_WARNING(
+                        "node_admin Aeternity activity unavailable account=~p reason=~p",
+                        [AeAccount, Reason]
+                    ),
+                    #{
+                        ok => false,
+                        account => AeAccount,
+                        transactions => [],
+                        count => 0,
+                        source => <<"aemdw">>,
+                        error => normalize_error(Reason)
+                    }
+            end;
+        {error, Reason} ->
+            ?LOG_WARNING("node_admin Aeternity node account unavailable reason=~p", [Reason]),
+            #{
+                ok => false,
+                account => <<>>,
+                transactions => [],
+                count => 0,
+                source => <<"aemdw">>,
+                error => normalize_error(Reason)
+            }
+    end.
+
+node_ae_account() ->
+    try secrets:node_keypair() of
+        #{public_key := AeAccount} when is_binary(AeAccount) ->
+            {ok, AeAccount};
+        #{public_key := AeAccount} when is_list(AeAccount) ->
+            {ok, unicode:characters_to_binary(AeAccount)};
+        Other ->
+            {error, {invalid_node_keypair, Other}}
+    catch
+        Class:Reason ->
+            {error, {node_keypair_unavailable, Class, Reason}}
+    end.
+
+fetch_aeternity_account_activity(AeAccount, Limit) ->
+    try damage_ae:get_ae_mdw_node() of
+        {ok, ConnPid, PathPrefix0} ->
+            PathPrefix = to_binary(PathPrefix0),
+            Query = uri_string:compose_query([
+                {"owned_only", "false"},
+                {"type", "transactions"},
+                {"direction", "backward"},
+                {"limit", integer_to_list(Limit)}
+            ]),
+            Path = iolist_to_binary([
+                PathPrefix,
+                "v3/accounts/",
+                AeAccount,
+                "/activities?",
+                Query
+            ]),
+            try
+                StreamRef = gun:get(
+                    ConnPid,
+                    Path,
+                    [{<<"accept">>, <<"application/json">>}]
+                ),
+                await_aeternity_activity(ConnPid, StreamRef)
+            after
+                catch gun:close(ConnPid)
+            end;
+        Error ->
+            {error, {middleware_unavailable, Error}}
+    catch
+        Class:Reason ->
+            {error, {middleware_failed, Class, Reason}}
+    end.
+
+await_aeternity_activity(ConnPid, StreamRef) ->
+    case gun:await(ConnPid, StreamRef, 15000) of
+        {response, fin, Status, _Headers} when Status >= 200, Status < 300 ->
+            {ok, []};
+        {response, nofin, Status, _Headers} when Status >= 200, Status < 300 ->
+            case gun:await_body(ConnPid, StreamRef, 15000) of
+                {ok, Body} -> decode_aeternity_activity(Body);
+                Error -> {error, {middleware_body, Error}}
+            end;
+        {response, nofin, Status, _Headers} ->
+            case gun:await_body(ConnPid, StreamRef, 15000) of
+                {ok, Body} -> {error, {middleware_status, Status, Body}};
+                Error -> {error, {middleware_status, Status, Error}}
+            end;
+        {response, fin, Status, _Headers} ->
+            {error, {middleware_status, Status}};
+        {error, Reason} ->
+            {error, {middleware_request, Reason}};
+        Other ->
+            {error, {middleware_response, Other}}
+    end.
+
+decode_aeternity_activity(Body) ->
+    try jsx:decode(Body, [return_maps]) of
+        #{<<"data">> := Rows} when is_list(Rows) ->
+            {ok, Rows};
+        #{data := Rows} when is_list(Rows) ->
+            {ok, Rows};
+        #{<<"data">> := null} ->
+            {ok, []};
+        #{data := null} ->
+            {ok, []};
+        Other ->
+            {error, {invalid_middleware_response, Other}}
+    catch
+        Class:Reason ->
+            {error, {invalid_middleware_json, Class, Reason}}
+    end.
+
+to_binary(V) when is_binary(V) -> V;
+to_binary(V) when is_list(V) -> unicode:characters_to_binary(V);
+to_binary(V) when is_atom(V) -> atom_to_binary(V, utf8);
+to_binary(V) -> iolist_to_binary(io_lib:format("~p", [V])).
 
 cln_map_or(Fun, Default, Operation) ->
     case Fun() of

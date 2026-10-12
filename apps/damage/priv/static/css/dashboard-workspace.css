@@ -421,7 +421,9 @@
 .damage-dashboard .workspace-table tr:last-child td { border-bottom: 0; }
 .damage-dashboard .workspace-table code { font-size: 11px; }
 
-/* Admin/data panels share the same visual vocabulary. */
+/* Admin/data panels share the dashboard visual vocabulary. Legacy global
+ * .admin-* rules were removed from main.css; these styles are intentionally
+ * scoped so the dashboard owns its own presentation. */
 .damage-dashboard .admin-tab {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -443,7 +445,7 @@
   gap: 10px;
   margin-bottom: 12px;
 }
-.damage-dashboard .admin-card-header h3 { margin: 0; }
+.damage-dashboard .admin-card-header :is(h2, h3) { margin: 0; }
 .damage-dashboard .admin-card label {
   display: block;
   margin: 10px 0 5px;
@@ -463,12 +465,71 @@
   box-shadow: none;
 }
 .damage-dashboard .admin-card > .workspace-actions { margin-top: 12px; }
-.damage-dashboard .admin-data { color: var(--ws-text); }
-.damage-dashboard .admin-table-wrap { border: 1px solid var(--ws-line); border-radius: 8px; background: var(--ws-input); }
-.damage-dashboard .admin-table { table-layout: auto; color: var(--ws-text); font-size: 12px; }
+.damage-dashboard .admin-data { width: 100%; min-width: 0; color: var(--ws-text); }
+.damage-dashboard .admin-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid var(--ws-line);
+  border-radius: 10px;
+  background: var(--ws-input);
+}
+.damage-dashboard .admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+  color: var(--ws-text);
+  font-size: 12px;
+}
 .damage-dashboard .admin-table th,
-.damage-dashboard .admin-table td { border-bottom-color: var(--ws-line); }
-.damage-dashboard .admin-table th { position: static; background: #172230; color: #9fb1c7; }
+.damage-dashboard .admin-table td {
+  padding: 11px 13px;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--ws-line);
+}
+.damage-dashboard .admin-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #111a27;
+  color: #9fb1c7;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .65px;
+  text-transform: uppercase;
+}
+.damage-dashboard .admin-table tbody tr:last-child td { border-bottom: 0; }
+.damage-dashboard .admin-table tbody tr:hover { background: rgba(193, 215, 245, .035); }
+.damage-dashboard .admin-section-block { margin: 0 0 24px; }
+.damage-dashboard .admin-section-block:last-child { margin-bottom: 0; }
+.damage-dashboard .admin-empty,
+.damage-dashboard .admin-loading,
+.damage-dashboard .admin-kv {
+  padding: 14px;
+  border: 1px solid var(--ws-line);
+  border-radius: 9px;
+  background: var(--ws-input);
+  color: var(--ws-muted);
+}
+.damage-dashboard .admin-loading { animation: admin-loading-pulse 1.6s ease-in-out infinite; }
+@keyframes admin-loading-pulse { 50% { opacity: .62; } }
+.damage-dashboard .admin-kv {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px 16px;
+  margin-bottom: 12px;
+  color: var(--ws-text);
+}
+.damage-dashboard .admin-details { margin-top: 14px; }
+.damage-dashboard .admin-details summary {
+  cursor: pointer;
+  width: max-content;
+  max-width: 100%;
+  color: #b8cbe4;
+  font-size: 11px;
+  font-weight: 600;
+}
 .damage-dashboard .admin-pre {
   max-height: 360px;
   overflow: auto;
@@ -482,12 +543,353 @@
   overflow-wrap: anywhere;
   font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
-.damage-dashboard .admin-empty,
-.damage-dashboard .admin-loading,
-.damage-dashboard .admin-kv { border-color: var(--ws-line); background: var(--ws-input); }
-.damage-dashboard .admin-details summary { color: #c1d7f5; }
-.damage-dashboard .admin-code { background: #1a2635; color: #dce7f5; }
-.damage-dashboard .admin-copy-btn { min-height: 28px; }
+.damage-dashboard .admin-copy-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+.damage-dashboard .admin-code {
+  display: inline-block;
+  max-width: 220px;
+  overflow: hidden;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: #1a2635;
+  color: #dce7f5;
+  font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.damage-dashboard .admin-copy-btn {
+  min-height: 26px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  font-size: 10px;
+  line-height: 1;
+}
+.damage-dashboard .admin-amount {
+  cursor: help;
+  border-bottom: 1px dotted #657890;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Transactions workspace --------------------------------------------------- */
+.damage-dashboard .transactions-workspace { display: grid; gap: 18px; min-width: 0; }
+.damage-dashboard .transactions-heading { margin-bottom: 0; }
+.damage-dashboard .transactions-heading-actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.damage-dashboard .transactions-limit {
+  display: grid;
+  gap: 5px;
+  color: var(--ws-muted);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .45px;
+  text-transform: uppercase;
+}
+.damage-dashboard .transactions-limit select {
+  min-width: 92px;
+  min-height: 36px;
+  padding: 7px 30px 7px 9px;
+  border: 1px solid var(--ws-line);
+  border-radius: 7px;
+  background: var(--ws-input);
+  color: var(--ws-text);
+  box-shadow: none;
+}
+.damage-dashboard .transactions-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.damage-dashboard .transaction-stat {
+  min-width: 0;
+  padding: 15px 16px;
+  border: 1px solid var(--ws-line);
+  border-radius: 11px;
+  background: #111a27;
+}
+.damage-dashboard .transaction-stat[data-tone="good"] { border-color: #3f5945; }
+.damage-dashboard .transaction-stat[data-tone="warn"] { border-color: #675d39; }
+.damage-dashboard .transaction-stat[data-tone="bad"] { border-color: #68424a; }
+.damage-dashboard .transaction-stat-label {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--ws-muted);
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+.damage-dashboard .transaction-stat strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ws-text);
+  font-size: 19px;
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.damage-dashboard .transaction-stat strong span { color: var(--ws-muted); font-size: 11px; font-weight: 550; }
+.damage-dashboard .transaction-stat small {
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--ws-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.damage-dashboard .transactions-surface { min-width: 0; overflow: hidden; }
+.damage-dashboard .transactions-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  min-width: 0;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--ws-line);
+  background: #101824;
+}
+.damage-dashboard .transactions-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 17px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--ws-muted);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.damage-dashboard .transactions-tab:hover { background: #162131; color: var(--ws-text); }
+.damage-dashboard .transactions-tab.is-active {
+  border-bottom-color: var(--ws-accent);
+  background: #151f2d;
+  color: var(--ws-text);
+}
+.damage-dashboard .transactions-tab-mark {
+  display: inline-grid;
+  width: 23px;
+  height: 23px;
+  place-items: center;
+  border: 1px solid #34445a;
+  border-radius: 7px;
+  color: #cbd8e8;
+  font: 650 12px/1 ui-monospace, monospace;
+}
+.damage-dashboard .transactions-tab.is-active .transactions-tab-mark {
+  border-color: #53684b;
+  background: #223124;
+  color: var(--ws-accent);
+}
+.damage-dashboard .transactions-updated {
+  align-self: center;
+  margin-left: auto;
+  padding: 0 16px;
+  color: #7f91a8;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.damage-dashboard .transactions-panels { min-width: 0; }
+.damage-dashboard .transactions-panel { min-width: 0; padding: 22px; }
+.damage-dashboard .transactions-panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 20px;
+}
+.damage-dashboard .transactions-panel-heading h2 { margin: 2px 0 4px; }
+.damage-dashboard .transactions-panel-heading p:not(.transactions-kicker) {
+  max-width: 760px;
+  margin: 0;
+  color: var(--ws-muted);
+  font-size: 11px;
+}
+.damage-dashboard .transactions-kicker {
+  margin: 0;
+  color: #8193aa;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 1.2px;
+}
+.damage-dashboard .transaction-section-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 9px;
+}
+.damage-dashboard .transaction-section-heading h3 { margin: 0 0 2px; font-size: 13px; }
+.damage-dashboard .transaction-section-heading p {
+  margin: 0;
+  color: var(--ws-muted);
+  font-size: 10px;
+}
+.damage-dashboard .transactions-workspace .transaction-table { min-width: 760px; }
+.damage-dashboard .transactions-workspace .transaction-table th,
+.damage-dashboard .transactions-workspace .transaction-table td { white-space: nowrap; }
+.damage-dashboard .transactions-workspace .transaction-table td { min-width: 90px; }
+.damage-dashboard .transactions-workspace .transaction-table td:first-child { min-width: 180px; }
+.damage-dashboard .transaction-number { text-align: right !important; font-variant-numeric: tabular-nums; }
+.damage-dashboard .transaction-cell-stack {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.damage-dashboard .transaction-cell-stack.is-numeric { justify-items: end; }
+.damage-dashboard .transaction-cell-primary { min-width: 0; color: var(--ws-text); }
+.damage-dashboard .transaction-cell-secondary {
+  min-width: 0;
+  max-width: 340px;
+  overflow: hidden;
+  color: #8496ad;
+  font-size: 9px;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+}
+.damage-dashboard .transaction-cell-secondary .admin-copy-cell { vertical-align: middle; }
+.damage-dashboard .transaction-muted { color: #73859c; font-size: .92em; }
+.damage-dashboard .transaction-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 2px 8px;
+  border: 1px solid #3a4a5e;
+  border-radius: 999px;
+  background: #182332;
+  color: #b9c7d8;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .3px;
+  white-space: nowrap;
+}
+.damage-dashboard .transaction-badge[data-tone="good"] { border-color: #476248; background: #1b2c21; color: #c5e1b5; }
+.damage-dashboard .transaction-badge[data-tone="warn"] { border-color: #6a5d37; background: #2b281b; color: #e1d29b; }
+.damage-dashboard .transaction-badge[data-tone="bad"] { border-color: #70464e; background: #2d2025; color: #efb9c0; }
+.damage-dashboard .transaction-context {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--ws-line);
+  border-radius: 9px;
+  background: #101824;
+}
+.damage-dashboard .transaction-context > span:first-child {
+  color: var(--ws-muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .65px;
+  text-transform: uppercase;
+}
+.damage-dashboard .transaction-context small { margin-left: auto; color: var(--ws-muted); font-size: 10px; }
+.damage-dashboard .transaction-callout {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: 14px;
+  padding: 11px 12px;
+  border: 1px solid #675d39;
+  border-radius: 9px;
+  background: #2b281b;
+  color: #e6dba8;
+  font-size: 11px;
+}
+.damage-dashboard .transaction-callout span { color: #baae7b; overflow-wrap: anywhere; }
+.damage-dashboard .transaction-callout[data-tone="bad"] { border-color: #70464e; background: #2d2025; color: #efb9c0; }
+.damage-dashboard .transaction-callout[data-tone="bad"] span { color: #c9929a; }
+.damage-dashboard .transaction-subdetails {
+  margin: 0 0 20px;
+  border: 1px solid var(--ws-line);
+  border-radius: 9px;
+  background: #101824;
+}
+.damage-dashboard .transaction-subdetails > summary {
+  cursor: pointer;
+  padding: 12px 14px;
+  color: #c5d3e4;
+  font-size: 11px;
+  font-weight: 650;
+}
+.damage-dashboard .transaction-subdetails > summary span {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #1d2a3b;
+  color: var(--ws-muted);
+  font-size: 9px;
+}
+.damage-dashboard .transaction-subdetails[open] > summary { border-bottom: 1px solid var(--ws-line); }
+.damage-dashboard .transaction-subdetails .admin-table-wrap { margin: 0 12px 12px; width: calc(100% - 24px); }
+.damage-dashboard .transaction-subdetails-copy { margin: 10px 13px; color: var(--ws-muted); font-size: 10px; }
+
+@media (max-width: 760px) {
+  .damage-dashboard .transactions-heading { align-items: flex-start; flex-direction: column; }
+  .damage-dashboard .transactions-heading-actions { width: 100%; }
+  .damage-dashboard .transactions-limit { flex: 1; }
+  .damage-dashboard .transactions-limit select { width: 100%; }
+  .damage-dashboard .transactions-summary { grid-template-columns: minmax(0, 1fr); }
+  .damage-dashboard .transactions-updated { display: none; }
+  .damage-dashboard .transactions-panel { padding: 16px; }
+  .damage-dashboard .transactions-panel-heading { align-items: flex-start; flex-direction: column; }
+  .damage-dashboard .transactions-panel-heading .workspace-button { align-self: flex-start; }
+  .damage-dashboard .transaction-context small { width: 100%; margin-left: 0; }
+}
+
+@media (max-width: 620px) {
+  .damage-dashboard .transactions-workspace .admin-table-wrap { overflow: visible; border: 0; background: transparent; }
+  .damage-dashboard .transactions-workspace .transaction-table,
+  .damage-dashboard .transactions-workspace .transaction-table tbody,
+  .damage-dashboard .transactions-workspace .transaction-table tr,
+  .damage-dashboard .transactions-workspace .transaction-table td { display: block; width: 100%; min-width: 0; }
+  .damage-dashboard .transactions-workspace .transaction-table { min-width: 0; }
+  .damage-dashboard .transactions-workspace .transaction-table thead { display: none; }
+  .damage-dashboard .transactions-workspace .transaction-table tr {
+    margin-bottom: 10px;
+    overflow: hidden;
+    border: 1px solid var(--ws-line);
+    border-radius: 9px;
+    background: var(--ws-input);
+  }
+  .damage-dashboard .transactions-workspace .transaction-table tr:last-child { margin-bottom: 0; }
+  .damage-dashboard .transactions-workspace .transaction-table td {
+    display: grid;
+    grid-template-columns: minmax(78px, 95px) minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+    padding: 9px 11px;
+    border-bottom: 1px solid var(--ws-line);
+    text-align: left !important;
+    white-space: normal;
+  }
+  .damage-dashboard .transactions-workspace .transaction-table td::before {
+    content: attr(data-label);
+    color: #7f91a8;
+    font-size: 8px;
+    font-weight: 750;
+    letter-spacing: .6px;
+    text-transform: uppercase;
+  }
+  .damage-dashboard .transactions-workspace .transaction-table td:last-child { border-bottom: 0; }
+  .damage-dashboard .transaction-cell-stack.is-numeric { justify-items: start; }
+  .damage-dashboard .transactions-workspace .admin-code { max-width: min(48vw, 220px); }
+}
 
 @container dashboard (max-width: 760px) {
   .damage-dashboard .workspace-grid,
