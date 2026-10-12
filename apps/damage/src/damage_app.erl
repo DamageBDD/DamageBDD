@@ -60,6 +60,7 @@ get_trails() ->
             damage_tests,
             damage_analytics,
             damage_reports,
+            damage_run_history_http,
             damage_ai,
             damage_bdd_http,
             lnaddress,

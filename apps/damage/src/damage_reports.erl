@@ -178,6 +178,10 @@ reply_plain_text(Req, Txt) ->
         Req
     ).
 
+%% run.meta is at the published report CID *root*, not in its reports/
+%% subdirectory. Keep this public, immutable evidence available same-origin.
+route_report_file(Hash, Req, State, <<"run.meta">>) ->
+    reply_run_meta(Hash, Req, State);
 route_report_file(Hash, Req, State, PathBin) ->
     PathList = binary_to_list(PathBin),
     FullPath = full_reports_path(PathList),
@@ -196,6 +200,30 @@ route_report_file(Hash, Req, State, PathBin) ->
             Data0 = cat(Hash, FullPath),
             Data = ecai_log_decode:expand(Hash, FullPath, Data0),
             {Data, Req, State}
+    end.
+
+safe_run_meta(Hash) ->
+    try
+        case damage_ipfs:cat(filename:join([Hash, <<"run.meta">>])) of
+            {ok, Data} when is_binary(Data), byte_size(Data) =< 131072 ->
+                {ok, Data};
+            _ ->
+                {error, not_found}
+        end
+    catch
+        _:_ -> {error, not_found}
+    end.
+
+reply_run_meta(Hash, Req, State) ->
+    case safe_run_meta(Hash) of
+        {ok, Data} ->
+            {stop, cowboy_req:reply(200,
+                #{<<"content-type">> => <<"application/json; charset=utf-8">>,
+                  <<"cache-control">> => <<"public, max-age=300">>,
+                  <<"x-content-type-options">> => <<"nosniff">>},
+                Data, Req), State};
+        {error, _} ->
+            {stop, cowboy_req:reply(404, Req), State}
     end.
 
 %% ================= Controller =================
@@ -258,7 +286,10 @@ to_json(Req, #{public_key := AeAccount} = State) ->
         end,
     {jsx:encode(Reports), Req, State};
 to_json(Req, #{hash := Hash0} = State) ->
-    {jsx:encode(get_reports(Req, Hash0)), Req, State}.
+    case cowboy_req:binding(path, Req) of
+        <<"run.meta">> -> reply_run_meta(Hash0, Req, State);
+        _ -> {jsx:encode(get_reports(Req, Hash0)), Req, State}
+    end.
 
 get_reports(Req, Hash) ->
     case cowboy_req:binding(path, Req) of

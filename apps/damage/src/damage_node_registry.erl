@@ -37,6 +37,7 @@
 -export([
     start_link/0,
     set_contract/1,
+    contract_id/0,
     clear_cache/0,
     clear_cache/1,
 
@@ -100,6 +101,10 @@ start_link() ->
 
 set_contract(ContractId) when is_binary(ContractId); is_list(ContractId) ->
     gen_server:call(?MODULE, {set_contract, ContractId}).
+
+%% Public contract identifier for read-only middleware indexing.
+contract_id() ->
+    gen_server:call(?MODULE, get_contract_id).
 
 clear_cache() ->
     gen_server:call(?MODULE, clear_cache).
@@ -293,6 +298,8 @@ init([]) ->
     Tab = ets:new(?ETS_TABLE, [named_table, set, private]),
     {ok, #state{ets_table = Tab, contract_id = ?NODE_REGISTRY_CONTRACT}}.
 
+handle_call(get_contract_id, _From, #state{contract_id = ContractId} = State) ->
+    {reply, ContractId, State};
 handle_call({set_contract, ContractId0}, _From, State) ->
     ContractId = to_bin(ContractId0),
     erlang:put(node_registry_contract_id, ContractId),
