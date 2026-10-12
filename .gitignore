@@ -267,3 +267,5 @@ packaging/ubuntu/*/deb/
 /index.html
 /jquery-latest.js
 /jquery.tablesorter.min.js
+
+*.env
