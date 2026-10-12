@@ -6,7 +6,7 @@ Enabled = case os:getenv("ERM_NATIVE_VOICE") of
     "0" -> false;
     Other -> error({invalid_environment, "ERM_NATIVE_VOICE", Other})
 end,
-case os:type() =:= {unix, linux} andalso Enabled of
+VoiceConfig = case os:type() =:= {unix, linux} andalso Enabled of
     false -> CONFIG;
     true ->
         Additions = [
@@ -18,4 +18,24 @@ case os:type() =:= {unix, linux} andalso Enabled of
             Existing = proplists:get_value(Key, Acc, []),
             lists:keystore(Key, 1, Acc, {Key, Existing ++ Values})
         end, CONFIG, Additions)
+end,
+%% Sharing is opt-in and does not add GIO build dependencies to headless nodes.
+ShareBridge = case os:getenv("ERM_SHARE_BRIDGE") of
+    false -> false;
+    "0" -> false;
+    "1" -> true;
+    InvalidShare -> error({invalid_environment, "ERM_SHARE_BRIDGE", InvalidShare})
+end,
+case os:type() =:= {unix, linux} andalso ShareBridge of
+    false -> VoiceConfig;
+    true ->
+        ShareAdditions = [
+            {pre_hooks, [{compile, "make -C c_src/share"}]},
+            {post_hooks, [{clean, "make -C c_src/share clean"}]},
+            {artifacts, ["priv/erm_kdeconnect_share"]}
+        ],
+        lists:foldl(fun({Key, Values}, Acc) ->
+            Existing = proplists:get_value(Key, Acc, []),
+            lists:keystore(Key, 1, Acc, {Key, Existing ++ Values})
+        end, VoiceConfig, ShareAdditions)
 end.

@@ -72,11 +72,13 @@ code_change(_OldVsn, S, _Extra) ->
 reconcile(S0, Trigger) ->
     Gtk = safe_sync(gtknode4, fun erm_sup:sync_gtknode4/0),
     Lens = safe_sync(lens, fun erm_sup:sync_lens/0),
-    Results = #{gtknode4 => Gtk, lens => Lens},
+    Share = safe_sync(share, fun erm_share:sync/0),
+    Results = #{gtknode4 => Gtk, lens => Lens, share => Share},
     Previous = maps:get(last, S0, #{}),
     log_changes(Results, Previous, Trigger),
 
-    NeedsRetry = needs_retry(gtknode4, Gtk) orelse needs_retry(lens, Lens),
+    NeedsRetry = needs_retry(gtknode4, Gtk) orelse needs_retry(lens, Lens) orelse
+        needs_retry(share, Share),
     Retry0 = maps:get(retry_ms, S0, ?RETRY_MIN_MS),
     {Timer, Retry1} =
         case NeedsRetry of
@@ -108,8 +110,13 @@ safe_sync(Name, Fun) ->
 needs_retry(gtknode4, Result) ->
     configured(gtknode4) andalso not successful(Result);
 needs_retry(lens, Result) ->
-    configured(lens) andalso not successful(Result).
+    configured(lens) andalso not successful(Result);
+needs_retry(share, Result) ->
+    configured(share) andalso not successful(Result).
 
+configured(share) ->
+    C = options_map(application:get_env(erm, share, #{})),
+    maps:get(enabled, C, false) =:= true;
 configured(gtknode4) ->
     C = options_map(application:get_env(erm, gtknode4, #{})),
     maps:get(enabled, C, false) =:= true;
