@@ -108,9 +108,15 @@ export async function updateWalletSummary() {
   const body = await response.json();
   if (account !== TokenManager.getAddress()) return; // Discard stale account responses.
   const put = (id, value) => { const el = document.getElementById(id); if (el) el.textContent = value ?? '—'; };
-  put('balanceAmount', body.damage_display);
-  put('aeBalance', body.ae_display);
-  put('satsBalance', body.sats_available === false ? 'Unavailable' : body.sats);
+  const putAll = (name, value) => {
+    for (const el of document.querySelectorAll(`[data-wallet-balance="${name}"]`)) el.textContent = value ?? '—';
+  };
+  const damageValue = body.damage_display ?? '—';
+  const aeValue = body.ae_display ?? '—';
+  const satsValue = body.sats_available === false ? 'Unavailable' : (body.sats ?? '—');
+  put('balanceAmount', damageValue); putAll('damage', damageValue);
+  put('aeBalance', aeValue); putAll('ae', aeValue);
+  put('satsBalance', satsValue); putAll('sats', satsValue);
 }
 window.updateWalletSummary = updateWalletSummary;
 window.refreshAfterAuthChange = async () => { await updateWalletSummary(); document.dispatchEvent(new Event('balance:refresh')); };

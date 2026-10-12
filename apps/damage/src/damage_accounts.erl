@@ -98,6 +98,19 @@ trails() ->
             }
         ),
         trails:trail(
+            "/accounts/transfer",
+            damage_accounts,
+            #{action => transfer},
+            #{
+                post =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "Transfer DAMAGE from the authenticated managed account.",
+                        produces => ["application/json"]
+                    }
+            }
+        ),
+        trails:trail(
             "/rate",
             damage_accounts,
             #{action => rate},
@@ -301,6 +314,7 @@ allowed_methods(Req, State) ->
 is_authorized(Req, #{action := Action} = State) when
     Action =:= balance;
     Action =:= wallet;
+    Action =:= transfer;
     Action =:= invoices
 ->
     safe_account_authorized(Req, State);
@@ -784,6 +798,21 @@ from_json(Req, #{action := authenticate} = State) ->
         {error, _Reason} ->
             json_decode_error_response(Req0, State)
     end;
+from_json(Req, #{action := transfer, public_key := From} = State) ->
+    {ok, Data, Req0} = cowboy_req:read_body(Req),
+    case decode_json_body(Data) of
+        {ok, Data0} ->
+            {Status0, Response0} = transfer_damage_response(From, State, Data0),
+            Req1 = cowboy_req:reply(
+                Status0,
+                #{<<"content-type">> => <<"application/json">>, <<"cache-control">> => <<"no-store">>},
+                jsx:encode(Response0),
+                Req0
+            ),
+            {stop, Req1, State};
+        {error, _Reason} ->
+            json_decode_error_response(Req0, State)
+    end;
 from_json(Req, #{action := Action} = State) ->
     {ok, Data, Req0} = cowboy_req:read_body(Req),
     case decode_json_body(Data) of
@@ -804,6 +833,84 @@ from_json(Req, #{action := Action} = State) ->
         {error, _Reason} ->
             json_decode_error_response(Req0, State)
     end.
+
+transfer_damage_response(_From, #{auth_mode := wallet}, _Data) ->
+    {403, maps:merge(#{status => <<"failed">>}, damage_wallet_policy:rejection())};
+transfer_damage_response(From, _State, Data) ->
+    To = map_get_any([to, <<"to">>, address, <<"address">>], Data, undefined),
+    Amount0 = map_get_any([amount, <<"amount">>], Data, undefined),
+    case {valid_ae_account(To), positive_integer(Amount0)} of
+        {false, _} ->
+            {400, #{status => <<"failed">>, message => <<"A valid recipient Aeternity address is required.">>}};
+        {true, error} ->
+            {400, #{status => <<"failed">>, message => <<"Transfer amount must be a positive atomic DAMAGE integer.">>}};
+        {true, Amount} ->
+            try damage_ae:transfer_damage_tokens(From, To, Amount) of
+                Result ->
+                    case transfer_result_ok(Result) of
+                        true ->
+                            safe_invalidate_wallet(From),
+                            safe_invalidate_wallet(To),
+                            {200, #{status => <<"ok">>, tx_hash => transfer_tx_hash(Result)}};
+                        false ->
+                            ?LOG_WARNING("DAMAGE transfer failed from=~p to=~p result=~p", [From, To, Result]),
+                            {502, #{status => <<"failed">>, message => <<"Aeternity transfer was not accepted.">>}}
+                    end
+            catch
+                Class:Reason:Stack ->
+                    ?LOG_ERROR("DAMAGE transfer crashed from=~p to=~p class=~p reason=~p stack=~p", [
+                        From, To, Class, Reason, Stack
+                    ]),
+                    {502, #{status => <<"failed">>, message => <<"Aeternity transfer could not be submitted.">>}}
+            end
+    end.
+
+map_get_any([K | Rest], Map, Default) ->
+    case maps:find(K, Map) of
+        {ok, V} -> V;
+        error -> map_get_any(Rest, Map, Default)
+    end;
+map_get_any([], _Map, Default) -> Default.
+
+positive_integer(I) when is_integer(I), I > 0 -> I;
+positive_integer(B) when is_binary(B) ->
+    try binary_to_integer(B) of
+        I when I > 0 -> I;
+        _ -> error
+    catch _:_ -> error end;
+positive_integer(L) when is_list(L) ->
+    try list_to_integer(L) of
+        I when I > 0 -> I;
+        _ -> error
+    catch _:_ -> error end;
+positive_integer(_) -> error.
+
+valid_ae_account(Account) when is_binary(Account) ->
+    try aeser_api_encoder:decode(account_pubkey, Account) of
+        {account_pubkey, _} -> true;
+        _ -> false
+    catch _:_ -> false end;
+valid_ae_account(_) -> false.
+
+safe_invalidate_wallet(Account) ->
+    try damage_ae:invalidate_cache(Account) of
+        _ -> ok
+    catch
+        _:_ -> ok
+    end.
+
+transfer_result_ok(Result) when is_map(Result) ->
+    map_get_any(["return_type", <<"return_type">>, return_type], Result, undefined) =:= "ok"
+        orelse map_get_any(["return_type", <<"return_type">>, return_type], Result, undefined) =:= <<"ok">>;
+transfer_result_ok(_) -> false.
+
+transfer_tx_hash(Result) when is_map(Result) ->
+    case map_get_any(["tx_hash", <<"tx_hash">>, tx_hash], Result, null) of
+        null -> null;
+        Hash when is_list(Hash) -> list_to_binary(Hash);
+        Hash -> Hash
+    end;
+transfer_tx_hash(_) -> null.
 
 %% Decrypt account tokens without the deprecated `catch Expr` form and never
 %% decode untrusted external terms without the safe option.

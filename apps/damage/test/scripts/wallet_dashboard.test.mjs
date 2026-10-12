@@ -50,3 +50,26 @@ test('sign-out confirmation never stacks the authentication dialog behind it', a
   assert.match(main, /await window\.logoutActiveSession\(\)[\s\S]{0,520}MicroModal\.close\("logout-modal"\)[\s\S]{0,120}window\.location\.reload\(\)/);
   assert.match(auth, /getElementById\('logout-modal'\)\?\.classList\.contains\('is-open'\)/);
 });
+
+test('wallet surfaces animated funds in and out telemetry', async () => {
+  const [wallet, css, js] = await Promise.all([
+    read('priv/templates/ui/dashboard/wallet_tab.mustache'),
+    read('priv/static/css/dashboard-wallet.css'),
+    read('priv/static/js/wallet-dashboard.js')
+  ]);
+  assert.match(wallet, /Funds in &amp; out/);
+  assert.match(wallet, /data-flow-stat="in"/);
+  assert.match(wallet, /data-flow-stat="out"/);
+  assert.match(wallet, /data-flow-stat="net"/);
+  assert.match(wallet, /data-flow-stat="count"/);
+  assert.match(wallet, /wallet-command-bar/);
+  assert.doesNotMatch(wallet, /wallet-quick-actions/);
+  assert.match(js, /function renderFlowStats\(sessions\)/);
+  assert.match(js, /requestAnimationFrame/);
+  assert.match(css, /prefers-reduced-motion: reduce/);
+  assert.match(css, /@keyframes walletReveal/);
+  assert.match(css, /#wallet-tab #qrcode-damage\.wallet-qr/);
+  assert.match(css, /min-width:0; max-width:196px/);
+  assert.doesNotMatch(css, /wallet-qr \{[^}]*border:7px solid #fff/s);
+  assert.match(css, /wallet-primary-button \{[^}]*border-radius:12px[^}]*background:linear-gradient/s);
+});

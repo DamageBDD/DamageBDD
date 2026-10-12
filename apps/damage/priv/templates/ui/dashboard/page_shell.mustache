@@ -66,6 +66,7 @@
     <link rel="stylesheet" href="/static/css/account-settings.css">
     <link rel="stylesheet" href="/static/css/dashboard-guest.css">
     <link rel="stylesheet" href="/static/css/dashboard-tax-reports.css">
+    <link rel="stylesheet" href="/static/css/dashboard-wallet.css">
     <noscript><style>
       .damage-dashboard [data-dashboard-view][hidden] { display: block !important; }
       .damage-dashboard #dashboard-nav-toggle, .damage-dashboard #dashboard-nav-close { display: none; }
@@ -82,7 +83,6 @@
     {{{node_unlock_modal}}}
     {{{file_picker_modal}}}
     {{{invoice_modal}}}
-    {{{wallet_modal}}}
     {{{logout_modal}}}
     {{{install_modal}}}
     {{{feature_picker_modal}}}
@@ -113,6 +113,9 @@
           </div>
           <div id="billing-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-billing" hidden>
             {{{billing_tab}}}
+          </div>
+          <div id="wallet-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-wallet" hidden>
+            {{{wallet_tab}}}
           </div>
           <div id="settings-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-settings" hidden>
             {{{settings_tab}}}
@@ -163,6 +166,7 @@
     <script type='module' src="/static/js/installer.js" defer></script>
     <script type='module' src="/static/js/wallet.js" defer></script>
     <script type='module' src="/static/js/wallet-switcher.js" defer></script>
+    <script type='module' src="/static/js/wallet-dashboard.js" defer></script>
     <script type='module' src="/static/js/filter.js" defer></script>
     <script type='module' src="/static/js/reports.js" defer></script>
     <script type='module' src="/static/js/gallery.js" defer></script>

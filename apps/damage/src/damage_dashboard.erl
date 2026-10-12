@@ -97,9 +97,9 @@ render_full_page(Ctx) ->
     Anal = render_tpl(?TPL("analytics_tab.mustache"), history_context(Ctx)),
     Sched = render_tpl(?TPL("schedules_tab.mustache"), Ctx),
     Billing = render_tpl(?TPL("billing_tab.mustache"), Ctx),
+    Wallet = render_tpl(?TPL("wallet_tab.mustache"), Ctx),
     Sets = render_tpl(?TPL("settings_tab.mustache"), Ctx),
     InvM = render_tpl(?TPL("invoice_modal.mustache"), Ctx),
-    WalletM = render_tpl(?TPL("wallet_modal.mustache"), Ctx),
     %% A guest sees the public onboarding experience immediately, rather than an
     %% auto-open sign-in dialog covering an otherwise empty dashboard.  The
     %% sign-in modal remains available via the guest actions.
@@ -141,9 +141,9 @@ render_full_page(Ctx) ->
         analytics_tab => Anal,
         schedules_tab => Sched,
         billing_tab => Billing,
+        wallet_tab => Wallet,
         settings_tab => Sets,
         invoice_modal => InvM,
-        wallet_modal => WalletM,
         auth_modal => AuthM,
         guest_landing => GuestLanding,
         logout_modal => LogOutM,
@@ -189,6 +189,8 @@ render_component(schedules_tab, Ctx) ->
     render_tpl(?TPL("schedules_tab.mustache"), Ctx);
 render_component(billing_tab, Ctx) ->
     render_tpl(?TPL("billing_tab.mustache"), Ctx);
+render_component(wallet_tab, Ctx) ->
+    render_tpl(?TPL("wallet_tab.mustache"), Ctx);
 render_component(settings_tab, Ctx) ->
     render_tpl(?TPL("settings_tab.mustache"), Ctx);
 render_component(node_tax_reports_tab, #{tax_admin := true} = Ctx) ->
