@@ -166,7 +166,10 @@ read_public_activities(Path) ->
                     ?LOG_WARNING("Run history AEMDW activity request failed ~p:~p", [Class, Reason]),
                     public_activity_unavailable()
             after
-                catch gun:close(ConnPid)
+                try gun:close(ConnPid)
+                catch
+                    _:_ -> ok
+                end
             end;
         _ -> public_activity_unavailable()
     end.
@@ -179,7 +182,7 @@ lookup_node(Node) ->
         {ok, NodeId} ->
             case registered_node(NodeId, undefined) of
                 {ok, Info} -> {200, #{status => <<"ok">>, nodes => [Info]}};
-                {error, not_registered} -> {404, #{status => <<"error">>, error => <<"node not registered">>};
+                {error, not_registered} -> {404, #{status => <<"error">>, error => <<"node not registered">>}};
                 {error, _} -> unavailable()
             end;
         error -> bad_address()
@@ -391,7 +394,10 @@ fetch_registry_transactions(Contract) ->
             catch
                 Class:Reason -> {error, {middleware_failed, Class, Reason}}
             after
-                catch gun:close(ConnPid)
+                try gun:close(ConnPid)
+                catch
+                    _:_ -> ok
+                end
             end;
         _ -> {error, middleware_unavailable}
     end.
