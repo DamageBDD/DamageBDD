@@ -173,6 +173,10 @@ with_repo(Fun) ->
     ok = filelib:ensure_dir(filename:join(Base, "placeholder")),
     ok = file:write_file(filename:join(Base, "README.md"), <<"base\n">>),
     ok = git(Base, ["init", "-q"]),
+    %% Keep release-tag tests deterministic regardless of the developer's
+    %% global init.defaultBranch. Runtime release policy defaults to main, so
+    %% temporary repositories used by these tests must model that stable branch.
+    ok = git(Base, ["symbolic-ref", "HEAD", "refs/heads/main"]),
     ok = git(Base, ["config", "user.email", "ecai-test@example.invalid"]),
     ok = git(Base, ["config", "user.name", "ECAI Test"]),
     ok = git(Base, ["add", "."]),
