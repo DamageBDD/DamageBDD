@@ -3,6 +3,7 @@
 %% process, tied to immutable patch bytes, and synchronously written to DETS.
 -module(ecai_code_review_queue).
 -behaviour(gen_server).
+-compile({no_auto_import,[now/0]}).
 
 -export([start_link/0, list/0, get/1, get/2, status/0, approve/4, reject/4, publish/4]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
