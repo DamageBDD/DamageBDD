@@ -3,7 +3,7 @@
 Feature: Publish an installable Arch Linux release
   Scenario: Build and verify the archlinux-x86_64 installation release
     Given the build release discovery is configured
-    When I build an image from Dockerfile at "QmTipEn7pZcmYsEGvEJSwn5aEGLknypCfpGFYPeFbg2Mck" as tag "damagebdd/arch-builder:latest" with params "--build-arg 'REPO_URL=https://github.com/DamageBDD/DamageBDD.git' --build-arg 'REPO_REF=main'"
+    When I build an image from Dockerfile at "QmWA4mpEGJecLYA5iwR92LhkbyDVbGXSxdUYAXxLAPXoGs" as tag "damagebdd/arch-builder:latest" with params "--build-arg 'REPO_URL=https://github.com/DamageBDD/DamageBDD.git' --build-arg 'REPO_REF=main'"
     Then I run docker image tagged "damagebdd/arch-builder:latest"
     """
     set -eux
