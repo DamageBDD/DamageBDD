@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="/static/css/ecai-market-maker.css">
   <link rel="stylesheet" href="/ecai/auth-assets/css/auth.css">
   <link rel="stylesheet" href="/static/css/ecai-auth.css">
+  <link rel="stylesheet" href="/static/css/ecai-quick-index.css?v=quick-index-v2">
   <link rel="stylesheet" href="/static/css/ecai-index-pool.css">
   <link rel="stylesheet" href="/static/css/ecai-compute-settings.css">
   <link rel="stylesheet" href="/static/css/ecai-keys.css">
@@ -244,7 +245,45 @@
         <section class="view" data-panel="indexing" data-ecai-managed aria-labelledby="indexTitle" hidden>
           <div class="page-intro page-intro-actions"><div><div class="eyebrow">DURABLE PIPELINE</div><h1 id="indexTitle">Index jobs</h1><p>Enqueue curated sources, inspect persisted jobs and follow execution events.</p></div><div class="inline-actions wrap-actions"><button type="button" class="button button-outline" id="indexOpenCompute">Compute budget &amp; NFT settings ↗</button><a class="button button-outline" href="/indexer/advanced">Advanced builder ↗</a></div></div>
           <div class="three-stats"><div class="surface mini-stat"><span>Running</span><strong id="queueRunning">—</strong></div><div class="surface mini-stat"><span>Queued</span><strong id="queueQueued">—</strong></div><div class="surface mini-stat"><span>Concurrency</span><strong id="queueWorkers">—</strong></div></div>
-          <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">QUICK START</div><h2>Wikimedia presets</h2></div><button type="button" id="reloadPresets" class="text-button">Reload presets ↻</button></div><div id="indexPresets" class="preset-grid"><div class="empty-state">Sign in to load available presets.</div></div></section>
+          <section class="surface panel-pad quick-index-card" id="quickIndexCard" aria-labelledby="quickIndexTitle">
+            <div class="panel-heading">
+              <div><div class="eyebrow">QUICK INDEX</div><h2 id="quickIndexTitle">Add knowledge from anywhere</h2></div>
+              <span class="quick-index-kicker">Detect → verify → index</span>
+            </div>
+            <p class="quick-index-lead">Drop a UTF-8 file, fetch a public URL, or paste an IPFS CID. ECAI inspects the source first, shows exactly what it detected, then hands it to the durable searchable index queue.</p>
+
+            <div class="quick-index-tabs" role="tablist" aria-label="Quick Index source type">
+              <button type="button" class="quick-index-tab is-active" data-quick-index-source="file" role="tab" aria-selected="true">↥ File</button>
+              <button type="button" class="quick-index-tab" data-quick-index-source="url" role="tab" aria-selected="false">↗ URL</button>
+              <button type="button" class="quick-index-tab" data-quick-index-source="ipfs" role="tab" aria-selected="false">◇ IPFS</button>
+            </div>
+
+            <div class="quick-index-pane" data-quick-index-pane="file">
+              <input id="quickIndexFile" type="file" hidden>
+              <div id="quickIndexDrop" class="quick-index-drop" role="button" tabindex="0" aria-controls="quickIndexFile">
+                <span class="quick-index-drop-icon" aria-hidden="true">↥</span>
+                <span class="quick-index-drop-copy"><strong id="quickIndexFileName">Drop a text or structured-text file here, or click to browse</strong><span>Markdown · Org · JSON · JSONL · CSV/TSV · HTML/XML · YAML · source code · plain text</span></span>
+              </div>
+            </div>
+
+            <div class="quick-index-pane" data-quick-index-pane="url" hidden>
+              <div class="quick-index-field"><label for="quickIndexUrl">Public HTTP(S) URL</label><input id="quickIndexUrl" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://example.org/knowledge.jsonl"><small>Fetched server-side with private-network and redirect protection.</small></div>
+            </div>
+
+            <div class="quick-index-pane" data-quick-index-pane="ipfs" hidden>
+              <div class="quick-index-field"><label for="quickIndexCid">IPFS CID</label><input id="quickIndexCid" type="text" autocomplete="off" spellcheck="false" placeholder="bafy… or Qm…"><small>You may paste a bare CID, ipfs://CID, or /ipfs/CID.</small></div>
+            </div>
+
+            <div class="quick-index-actions">
+              <button type="button" class="button button-outline" id="quickIndexInspect">Detect structure</button>
+              <button type="button" class="button button-primary" id="quickIndexQueue" disabled>Index detected source ↗</button>
+              <span class="quick-index-status" id="quickIndexStatus" role="status" aria-live="polite">Ready</span>
+            </div>
+
+            <div class="quick-index-analysis" id="quickIndexAnalysis" aria-live="polite"><p class="quick-index-empty">Choose a source, then detect its structure before indexing.</p></div>
+            <div class="quick-index-public-note"><span aria-hidden="true">ⓘ</span><span><strong>Searchable/public pipeline:</strong> file and URL bytes are content-addressed in this node's IPFS store before the existing <code>ipfs_cid → searchable_disk</code> job runs. Use Knowledge &amp; privacy instead for confidential corpora.</span></div>
+          </section>
+          <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">LARGE DATASETS</div><h2>Wikimedia presets</h2></div><button type="button" id="reloadPresets" class="text-button">Reload presets ↻</button></div><div id="indexPresets" class="preset-grid"><div class="empty-state">Sign in to load available presets.</div></div></section>
           <section class="surface panel-pad">
             <div class="panel-heading">
               <div><div class="eyebrow">DURABLE JOB QUEUE</div><h2>Execution history</h2></div>
@@ -457,6 +496,7 @@
 
   {{{browser_auth_modal}}}
   <script src="/ecai/auth-assets/js/micromodal.min.js"></script>
+  <script type="module" src="/static/js/ecai-quick-index.js?v=quick-index-v2"></script>
   <script type="module" src="/static/js/ecai-index-pool.js"></script>
   <script type="module" src="/static/js/ecai-compute-settings.js"></script>
   <script type="module" src="/static/js/ecai-keys.js"></script>
