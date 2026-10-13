@@ -5,6 +5,7 @@
     start_link/0,
     start_link/1,
     learn_now/0,
+    reload_runtime/0,
     module_changed/2,
     status/0
 ]).
@@ -55,22 +56,23 @@
 start_link() -> start_link(#{}).
 start_link(Opts) -> gen_server:start_link({local, ?SERVER}, ?MODULE, Opts, []).
 learn_now() -> gen_server:cast(?SERVER, learn_now).
+reload_runtime() -> gen_server:call(?SERVER, reload_runtime, 30000).
 module_changed(App, Module) -> gen_server:cast(?SERVER, {module_changed, App, Module}).
 status() -> status_snapshot().
 
 init(Opts) ->
     process_flag(trap_exit, true),
-    Interval = maps:get(
-        interval_ms,
-        Opts,
-        application:get_env(ecai, code_learning_interval_ms, ?DEFAULT_INTERVAL)
-    ),
-    MaxParallel = resolve_parallelism(Opts),
+    Runtime = ecai_code_runtime_config:get(),
+    Learning = maps:get(learning, Runtime),
+    Repository = maps:get(repository, Runtime),
+    Opts1 = Opts#{repo_root => maps:get(working_root, Repository)},
+    Interval = maps:get(interval_ms, Learning, ?DEFAULT_INTERVAL),
+    MaxParallel = resolve_parallelism(Opts1),
     ok = init_status_table(),
     Base = #state{
         interval_ms = Interval,
         max_parallel = MaxParallel,
-        opts = Opts
+        opts = Opts1
     },
     {State0, Action} = restore_checkpoint(Base),
     State1 = restore_schedule(State0, Action),
@@ -89,6 +91,19 @@ init(Opts) ->
 
 handle_call(status, _From, State) ->
     {reply, status_map(State), State};
+handle_call(reload_runtime, _From, State0) ->
+    Runtime = ecai_code_runtime_config:get(),
+    Learning = maps:get(learning, Runtime),
+    Repository = maps:get(repository, Runtime),
+    Opts1 = (State0#state.opts)#{repo_root => maps:get(working_root, Repository)},
+    State1 = State0#state{
+        interval_ms = maps:get(interval_ms, Learning, ?DEFAULT_INTERVAL),
+        max_parallel = resolve_parallelism(Opts1),
+        opts = Opts1
+    },
+    State2 = reschedule_idle(State1),
+    ok = checkpoint_and_publish(State2),
+    {reply, {ok, status_map(State2)}, State2};
 handle_call(_Request, _From, State) ->
     {reply, {error, unsupported_call}, State}.
 
@@ -102,45 +117,60 @@ handle_cast(learn_now, State0) ->
     ok = checkpoint_and_publish(State1),
     {noreply, State1};
 handle_cast({module_changed, App, Module}, State0) ->
-    case lists:member(App, State0#state.apps) andalso is_atom(Module) of
-        false ->
+    case {
+        lists:member(App, State0#state.apps) andalso is_atom(Module),
+        ecai_code_runtime_config:learning_admission()
+    } of
+        {false, _} ->
             {noreply, State0};
-        true ->
-            enqueue_module_change(App, Module, State0)
+        {true, {ok, _}} ->
+            enqueue_module_change(App, Module, State0);
+        {true, {error, _}} ->
+            {noreply, State0}
     end;
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info(resume_cycle, State0) ->
-    State1 = State0#state{phase = queued, inflight = #{}},
-    ok = checkpoint_and_publish(State1),
-    State2 = dispatch(State1),
-    ok = checkpoint_and_publish(State2),
-    {noreply, maybe_finalize(State2)};
+    case ecai_code_runtime_config:learning_admission() of
+        {ok, _} ->
+            State1 = State0#state{phase = queued, inflight = #{}},
+            ok = checkpoint_and_publish(State1),
+            State2 = dispatch(State1),
+            ok = checkpoint_and_publish(State2),
+            {noreply, maybe_finalize(State2)};
+        {error, Reason} ->
+            pause_learning(State0, Reason)
+    end;
 handle_info(start_cycle, State0 = #state{phase = idle}) ->
     StateA = cancel_cycle_timer(State0),
-    {Queue, Errors} = build_queue(StateA#state.apps, StateA#state.opts),
-    State1 = StateA#state{
-        queue = Queue,
-        inflight = #{},
-        phase = queued,
-        total = length(Queue),
-        completed = 0,
-        cycle = StateA#state.cycle + 1,
-        changed_apps = #{},
-        last_started_at = now_iso8601(),
-        last_error =
-            case Errors of
-                [] -> undefined;
-                _ -> Errors
-            end,
-        refresh_requested = false,
-        ready = false
-    },
-    ok = checkpoint_and_publish(State1),
-    State2 = dispatch(State1),
-    ok = checkpoint_and_publish(State2),
-    {noreply, maybe_finalize(State2)};
+    case ecai_code_runtime_config:prepare_learning_repo() of
+        {ok, _} ->
+            {Queue, Errors} = build_queue(StateA#state.apps, StateA#state.opts),
+            State1 = StateA#state{
+                queue = Queue,
+                inflight = #{},
+                phase = queued,
+                total = length(Queue),
+                completed = 0,
+                cycle = StateA#state.cycle + 1,
+                changed_apps = #{},
+                last_started_at = now_iso8601(),
+                last_error =
+                    case Errors of
+                        [] -> undefined;
+                        _ -> Errors
+                    end,
+                refresh_requested = false,
+                ready = false
+            },
+            ok = checkpoint_and_publish(State1),
+            State2 = dispatch(State1),
+            ok = checkpoint_and_publish(State2),
+            {noreply, maybe_finalize(State2)};
+        {error, Reason} ->
+            pause_learning(StateA, Reason)
+    end;
 handle_info(start_cycle, State0) ->
     State1 = State0#state{refresh_requested = true},
     ok = checkpoint_and_publish(State1),
@@ -183,21 +213,26 @@ handle_info({'DOWN', MRef, process, _Pid, Reason}, State0) ->
 handle_info(finalize_cycle, State0 = #state{queue = [], inflight = Inflight}) when
     map_size(Inflight) =:= 0
 ->
-    Finalizing = State0#state{phase = finalizing},
-    ok = checkpoint_and_publish(Finalizing),
-    State1 = finish_cycle(Finalizing),
-    State2 = State1#state{phase = idle},
-    State3 =
-        case State2#state.refresh_requested of
-            true ->
-                self() ! start_cycle,
-                State2#state{refresh_requested = false};
-            false ->
-                schedule_next_cycle(State2)
-        end,
-    ok = checkpoint_and_publish(State3),
-    _ = ecai_learning_snapshot:write(State3#state.opts),
-    {noreply, State3};
+    case finalization_admission(State0) of
+        ok ->
+            Finalizing = State0#state{phase = finalizing},
+            ok = checkpoint_and_publish(Finalizing),
+            State1 = finish_cycle(Finalizing),
+            State2 = State1#state{phase = idle},
+            State3 =
+                case State2#state.refresh_requested of
+                    true ->
+                        self() ! start_cycle,
+                        State2#state{refresh_requested = false};
+                    false ->
+                        schedule_next_cycle(State2)
+                end,
+            ok = checkpoint_and_publish(State3),
+            _ = ecai_learning_snapshot:write(State3#state.opts),
+            {noreply, State3};
+        {error, Reason} ->
+            pause_learning(State0, {finalization_blocked, Reason})
+    end;
 handle_info(finalize_cycle, State) ->
     {noreply, State};
 handle_info(_Info, State) ->
@@ -405,7 +440,8 @@ status_map(State) ->
         next_run_at_ms => State#state.next_run_at_ms,
         last_started_at => State#state.last_started_at,
         last_completed_at => State#state.last_completed_at,
-        last_error => State#state.last_error
+        last_error => State#state.last_error,
+        runtime_policy => runtime_policy_status()
     }.
 
 build_queue(Apps, Opts) ->
@@ -975,6 +1011,47 @@ resolve_capacity_reserve(Opts) ->
 
 ollama_opts(Opts) ->
     maps:get(ollama, Opts, #{}).
+
+runtime_policy_status() ->
+    case ecai_code_runtime_config:learning_admission() of
+        {ok, Policy} -> Policy#{allowed => true};
+        {error, Reason} -> #{allowed => false, reason => Reason}
+    end.
+
+finalization_admission(State) ->
+    case {
+        ecai_code_runtime_config:learning_admission(),
+        ecai_source_repository:current(State#state.opts)
+    } of
+        {{ok, #{head := Commit}}, {ok, #{commit := Commit}}} ->
+            ok;
+        {{ok, #{head := Head}}, {ok, #{commit := Generation}}} ->
+            {error, {source_generation_head_mismatch, Generation, Head}};
+        {{error, Reason}, _} ->
+            {error, Reason};
+        {_, {error, Reason}} ->
+            {error, {canonical_source_unavailable, Reason}}
+    end.
+
+pause_learning(State0, Reason) ->
+    State1 = (cancel_cycle_timer(State0))#state{
+        queue = [],
+        inflight = #{},
+        phase = idle,
+        total = 0,
+        completed = 0,
+        refresh_requested = false,
+        ready = false,
+        last_error = {learning_paused, Reason}
+    },
+    State2 = schedule_next_cycle(State1),
+    ok = checkpoint_and_publish(State2),
+    {noreply, State2}.
+
+reschedule_idle(State = #state{phase = idle}) ->
+    schedule_next_cycle(cancel_cycle_timer(State));
+reschedule_idle(State) ->
+    State.
 
 schedule_next_cycle(State0) ->
     Now = erlang:system_time(millisecond),

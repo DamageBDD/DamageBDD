@@ -101,13 +101,14 @@ get_trails() ->
             ecai_mm_dashboard_http,
             ecai_index_pool_http,
             ecai_index_jobs_http,
+            ecai_quick_index_http,
             ecai_compute_settings_http,
             ecai_private_http,
             ecai_wikimedia_http,
             ecai_yelp_admin,
             ecai_dashboard,
             ecai_chat_http_handler
-        ] ++ ollama_api_handlers() ++ code_admin_handlers() ++ marketplace_handlers(),
+        ] ++ conversation_history_handlers() ++ ollama_api_handlers() ++ code_admin_handlers() ++ marketplace_handlers(),
     %% The dashboard uses the same supervised browser auth service as DamageBDD.
     %% Legacy login routes remain for the separate older indexer pages only.
     AccountRoutes =
@@ -128,6 +129,12 @@ get_trails() ->
         ] ++ AuthAssets ++ AccountRoutes ++ trails:trails(Handlers),
     trails:store(Trails),
     trails:single_host_compile(Trails).
+
+conversation_history_handlers() ->
+    case application:get_env(ecai, conversation_history_enabled, true) of
+        true -> [ecai_conversation_http];
+        _ -> []
+    end.
 
 %% The privileged control plane is an explicit opt-in and does not reuse
 %% normal authenticated-user permissions.

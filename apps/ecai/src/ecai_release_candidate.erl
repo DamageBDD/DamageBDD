@@ -115,9 +115,29 @@ tag(Kind0, Opts) when is_map(Opts) ->
         {error, _} = Error ->
             Error;
         Kind ->
-            case ensure_learning_quiescent(Opts) of
-                ok -> tag_attempt(Kind, Opts, 0);
+            case ensure_learning_admitted(Opts) of
+                ok ->
+                    case ensure_learning_quiescent(Opts) of
+                        ok -> tag_attempt(Kind, Opts, 0);
+                        {error, _} = Error -> Error
+                    end;
                 {error, _} = Error -> Error
+            end
+    end.
+
+ensure_learning_admitted(Opts) ->
+    case maps:get(require_learning_admission, Opts, true) of
+        false ->
+            ok;
+        true ->
+            Repo = repo_root(Opts),
+            try ecai_code_runtime_config:learning_admission_for(Repo) of
+                {ok, _Policy} -> ok;
+                {error, Reason} -> {error, {release_learning_policy_blocked, Reason}};
+                Other -> {error, {unexpected_learning_admission, Other}}
+            catch
+                Class:Reason:Stack ->
+                    {error, {learning_admission_failed, Class, Reason, Stack}}
             end
     end.
 

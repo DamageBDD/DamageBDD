@@ -28,6 +28,10 @@
         ]},
         {env, [
             {marketplace_enabled, false},
+            %% Durable, account-scoped dashboard conversation history. Search
+            %% uses the canonical ECAI term pipeline in a separate private store.
+            {conversation_history_enabled, true},
+            {conversation_history_context_messages, 12},
             %% Safe default: account settings enabled, but remote spending and mint
             %% requests are both disabled until each account explicitly opts in.
             {compute_settings_enabled, true},

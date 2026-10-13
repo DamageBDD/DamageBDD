@@ -51,7 +51,8 @@ init([]) ->
     ok = ecai_paths:ensure_parent(SnapPath),
     Interval = application:get_env(ecai, index_snapshot_ms, 60000),
     PoolSpecs0 =
-        maybe_ollama_key_specs() ++ maybe_compute_specs() ++ maybe_ingest_specs() ++
+        conversation_history_specs() ++
+            maybe_ollama_key_specs() ++ maybe_compute_specs() ++ maybe_ingest_specs() ++
             [
                 #{
                     id => ecai_index_snapshot,
@@ -105,6 +106,25 @@ init([]) ->
             PoolSpecs,
     ?LOG_DEBUG("Worker definitions ~p~n", [PoolSpecs0]),
     {ok, {SupFlags, PoolSpecs0}}.
+
+conversation_history_specs() ->
+    case application:get_env(ecai, conversation_history_enabled, true) of
+        true ->
+            [
+                #{
+                    id => ecai_conversation_store,
+                    start => {ecai_conversation_store, start_link, []},
+                    restart => permanent,
+                    shutdown => 5000,
+                    type => worker,
+                    modules => [ecai_conversation_store]
+                }
+            ];
+        false ->
+            [];
+        Invalid ->
+            erlang:error({invalid_configuration, conversation_history_enabled, Invalid})
+    end.
 
 %% Funding/settlement is an explicit, operator-configured opt-in. CLN is
 %% contacted only after a deliberate API operation, never during supervisor init.

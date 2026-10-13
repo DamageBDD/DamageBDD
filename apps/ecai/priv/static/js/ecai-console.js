@@ -28,6 +28,8 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     { group: "Knowledge & private", method: "POST", path: "/ecai/private/:corpus/search", description: "Private knowledge retrieval.", params: ["corpus"], body: { query: "example", limit: 8 } },
     { group: "Knowledge & private", method: "POST", path: "/ecai/private/:corpus/fetch", description: "Fetch private record by ID.", params: ["corpus"], body: { id: "record-id" } },
     { group: "Knowledge & private", method: "POST", path: "/ecai/private/:corpus/ask", description: "Answer from private sources via an operator-approved destination.", params: ["corpus"], body: { question: "What is known?", destination: "local" } },
+    { group: "Index jobs", method: "POST", path: "/ecai/quick-index/inspect", description: "Inspect a public URL or IPFS source before Quick Index submission.", body: { source_type: "url", url: "https://example.org/knowledge.jsonl" } },
+    { group: "Index jobs", method: "POST", path: "/ecai/quick-index", description: "Queue an inspected Quick Index source. expected_sha256 and Idempotency-Key are required.", body: { source_type: "url", url: "https://example.org/knowledge.jsonl", expected_sha256: "<sha256 from inspect>" }, key: true },
     { group: "Index jobs", method: "GET", path: "/ecai/index-jobs/status", description: "Durable queue, capacity and worker counts." },
     { group: "Index jobs", method: "GET", path: "/ecai/index-jobs/presets", description: "Preconfigured Wikimedia source presets." },
     { group: "Index jobs", method: "GET", path: "/ecai/index-jobs", description: "List persisted indexing jobs.", query: { state: "", kind: "", limit: "50" } },
@@ -66,6 +68,16 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     { group: "Yelp operations", method: "POST", path: "/yelp/headers", description: "Export on-chain term header commitments.", body: {}, confirm: "Export index term headers?" },
     { group: "Yelp operations", method: "POST", path: "/yelp/manifest", description: "Build combined on-chain manifest.", body: {}, confirm: "Build the publication manifest?" },
     { group: "Code administration", method: "GET", path: "/ecai/admin/code/status", description: "Admin-only learning, repair, health and review status." },
+    { group: "Code administration", method: "GET", path: "/ecai/admin/code/settings", description: "Runtime code-learning, repository, review-gate and sharing settings." },
+    { group: "Code administration", method: "POST", path: "/ecai/admin/code/settings/update", description: "Persist bounded runtime code-administration settings.", body: { learning: { enabled: true, branches: ["main"] }, repository: { remote: "origin", branch: "main" } } },
+    { group: "Code administration", method: "POST", path: "/ecai/admin/code/repository/fetch", description: "Fetch/prune the configured learning remote without changing the worktree.", body: {} },
+    { group: "Code administration", method: "POST", path: "/ecai/admin/code/repository/pull", description: "Fast-forward-only pull of the configured stable branch when the worktree is clean.", body: {}, confirm: "Fast-forward the configured working repository?" },
+    { group: "Code administration", method: "POST", path: "/ecai/admin/code/reviewers/add", description: "Allow an existing DamageBDD code admin to review patches.", body: { account: "<authorized account id>" } },
+    { group: "Code administration", method: "POST", path: "/ecai/admin/code/reviewers/remove", description: "Remove a reviewer from future review actions.", body: { account: "<authorized account id>" } },
+    { group: "Code administration", method: "POST", path: "/ecai/admin/code/publishers/add", description: "Allow an existing DamageBDD code admin to publish reviewed branches.", body: { account: "<authorized account id>" } },
+    { group: "Code administration", method: "POST", path: "/ecai/admin/code/publishers/remove", description: "Remove a publisher from future publication actions.", body: { account: "<authorized account id>" } },
+    { group: "Code administration", method: "POST", path: "/ecai/admin/code/learning/export", description: "Export a commit-pinned, source-free learning evidence bundle.", body: {} },
+    { group: "Code administration", method: "GET", path: "/ecai/admin/code/learning/bundles", description: "List locally exported learning evidence bundles." },
     { group: "Code administration", method: "GET", path: "/ecai/admin/code/repairs", description: "Recent persisted repair records (sanitized)." },
     { group: "Code administration", method: "POST", path: "/ecai/admin/code/learn", description: "Start or schedule a code learning cycle.", body: {}, confirm: "Request a code learning cycle?" },
     { group: "Code administration", method: "POST", path: "/ecai/admin/code/scan", description: "Scan for repair candidates.", body: {}, confirm: "Run the repair scanner?" },
@@ -75,7 +87,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     { group: "Code administration", method: "GET", path: "/ecai/admin/code/reviews/:id", params: ["id"], description: "Inspect frozen patch and audit events." },
     { group: "Code administration", method: "POST", path: "/ecai/admin/code/reviews/:id/approve", params: ["id"], description: "Approve a pinned patch SHA.", body: { patch_sha256: "<review SHA-256>", note: "Code reviewed and verified" }, confirm: "Approve this pinned patch?" },
     { group: "Code administration", method: "POST", path: "/ecai/admin/code/reviews/:id/reject", params: ["id"], description: "Reject a pinned patch SHA.", body: { patch_sha256: "<review SHA-256>", note: "Request regeneration before merging" }, confirm: "Reject this pinned patch?" },
-    { group: "Code administration", method: "POST", path: "/ecai/admin/code/reviews/:id/publish", params: ["id"], description: "Two-stage approval gate: publish verified commit to origin review branch (not main).", body: { patch_sha256: "<review SHA-256>", revision: 2, confirm: "push to origin" }, confirm: "Create a remote review branch in origin?" },
+    { group: "Code administration", method: "POST", path: "/ecai/admin/code/reviews/:id/publish", params: ["id"], description: "Two-stage approval gate: publish verified commit to the configured review branch.", body: { patch_sha256: "<review SHA-256>", revision: 2, confirm: "push reviewed branch" }, confirm: "Create the configured remote review branch?" },
     { group: "Funded indexing", method: "GET", path: "/ecai/admin/index-pool/status", description: "Funded jobs, registered nodes, plans and read-only budget accounting." },
     { group: "Funded indexing", method: "POST", path: "/ecai/admin/index-pool/nodes", description: "Enroll an operator-allowlisted private-cluster node with a Lightning identity proof.", body: {} },
     { group: "Compute & NFTs", method: "GET", path: "/ecai/compute/settings", description: "Managed-account provider and budget settings; cloud dispatch not active." },
@@ -120,8 +132,10 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
   const state = {
     authenticated: false, sessionMode: "anonymous", authEpoch: 0, email: "", view: "overview", jobs: [], presets: [], marketJobs: [],
     nodeAdmin: false, codeAdmin: false, codeFeatureConfigured: false, adminProbeSequence: 0, codeQueue: {}, codeRepairs: [], codeReviews: [], codeReview: null, codeReviewOpenId: "", codeReviewLoadSerial: 0, codeDiffFiles: [], codeDiffSelectedFile: "0",
+    codeSettings: null, codeRepository: null, codeBundles: [],
     selectedIndexId: "", selectedIndexJob: null, jobEntries: new Map(), selectedMarketId: "", activeRoute: -1, lastApiResult: null,
     chatSession: randomHex(16), chatUser: `console-${randomHex(12)}`, chatBusy: false,
+    chatConversationId: "", chatFilterProjectId: "", chatConversations: [], chatProjects: [], chatHistoryOpen: false,
     streamSession: null, socket: null,
     wikiSelectedPresets: new Set(), wikiPresetKeys: new Map(), wikiQueueBusy: false, wikiLoadingPresets: false,
     wikiCatalog: null, wikiCatalogKey: "", wikiMonthsSelected: new Set(),
@@ -427,7 +441,10 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     "POST /ecai/search", "GET /yelp/status"
   ]);
   function walletRequestAllowed(path, method = "GET") {
-    return WALLET_PUBLIC_REQUESTS.has(`${method} ${new URL(path, location.origin).pathname}`);
+    const pathname = new URL(path, location.origin).pathname;
+    const conversationMethod = ["GET", "POST", "PATCH", "DELETE"].includes(method);
+    if (conversationMethod && (pathname === "/ecai/conversations" || pathname.startsWith("/ecai/conversations/") || pathname === "/ecai/projects" || pathname.startsWith("/ecai/projects/"))) return true;
+    return WALLET_PUBLIC_REQUESTS.has(`${method} ${pathname}`);
   }
   function applyConsoleCapabilities() {
     const wallet = state.authenticated && state.sessionMode === "wallet";
@@ -457,12 +474,17 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
       marketMaker?.reset();
       if (state.authenticated) setAuthenticated(false);
       observedToken = token;
+      document.dispatchEvent(new CustomEvent("ecai:identity-changed"));
     }
     state.sessionMode = session?.mode || "anonymous";
     state.email = session?.email || session?.address || "";
     setAuthenticated(Boolean(session), state.email);
     videoStudio?.accountChanged();
     marketMaker?.accessChanged();
+    if (tokenChanged) {
+      resetChat();
+      if (state.view === "chat") void task(refreshChatWorkspace);
+    }
     if (tokenChanged && state.view === "video" && state.authenticated)
       void task(() => videoStudio?.refresh());
   }
@@ -705,6 +727,13 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
       return undefined;
     }
   }
+  document.addEventListener("ecai:quick-index-queued", ({detail}) => {
+    void task(async () => {
+      await refreshJobs();
+      if (detail?.job?.id) await selectIndexJob(detail.job.id);
+      toast("Quick Index job queued");
+    });
+  });
   async function search(event) {
     event.preventDefault();
     const q = $("searchQuery").value.trim();
@@ -732,21 +761,180 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
       put("searchProofs", data.proofs ?? "No proof material returned by this endpoint.");
     }, "searchStatus");
   }
+  function chatProject(projectId) {
+    return state.chatProjects.find((project) => String(project.id) === String(projectId || ""));
+  }
+  function activeChatConversation() {
+    return state.chatConversations.find((conversation) => String(conversation.id) === String(state.chatConversationId || ""));
+  }
+  function chatProjectName(projectId) {
+    if (!projectId) return "No project";
+    return chatProject(projectId)?.name || "Project";
+  }
   function resetChat() {
+    state.chatConversationId = "";
     state.chatSession = randomHex(16);
     state.chatUser = `console-${randomHex(12)}`;
     $("chatMessages").replaceChildren();
     const welcome = element("div", "chat-welcome");
-    welcome.append(element("div", "welcome-icon", "e·"), element("h2", "", "A new conversation"), element("p", "", "Ask a question about your indexed knowledge."));
+    const copy = state.authenticated
+      ? (state.chatFilterProjectId ? `Start a conversation in ${chatProjectName(state.chatFilterProjectId)}.` : "Ask a question about your indexed knowledge.")
+      : "Ask a question in a temporary guest session. Sign in to save and search conversation history.";
+    welcome.append(element("div", "welcome-icon", "e·"), element("h2", "", "A new conversation"), element("p", "", copy));
     $("chatMessages").append(welcome);
-    put("chatSessionLabel", `Session ${state.chatSession.slice(0, 12)}`);
     put("chatStatus", "Ready");
+    renderChatThreadControls();
+    renderChatHistory();
   }
   function addChatMessage(content, role) {
     const area = $("chatMessages");
     area.querySelector(".chat-welcome")?.remove();
-    area.append(element("div", `chat-bubble ${role === "user" ? "from-user" : "from-agent"}`, content));
+    area.append(element("div", `chat-bubble ${role === "user" ? "from-user" : "from-agent"}`, String(content ?? "")));
     area.scrollTop = area.scrollHeight;
+  }
+  function renderChatMessages(messages = []) {
+    const area = $("chatMessages");
+    area.replaceChildren();
+    if (!messages.length) {
+      const welcome = element("div", "chat-welcome");
+      welcome.append(element("div", "welcome-icon", "e·"), element("h2", "", "A new conversation"), element("p", "", "Ask a question about your indexed knowledge."));
+      area.append(welcome);
+      return;
+    }
+    for (const message of messages) addChatMessage(message?.content ?? "", message?.role === "user" ? "user" : "agent");
+  }
+  function renderChatProjectOptions() {
+    const move = $("chatMoveProject");
+    const search = $("chatSearchProject");
+    const moveValue = move.value;
+    const searchValue = search.value;
+    move.replaceChildren(new Option("No project", ""));
+    search.replaceChildren(new Option("All projects", ""));
+    for (const project of state.chatProjects) {
+      move.append(new Option(project.name || "Untitled project", project.id));
+      search.append(new Option(project.name || "Untitled project", project.id));
+    }
+    const active = activeChatConversation();
+    move.value = String(active?.project_id || state.chatFilterProjectId || moveValue || "");
+    search.value = String(state.chatFilterProjectId || searchValue || "");
+  }
+  function renderChatProjects() {
+    const host = $("chatProjects");
+    host.replaceChildren();
+    $("chatAllChats").classList.toggle("is-active", !state.chatFilterProjectId);
+    for (const project of state.chatProjects) {
+      const row = element("div", "chat-project-row");
+      const select = element("button", `chat-history-item${String(project.id) === String(state.chatFilterProjectId) ? " is-active" : ""}`);
+      select.type = "button";
+      const copy = element("span", "chat-history-copy");
+      copy.append(element("strong", "", project.name || "Untitled project"), element("small", "", `${project.conversation_count || 0} chat${project.conversation_count === 1 ? "" : "s"}`));
+      select.append(element("span", "chat-history-icon", "◇"), copy);
+      select.addEventListener("click", () => void task(() => selectChatProject(project.id)));
+      const edit = element("button", "chat-project-edit", "···");
+      edit.type = "button";
+      edit.title = `Edit ${project.name || "project"}`;
+      edit.setAttribute("aria-label", edit.title);
+      edit.addEventListener("click", () => openChatProjectDialog(project));
+      row.append(select, edit);
+      host.append(row);
+    }
+  }
+  function renderChatHistory() {
+    const host = $("chatHistoryList");
+    host.replaceChildren();
+    if (!state.authenticated) {
+      host.append(element("div", "chat-history-empty", "Sign in to keep account-scoped history."));
+      return;
+    }
+    if (!state.chatConversations.length) {
+      host.append(element("div", "chat-history-empty", state.chatFilterProjectId ? "No chats in this project yet." : "No saved chats yet."));
+      return;
+    }
+    for (const conversation of state.chatConversations) {
+      const button = element("button", `chat-history-item chat-thread-item${String(conversation.id) === String(state.chatConversationId) ? " is-active" : ""}`);
+      button.type = "button";
+      const copy = element("span", "chat-history-copy");
+      copy.append(element("strong", "", conversation.title || "New chat"), element("small", "", formatWhen(Number(conversation.updated_at))));
+      button.append(copy);
+      if (conversation.pinned) button.append(element("span", "chat-history-pin", "●"));
+      button.addEventListener("click", () => void task(() => openChatConversation(conversation.id)));
+      host.append(button);
+    }
+  }
+  function renderChatThreadControls() {
+    const conversation = activeChatConversation();
+    const persistent = state.authenticated;
+    const projectId = conversation?.project_id || state.chatFilterProjectId || "";
+    put("chatConversationTitle", conversation?.title || "New conversation");
+    put("chatProjectLabel", persistent ? chatProjectName(projectId) : "Guest session");
+    put("chatSessionLabel", conversation ? `History · ${String(conversation.id).slice(0, 8)}` : persistent ? "Saved on send" : `Guest · ${state.chatSession.slice(0, 8)}`);
+    $("chatRenameBtn").disabled = !conversation;
+    $("chatDeleteBtn").disabled = !conversation;
+    $("chatMoveProject").disabled = !persistent;
+    $("chatMoveProject").value = String(projectId);
+  }
+  function setChatHistoryAuthState() {
+    const authenticated = state.authenticated;
+    $("chatHistoryAuth").hidden = authenticated;
+    $("chatSearchBtn").disabled = !authenticated;
+    $("chatNewProjectBtn").disabled = !authenticated;
+    $("chatHistoryRefresh").disabled = !authenticated;
+    renderChatThreadControls();
+  }
+  async function refreshChatWorkspace() {
+    setChatHistoryAuthState();
+    if (!state.authenticated) {
+      state.chatProjects = [];
+      state.chatConversations = [];
+      state.chatFilterProjectId = "";
+      renderChatProjectOptions();
+      renderChatProjects();
+      renderChatHistory();
+      renderChatThreadControls();
+      return;
+    }
+    const params = new URLSearchParams({limit: "100"});
+    if (state.chatFilterProjectId) params.set("project_id", state.chatFilterProjectId);
+    const [projectsResponse, conversationsResponse] = await Promise.all([
+      request("/ecai/projects"),
+      request(`/ecai/conversations?${params}`)
+    ]);
+    state.chatProjects = Array.isArray(projectsResponse.projects) ? projectsResponse.projects : [];
+    state.chatConversations = Array.isArray(conversationsResponse.conversations) ? conversationsResponse.conversations : [];
+    renderChatProjectOptions();
+    renderChatProjects();
+    renderChatHistory();
+    renderChatThreadControls();
+  }
+  async function selectChatProject(projectId) {
+    state.chatFilterProjectId = String(projectId || "");
+    const active = activeChatConversation();
+    if (active && String(active.project_id || "") !== state.chatFilterProjectId) resetChat();
+    await refreshChatWorkspace();
+  }
+  async function ensurePersistentConversation() {
+    if (state.chatConversationId) return state.chatConversationId;
+    const body = {};
+    if (state.chatFilterProjectId) body.project_id = state.chatFilterProjectId;
+    const response = expectSuccess(await request("/ecai/conversations", {method: "POST", body}));
+    const conversation = response.conversation;
+    if (!conversation?.id) throw new Error("Conversation was not created");
+    state.chatConversationId = String(conversation.id);
+    state.chatConversations = [conversation, ...state.chatConversations.filter((item) => String(item.id) !== String(conversation.id))];
+    renderChatHistory();
+    renderChatThreadControls();
+    return state.chatConversationId;
+  }
+  async function openChatConversation(id) {
+    const response = expectSuccess(await request(`/ecai/conversations/${encodeURIComponent(String(id))}`));
+    if (!response.conversation) throw new Error("Conversation was not returned");
+    state.chatConversationId = String(response.conversation.id);
+    state.chatFilterProjectId = String(response.conversation.project_id || "");
+    const messages = Array.isArray(response.messages) ? response.messages : [];
+    await refreshChatWorkspace();
+    renderChatMessages(messages);
+    put("chatStatus", "Conversation loaded");
+    $("chatPrompt").focus();
   }
   async function sendChat(event) {
     event.preventDefault();
@@ -756,15 +944,156 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     $("chatPrompt").value = "";
     addChatMessage(message, "user");
     state.chatBusy = true; $("chatSend").disabled = true;
-    put("chatStatus", "Retrieving a reply…");
+    put("chatStatus", state.authenticated ? "Searching conversation and knowledge context…" : "Retrieving a reply…");
     try {
-      const response = expectSuccess(await request("/ecai/chat", { method: "POST", body: {
-        session_id: state.chatSession, user_id: state.chatUser, message
-      }, ignoreAuth: true }));
+      let response;
+      if (state.authenticated) {
+        const conversationId = await ensurePersistentConversation();
+        response = expectSuccess(await request(`/ecai/conversations/${encodeURIComponent(conversationId)}/messages`, {
+          method: "POST", body: {message}
+        }));
+      } else {
+        response = expectSuccess(await request("/ecai/chat", {method: "POST", body: {
+          session_id: state.chatSession, user_id: state.chatUser, message
+        }, ignoreAuth: true}));
+      }
       addChatMessage(response.reply ?? "Empty response", "agent");
-      put("chatStatus", "Reply received");
-    } catch (error) { addChatMessage(`Unable to obtain a reply: ${showError(error)}`, "agent"); put("chatStatus", "Request failed"); }
-    finally { state.chatBusy = false; $("chatSend").disabled = false; $("chatPrompt").focus(); }
+      if (response.conversation) {
+        const conversation = response.conversation;
+        state.chatConversationId = String(conversation.id);
+        state.chatConversations = [conversation, ...state.chatConversations.filter((item) => String(item.id) !== state.chatConversationId)];
+        renderChatHistory();
+        renderChatThreadControls();
+      }
+      put("chatStatus", state.authenticated ? "Reply received · history indexed" : "Reply received");
+    } catch (error) {
+      addChatMessage(`Unable to obtain a reply: ${showError(error)}`, "agent");
+      put("chatStatus", "Request failed · user message saved when signed in");
+      if (state.authenticated) {
+        try { await refreshChatWorkspace(); } catch (_) { /* preserve original error state */ }
+      }
+    } finally {
+      state.chatBusy = false; $("chatSend").disabled = false; $("chatPrompt").focus();
+    }
+  }
+  function openChatSearch() {
+    if (!state.authenticated) { openLogin("Sign in to search your conversation history."); return; }
+    renderChatProjectOptions();
+    $("chatSearchProject").value = state.chatFilterProjectId || "";
+    $("chatSearchQuery").value = "";
+    $("chatSearchResults").replaceChildren(element("div", "chat-history-empty", "Search message text and conversation titles."));
+    $("chatSearchDialog").showModal();
+    $("chatSearchQuery").focus();
+  }
+  async function searchChats(event) {
+    event.preventDefault();
+    const query = $("chatSearchQuery").value.trim();
+    if (!query) return;
+    const body = {query, limit: 50};
+    const projectId = $("chatSearchProject").value;
+    if (projectId) body.project_id = projectId;
+    const host = $("chatSearchResults");
+    host.replaceChildren(element("div", "chat-history-empty", "Searching the private ECAI history index…"));
+    await task(async () => {
+      const response = expectSuccess(await request("/ecai/conversations/search", {method: "POST", body}));
+      const results = Array.isArray(response.results) ? response.results : [];
+      host.replaceChildren();
+      if (!results.length) {
+        host.append(element("div", "chat-history-empty", "No matching conversations."));
+        return;
+      }
+      for (const result of results) {
+        const button = element("button", "chat-search-result");
+        button.type = "button";
+        button.append(element("strong", "", result.title || "New chat"), element("p", "", result.snippet || ""), element("small", "", `${chatProjectName(result.project_id)} · ${formatWhen(Number(result.updated_at))}`));
+        button.addEventListener("click", () => {
+          $("chatSearchDialog").close();
+          void task(() => openChatConversation(result.conversation_id));
+        });
+        host.append(button);
+      }
+    });
+  }
+  function openChatProjectDialog(project = null) {
+    if (!state.authenticated) { openLogin("Sign in to create conversation projects."); return; }
+    $("chatProjectId").value = project?.id || "";
+    $("chatProjectName").value = project?.name || "";
+    $("chatProjectInstructions").value = project?.instructions || "";
+    $("chatProjectDialogTitle").textContent = project ? "Project settings" : "New project";
+    $("chatProjectDelete").hidden = !project;
+    $("chatProjectDialog").showModal();
+    $("chatProjectName").focus();
+  }
+  async function saveChatProject(event) {
+    event.preventDefault();
+    const id = $("chatProjectId").value;
+    const name = $("chatProjectName").value.trim();
+    const instructions = $("chatProjectInstructions").value;
+    if (!name) return;
+    await task(async () => {
+      if (id) {
+        expectSuccess(await request(`/ecai/projects/${encodeURIComponent(id)}`, {method: "PATCH", body: {name, instructions}}));
+      } else {
+        const response = expectSuccess(await request("/ecai/projects", {method: "POST", body: {name, instructions}}));
+        if (response.project?.id) state.chatFilterProjectId = String(response.project.id);
+      }
+      $("chatProjectDialog").close();
+      await refreshChatWorkspace();
+      resetChat();
+    });
+  }
+  async function deleteChatProject() {
+    const id = $("chatProjectId").value;
+    if (!id || !confirm("Delete this project? Its conversations will be kept and moved to No project.")) return;
+    await task(async () => {
+      expectSuccess(await request(`/ecai/projects/${encodeURIComponent(id)}`, {method: "DELETE"}));
+      if (state.chatFilterProjectId === id) state.chatFilterProjectId = "";
+      $("chatProjectDialog").close();
+      await refreshChatWorkspace();
+      renderChatThreadControls();
+    });
+  }
+  async function renameChatConversation() {
+    const conversation = activeChatConversation();
+    if (!conversation) return;
+    const title = prompt("Rename conversation", conversation.title || "New chat");
+    if (title === null || !title.trim()) return;
+    const response = expectSuccess(await request(`/ecai/conversations/${encodeURIComponent(conversation.id)}`, {method: "PATCH", body: {title: title.trim()}}));
+    if (response.conversation) {
+      state.chatConversations = [response.conversation, ...state.chatConversations.filter((item) => String(item.id) !== String(response.conversation.id))];
+      renderChatHistory(); renderChatThreadControls();
+    }
+  }
+  async function deleteChatConversation() {
+    const conversation = activeChatConversation();
+    if (!conversation || !confirm(`Delete “${conversation.title || "this conversation"}”? This removes its saved messages and private history index entries.`)) return;
+    expectSuccess(await request(`/ecai/conversations/${encodeURIComponent(conversation.id)}`, {method: "DELETE"}));
+    state.chatConversations = state.chatConversations.filter((item) => String(item.id) !== String(conversation.id));
+    resetChat();
+    await refreshChatWorkspace();
+  }
+  async function moveChatConversation() {
+    const projectId = $("chatMoveProject").value;
+    const conversation = activeChatConversation();
+    if (!conversation) {
+      state.chatFilterProjectId = projectId;
+      await refreshChatWorkspace();
+      resetChat();
+      return;
+    }
+    const response = expectSuccess(await request(`/ecai/conversations/${encodeURIComponent(conversation.id)}`, {
+      method: "PATCH", body: {project_id: projectId || null}
+    }));
+    if (response.conversation) {
+      state.chatFilterProjectId = String(response.conversation.project_id || "");
+      await refreshChatWorkspace();
+      renderChatThreadControls();
+    }
+  }
+  function toggleChatHistory() {
+    state.chatHistoryOpen = !state.chatHistoryOpen;
+    $("chatHistoryPanel").classList.toggle("is-open", state.chatHistoryOpen);
+    $("chatHistoryToggle").setAttribute("aria-expanded", String(state.chatHistoryOpen));
   }
 
   function indexActions(job) {
@@ -1920,9 +2249,11 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     window.EcaiIndexPool?.setSession(state.authenticated, state.nodeAdmin);
   }
   function setCodeActionsEnabled(allowed) {
-    for (const id of ["codeLearn", "codeScan", "codeIntegrate", "codeProposeSubmit"]) {
+    for (const id of ["codeLearn", "codeScan", "codeIntegrate", "codeProposeSubmit", "codeSettingsSave",
+      "codeRepoFetch", "codeRepoPull", "codeReviewerAdd", "codePublisherAdd", "codeLearningExport"]) {
       $(id).disabled = !allowed;
     }
+    document.querySelectorAll(".code-role-remove").forEach((button) => { button.disabled = !allowed; });
     codeReviewButtons();
   }
   function applyCodeSession(session) {
@@ -2286,7 +2617,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
       ["Repair backlog", pending === null ? "—" : formatNumber(pending), `${codeValue(patchManager.queued_live, "0")} queued · ${codeValue(patchManager.retry_wait, "0")} retry wait`, pending > 0 ? "attention" : ""],
       ["Awaiting review", formatNumber(reviewsPending), `Verifier-validated patches pending approval`, reviewsPending > 0 ? "attention" : ""],
       ["Approved patches", formatNumber(reviewsApproved), `Awaiting independent publication`],
-      ["Published reviews", formatNumber(reviewsPublished), `Review branches published to origin`, reviewsPublished > 0 ? "success" : ""]
+      ["Published reviews", formatNumber(reviewsPublished), `Review branches published to configured remote`, reviewsPublished > 0 ? "success" : ""]
     ].forEach(([label, val, caption, tone]) => metrics.append(codeMetric(label, val, caption, tone)));
     const services = $("codeServiceCards"); services.replaceChildren();
     const learnerUnavailable = !Object.keys(learner).length;
@@ -2316,18 +2647,20 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
       [["Clean / broken", `${codeValue(integrationCounts.clean, "0")} / ${codeValue(broken, "0")}`],
        ["Review approvals required", codeValue(queue.required_approvals)],
        ["Publishing", queue.publishing && queue.publishing !== "null" ? "In progress" : "Idle"],
-       ["Origin push", queue.publish_enabled ? "Enabled" : "Disabled"],
+       ["Review push", queue.publish_enabled ? "Enabled" : "Disabled"],
        ...(integrationError ? [["Last error", integrationError]] : [])]));
     put("codeStatusUpdated", `Telemetry checked ${new Date().toLocaleTimeString()}`);
   }
   const CODE_PUBLISH_BLOCKERS = {
-    push_disabled: "Publishing is disabled in ECAI configuration (code_review_push_enabled).",
+    push_disabled: "Publishing is disabled in the runtime review-gate settings.",
     review_not_approved: "The review is not yet approved for publication.",
-    already_published: "This immutable review has already been published; open the existing origin review branch.",
+    already_published: "This immutable review has already been published; open the existing configured review branch.",
     review_rejected: "This review was rejected and cannot be published.",
     approvals_missing: "Additional independent review approval is required.",
-    publisher_is_reviewer: "This account approved the patch. Sign in as a different authorized node admin to publish it.",
+    publisher_is_reviewer: "This account approved the patch. Sign in as a different authorized publisher to publish it.",
     invalid_publisher_identity: "The authenticated publisher identity is invalid.",
+    publisher_not_allowed: "This account is not in the current publisher policy.",
+    reviewer_not_allowed: "This account is not in the current reviewer policy.",
     repair_superseded: "The underlying validated repair has changed; generate and approve a new pinned review.",
     repair_not_available: "The associated durable repair record is missing.",
     publication_in_progress: "Another Git publication is currently running.",
@@ -2371,11 +2704,11 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     const token = currentToken();
     const bearer = typeof token === "string" && token.trim().length > 0;
     const status = review?.status;
-    $("codeApprove").disabled = !valid || !bearer || status !== "pending";
+    $("codeApprove").disabled = !valid || !bearer || !["pending", "approved", "publish_failed"].includes(status);
     $("codeReject").disabled = !valid || !bearer || !["pending", "approved", "publish_failed"].includes(status);
     const publishEligible = renderCodePublishGate(valid ? review : null, bearer);
     $("codePublish").disabled = !valid || !publishEligible ||
-      !["approved", "publish_failed"].includes(status) || $("codePublishPhrase").value.trim() !== "push to origin";
+      $("codePublishPhrase").value.trim() !== "push reviewed branch";
     $("codeReloadReview").disabled = !valid;
     $("codeCopyDiff").disabled = !valid || !review.patch;
     $("codeBearerNotice").hidden = !valid || bearer;
@@ -2400,6 +2733,107 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     put("codeActionStatus", `Reviewed diff ${id.slice(0, 16)} · ${review.status}. Check SHA-256, base commit and verifier evidence before approving.`);
     codeReviewButtons();
   }
+  function codeListValue(value) { return Array.isArray(value) ? value.join(", ") : ""; }
+  function codeRoleList(hostId, accounts, role) {
+    const host = $(hostId); host.replaceChildren();
+    const values = Array.isArray(accounts) ? accounts : [];
+    if (!values.length) { host.append(element("span", "empty-state", "All authorized code admins")); return; }
+    for (const account of values) {
+      const chip = element("span", "code-role-chip");
+      chip.append(element("span", "", account));
+      const remove = element("button", "code-role-remove", "Remove");
+      remove.type = "button"; remove.disabled = !state.codeAdmin;
+      remove.addEventListener("click", () => task(() => codeRoleAction(role, "remove", account), "codeSettingsStatus"));
+      chip.append(remove); host.append(chip);
+    }
+  }
+  function renderCodeBundles() {
+    const host = $("codeLearningBundles"); host.replaceChildren();
+    if (!state.codeBundles.length) { host.append(element("div", "empty-state", "No exported learning bundles.")); return; }
+    for (const name of state.codeBundles.slice(-20).reverse()) host.append(element("div", "code-bundle", name));
+  }
+  function renderCodeSettings(payload) {
+    const settings = payload?.settings || {};
+    const learning = settings.learning || {};
+    const repository = settings.repository || {};
+    const review = settings.review || {};
+    const sharing = settings.sharing || {};
+    state.codeSettings = settings; state.codeRepository = payload?.repository || null;
+    $("codeLearningEnabled").checked = learning.enabled === true;
+    $("codeLearningBranches").value = codeListValue(learning.branches);
+    $("codeLearningInterval").value = Number.isFinite(learning.interval_ms) ? Math.round(learning.interval_ms / 1000) : "300";
+    $("codeLearningParallelism").value = learning.parallelism ?? "auto";
+    $("codeLearningReserve").value = Number.isFinite(learning.capacity_reserve) ? learning.capacity_reserve : 1;
+    $("codeLearningClean").checked = learning.require_clean_worktree !== false;
+    $("codeLearningFetch").checked = learning.fetch_before_learning === true;
+    $("codeWorkingRoot").value = repository.working_root || "";
+    $("codeRepoRemote").value = repository.remote || "origin";
+    $("codeRepoBranch").value = repository.branch || "main";
+    $("codeReviewRepoRoot").value = review.repo_root || "";
+    $("codeReviewRemote").value = review.remote || "origin";
+    $("codeReviewPrefix").value = review.branch_prefix || "ecai/reviews/";
+    $("codeReviewApprovals").value = review.required_approvals || 1;
+    $("codeReviewTimeout").value = Number.isFinite(review.verify_timeout_ms) ? Math.round(review.verify_timeout_ms / 1000) : 600;
+    $("codeReviewPushEnabled").checked = review.push_enabled === true;
+    $("codeReviewEunit").checked = review.run_eunit !== false;
+    $("codeReviewCt").checked = review.run_ct === true;
+    $("codeSharingEnabled").checked = sharing.enabled === true;
+    $("codeSharingDirectory").value = sharing.directory || "";
+    codeRoleList("codeReviewerList", review.reviewers, "reviewers");
+    codeRoleList("codePublisherList", review.publishers, "publishers");
+    $("codeRepoStatus").textContent = pretty(state.codeRepository || { status: "Repository status unavailable" });
+    $("codeSettingsStatus").textContent = "Runtime settings loaded. Credentials remain in Git/SSH configuration, not ECAI settings.";
+  }
+  function codePositiveInteger(id, min, max) {
+    const value = Number($(id).value);
+    if (!Number.isInteger(value) || value < min || value > max) throw new Error(`${id} must be between ${min} and ${max}`);
+    return value;
+  }
+  function codeSettingsPayload() {
+    const parallelText = $("codeLearningParallelism").value.trim().toLowerCase() || "auto";
+    const parallelism = parallelText === "auto" ? "auto" : Number(parallelText);
+    if (parallelism !== "auto" && (!Number.isInteger(parallelism) || parallelism < 1 || parallelism > 64)) throw new Error("Parallelism must be auto or an integer from 1 to 64");
+    const branches = $("codeLearningBranches").value.split(/[\s,]+/).map((v) => v.trim()).filter(Boolean);
+    return {
+      learning: {
+        enabled: $("codeLearningEnabled").checked, branches,
+        interval_ms: codePositiveInteger("codeLearningInterval", 10, 604800) * 1000,
+        parallelism, capacity_reserve: codePositiveInteger("codeLearningReserve", 0, 64),
+        require_clean_worktree: $("codeLearningClean").checked,
+        fetch_before_learning: $("codeLearningFetch").checked
+      },
+      repository: { working_root: $("codeWorkingRoot").value.trim(), remote: $("codeRepoRemote").value.trim(), branch: $("codeRepoBranch").value.trim() },
+      review: {
+        repo_root: $("codeReviewRepoRoot").value.trim(), remote: $("codeReviewRemote").value.trim(), branch_prefix: $("codeReviewPrefix").value.trim(),
+        push_enabled: $("codeReviewPushEnabled").checked, required_approvals: codePositiveInteger("codeReviewApprovals", 1, 5),
+        run_eunit: $("codeReviewEunit").checked, run_ct: $("codeReviewCt").checked,
+        verify_timeout_ms: codePositiveInteger("codeReviewTimeout", 30, 3600) * 1000
+      },
+      sharing: { enabled: $("codeSharingEnabled").checked, directory: $("codeSharingDirectory").value.trim() }
+    };
+  }
+  async function saveCodeSettings() {
+    const result = expectSuccess(await request("/ecai/admin/code/settings/update", { method: "POST", body: codeSettingsPayload() }));
+    renderCodeSettings(result); toast("ECAI code runtime settings saved"); await refreshCode();
+  }
+  async function codeRepositoryAction(action) {
+    if (!confirm(`${action === "fetch" ? "Fetch/prune" : "Fast-forward pull"} the configured code repository?`)) return;
+    const result = expectSuccess(await request(`/ecai/admin/code/repository/${action}`, { method: "POST", body: {} }));
+    if (result.repository) state.codeRepository = result.repository;
+    toast(`Repository ${action} completed`); await refreshCode();
+  }
+  async function codeRoleAction(role, action, accountValue = "") {
+    const accountId = role === "reviewers" ? "codeReviewerAccount" : "codePublisherAccount";
+    const account = String(accountValue || $(accountId).value).trim();
+    if (!account) throw new Error("Authorized account id is required");
+    const endpoint = role === "reviewers" ? "reviewers" : "publishers";
+    expectSuccess(await request(`/ecai/admin/code/${endpoint}/${action}`, { method: "POST", body: { account } }));
+    $(accountId).value = ""; toast(`${role === "reviewers" ? "Reviewer" : "Publisher"} policy updated`); await refreshCode();
+  }
+  async function exportCodeLearning() {
+    const result = expectSuccess(await request("/ecai/admin/code/learning/export", { method: "POST", body: {} }));
+    toast(`Learning evidence exported${result.bundle?.name ? `: ${result.bundle.name}` : ""}`); await refreshCode();
+  }
   async function refreshCode() {
     if (!state.authenticated) { openLogin("Sign in with a node administrator account."); return; }
     try {
@@ -2409,18 +2843,21 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
       setCodeActionsEnabled(true);
       state.codeQueue = status.status?.reviews || {};
       const learning = status.status?.learning || {};
-      put("codeLearningStatus", { learner: learning.learner, store: learning.store,
-        health_monitor: learning.health_monitor, log_learning: learning.log_learning });
+      put("codeLearningStatus", { learner: learning.learner, source_repository: learning.source_repository,
+        store: learning.store, health_monitor: learning.health_monitor, log_learning: learning.log_learning });
       put("codeRepairStatus", { patch_manager: learning.patch_manager, integration: learning.integration,
         review_queue: state.codeQueue });
       renderCodeOperations(learning, state.codeQueue);
       state.codeStatusLastPoll = Date.now();
-      const [repairs, reviews] = await Promise.all([
-        request("/ecai/admin/code/repairs"), request("/ecai/admin/code/reviews")
+      const [repairs, reviews, settings, bundles] = await Promise.all([
+        request("/ecai/admin/code/repairs"), request("/ecai/admin/code/reviews"),
+        request("/ecai/admin/code/settings"), request("/ecai/admin/code/learning/bundles")
       ]);
       state.codeRepairs = Array.isArray(repairs.repairs) ? repairs.repairs : [];
       state.codeReviews = Array.isArray(reviews.reviews) ? reviews.reviews : [];
       state.codeQueue = reviews.queue || state.codeQueue;
+      state.codeBundles = Array.isArray(bundles.bundles) ? bundles.bundles : [];
+      renderCodeSettings(settings); renderCodeBundles();
       renderCodeOperations(learning, state.codeQueue);
       put("codeRepairCount", `${repairs.total ?? state.codeRepairs.length} repair records (showing latest ${state.codeRepairs.length})`);
       put("codeReviewCounts", Object.entries(state.codeQueue.counts || {}).map(([k,v]) => `${k}: ${v}`).join(" · ") || "Queue empty");
@@ -2430,7 +2867,8 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     } catch (error) {
       state.codeAdmin = false;
       clearCodeReviewFocus();
-      state.codeRepairs = []; state.codeReviews = [];
+      state.codeRepairs = []; state.codeReviews = []; state.codeSettings = null; state.codeRepository = null; state.codeBundles = [];
+      renderCodeBundles();
       showCodeAdminNavigation();
       setCodeActionsEnabled(false);
       renderCodeRepairs(); renderCodeReviews();
@@ -2446,8 +2884,8 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     const status = expectSuccess(await request("/ecai/admin/code/status"));
     const learning = status.status?.learning || {};
     state.codeQueue = status.status?.reviews || state.codeQueue;
-    put("codeLearningStatus", { learner: learning.learner, store: learning.store,
-      health_monitor: learning.health_monitor, log_learning: learning.log_learning });
+    put("codeLearningStatus", { learner: learning.learner, source_repository: learning.source_repository,
+      store: learning.store, health_monitor: learning.health_monitor, log_learning: learning.log_learning });
     put("codeRepairStatus", { patch_manager: learning.patch_manager, integration: learning.integration,
       review_queue: state.codeQueue });
     renderCodeOperations(learning, state.codeQueue);
@@ -2496,13 +2934,15 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
   }
   async function codePublish() {
     const review = state.codeReview;
-    if (!review || $("codePublishPhrase").value.trim() !== "push to origin") return;
+    if (!review || $("codePublishPhrase").value.trim() !== "push reviewed branch") return;
     if (!renderCodePublishGate(review, !!currentToken())) return;
-    if (!confirm(`Publish reviewed patch ${review.patch_sha256.slice(0, 16)}… to origin/ecai/reviews/${review.id}? This creates a remote Git branch, not a merge to main.`)) return;
+    const remote = state.codeSettings?.review?.remote || "origin";
+    const prefix = state.codeSettings?.review?.branch_prefix || "ecai/reviews/";
+    if (!confirm(`Publish reviewed patch ${review.patch_sha256.slice(0, 16)}… to ${remote}/${prefix}${review.id}? This creates a remote Git branch, not a merge to the stable branch.`)) return;
     await task(async () => {
       try {
         expectSuccess(await request(`/ecai/admin/code/reviews/${encodeURIComponent(review.id)}/publish`, {
-          method: "POST", body: { patch_sha256: review.patch_sha256, revision: review.revision, confirm: "push to origin" }
+          method: "POST", body: { patch_sha256: review.patch_sha256, revision: review.revision, confirm: "push reviewed branch" }
         }));
       } catch (error) {
         if (error.status === 409) {
@@ -2530,6 +2970,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     }
     switch (state.view) {
       case "overview": await refreshOverview(); break;
+      case "chat": await refreshChatWorkspace(); break;
       case "indexing": await refreshIndexing(); break;
       case "wikimedia": await refreshWikiProjects(); break;
       case "network": await window.EcaiIndexPool?.refresh(); break;
@@ -2567,6 +3008,24 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
       if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); $("chatForm").requestSubmit(); }
     });
     $("newChatBtn").addEventListener("click", resetChat);
+    $("chatSearchBtn").addEventListener("click", openChatSearch);
+    $("chatSearchClose").addEventListener("click", () => $("chatSearchDialog").close());
+    $("chatSearchForm").addEventListener("submit", searchChats);
+    $("chatAllChats").addEventListener("click", () => task(() => selectChatProject("")));
+    $("chatNewProjectBtn").addEventListener("click", () => openChatProjectDialog());
+    $("chatHistoryRefresh").addEventListener("click", () => task(refreshChatWorkspace));
+    $("chatProjectDialogClose").addEventListener("click", () => $("chatProjectDialog").close());
+    $("chatProjectForm").addEventListener("submit", saveChatProject);
+    $("chatProjectDelete").addEventListener("click", () => void deleteChatProject());
+    $("chatRenameBtn").addEventListener("click", () => task(renameChatConversation));
+    $("chatDeleteBtn").addEventListener("click", () => task(deleteChatConversation));
+    $("chatMoveProject").addEventListener("change", () => task(moveChatConversation));
+    $("chatHistoryToggle").addEventListener("click", toggleChatHistory);
+    document.addEventListener("keydown", (event) => {
+      if (state.view === "chat" && (event.metaKey || event.ctrlKey) && String(event.key).toLowerCase() === "k") {
+        event.preventDefault(); openChatSearch();
+      }
+    });
     $("refreshJobs").addEventListener("click", () => task(refreshIndexing));
     $("indexOpenCompute").addEventListener("click", () => {
       const selected = state.selectedIndexId;
@@ -2614,6 +3073,12 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     $("codeLearn").addEventListener("click", () => codeWorkerAction("learn", "Start a code learning cycle"));
     $("codeScan").addEventListener("click", () => codeWorkerAction("scan", "Scan for repair proposals"));
     $("codeIntegrate").addEventListener("click", () => codeWorkerAction("integrate", "Verify integration patchset"));
+    $("codeSettingsSave").addEventListener("click", () => task(saveCodeSettings, "codeSettingsStatus"));
+    $("codeRepoFetch").addEventListener("click", () => task(() => codeRepositoryAction("fetch"), "codeSettingsStatus"));
+    $("codeRepoPull").addEventListener("click", () => task(() => codeRepositoryAction("pull"), "codeSettingsStatus"));
+    $("codeReviewerAdd").addEventListener("click", () => task(() => codeRoleAction("reviewers", "add"), "codeSettingsStatus"));
+    $("codePublisherAdd").addEventListener("click", () => task(() => codeRoleAction("publishers", "add"), "codeSettingsStatus"));
+    $("codeLearningExport").addEventListener("click", () => task(exportCodeLearning, "codeSettingsStatus"));
     $("codeProposeForm").addEventListener("submit", codePropose);
     for (const id of ["codeRepairSearch", "codeRepairValidation", "codeRepairApp", "codeRepairWithDiff"]) {
       $(id).addEventListener(id === "codeRepairSearch" ? "input" : "change", renderCodeRepairs);

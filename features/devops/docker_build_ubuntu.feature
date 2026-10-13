@@ -5,7 +5,7 @@
 Feature: Publish an installable Ubuntu 24.04 LTS release
   Scenario: Build and verify the ubuntu-noble-amd64 installation release
     Given the build release discovery is configured
-    When I build an image from Dockerfile at "QmedASiMU1b2TSyzBE9KCViDnmBVeAfuMYqnxcnwDHjhSD" as tag "damagebdd/ubuntu24-builder:latest" with params "--build-arg 'REPO_URL=https://github.com/DamageBDD/DamageBDD.git' --build-arg 'REPO_REF=develop'"
+    When I build an image from Dockerfile at "QmQ7FARrGVyWg8LaNg3reKU514jgbpoh4cjd3ix1scTiyV" as tag "damagebdd/ubuntu24-builder:latest" with params "--build-arg 'REPO_URL=https://github.com/DamageBDD/DamageBDD.git' --build-arg 'REPO_REF=main'"
     Then I run docker image tagged "damagebdd/ubuntu24-builder:latest"
     """
     set -eu

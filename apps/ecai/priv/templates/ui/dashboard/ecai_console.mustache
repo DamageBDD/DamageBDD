@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="/static/css/ecai-market-maker.css">
   <link rel="stylesheet" href="/ecai/auth-assets/css/auth.css">
   <link rel="stylesheet" href="/static/css/ecai-auth.css">
+  <link rel="stylesheet" href="/static/css/ecai-quick-index.css?v=quick-index-v2">
   <link rel="stylesheet" href="/static/css/ecai-index-pool.css">
   <link rel="stylesheet" href="/static/css/ecai-compute-settings.css">
   <link rel="stylesheet" href="/static/css/ecai-keys.css">
@@ -232,19 +233,104 @@
         </section>
 
         <section class="view" data-panel="chat" aria-labelledby="chatTitle" hidden>
-          <div class="page-intro"><div class="eyebrow">CONVERSATION</div><h1 id="chatTitle">Speak to the knowledge layer</h1><p>Use the ECAI chat API with an isolated session. Replies depend on the configured backend and are not cryptographic proofs.</p></div>
-          <div class="surface chat-layout">
-            <div class="chat-toolbar"><span class="status-indicator"><span class="status-pulse"></span>ECAI chat</span><span id="chatSessionLabel" class="mono small">New session</span><button type="button" class="text-button" id="newChatBtn">+ New conversation</button></div>
-            <div class="chat-messages" id="chatMessages" aria-live="polite"><div class="chat-welcome"><div class="welcome-icon">e·</div><h2>Ask a question</h2><p>Your conversation stays in this browser tab. Messages are sent to the configured ECAI chat service.</p></div></div>
-            <form id="chatForm" class="composer"><label class="sr-only" for="chatPrompt">Your message</label><textarea id="chatPrompt" rows="2" required placeholder="Ask the ECAI knowledge layer…"></textarea><button class="button button-primary" type="submit" id="chatSend">Send ↗</button></form>
-            <div class="form-meta"><span id="chatStatus" role="status">Ready</span><span>POST /ecai/chat</span></div>
+          <div class="page-intro"><div class="eyebrow">CONVERSATION</div><h1 id="chatTitle">Speak to the knowledge layer</h1><p>Signed-in conversations are durable, searchable through the private ECAI term index and can be grouped into projects. Guest chat remains an isolated session. Replies depend on the configured backend and are not cryptographic proofs.</p></div>
+          <div class="chat-workspace">
+            <aside class="surface chat-history-panel" id="chatHistoryPanel" aria-label="Conversation history">
+              <div class="chat-history-actions">
+                <button type="button" class="button button-primary chat-new-button" id="newChatBtn">＋ New chat</button>
+                <button type="button" class="chat-search-button" id="chatSearchBtn"><span aria-hidden="true">⌕</span><span>Search chats</span><kbd>⌘K</kbd></button>
+              </div>
+              <div class="chat-history-auth" id="chatHistoryAuth">Sign in or connect a wallet to save account-scoped history, search messages and use projects.</div>
+              <div class="chat-history-section">
+                <div class="chat-history-heading"><span>Projects</span><button type="button" class="chat-history-icon-button" id="chatNewProjectBtn" aria-label="Create project">＋</button></div>
+                <button type="button" class="chat-history-item is-active" id="chatAllChats"><span class="chat-history-icon" aria-hidden="true">◫</span><span class="chat-history-copy"><strong>All chats</strong><small>Every project</small></span></button>
+                <div id="chatProjects" class="chat-project-list"></div>
+              </div>
+              <div class="chat-history-section chat-history-recent">
+                <div class="chat-history-heading"><span>Recent</span><button type="button" class="chat-history-icon-button" id="chatHistoryRefresh" aria-label="Refresh conversation history">↻</button></div>
+                <div id="chatHistoryList" class="chat-history-list"><div class="chat-history-empty">Sign in to keep account-scoped history.</div></div>
+              </div>
+            </aside>
+            <div class="surface chat-layout">
+              <div class="chat-toolbar">
+                <button type="button" class="chat-history-toggle" id="chatHistoryToggle" aria-controls="chatHistoryPanel" aria-expanded="false" aria-label="Toggle conversation history">☰</button>
+                <span class="status-indicator"><span class="status-pulse"></span>ECAI chat</span>
+                <div class="chat-thread-heading"><strong id="chatConversationTitle">New conversation</strong><span id="chatProjectLabel" class="small muted">Guest session</span></div>
+                <span id="chatSessionLabel" class="mono small">New session</span>
+                <div class="chat-thread-actions">
+                  <button type="button" class="text-button" id="chatRenameBtn" disabled>Rename</button>
+                  <select id="chatMoveProject" class="chat-project-select" aria-label="Move conversation to project" disabled><option value="">No project</option></select>
+                  <button type="button" class="text-button chat-delete-button" id="chatDeleteBtn" disabled>Delete</button>
+                </div>
+              </div>
+              <div class="chat-messages" id="chatMessages" aria-live="polite"><div class="chat-welcome"><div class="welcome-icon">e·</div><h2>Ask a question</h2><p>Guest messages use a temporary session. Sign in to keep searchable conversation history.</p></div></div>
+              <form id="chatForm" class="composer"><label class="sr-only" for="chatPrompt">Your message</label><textarea id="chatPrompt" rows="2" required maxlength="16384" placeholder="Ask the ECAI knowledge layer…"></textarea><button class="button button-primary" type="submit" id="chatSend">Send ↗</button></form>
+              <div class="form-meta"><span id="chatStatus" role="status">Ready</span><span>Saved + privately indexed when signed in</span></div>
+            </div>
           </div>
+          <dialog id="chatSearchDialog" class="chat-dialog">
+            <div class="chat-dialog-header"><div><div class="eyebrow">HISTORY</div><h2>Search chats</h2></div><button type="button" class="chat-dialog-close" id="chatSearchClose" aria-label="Close search">×</button></div>
+            <form id="chatSearchForm" class="chat-dialog-form">
+              <label>Search your conversations<input id="chatSearchQuery" type="search" required maxlength="4096" placeholder="Search titles and message text…" autocomplete="off"></label>
+              <label>Project<select id="chatSearchProject"><option value="">All projects</option></select></label>
+              <button class="button button-primary" type="submit">Search</button>
+            </form>
+            <div id="chatSearchResults" class="chat-search-results"><div class="chat-history-empty">Search message text and conversation titles.</div></div>
+          </dialog>
+          <dialog id="chatProjectDialog" class="chat-dialog chat-project-dialog">
+            <div class="chat-dialog-header"><div><div class="eyebrow">PROJECT</div><h2 id="chatProjectDialogTitle">New project</h2></div><button type="button" class="chat-dialog-close" id="chatProjectDialogClose" aria-label="Close project settings">×</button></div>
+            <form id="chatProjectForm" class="stack-form">
+              <input id="chatProjectId" type="hidden">
+              <label>Project name<input id="chatProjectName" required maxlength="120" placeholder="e.g. DamageBDD release work"></label>
+              <label>Project instructions<textarea id="chatProjectInstructions" rows="7" maxlength="8192" placeholder="Optional instructions applied to conversations in this project. These are user preferences, not proof or system policy."></textarea></label>
+              <p class="context-hint">Project search and related-history retrieval stay scoped to the authenticated account. Deleting a project keeps its conversations and moves them to No project.</p>
+              <div class="inline-actions wrap-actions"><button class="button button-primary" type="submit">Save project</button><button class="button button-outline" type="button" id="chatProjectDelete" hidden>Delete project</button></div>
+            </form>
+          </dialog>
         </section>
 
         <section class="view" data-panel="indexing" data-ecai-managed aria-labelledby="indexTitle" hidden>
           <div class="page-intro page-intro-actions"><div><div class="eyebrow">DURABLE PIPELINE</div><h1 id="indexTitle">Index jobs</h1><p>Enqueue curated sources, inspect persisted jobs and follow execution events.</p></div><div class="inline-actions wrap-actions"><button type="button" class="button button-outline" id="indexOpenCompute">Compute budget &amp; NFT settings ↗</button><a class="button button-outline" href="/indexer/advanced">Advanced builder ↗</a></div></div>
           <div class="three-stats"><div class="surface mini-stat"><span>Running</span><strong id="queueRunning">—</strong></div><div class="surface mini-stat"><span>Queued</span><strong id="queueQueued">—</strong></div><div class="surface mini-stat"><span>Concurrency</span><strong id="queueWorkers">—</strong></div></div>
-          <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">QUICK START</div><h2>Wikimedia presets</h2></div><button type="button" id="reloadPresets" class="text-button">Reload presets ↻</button></div><div id="indexPresets" class="preset-grid"><div class="empty-state">Sign in to load available presets.</div></div></section>
+          <section class="surface panel-pad quick-index-card" id="quickIndexCard" aria-labelledby="quickIndexTitle">
+            <div class="panel-heading">
+              <div><div class="eyebrow">QUICK INDEX</div><h2 id="quickIndexTitle">Add knowledge from anywhere</h2></div>
+              <span class="quick-index-kicker">Detect → verify → index</span>
+            </div>
+            <p class="quick-index-lead">Drop a UTF-8 file, fetch a public URL, or paste an IPFS CID. ECAI inspects the source first, shows exactly what it detected, then hands it to the durable searchable index queue.</p>
+
+            <div class="quick-index-tabs" role="tablist" aria-label="Quick Index source type">
+              <button type="button" class="quick-index-tab is-active" data-quick-index-source="file" role="tab" aria-selected="true">↥ File</button>
+              <button type="button" class="quick-index-tab" data-quick-index-source="url" role="tab" aria-selected="false">↗ URL</button>
+              <button type="button" class="quick-index-tab" data-quick-index-source="ipfs" role="tab" aria-selected="false">◇ IPFS</button>
+            </div>
+
+            <div class="quick-index-pane" data-quick-index-pane="file">
+              <input id="quickIndexFile" type="file" hidden>
+              <div id="quickIndexDrop" class="quick-index-drop" role="button" tabindex="0" aria-controls="quickIndexFile">
+                <span class="quick-index-drop-icon" aria-hidden="true">↥</span>
+                <span class="quick-index-drop-copy"><strong id="quickIndexFileName">Drop a text or structured-text file here, or click to browse</strong><span>Markdown · Org · JSON · JSONL · CSV/TSV · HTML/XML · YAML · source code · plain text</span></span>
+              </div>
+            </div>
+
+            <div class="quick-index-pane" data-quick-index-pane="url" hidden>
+              <div class="quick-index-field"><label for="quickIndexUrl">Public HTTP(S) URL</label><input id="quickIndexUrl" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://example.org/knowledge.jsonl"><small>Fetched server-side with private-network and redirect protection.</small></div>
+            </div>
+
+            <div class="quick-index-pane" data-quick-index-pane="ipfs" hidden>
+              <div class="quick-index-field"><label for="quickIndexCid">IPFS CID</label><input id="quickIndexCid" type="text" autocomplete="off" spellcheck="false" placeholder="bafy… or Qm…"><small>You may paste a bare CID, ipfs://CID, or /ipfs/CID.</small></div>
+            </div>
+
+            <div class="quick-index-actions">
+              <button type="button" class="button button-outline" id="quickIndexInspect">Detect structure</button>
+              <button type="button" class="button button-primary" id="quickIndexQueue" disabled>Index detected source ↗</button>
+              <span class="quick-index-status" id="quickIndexStatus" role="status" aria-live="polite">Ready</span>
+            </div>
+
+            <div class="quick-index-analysis" id="quickIndexAnalysis" aria-live="polite"><p class="quick-index-empty">Choose a source, then detect its structure before indexing.</p></div>
+            <div class="quick-index-public-note"><span aria-hidden="true">ⓘ</span><span><strong>Searchable/public pipeline:</strong> file and URL bytes are content-addressed in this node's IPFS store before the existing <code>ipfs_cid → searchable_disk</code> job runs. Use Knowledge &amp; privacy instead for confidential corpora.</span></div>
+          </section>
+          <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">LARGE DATASETS</div><h2>Wikimedia presets</h2></div><button type="button" id="reloadPresets" class="text-button">Reload presets ↻</button></div><div id="indexPresets" class="preset-grid"><div class="empty-state">Sign in to load available presets.</div></div></section>
           <section class="surface panel-pad">
             <div class="panel-heading">
               <div><div class="eyebrow">DURABLE JOB QUEUE</div><h2>Execution history</h2></div>
@@ -355,6 +441,50 @@
               </div>
             </details>
           </div>
+          <details class="surface panel-pad code-settings-surface" id="codeSettingsPanel" open>
+            <summary><span><span class="eyebrow">RUNTIME POLICY · COLLABORATION</span><strong>Learning, repositories &amp; review gate</strong></span><span class="expand-arrow">⌄</span></summary>
+            <p class="context-hint">Changes are durable and take effect without restarting ECAI. In-flight learning is allowed to finish; new generations use the updated policy. Git credentials are never stored here.</p>
+            <div class="code-settings-grid">
+              <section class="code-settings-card">
+                <div class="eyebrow">LEARNING POLICY</div><h3>Where ECAI learns</h3>
+                <label class="code-toggle"><input id="codeLearningEnabled" type="checkbox"> Enable code learning</label>
+                <label>Allowed branches<input id="codeLearningBranches" placeholder="main" autocomplete="off" spellcheck="false"><small>Comma or whitespace separated. Empty means any non-detached branch.</small></label>
+                <div class="field-grid"><label>Interval (seconds)<input id="codeLearningInterval" type="number" min="10" max="604800" step="1"></label><label>Parallelism<input id="codeLearningParallelism" placeholder="auto" autocomplete="off"></label><label>Capacity reserve<input id="codeLearningReserve" type="number" min="0" max="64" step="1"></label></div>
+                <label class="code-toggle"><input id="codeLearningClean" type="checkbox"> Require a clean working tree</label>
+                <label class="code-toggle"><input id="codeLearningFetch" type="checkbox"> Fetch configured remote before each generation</label>
+              </section>
+              <section class="code-settings-card">
+                <div class="eyebrow">WORKING REPOSITORY</div><h3>Fetch &amp; fast-forward</h3>
+                <label>Working repo path<input id="codeWorkingRoot" autocomplete="off" spellcheck="false"></label>
+                <div class="field-grid"><label>Remote<input id="codeRepoRemote" value="origin" autocomplete="off"></label><label>Stable branch<input id="codeRepoBranch" value="main" autocomplete="off"></label></div>
+                <div class="inline-actions wrap-actions"><button type="button" class="button button-outline button-sm" id="codeRepoFetch">Fetch remote</button><button type="button" class="button button-outline button-sm" id="codeRepoPull">Pull --ff-only</button></div>
+                <pre id="codeRepoStatus" class="code-display code-status">Repository status not loaded.</pre>
+              </section>
+              <section class="code-settings-card">
+                <div class="eyebrow">AUTO PATCH REVIEW GATE</div><h3>Verification &amp; publication</h3>
+                <label>Review repo path<input id="codeReviewRepoRoot" autocomplete="off" spellcheck="false"></label>
+                <div class="field-grid"><label>Push remote<input id="codeReviewRemote" value="origin" autocomplete="off"></label><label>Branch prefix<input id="codeReviewPrefix" value="ecai/reviews/" autocomplete="off"></label></div>
+                <div class="field-grid"><label>Required approvals<input id="codeReviewApprovals" type="number" min="1" max="5" step="1"></label><label>Verify timeout (seconds)<input id="codeReviewTimeout" type="number" min="30" max="3600" step="1"></label></div>
+                <label class="code-toggle"><input id="codeReviewPushEnabled" type="checkbox"> Allow explicit reviewed-branch pushes</label>
+                <div class="inline-actions wrap-actions"><label class="code-toggle"><input id="codeReviewEunit" type="checkbox"> EUnit</label><label class="code-toggle"><input id="codeReviewCt" type="checkbox"> Common Test</label></div>
+              </section>
+              <section class="code-settings-card">
+                <div class="eyebrow">COLLABORATORS</div><h3>Reviewers &amp; publishers</h3>
+                <p class="context-hint">These lists can only narrow existing DamageBDD code-admin authority. Empty lists allow every authorized code admin.</p>
+                <div class="code-role-group"><strong>Reviewers</strong><div id="codeReviewerList" class="code-role-list"></div><div class="inline-actions"><input id="codeReviewerAccount" placeholder="authorized account id" autocomplete="off"><button type="button" class="button button-outline button-sm" id="codeReviewerAdd">Add reviewer</button></div></div>
+                <div class="code-role-group"><strong>Publishers</strong><div id="codePublisherList" class="code-role-list"></div><div class="inline-actions"><input id="codePublisherAccount" placeholder="authorized account id" autocomplete="off"><button type="button" class="button button-outline button-sm" id="codePublisherAdd">Add publisher</button></div></div>
+              </section>
+              <section class="code-settings-card code-sharing-card">
+                <div class="eyebrow">LEARNING EXCHANGE</div><h3>Share verified learning evidence</h3>
+                <label class="code-toggle"><input id="codeSharingEnabled" type="checkbox"> Enable source-free learning bundle export</label>
+                <label>Exchange directory<input id="codeSharingDirectory" autocomplete="off" spellcheck="false"></label>
+                <p class="context-hint">Bundles are commit-pinned snapshots without raw source bodies. They are never auto-imported into live learning.</p>
+                <div class="inline-actions wrap-actions"><button type="button" class="button button-outline button-sm" id="codeLearningExport">Export bundle</button></div>
+                <div id="codeLearningBundles" class="code-bundle-list"><div class="empty-state">No shared bundles loaded.</div></div>
+              </section>
+            </div>
+            <div class="code-settings-footer"><div id="codeSettingsStatus" class="context-hint" role="status" aria-live="polite">Runtime settings not loaded.</div><button type="button" class="button button-primary" id="codeSettingsSave">Save runtime settings</button></div>
+          </details>
           <section class="surface panel-pad">
             <div class="panel-heading"><div><div class="eyebrow">REPAIR OUTPUT</div><h2>Recent repair attempts</h2></div><span id="codeRepairCount" class="small muted">Not loaded</span></div>
             <div class="code-filter-toolbar" role="group" aria-label="Filter repair jobs">
@@ -368,7 +498,7 @@
           </section>
           <section class="surface panel-pad">
             <div class="panel-heading"><div><div class="eyebrow">DURABLE APPROVAL QUEUE</div><h2>Patch reviews</h2></div><span id="codeReviewCounts" class="small muted">Awaiting load</span></div>
-            <p class="context-hint">Only successful verifier results can enter the queue. A review pins a SHA-256 hash and base commit. Independent approval is required before publication. Publication re-runs verification, creates a new commit in an isolated worktree, and pushes without force to <code>origin/ecai/reviews/&lt;id&gt;</code>.</p>
+            <p class="context-hint">Only successful verifier results can enter the queue. A review pins a SHA-256 hash and base commit. Independent approval is required before publication. Publication re-runs verification, creates a new commit in an isolated worktree, and pushes without force to the configured review remote and branch prefix.</p>
             <div class="code-filter-toolbar" role="group" aria-label="Filter patch reviews">
               <label class="code-filter-search">Search patches<input id="codeReviewSearch" type="search" placeholder="Module, summary, SHA or fingerprint…" autocomplete="off"></label>
               <label>Review state<select id="codeReviewStatus"><option value="">All review states</option><option value="pending">Awaiting approval</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="publishing">Publishing</option><option value="published">Published</option><option value="publish_failed">Push failed</option><option value="reconcile_required">Reconciliation required</option></select></label>
@@ -396,9 +526,9 @@
                 <div class="inline-actions wrap-actions"><button type="button" class="button button-primary button-sm" id="codeApprove" disabled>Approve immutable diff</button><button type="button" class="button button-outline button-sm danger-outline" id="codeReject" disabled>Reject patch</button></div>
               </form>
               <hr class="section-rule">
-              <div class="eyebrow">SEPARATE PUBLISH GATE</div><p class="context-hint">The publisher must be a different node admin from every approving reviewer. Approval alone never pushes. Push must also be enabled server-side and the base commit must still match the configured repository HEAD.</p>
+              <div class="eyebrow">SEPARATE PUBLISH GATE</div><p class="context-hint">The publisher must be a different authorized publisher from every approving reviewer. Approval alone never pushes. Push must also be enabled and the base commit must still match the configured review repository HEAD.</p>
               <div id="codePublishGate" class="code-publish-gate" role="status" aria-live="polite">Open a reviewed patch to inspect publication eligibility.</div>
-              <label for="codePublishPhrase">To authorize this push, type <code>push to origin</code><input id="codePublishPhrase" autocomplete="off" placeholder="push to origin"></label>
+              <label for="codePublishPhrase">To authorize this push, type <code>push reviewed branch</code><input id="codePublishPhrase" autocomplete="off" placeholder="push reviewed branch"></label>
               <div class="inline-actions wrap-actions"><button type="button" class="button button-primary button-sm" id="codePublish" disabled>Publish reviewed branch ↗</button><button type="button" class="button button-outline button-sm" id="codeReloadReview" disabled>Reload review</button></div>
               <div class="context-hint" id="codeActionStatus" role="status" aria-live="polite">Review a patch before taking an action.</div>
               <div class="eyebrow code-diff-label">AUDIT TRAIL</div><pre class="code-display code-status" id="codeReviewAudit">No audit events selected.</pre>
@@ -457,6 +587,7 @@
 
   {{{browser_auth_modal}}}
   <script src="/ecai/auth-assets/js/micromodal.min.js"></script>
+  <script type="module" src="/static/js/ecai-quick-index.js?v=quick-index-v2"></script>
   <script type="module" src="/static/js/ecai-index-pool.js"></script>
   <script type="module" src="/static/js/ecai-compute-settings.js"></script>
   <script type="module" src="/static/js/ecai-keys.js"></script>

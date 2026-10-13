@@ -3362,15 +3362,32 @@ contract_path(App, Contract0) ->
 
 contracts_dir(App) ->
     case application:get_env(App, contracts_dir) of
-        {ok, Dir} when is_list(Dir) ->
-            Dir;
-        {ok, Dir} when is_binary(Dir) ->
-            binary_to_list(Dir);
+        {ok, Dir0} when is_list(Dir0); is_binary(Dir0) ->
+            Dir = to_path_list(Dir0),
+            resolve_configured_contracts_dir(App, Dir);
         undefined ->
-            %% Fallback for old behaviour
-            PrivDir = priv_dir_source_first(App),
-            filename:join([PrivDir, "contracts"])
+            default_contracts_dir(App)
     end.
+
+resolve_configured_contracts_dir(App, Dir) ->
+    case filename:pathtype(Dir) of
+        absolute ->
+            Dir;
+        _ ->
+            %% Relative paths are useful in a rebar3 source checkout, but are
+            %% not stable in an OTP release where cwd is typically /opt/damage.
+            %% Honour the configured path only when it actually exists.
+            case filelib:is_dir(Dir) of
+                true -> filename:absname(Dir);
+                false -> default_contracts_dir(App)
+            end
+    end.
+
+default_contracts_dir(App) ->
+    filename:join([priv_dir_source_first(App), "contracts"]).
+
+to_path_list(Bin) when is_binary(Bin) -> binary_to_list(Bin);
+to_path_list(List) when is_list(List) -> List.
 
 priv_dir_source_first(App) ->
     %% 1. Running from source / rebar3 shell:
@@ -3394,8 +3411,11 @@ priv_dir_fallback(App) ->
     end.
 
 normalize_contract_path(Contract) ->
-    Clean = filename:join(filename:split(Contract)),
+    Clean0 = to_path_list(Contract),
+    Clean = filename:join(filename:split(Clean0)),
     case filename:split(Clean) of
+        ["priv", "contracts" | Rest] ->
+            filename:join(Rest);
         ["contracts" | Rest] ->
             filename:join(Rest);
         _ ->

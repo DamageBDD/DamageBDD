@@ -3,6 +3,7 @@
 %% process, tied to immutable patch bytes, and synchronously written to DETS.
 -module(ecai_code_review_queue).
 -behaviour(gen_server).
+-compile({no_auto_import,[now/0]}).
 
 -export([start_link/0, list/0, get/1, get/2, status/0, approve/4, reject/4, publish/4]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
@@ -74,7 +75,11 @@ handle_call(status, _From, State) ->
             counts => Counts,
             publishing => current_id(State#state.current),
             required_approvals => required_approvals(),
-            publish_enabled => publish_enabled()
+            publish_enabled => publish_enabled(),
+            reviewers => maps:get(reviewers, ecai_code_runtime_config:review_config(), []),
+            publishers => maps:get(publishers, ecai_code_runtime_config:review_config(), []),
+            remote => maps:get(remote, ecai_code_runtime_config:review_config(), <<"origin">>),
+            branch_prefix => maps:get(branch_prefix, ecai_code_runtime_config:review_config(), <<"ecai/reviews/">>)
         },
         State};
 handle_call({get, Id}, _From, State) ->
@@ -280,9 +285,14 @@ decide(Action, Id, Actor, Sha, Note, Tab) ->
                 false ->
                     {error, invalid_review_input};
                 true ->
-                    case current_repair(R) of
-                        ok -> decide_current(Action, R, Actor, Note, Tab);
-                        Error -> Error
+                    case ecai_code_runtime_config:reviewer_allowed(Actor) of
+                        false ->
+                            {error, reviewer_not_allowed};
+                        true ->
+                            case current_repair(R) of
+                                ok -> decide_current(Action, R, Actor, Note, Tab);
+                                Error -> Error
+                            end
                     end
             end;
         Error ->
@@ -290,28 +300,20 @@ decide(Action, Id, Actor, Sha, Note, Tab) ->
     end.
 
 decide_current(approve, R, Actor, Note, Tab) ->
-    case
-        {
-            maps:get(status, R),
-            lists:any(
-                fun(A) -> maps:get(actor, A) =:= Actor end,
-                maps:get(approvals, R, [])
-            )
-        }
-    of
-        {pending, false} ->
+    Approvals0 = maps:get(approvals, R, []),
+    Already = lists:any(fun(A) -> maps:get(actor, A) =:= Actor end, Approvals0),
+    Required = required_approvals(),
+    Enough = length(Approvals0) >= Required,
+    case {lists:member(maps:get(status, R), [pending, approved, publish_failed]), Already, Enough} of
+        {true, false, false} ->
             Approval = #{actor => Actor, note => Note, at => now()},
-            Approvals = maps:get(approvals, R, []) ++ [Approval],
-            Status =
-                case length(Approvals) >= required_approvals() of
-                    true -> approved;
-                    false -> pending
-                end,
+            Approvals = Approvals0 ++ [Approval],
+            Status = case length(Approvals) >= Required of true -> approved; false -> pending end,
             {ok,
                 redact(transition(R#{approvals => Approvals}, Status, Actor, <<"approved">>, Tab))};
-        {approved, false} ->
+        {true, false, true} ->
             {error, already_approved};
-        {_, true} ->
+        {_, true, _} ->
             {error, duplicate_reviewer};
         _ ->
             {error, invalid_review_state}
@@ -360,39 +362,53 @@ publication_gate(R, Actor) ->
     Required = required_approvals(),
     Status = maps:get(status, R),
     Reviewer = lists:any(fun(A) -> maps:get(actor, A) =:= Actor end, Approvals),
+    ActorValid = valid_actor(Actor),
+    HasEnoughApprovals = Count >= Required,
+    StatusAllowsPublication =
+        lists:member(Status, [approved, publish_failed]) orelse
+            (Status =:= pending andalso HasEnoughApprovals),
     Blockers0 =
         case publish_enabled() of
             true -> [];
             false -> [push_disabled]
         end,
     Blockers1 =
-        case Status of
-            approved -> Blockers0;
-            publish_failed -> Blockers0;
-            published -> Blockers0 ++ [already_published];
-            rejected -> Blockers0 ++ [review_rejected];
-            reconcile_required -> Blockers0 ++ [reconcile_required];
+        case {Status, StatusAllowsPublication} of
+            {published, _} -> Blockers0 ++ [already_published];
+            {rejected, _} -> Blockers0 ++ [review_rejected];
+            {reconcile_required, _} -> Blockers0 ++ [reconcile_required];
+            {_, true} -> Blockers0;
             _ -> Blockers0 ++ [review_not_approved]
         end,
     Blockers2 =
-        case Count >= Required of
+        case HasEnoughApprovals of
             true -> Blockers1;
             false -> Blockers1 ++ [approvals_missing]
         end,
     Blockers3 =
-        case valid_actor(Actor) of
+        case ActorValid of
             true -> Blockers2;
             false -> Blockers2 ++ [invalid_publisher_identity]
         end,
     Blockers4 =
+        case ActorValid of
+            true ->
+                case ecai_code_runtime_config:publisher_allowed(Actor) of
+                    true -> Blockers3;
+                    false -> Blockers3 ++ [publisher_not_allowed]
+                end;
+            false ->
+                Blockers3
+        end,
+    Blockers5 =
         case Reviewer of
-            true -> Blockers3 ++ [publisher_is_reviewer];
-            false -> Blockers3
+            true -> Blockers4 ++ [publisher_is_reviewer];
+            false -> Blockers4
         end,
     Blockers =
         case current_repair(R) of
-            ok -> Blockers4;
-            {error, Reason} -> Blockers4 ++ [Reason]
+            ok -> Blockers5;
+            {error, Reason} -> Blockers5 ++ [Reason]
         end,
     #{
         eligible => Blockers =:= [],
@@ -400,8 +416,10 @@ publication_gate(R, Actor) ->
         approvals => Count,
         required_approvals => Required,
         publisher_is_reviewer => Reviewer,
+        reviewer_policy => maps:get(reviewers, ecai_code_runtime_config:review_config(), []),
+        publisher_policy => maps:get(publishers, ecai_code_runtime_config:review_config(), []),
         publish_enabled => publish_enabled(),
-        %% Remote/origin and base HEAD are still checked at publish time.
+        %% Configured remote and base HEAD are still checked at publish time.
         git_preflight => not_checked
     }.
 
@@ -532,11 +550,11 @@ valid_commit(C) when is_binary(C) ->
 valid_commit(_) ->
     false.
 required_approvals() ->
-    case application:get_env(ecai, code_review_required_approvals, 1) of
+    case maps:get(required_approvals, ecai_code_runtime_config:review_config(), 1) of
         N when is_integer(N), N >= 1, N =< 5 -> N;
         _ -> 1
     end.
-publish_enabled() -> application:get_env(ecai, code_review_push_enabled, false) =:= true.
+publish_enabled() -> maps:get(push_enabled, ecai_code_runtime_config:review_config(), false) =:= true.
 sha(Bin) ->
     iolist_to_binary([
         io_lib:format("~2.16.0b", [N])

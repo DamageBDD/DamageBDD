@@ -13,6 +13,22 @@ APP = Path(__file__).resolve().parents[1]
 from test_dashboard_auth_browser import console_html
 from dashboard_auth_dom_fixture import business_fixture_html
 SCREENSHOTS = Path(tempfile.gettempdir())
+
+def code_console_html():
+    """Mount only scripts relevant to this isolated code-admin test.
+
+    The production console also loads Quick Index, compute settings and API-key
+    modules. Those features have their own browser coverage and their network
+    mocks are intentionally absent here.
+    """
+    markup = console_html()
+    for name in ("ecai-quick-index.js", "ecai-compute-settings.js", "ecai-keys.js"):
+        markup = re.sub(
+            rf'<script[^>]+src="/static/js/{re.escape(name)}(?:\?[^"]*)?"[^>]*></script>',
+            "",
+            markup,
+        )
+    return markup
 MOCK = r'''(() => {
   window.__actor = null;
   window.__posts = [];
@@ -57,7 +73,14 @@ MOCK = r'''(() => {
           integration:{cycles:21,job_counts:{clean:36,broken:8}},store:{event_seq:40}},
         reviews:{counts:{approved:1,pending:2,published:3},required_approvals:1,publish_enabled:true,publishing:null}
       }};
-    } else if(path==='/ecai/admin/code/repairs') payload={ok:true,total:120,repairs:[]};
+    } else if(path==='/ecai/admin/code/settings') payload={ok:true,settings:{
+      learning:{enabled:true,branches:['main'],interval_ms:300000,parallelism:'auto',capacity_reserve:1,require_clean_worktree:true,fetch_before_learning:false},
+      repository:{working_root:'/tmp/DamageBDD',remote:'origin',branch:'main'},
+      review:{repo_root:'/tmp/DamageBDD',remote:'origin',branch_prefix:'ecai/reviews/',push_enabled:true,required_approvals:1,run_eunit:true,run_ct:false,verify_timeout_ms:600000,reviewers:[],publishers:[]},
+      sharing:{enabled:false,directory:'/tmp/ecai-learning-exchange'}
+    },repository:{working_root:'/tmp/DamageBDD',head:'c'.repeat(40),branch:'main',dirty:false,configured_branch:'main',remote:'origin',fetch_url:'git@example.invalid:DamageBDD/DamageBDD.git',push_url:'git@example.invalid:DamageBDD/DamageBDD.git',canonical_source:{current:{commit:'c'.repeat(40)}}}};
+    else if(path==='/ecai/admin/code/learning/bundles') payload={ok:true,bundles:[]};
+    else if(path==='/ecai/admin/code/repairs') payload={ok:true,total:120,repairs:[]};
     else if(path==='/ecai/admin/code/reviews') payload={ok:true,reviews:[window.__mockReview],queue:{counts:{approved:1,pending:2,published:3},required_approvals:1,publish_enabled:true,publishing:null}};
     else if(path.endsWith('/approve')) {payload={ok:false,error:'already_approved'};status=409;}
     else if(path.endsWith('/publish')) {
@@ -95,7 +118,7 @@ async def main():
         errors=[]
         page.on('pageerror', lambda e: errors.append(str(e)))
         await page.goto('about:blank')
-        await page.set_content(business_fixture_html(console_html(), MOCK))
+        await page.set_content(business_fixture_html(code_console_html(), MOCK))
         await page.wait_for_function('!!window.DamageAuth')
         await page.wait_for_timeout(100)
         await login(page,'reviewer')
@@ -107,7 +130,7 @@ async def main():
         assert await page.locator('.code-raw-telemetry').count() == 1
         await page.locator('#codeReviewRows details.code-review-card summary').click()
         await page.locator('#codePublishGate').get_by_text('This account approved the patch', exact=False).wait_for()
-        await page.locator('#codePublishPhrase').fill('push to origin')
+        await page.locator('#codePublishPhrase').fill('push reviewed branch')
         assert await page.locator('#codePublish').is_disabled(), 'Reviewer should never publish own approved diff'
         assert await page.evaluate('window.__posts.length') == 0
         await page.screenshot(path=str(SCREENSHOTS / 'ecai-code-metrics-gate-desktop.png'),full_page=True)
@@ -123,7 +146,7 @@ async def main():
         await page.evaluate('window.__omitGate=false')
         await page.locator('#codeReloadReview').click()
         await page.locator('#codePublishGate').get_by_text('Eligible for independent publication').wait_for()
-        await page.locator('#codePublishPhrase').fill('push to origin')
+        await page.locator('#codePublishPhrase').fill('push reviewed branch')
         assert await page.locator('#codePublish').is_enabled(), 'Independent authorized publisher should be eligible'
         await page.evaluate('window.__forceConflict=true')
         await page.locator('#codePublish').click()
