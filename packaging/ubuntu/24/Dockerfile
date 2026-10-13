@@ -8,6 +8,7 @@ ARG REPO_URL=https://github.com/DamageBDD/DamageBDD.git
 ARG REPO_REF=develop   # or a tag/sha
 ARG REBAR3_URL=https://s3.amazonaws.com/rebar3/rebar3
 ARG OTP_VERSION=28.3
+ARG LIBOQS_VERSION=0.16.0
 WORKDIR /opt/workspace
 
 
@@ -18,7 +19,7 @@ RUN set -eux; \
     > /etc/apt/apt.conf.d/99retries; \
   apt-get update; \
   apt-get install -y --no-install-recommends git\
-      build-essential autoconf m4 \
+      build-essential autoconf m4 cmake ninja-build \
       libncurses-dev libssl-dev xsltproc fop unixodbc-dev \
       ca-certificates curl git wget xz-utils pkg-config \
       libsodium23 libsodium-dev \
@@ -26,16 +27,39 @@ RUN set -eux; \
       rpm dpkg-dev gnupg rsync \
     nvidia-cuda-toolkit \
       pkg-config \
-      libgtk-4-dev libx11-dev \
+      libgtk-4-dev libx11-dev libshumate-dev \
+      libxcb1-dev libxcb-dpms0-dev libxcb-screensaver0-dev \
       libcairo2-dev \
       libpango1.0-dev \
       libglib2.0-dev \
       libgdk-pixbuf-2.0-dev \
       libharfbuzz-dev \
       libgraphene-1.0-dev \
-    && pkg-config --print-errors --exists gtk4 x11 \
+    && pkg-config --print-errors --exists gtk4 x11 shumate-1.0 xcb-dpms xcb-screensaver \
     && gem install --no-document fpm \
  && rm -rf /var/lib/apt/lists/*
+
+# --- liboqs
+# Ubuntu 24.04 does not provide the liboqs development package used by
+# DamageBDD's OQS NIF. Build the pinned upstream release and install its
+# pkg-config metadata before rebar3 compile hooks run.
+RUN set -eux; \
+    git clone --depth 1 --branch "${LIBOQS_VERSION}" \
+      https://github.com/open-quantum-safe/liboqs.git /tmp/liboqs; \
+    cmake -S /tmp/liboqs -B /tmp/liboqs/build -GNinja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DBUILD_SHARED_LIBS=ON \
+      -DCMAKE_INSTALL_PREFIX=/usr/local; \
+    cmake --build /tmp/liboqs/build --parallel "$(nproc)"; \
+    cmake --install /tmp/liboqs/build; \
+    ldconfig; \
+    rm -rf /tmp/liboqs; \
+    export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"; \
+    pkg-config --print-errors --exists liboqs; \
+    pkg-config --modversion liboqs
+
+ENV PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig:${PKG_CONFIG_PATH}"
+ENV LD_LIBRARY_PATH="/usr/local/lib:/usr/local/lib64:${LD_LIBRARY_PATH}"
 
 # --- kerl + OTP
 RUN curl -fsSL https://raw.githubusercontent.com/kerl/kerl/master/kerl -o /usr/local/bin/kerl \

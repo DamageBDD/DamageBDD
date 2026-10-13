@@ -60,7 +60,7 @@ RUN set -eux; \
             tar gzip unzip xz zstd patch pkgconf \
             cmake ninja make gcc \
             erlang rebar3 jq pacman-contrib \
-            libsodium kubo pass cuda vim gtk4 \
+            libsodium libshumate kubo pass cuda vim gtk4 \
             ccache; \
     }; \
     mkdir -p "$CCACHE_DIR" /root/.cache; \
@@ -75,10 +75,11 @@ ARG REPO_URL=https://github.com/DamageBDD/DamageBDD.git
 ARG REPO_REF=develop   # or a tag/sha
 
 # Do a shallow clone if the ref is a branch or tag; fall back to full + checkout for SHA
-RUN git clone --depth 1 "${REPO_URL}" /src \
-    && cd /src \
-    && git fetch --depth 1 origin "${REPO_REF}" || true \
-    && git checkout "${REPO_REF}"
+RUN git clone \
+      --depth 1 \
+      --single-branch \
+      --branch "${REPO_REF}" \
+      "${REPO_URL}" /src
 
 ############################################
 # Build image (compiles / artifacts)
