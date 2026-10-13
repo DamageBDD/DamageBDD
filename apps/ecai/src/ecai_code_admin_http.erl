@@ -23,6 +23,16 @@
 trails() ->
     [
         trail("/ecai/admin/code/status", status, get),
+        trail("/ecai/admin/code/settings", settings, get),
+        trail("/ecai/admin/code/settings/update", settings_update, post),
+        trail("/ecai/admin/code/repository/fetch", repository_fetch, post),
+        trail("/ecai/admin/code/repository/pull", repository_pull, post),
+        trail("/ecai/admin/code/reviewers/add", reviewer_add, post),
+        trail("/ecai/admin/code/reviewers/remove", reviewer_remove, post),
+        trail("/ecai/admin/code/publishers/add", publisher_add, post),
+        trail("/ecai/admin/code/publishers/remove", publisher_remove, post),
+        trail("/ecai/admin/code/learning/export", learning_export, post),
+        trail("/ecai/admin/code/learning/bundles", learning_bundles, get),
         trail("/ecai/admin/code/repairs", repairs, get),
         trail("/ecai/admin/code/learn", learn, post),
         trail("/ecai/admin/code/scan", scan, post),
@@ -46,6 +56,14 @@ init(Req, State) -> {cowboy_rest, Req, State}.
 is_authorized(Req, State) -> damage_http:is_authorized(Req, State).
 allowed_methods(Req, #{action := Action} = State) when
     Action =:= learn;
+    Action =:= settings_update;
+    Action =:= repository_fetch;
+    Action =:= repository_pull;
+    Action =:= reviewer_add;
+    Action =:= reviewer_remove;
+    Action =:= publisher_add;
+    Action =:= publisher_remove;
+    Action =:= learning_export;
     Action =:= scan;
     Action =:= integrate;
     Action =:= propose;
@@ -131,9 +149,26 @@ actor_enabled(State) ->
 respond_get(Req, #{action := status} = State, _Actor) ->
     Data = #{
         learning => ecai_codebase_learning:status(),
-        reviews => ecai_code_review_queue:status()
+        reviews => ecai_code_review_queue:status(),
+        runtime => ecai_code_runtime_config:status()
     },
     reply(Req, 200, #{ok => true, status => Data}, State);
+respond_get(Req, #{action := settings} = State, _Actor) ->
+    reply(
+        Req,
+        200,
+        #{
+            ok => true,
+            settings => ecai_code_runtime_config:get(),
+            repository => ecai_code_runtime_config:repository_status()
+        },
+        State
+    );
+respond_get(Req, #{action := learning_bundles} = State, _Actor) ->
+    case ecai_learning_exchange:list_bundles() of
+        {ok, Bundles} -> reply(Req, 200, #{ok => true, bundles => Bundles}, State);
+        {error, Reason} -> reply(Req, 409, #{ok => false, error => Reason}, State)
+    end;
 respond_get(Req, #{action := repairs} = State, _Actor) ->
     Repairs = ecai_learning_store:repairs(),
     Fields = [
@@ -190,6 +225,58 @@ respond_get(Req, #{action := reviews} = State, _Actor) ->
 respond_get(Req, #{action := review} = State, Actor) ->
     as_result(Req, State, ecai_code_review_queue:get(cowboy_req:binding(id, Req), Actor), 200).
 
+respond_post(Req, #{action := settings_update} = State, _Actor, Body) ->
+    case ecai_code_runtime_config:update(Body) of
+        {ok, Settings} ->
+            reply(
+                Req,
+                200,
+                #{
+                    ok => true,
+                    settings => Settings,
+                    repository => ecai_code_runtime_config:repository_status()
+                },
+                State
+            );
+        {error, Reason} ->
+            reply(Req, 422, #{ok => false, error => Reason}, State)
+    end;
+respond_post(Req, #{action := repository_fetch} = State, _Actor, Body) ->
+    empty_admin_action(
+        Req, State, Body, fun ecai_code_runtime_config:fetch/0, repository
+    );
+respond_post(Req, #{action := repository_pull} = State, _Actor, Body) ->
+    empty_admin_action(
+        Req, State, Body, fun ecai_code_runtime_config:pull_ff/0, repository
+    );
+respond_post(Req, #{action := learning_export} = State, _Actor, Body) ->
+    empty_admin_action(
+        Req, State, Body, fun ecai_learning_exchange:export_bundle/0, bundle
+    );
+respond_post(Req, #{action := Action} = State, _Actor, Body) when
+    Action =:= reviewer_add;
+    Action =:= reviewer_remove;
+    Action =:= publisher_add;
+    Action =:= publisher_remove
+->
+    case {maps:keys(Body), maps:get(<<"account">>, Body, undefined)} of
+        {[<<"account">>], Account} when is_binary(Account), byte_size(Account) > 0 ->
+            Result =
+                case Action of
+                    reviewer_add -> ecai_code_runtime_config:add_reviewer(Account);
+                    reviewer_remove -> ecai_code_runtime_config:remove_reviewer(Account);
+                    publisher_add -> ecai_code_runtime_config:add_publisher(Account);
+                    publisher_remove -> ecai_code_runtime_config:remove_publisher(Account)
+                end,
+            case Result of
+                {ok, Settings} ->
+                    reply(Req, 200, #{ok => true, settings => Settings}, State);
+                {error, Reason} ->
+                    reply(Req, 422, #{ok => false, error => Reason}, State)
+            end;
+        _ ->
+            reply(Req, 400, #{ok => false, error => account_field_required}, State)
+    end;
 respond_post(Req, #{action := Action} = State, _Actor, Body) when
     Action =:= learn; Action =:= scan; Action =:= integrate
 ->
@@ -207,17 +294,23 @@ respond_post(Req, #{action := Action} = State, _Actor, Body) when
                 undefined ->
                     reply(Req, 503, #{ok => false, error => worker_unavailable}, State);
                 _Pid ->
-                    ok = Fun(),
-                    reply(
-                        Req,
-                        202,
-                        #{
-                            ok => true,
-                            action => Action,
-                            message => <<"Requested; see status for progress">>
-                        },
-                        State
-                    )
+                    case Fun() of
+                        ok ->
+                            reply(
+                                Req,
+                                202,
+                                #{
+                                    ok => true,
+                                    action => Action,
+                                    message => <<"Requested; see status for progress">>
+                                },
+                                State
+                            );
+                        {error, Reason} ->
+                            reply(Req, 409, #{ok => false, error => Reason}, State);
+                        Other ->
+                            reply(Req, 503, #{ok => false, error => unexpected_action_result, result => Other}, State)
+                    end
             end
     end;
 respond_post(Req, #{action := propose} = State, _Actor, Body) ->
@@ -262,7 +355,8 @@ respond_post(Req, #{action := Action} = State, Actor, Body) when
     as_result(Req, State, Result, 200);
 respond_post(Req, #{action := publish} = State, Actor, Body) ->
     case maps:get(<<"confirm">>, Body, undefined) of
-        <<"push to origin">> ->
+        Confirm when Confirm =:= <<"push to origin">>;
+                     Confirm =:= <<"push reviewed branch">> ->
             as_result(
                 Req,
                 State,
@@ -276,6 +370,18 @@ respond_post(Req, #{action := publish} = State, Actor, Body) ->
             );
         _ ->
             reply(Req, 400, #{ok => false, error => explicit_push_confirmation_required}, State)
+    end.
+
+empty_admin_action(Req, State, Body, Fun, Key) ->
+    case map_size(Body) of
+        0 ->
+            case Fun() of
+                {ok, Data} -> reply(Req, 200, #{ok => true, Key => Data}, State);
+                ok -> reply(Req, 200, #{ok => true}, State);
+                {error, Reason} -> reply(Req, 409, #{ok => false, error => Reason}, State)
+            end;
+        _ ->
+            reply(Req, 400, #{ok => false, error => unexpected_fields}, State)
     end.
 
 %% Never call binary_to_atom on user-controlled strings. The target must be an

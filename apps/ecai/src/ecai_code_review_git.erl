@@ -1,4 +1,4 @@
-%% Publish a pinned, approved ECAI patch to a new origin review branch.
+%% Publish a pinned, approved ECAI patch to a configured review remote/branch.
 %% Never checks out or commits in the operator's working tree; never force-pushes.
 -module(ecai_code_review_git).
 -export([publish/1]).
@@ -10,10 +10,11 @@ publish(Review) ->
     Patch = maps:get(patch, Review),
     Sha = maps:get(patch_sha256, Review),
     Base = maps:get(base_commit, Review),
+    ReviewConfig = ecai_code_runtime_config:review_config(),
     case
         {
-            application:get_env(ecai, code_review_push_enabled, false),
-            application:get_env(ecai, code_review_repo_root, undefined)
+            maps:get(push_enabled, ReviewConfig, false),
+            maps:get(repo_root, ReviewConfig, undefined)
         }
     of
         {true, Repo0} when Repo0 =/= undefined ->
@@ -42,9 +43,9 @@ repo_preflight(Repo, Base, Patch, Sha) ->
                 true ->
                     case ecai_repair_git:head(Repo) of
                         {ok, Base} ->
-                            case git(Repo, ["remote", "get-url", "--push", "origin"]) of
+                            case git(Repo, ["remote", "get-url", "--push", review_remote()]) of
                                 {ok, _} -> ok;
-                                _ -> {error, origin_remote_unavailable}
+                                _ -> {error, review_remote_unavailable}
                             end;
                         {ok, _Other} ->
                             {error, stale_base_commit};
@@ -60,7 +61,8 @@ do_publish(Repo, Root, Id, Base, Patch, Sha) ->
     Dir = filename:join([Root, "git", "security", "reviews"]),
     PatchFile = filename:join(Dir, binary_to_list(Id) ++ ".patch"),
     Worktree = filename:join([Dir, "worktrees", binary_to_list(Id)]),
-    RemoteRef = <<"refs/heads/ecai/reviews/", Id/binary>>,
+    Prefix = review_branch_prefix(),
+    RemoteRef = <<"refs/heads/", Prefix/binary, Id/binary>>,
     case filelib:ensure_dir(PatchFile) of
         ok ->
             case freeze_patch(PatchFile, Patch, Sha) of
@@ -108,23 +110,27 @@ freeze_patch(File, Patch, Sha) ->
     end.
 
 existing_remote(Repo, Branch) ->
-    case git(Repo, ["ls-remote", "--heads", "origin", Branch]) of
+    case git(
+        Repo,
+        ["-c", "core.askPass=/bin/false", "ls-remote", "--heads", review_remote(), Branch]
+    ) of
         {ok, <<>>} -> absent;
         {ok, _} -> present;
-        _ -> {error, cannot_query_origin}
+        _ -> {error, cannot_query_review_remote}
     end.
 
 verify_and_push(Repo, Root, Worktree, PatchFile, Base, Sha, Branch) ->
     %% Force a fresh compile and test in the verifier's isolated Git worktree,
     %% independently of the original worker's old result.
+    Review = ecai_code_runtime_config:review_config(),
     Opts = #{
         repo_root => Repo,
         state_root => Root,
         base_commit => Base,
         keep_worktree => false,
-        run_eunit => application:get_env(ecai, code_review_run_eunit, true),
-        run_ct => application:get_env(ecai, code_review_run_ct, false),
-        command_timeout_ms => application:get_env(ecai, code_review_verify_timeout_ms, 600000)
+        run_eunit => maps:get(run_eunit, Review, true),
+        run_ct => maps:get(run_ct, Review, false),
+        command_timeout_ms => maps:get(verify_timeout_ms, Review, 600000)
     },
     case ecai_patch_verifier:verify_patchset([PatchFile], Opts) of
         {ok, #{status := validated}} ->
@@ -236,7 +242,7 @@ push_committed_review(Repo, Worktree, Base, Sha, Branch) ->
                                 "push",
                                 "--porcelain",
                                 "--no-verify",
-                                "origin",
+                                review_remote(),
                                 RefSpec
                             ],
                             120000
@@ -244,7 +250,7 @@ push_committed_review(Repo, Worktree, Base, Sha, Branch) ->
                     of
                         {ok, _} ->
                             {ok, #{
-                                remote => <<"origin">>,
+                                remote => to_binary(review_remote()),
                                 branch => Branch,
                                 commit => Commit,
                                 base_commit => Base,
@@ -252,7 +258,7 @@ push_committed_review(Repo, Worktree, Base, Sha, Branch) ->
                                 tests => <<"verified before commit">>
                             }};
                         _ ->
-                            {error, {push_uncertain, check_origin_branch}}
+                            {error, {push_uncertain, check_review_branch}}
                     end;
                 _ ->
                     {error, {push_uncertain, remote_branch_changed}}
@@ -260,6 +266,14 @@ push_committed_review(Repo, Worktree, Base, Sha, Branch) ->
         _ ->
             {error, review_commit_unavailable}
     end.
+
+review_remote() ->
+    to_list(maps:get(remote, ecai_code_runtime_config:review_config(), <<"origin">>)).
+
+review_branch_prefix() ->
+    to_binary(
+        maps:get(branch_prefix, ecai_code_runtime_config:review_config(), <<"ecai/reviews/">>)
+    ).
 
 git(Repo, Args) -> git(Repo, Args, ?TIMEOUT).
 git(Repo, Args, Timeout) -> ecai_repair_git:run(Repo, Args, Timeout).
@@ -280,4 +294,8 @@ hash(Patch) ->
      || <<N:8>> <= crypto:hash(sha256, Patch)
     ]).
 to_list(A) when is_binary(A) -> binary_to_list(A);
-to_list(A) when is_list(A) -> A.
+to_list(A) when is_list(A) -> A;
+to_list(A) when is_atom(A) -> atom_to_list(A).
+to_binary(A) when is_binary(A) -> A;
+to_binary(A) when is_list(A) -> unicode:characters_to_binary(A);
+to_binary(A) when is_atom(A) -> atom_to_binary(A, utf8).

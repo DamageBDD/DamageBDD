@@ -28,6 +28,8 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     { group: "Knowledge & private", method: "POST", path: "/ecai/private/:corpus/search", description: "Private knowledge retrieval.", params: ["corpus"], body: { query: "example", limit: 8 } },
     { group: "Knowledge & private", method: "POST", path: "/ecai/private/:corpus/fetch", description: "Fetch private record by ID.", params: ["corpus"], body: { id: "record-id" } },
     { group: "Knowledge & private", method: "POST", path: "/ecai/private/:corpus/ask", description: "Answer from private sources via an operator-approved destination.", params: ["corpus"], body: { question: "What is known?", destination: "local" } },
+    { group: "Index jobs", method: "POST", path: "/ecai/quick-index/inspect", description: "Inspect a public URL or IPFS source before Quick Index submission.", body: { source_type: "url", url: "https://example.org/knowledge.jsonl" } },
+    { group: "Index jobs", method: "POST", path: "/ecai/quick-index", description: "Queue an inspected Quick Index source. expected_sha256 and Idempotency-Key are required.", body: { source_type: "url", url: "https://example.org/knowledge.jsonl", expected_sha256: "<sha256 from inspect>" }, key: true },
     { group: "Index jobs", method: "GET", path: "/ecai/index-jobs/status", description: "Durable queue, capacity and worker counts." },
     { group: "Index jobs", method: "GET", path: "/ecai/index-jobs/presets", description: "Preconfigured Wikimedia source presets." },
     { group: "Index jobs", method: "GET", path: "/ecai/index-jobs", description: "List persisted indexing jobs.", query: { state: "", kind: "", limit: "50" } },
@@ -66,6 +68,16 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     { group: "Yelp operations", method: "POST", path: "/yelp/headers", description: "Export on-chain term header commitments.", body: {}, confirm: "Export index term headers?" },
     { group: "Yelp operations", method: "POST", path: "/yelp/manifest", description: "Build combined on-chain manifest.", body: {}, confirm: "Build the publication manifest?" },
     { group: "Code administration", method: "GET", path: "/ecai/admin/code/status", description: "Admin-only learning, repair, health and review status." },
+    { group: "Code administration", method: "GET", path: "/ecai/admin/code/settings", description: "Runtime code-learning, repository, review-gate and sharing settings." },
+    { group: "Code administration", method: "POST", path: "/ecai/admin/code/settings/update", description: "Persist bounded runtime code-administration settings.", body: { learning: { enabled: true, branches: ["main"] }, repository: { remote: "origin", branch: "main" } } },
+    { group: "Code administration", method: "POST", path: "/ecai/admin/code/repository/fetch", description: "Fetch/prune the configured learning remote without changing the worktree.", body: {} },
+    { group: "Code administration", method: "POST", path: "/ecai/admin/code/repository/pull", description: "Fast-forward-only pull of the configured stable branch when the worktree is clean.", body: {}, confirm: "Fast-forward the configured working repository?" },
+    { group: "Code administration", method: "POST", path: "/ecai/admin/code/reviewers/add", description: "Allow an existing DamageBDD code admin to review patches.", body: { account: "<authorized account id>" } },
+    { group: "Code administration", method: "POST", path: "/ecai/admin/code/reviewers/remove", description: "Remove a reviewer from future review actions.", body: { account: "<authorized account id>" } },
+    { group: "Code administration", method: "POST", path: "/ecai/admin/code/publishers/add", description: "Allow an existing DamageBDD code admin to publish reviewed branches.", body: { account: "<authorized account id>" } },
+    { group: "Code administration", method: "POST", path: "/ecai/admin/code/publishers/remove", description: "Remove a publisher from future publication actions.", body: { account: "<authorized account id>" } },
+    { group: "Code administration", method: "POST", path: "/ecai/admin/code/learning/export", description: "Export a commit-pinned, source-free learning evidence bundle.", body: {} },
+    { group: "Code administration", method: "GET", path: "/ecai/admin/code/learning/bundles", description: "List locally exported learning evidence bundles." },
     { group: "Code administration", method: "GET", path: "/ecai/admin/code/repairs", description: "Recent persisted repair records (sanitized)." },
     { group: "Code administration", method: "POST", path: "/ecai/admin/code/learn", description: "Start or schedule a code learning cycle.", body: {}, confirm: "Request a code learning cycle?" },
     { group: "Code administration", method: "POST", path: "/ecai/admin/code/scan", description: "Scan for repair candidates.", body: {}, confirm: "Run the repair scanner?" },
@@ -75,7 +87,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     { group: "Code administration", method: "GET", path: "/ecai/admin/code/reviews/:id", params: ["id"], description: "Inspect frozen patch and audit events." },
     { group: "Code administration", method: "POST", path: "/ecai/admin/code/reviews/:id/approve", params: ["id"], description: "Approve a pinned patch SHA.", body: { patch_sha256: "<review SHA-256>", note: "Code reviewed and verified" }, confirm: "Approve this pinned patch?" },
     { group: "Code administration", method: "POST", path: "/ecai/admin/code/reviews/:id/reject", params: ["id"], description: "Reject a pinned patch SHA.", body: { patch_sha256: "<review SHA-256>", note: "Request regeneration before merging" }, confirm: "Reject this pinned patch?" },
-    { group: "Code administration", method: "POST", path: "/ecai/admin/code/reviews/:id/publish", params: ["id"], description: "Two-stage approval gate: publish verified commit to origin review branch (not main).", body: { patch_sha256: "<review SHA-256>", revision: 2, confirm: "push to origin" }, confirm: "Create a remote review branch in origin?" },
+    { group: "Code administration", method: "POST", path: "/ecai/admin/code/reviews/:id/publish", params: ["id"], description: "Two-stage approval gate: publish verified commit to the configured review branch.", body: { patch_sha256: "<review SHA-256>", revision: 2, confirm: "push reviewed branch" }, confirm: "Create the configured remote review branch?" },
     { group: "Funded indexing", method: "GET", path: "/ecai/admin/index-pool/status", description: "Funded jobs, registered nodes, plans and read-only budget accounting." },
     { group: "Funded indexing", method: "POST", path: "/ecai/admin/index-pool/nodes", description: "Enroll an operator-allowlisted private-cluster node with a Lightning identity proof.", body: {} },
     { group: "Compute & NFTs", method: "GET", path: "/ecai/compute/settings", description: "Managed-account provider and budget settings; cloud dispatch not active." },
@@ -120,6 +132,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
   const state = {
     authenticated: false, sessionMode: "anonymous", authEpoch: 0, email: "", view: "overview", jobs: [], presets: [], marketJobs: [],
     nodeAdmin: false, codeAdmin: false, codeFeatureConfigured: false, adminProbeSequence: 0, codeQueue: {}, codeRepairs: [], codeReviews: [], codeReview: null, codeReviewOpenId: "", codeReviewLoadSerial: 0, codeDiffFiles: [], codeDiffSelectedFile: "0",
+    codeSettings: null, codeRepository: null, codeBundles: [],
     selectedIndexId: "", selectedIndexJob: null, jobEntries: new Map(), selectedMarketId: "", activeRoute: -1, lastApiResult: null,
     chatSession: randomHex(16), chatUser: `console-${randomHex(12)}`, chatBusy: false,
     streamSession: null, socket: null,
@@ -457,6 +470,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
       marketMaker?.reset();
       if (state.authenticated) setAuthenticated(false);
       observedToken = token;
+      document.dispatchEvent(new CustomEvent("ecai:identity-changed"));
     }
     state.sessionMode = session?.mode || "anonymous";
     state.email = session?.email || session?.address || "";
@@ -705,6 +719,13 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
       return undefined;
     }
   }
+  document.addEventListener("ecai:quick-index-queued", ({detail}) => {
+    void task(async () => {
+      await refreshJobs();
+      if (detail?.job?.id) await selectIndexJob(detail.job.id);
+      toast("Quick Index job queued");
+    });
+  });
   async function search(event) {
     event.preventDefault();
     const q = $("searchQuery").value.trim();
@@ -1920,9 +1941,11 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     window.EcaiIndexPool?.setSession(state.authenticated, state.nodeAdmin);
   }
   function setCodeActionsEnabled(allowed) {
-    for (const id of ["codeLearn", "codeScan", "codeIntegrate", "codeProposeSubmit"]) {
+    for (const id of ["codeLearn", "codeScan", "codeIntegrate", "codeProposeSubmit", "codeSettingsSave",
+      "codeRepoFetch", "codeRepoPull", "codeReviewerAdd", "codePublisherAdd", "codeLearningExport"]) {
       $(id).disabled = !allowed;
     }
+    document.querySelectorAll(".code-role-remove").forEach((button) => { button.disabled = !allowed; });
     codeReviewButtons();
   }
   function applyCodeSession(session) {
@@ -2286,7 +2309,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
       ["Repair backlog", pending === null ? "—" : formatNumber(pending), `${codeValue(patchManager.queued_live, "0")} queued · ${codeValue(patchManager.retry_wait, "0")} retry wait`, pending > 0 ? "attention" : ""],
       ["Awaiting review", formatNumber(reviewsPending), `Verifier-validated patches pending approval`, reviewsPending > 0 ? "attention" : ""],
       ["Approved patches", formatNumber(reviewsApproved), `Awaiting independent publication`],
-      ["Published reviews", formatNumber(reviewsPublished), `Review branches published to origin`, reviewsPublished > 0 ? "success" : ""]
+      ["Published reviews", formatNumber(reviewsPublished), `Review branches published to configured remote`, reviewsPublished > 0 ? "success" : ""]
     ].forEach(([label, val, caption, tone]) => metrics.append(codeMetric(label, val, caption, tone)));
     const services = $("codeServiceCards"); services.replaceChildren();
     const learnerUnavailable = !Object.keys(learner).length;
@@ -2316,18 +2339,20 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
       [["Clean / broken", `${codeValue(integrationCounts.clean, "0")} / ${codeValue(broken, "0")}`],
        ["Review approvals required", codeValue(queue.required_approvals)],
        ["Publishing", queue.publishing && queue.publishing !== "null" ? "In progress" : "Idle"],
-       ["Origin push", queue.publish_enabled ? "Enabled" : "Disabled"],
+       ["Review push", queue.publish_enabled ? "Enabled" : "Disabled"],
        ...(integrationError ? [["Last error", integrationError]] : [])]));
     put("codeStatusUpdated", `Telemetry checked ${new Date().toLocaleTimeString()}`);
   }
   const CODE_PUBLISH_BLOCKERS = {
-    push_disabled: "Publishing is disabled in ECAI configuration (code_review_push_enabled).",
+    push_disabled: "Publishing is disabled in the runtime review-gate settings.",
     review_not_approved: "The review is not yet approved for publication.",
-    already_published: "This immutable review has already been published; open the existing origin review branch.",
+    already_published: "This immutable review has already been published; open the existing configured review branch.",
     review_rejected: "This review was rejected and cannot be published.",
     approvals_missing: "Additional independent review approval is required.",
-    publisher_is_reviewer: "This account approved the patch. Sign in as a different authorized node admin to publish it.",
+    publisher_is_reviewer: "This account approved the patch. Sign in as a different authorized publisher to publish it.",
     invalid_publisher_identity: "The authenticated publisher identity is invalid.",
+    publisher_not_allowed: "This account is not in the current publisher policy.",
+    reviewer_not_allowed: "This account is not in the current reviewer policy.",
     repair_superseded: "The underlying validated repair has changed; generate and approve a new pinned review.",
     repair_not_available: "The associated durable repair record is missing.",
     publication_in_progress: "Another Git publication is currently running.",
@@ -2371,11 +2396,11 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     const token = currentToken();
     const bearer = typeof token === "string" && token.trim().length > 0;
     const status = review?.status;
-    $("codeApprove").disabled = !valid || !bearer || status !== "pending";
+    $("codeApprove").disabled = !valid || !bearer || !["pending", "approved", "publish_failed"].includes(status);
     $("codeReject").disabled = !valid || !bearer || !["pending", "approved", "publish_failed"].includes(status);
     const publishEligible = renderCodePublishGate(valid ? review : null, bearer);
     $("codePublish").disabled = !valid || !publishEligible ||
-      !["approved", "publish_failed"].includes(status) || $("codePublishPhrase").value.trim() !== "push to origin";
+      $("codePublishPhrase").value.trim() !== "push reviewed branch";
     $("codeReloadReview").disabled = !valid;
     $("codeCopyDiff").disabled = !valid || !review.patch;
     $("codeBearerNotice").hidden = !valid || bearer;
@@ -2400,6 +2425,107 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     put("codeActionStatus", `Reviewed diff ${id.slice(0, 16)} · ${review.status}. Check SHA-256, base commit and verifier evidence before approving.`);
     codeReviewButtons();
   }
+  function codeListValue(value) { return Array.isArray(value) ? value.join(", ") : ""; }
+  function codeRoleList(hostId, accounts, role) {
+    const host = $(hostId); host.replaceChildren();
+    const values = Array.isArray(accounts) ? accounts : [];
+    if (!values.length) { host.append(element("span", "empty-state", "All authorized code admins")); return; }
+    for (const account of values) {
+      const chip = element("span", "code-role-chip");
+      chip.append(element("span", "", account));
+      const remove = element("button", "code-role-remove", "Remove");
+      remove.type = "button"; remove.disabled = !state.codeAdmin;
+      remove.addEventListener("click", () => task(() => codeRoleAction(role, "remove", account), "codeSettingsStatus"));
+      chip.append(remove); host.append(chip);
+    }
+  }
+  function renderCodeBundles() {
+    const host = $("codeLearningBundles"); host.replaceChildren();
+    if (!state.codeBundles.length) { host.append(element("div", "empty-state", "No exported learning bundles.")); return; }
+    for (const name of state.codeBundles.slice(-20).reverse()) host.append(element("div", "code-bundle", name));
+  }
+  function renderCodeSettings(payload) {
+    const settings = payload?.settings || {};
+    const learning = settings.learning || {};
+    const repository = settings.repository || {};
+    const review = settings.review || {};
+    const sharing = settings.sharing || {};
+    state.codeSettings = settings; state.codeRepository = payload?.repository || null;
+    $("codeLearningEnabled").checked = learning.enabled === true;
+    $("codeLearningBranches").value = codeListValue(learning.branches);
+    $("codeLearningInterval").value = Number.isFinite(learning.interval_ms) ? Math.round(learning.interval_ms / 1000) : "300";
+    $("codeLearningParallelism").value = learning.parallelism ?? "auto";
+    $("codeLearningReserve").value = Number.isFinite(learning.capacity_reserve) ? learning.capacity_reserve : 1;
+    $("codeLearningClean").checked = learning.require_clean_worktree !== false;
+    $("codeLearningFetch").checked = learning.fetch_before_learning === true;
+    $("codeWorkingRoot").value = repository.working_root || "";
+    $("codeRepoRemote").value = repository.remote || "origin";
+    $("codeRepoBranch").value = repository.branch || "main";
+    $("codeReviewRepoRoot").value = review.repo_root || "";
+    $("codeReviewRemote").value = review.remote || "origin";
+    $("codeReviewPrefix").value = review.branch_prefix || "ecai/reviews/";
+    $("codeReviewApprovals").value = review.required_approvals || 1;
+    $("codeReviewTimeout").value = Number.isFinite(review.verify_timeout_ms) ? Math.round(review.verify_timeout_ms / 1000) : 600;
+    $("codeReviewPushEnabled").checked = review.push_enabled === true;
+    $("codeReviewEunit").checked = review.run_eunit !== false;
+    $("codeReviewCt").checked = review.run_ct === true;
+    $("codeSharingEnabled").checked = sharing.enabled === true;
+    $("codeSharingDirectory").value = sharing.directory || "";
+    codeRoleList("codeReviewerList", review.reviewers, "reviewers");
+    codeRoleList("codePublisherList", review.publishers, "publishers");
+    $("codeRepoStatus").textContent = pretty(state.codeRepository || { status: "Repository status unavailable" });
+    $("codeSettingsStatus").textContent = "Runtime settings loaded. Credentials remain in Git/SSH configuration, not ECAI settings.";
+  }
+  function codePositiveInteger(id, min, max) {
+    const value = Number($(id).value);
+    if (!Number.isInteger(value) || value < min || value > max) throw new Error(`${id} must be between ${min} and ${max}`);
+    return value;
+  }
+  function codeSettingsPayload() {
+    const parallelText = $("codeLearningParallelism").value.trim().toLowerCase() || "auto";
+    const parallelism = parallelText === "auto" ? "auto" : Number(parallelText);
+    if (parallelism !== "auto" && (!Number.isInteger(parallelism) || parallelism < 1 || parallelism > 64)) throw new Error("Parallelism must be auto or an integer from 1 to 64");
+    const branches = $("codeLearningBranches").value.split(/[\s,]+/).map((v) => v.trim()).filter(Boolean);
+    return {
+      learning: {
+        enabled: $("codeLearningEnabled").checked, branches,
+        interval_ms: codePositiveInteger("codeLearningInterval", 10, 604800) * 1000,
+        parallelism, capacity_reserve: codePositiveInteger("codeLearningReserve", 0, 64),
+        require_clean_worktree: $("codeLearningClean").checked,
+        fetch_before_learning: $("codeLearningFetch").checked
+      },
+      repository: { working_root: $("codeWorkingRoot").value.trim(), remote: $("codeRepoRemote").value.trim(), branch: $("codeRepoBranch").value.trim() },
+      review: {
+        repo_root: $("codeReviewRepoRoot").value.trim(), remote: $("codeReviewRemote").value.trim(), branch_prefix: $("codeReviewPrefix").value.trim(),
+        push_enabled: $("codeReviewPushEnabled").checked, required_approvals: codePositiveInteger("codeReviewApprovals", 1, 5),
+        run_eunit: $("codeReviewEunit").checked, run_ct: $("codeReviewCt").checked,
+        verify_timeout_ms: codePositiveInteger("codeReviewTimeout", 30, 3600) * 1000
+      },
+      sharing: { enabled: $("codeSharingEnabled").checked, directory: $("codeSharingDirectory").value.trim() }
+    };
+  }
+  async function saveCodeSettings() {
+    const result = expectSuccess(await request("/ecai/admin/code/settings/update", { method: "POST", body: codeSettingsPayload() }));
+    renderCodeSettings(result); toast("ECAI code runtime settings saved"); await refreshCode();
+  }
+  async function codeRepositoryAction(action) {
+    if (!confirm(`${action === "fetch" ? "Fetch/prune" : "Fast-forward pull"} the configured code repository?`)) return;
+    const result = expectSuccess(await request(`/ecai/admin/code/repository/${action}`, { method: "POST", body: {} }));
+    if (result.repository) state.codeRepository = result.repository;
+    toast(`Repository ${action} completed`); await refreshCode();
+  }
+  async function codeRoleAction(role, action, accountValue = "") {
+    const accountId = role === "reviewers" ? "codeReviewerAccount" : "codePublisherAccount";
+    const account = String(accountValue || $(accountId).value).trim();
+    if (!account) throw new Error("Authorized account id is required");
+    const endpoint = role === "reviewers" ? "reviewers" : "publishers";
+    expectSuccess(await request(`/ecai/admin/code/${endpoint}/${action}`, { method: "POST", body: { account } }));
+    $(accountId).value = ""; toast(`${role === "reviewers" ? "Reviewer" : "Publisher"} policy updated`); await refreshCode();
+  }
+  async function exportCodeLearning() {
+    const result = expectSuccess(await request("/ecai/admin/code/learning/export", { method: "POST", body: {} }));
+    toast(`Learning evidence exported${result.bundle?.name ? `: ${result.bundle.name}` : ""}`); await refreshCode();
+  }
   async function refreshCode() {
     if (!state.authenticated) { openLogin("Sign in with a node administrator account."); return; }
     try {
@@ -2409,18 +2535,21 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
       setCodeActionsEnabled(true);
       state.codeQueue = status.status?.reviews || {};
       const learning = status.status?.learning || {};
-      put("codeLearningStatus", { learner: learning.learner, store: learning.store,
-        health_monitor: learning.health_monitor, log_learning: learning.log_learning });
+      put("codeLearningStatus", { learner: learning.learner, source_repository: learning.source_repository,
+        store: learning.store, health_monitor: learning.health_monitor, log_learning: learning.log_learning });
       put("codeRepairStatus", { patch_manager: learning.patch_manager, integration: learning.integration,
         review_queue: state.codeQueue });
       renderCodeOperations(learning, state.codeQueue);
       state.codeStatusLastPoll = Date.now();
-      const [repairs, reviews] = await Promise.all([
-        request("/ecai/admin/code/repairs"), request("/ecai/admin/code/reviews")
+      const [repairs, reviews, settings, bundles] = await Promise.all([
+        request("/ecai/admin/code/repairs"), request("/ecai/admin/code/reviews"),
+        request("/ecai/admin/code/settings"), request("/ecai/admin/code/learning/bundles")
       ]);
       state.codeRepairs = Array.isArray(repairs.repairs) ? repairs.repairs : [];
       state.codeReviews = Array.isArray(reviews.reviews) ? reviews.reviews : [];
       state.codeQueue = reviews.queue || state.codeQueue;
+      state.codeBundles = Array.isArray(bundles.bundles) ? bundles.bundles : [];
+      renderCodeSettings(settings); renderCodeBundles();
       renderCodeOperations(learning, state.codeQueue);
       put("codeRepairCount", `${repairs.total ?? state.codeRepairs.length} repair records (showing latest ${state.codeRepairs.length})`);
       put("codeReviewCounts", Object.entries(state.codeQueue.counts || {}).map(([k,v]) => `${k}: ${v}`).join(" · ") || "Queue empty");
@@ -2430,7 +2559,8 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     } catch (error) {
       state.codeAdmin = false;
       clearCodeReviewFocus();
-      state.codeRepairs = []; state.codeReviews = [];
+      state.codeRepairs = []; state.codeReviews = []; state.codeSettings = null; state.codeRepository = null; state.codeBundles = [];
+      renderCodeBundles();
       showCodeAdminNavigation();
       setCodeActionsEnabled(false);
       renderCodeRepairs(); renderCodeReviews();
@@ -2446,8 +2576,8 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     const status = expectSuccess(await request("/ecai/admin/code/status"));
     const learning = status.status?.learning || {};
     state.codeQueue = status.status?.reviews || state.codeQueue;
-    put("codeLearningStatus", { learner: learning.learner, store: learning.store,
-      health_monitor: learning.health_monitor, log_learning: learning.log_learning });
+    put("codeLearningStatus", { learner: learning.learner, source_repository: learning.source_repository,
+      store: learning.store, health_monitor: learning.health_monitor, log_learning: learning.log_learning });
     put("codeRepairStatus", { patch_manager: learning.patch_manager, integration: learning.integration,
       review_queue: state.codeQueue });
     renderCodeOperations(learning, state.codeQueue);
@@ -2496,13 +2626,15 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
   }
   async function codePublish() {
     const review = state.codeReview;
-    if (!review || $("codePublishPhrase").value.trim() !== "push to origin") return;
+    if (!review || $("codePublishPhrase").value.trim() !== "push reviewed branch") return;
     if (!renderCodePublishGate(review, !!currentToken())) return;
-    if (!confirm(`Publish reviewed patch ${review.patch_sha256.slice(0, 16)}… to origin/ecai/reviews/${review.id}? This creates a remote Git branch, not a merge to main.`)) return;
+    const remote = state.codeSettings?.review?.remote || "origin";
+    const prefix = state.codeSettings?.review?.branch_prefix || "ecai/reviews/";
+    if (!confirm(`Publish reviewed patch ${review.patch_sha256.slice(0, 16)}… to ${remote}/${prefix}${review.id}? This creates a remote Git branch, not a merge to the stable branch.`)) return;
     await task(async () => {
       try {
         expectSuccess(await request(`/ecai/admin/code/reviews/${encodeURIComponent(review.id)}/publish`, {
-          method: "POST", body: { patch_sha256: review.patch_sha256, revision: review.revision, confirm: "push to origin" }
+          method: "POST", body: { patch_sha256: review.patch_sha256, revision: review.revision, confirm: "push reviewed branch" }
         }));
       } catch (error) {
         if (error.status === 409) {
@@ -2614,6 +2746,12 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     $("codeLearn").addEventListener("click", () => codeWorkerAction("learn", "Start a code learning cycle"));
     $("codeScan").addEventListener("click", () => codeWorkerAction("scan", "Scan for repair proposals"));
     $("codeIntegrate").addEventListener("click", () => codeWorkerAction("integrate", "Verify integration patchset"));
+    $("codeSettingsSave").addEventListener("click", () => task(saveCodeSettings, "codeSettingsStatus"));
+    $("codeRepoFetch").addEventListener("click", () => task(() => codeRepositoryAction("fetch"), "codeSettingsStatus"));
+    $("codeRepoPull").addEventListener("click", () => task(() => codeRepositoryAction("pull"), "codeSettingsStatus"));
+    $("codeReviewerAdd").addEventListener("click", () => task(() => codeRoleAction("reviewers", "add"), "codeSettingsStatus"));
+    $("codePublisherAdd").addEventListener("click", () => task(() => codeRoleAction("publishers", "add"), "codeSettingsStatus"));
+    $("codeLearningExport").addEventListener("click", () => task(exportCodeLearning, "codeSettingsStatus"));
     $("codeProposeForm").addEventListener("submit", codePropose);
     for (const id of ["codeRepairSearch", "codeRepairValidation", "codeRepairApp", "codeRepairWithDiff"]) {
       $(id).addEventListener(id === "codeRepairSearch" ? "input" : "change", renderCodeRepairs);

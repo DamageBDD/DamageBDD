@@ -55,11 +55,15 @@
 ]).
 
 refresh() ->
-    ecai_codebase_learner:learn_now().
+    case ecai_code_runtime_config:learning_admission() of
+        {ok, _Policy} -> ecai_codebase_learner:learn_now();
+        {error, _} = Error -> Error
+    end.
 
 status() ->
     #{
         learner => safe_call(fun ecai_codebase_learner:status/0),
+        source_repository => safe_call(fun ecai_source_repository:status/0),
         store => safe_call(fun ecai_learning_store:status/0),
         patch_manager => safe_call(fun ecai_patch_manager:status/0),
         integration => safe_call(fun ecai_patch_integration:status/0),

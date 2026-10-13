@@ -394,6 +394,50 @@
               </div>
             </details>
           </div>
+          <details class="surface panel-pad code-settings-surface" id="codeSettingsPanel" open>
+            <summary><span><span class="eyebrow">RUNTIME POLICY · COLLABORATION</span><strong>Learning, repositories &amp; review gate</strong></span><span class="expand-arrow">⌄</span></summary>
+            <p class="context-hint">Changes are durable and take effect without restarting ECAI. In-flight learning is allowed to finish; new generations use the updated policy. Git credentials are never stored here.</p>
+            <div class="code-settings-grid">
+              <section class="code-settings-card">
+                <div class="eyebrow">LEARNING POLICY</div><h3>Where ECAI learns</h3>
+                <label class="code-toggle"><input id="codeLearningEnabled" type="checkbox"> Enable code learning</label>
+                <label>Allowed branches<input id="codeLearningBranches" placeholder="main" autocomplete="off" spellcheck="false"><small>Comma or whitespace separated. Empty means any non-detached branch.</small></label>
+                <div class="field-grid"><label>Interval (seconds)<input id="codeLearningInterval" type="number" min="10" max="604800" step="1"></label><label>Parallelism<input id="codeLearningParallelism" placeholder="auto" autocomplete="off"></label><label>Capacity reserve<input id="codeLearningReserve" type="number" min="0" max="64" step="1"></label></div>
+                <label class="code-toggle"><input id="codeLearningClean" type="checkbox"> Require a clean working tree</label>
+                <label class="code-toggle"><input id="codeLearningFetch" type="checkbox"> Fetch configured remote before each generation</label>
+              </section>
+              <section class="code-settings-card">
+                <div class="eyebrow">WORKING REPOSITORY</div><h3>Fetch &amp; fast-forward</h3>
+                <label>Working repo path<input id="codeWorkingRoot" autocomplete="off" spellcheck="false"></label>
+                <div class="field-grid"><label>Remote<input id="codeRepoRemote" value="origin" autocomplete="off"></label><label>Stable branch<input id="codeRepoBranch" value="main" autocomplete="off"></label></div>
+                <div class="inline-actions wrap-actions"><button type="button" class="button button-outline button-sm" id="codeRepoFetch">Fetch remote</button><button type="button" class="button button-outline button-sm" id="codeRepoPull">Pull --ff-only</button></div>
+                <pre id="codeRepoStatus" class="code-display code-status">Repository status not loaded.</pre>
+              </section>
+              <section class="code-settings-card">
+                <div class="eyebrow">AUTO PATCH REVIEW GATE</div><h3>Verification &amp; publication</h3>
+                <label>Review repo path<input id="codeReviewRepoRoot" autocomplete="off" spellcheck="false"></label>
+                <div class="field-grid"><label>Push remote<input id="codeReviewRemote" value="origin" autocomplete="off"></label><label>Branch prefix<input id="codeReviewPrefix" value="ecai/reviews/" autocomplete="off"></label></div>
+                <div class="field-grid"><label>Required approvals<input id="codeReviewApprovals" type="number" min="1" max="5" step="1"></label><label>Verify timeout (seconds)<input id="codeReviewTimeout" type="number" min="30" max="3600" step="1"></label></div>
+                <label class="code-toggle"><input id="codeReviewPushEnabled" type="checkbox"> Allow explicit reviewed-branch pushes</label>
+                <div class="inline-actions wrap-actions"><label class="code-toggle"><input id="codeReviewEunit" type="checkbox"> EUnit</label><label class="code-toggle"><input id="codeReviewCt" type="checkbox"> Common Test</label></div>
+              </section>
+              <section class="code-settings-card">
+                <div class="eyebrow">COLLABORATORS</div><h3>Reviewers &amp; publishers</h3>
+                <p class="context-hint">These lists can only narrow existing DamageBDD code-admin authority. Empty lists allow every authorized code admin.</p>
+                <div class="code-role-group"><strong>Reviewers</strong><div id="codeReviewerList" class="code-role-list"></div><div class="inline-actions"><input id="codeReviewerAccount" placeholder="authorized account id" autocomplete="off"><button type="button" class="button button-outline button-sm" id="codeReviewerAdd">Add reviewer</button></div></div>
+                <div class="code-role-group"><strong>Publishers</strong><div id="codePublisherList" class="code-role-list"></div><div class="inline-actions"><input id="codePublisherAccount" placeholder="authorized account id" autocomplete="off"><button type="button" class="button button-outline button-sm" id="codePublisherAdd">Add publisher</button></div></div>
+              </section>
+              <section class="code-settings-card code-sharing-card">
+                <div class="eyebrow">LEARNING EXCHANGE</div><h3>Share verified learning evidence</h3>
+                <label class="code-toggle"><input id="codeSharingEnabled" type="checkbox"> Enable source-free learning bundle export</label>
+                <label>Exchange directory<input id="codeSharingDirectory" autocomplete="off" spellcheck="false"></label>
+                <p class="context-hint">Bundles are commit-pinned snapshots without raw source bodies. They are never auto-imported into live learning.</p>
+                <div class="inline-actions wrap-actions"><button type="button" class="button button-outline button-sm" id="codeLearningExport">Export bundle</button></div>
+                <div id="codeLearningBundles" class="code-bundle-list"><div class="empty-state">No shared bundles loaded.</div></div>
+              </section>
+            </div>
+            <div class="code-settings-footer"><div id="codeSettingsStatus" class="context-hint" role="status" aria-live="polite">Runtime settings not loaded.</div><button type="button" class="button button-primary" id="codeSettingsSave">Save runtime settings</button></div>
+          </details>
           <section class="surface panel-pad">
             <div class="panel-heading"><div><div class="eyebrow">REPAIR OUTPUT</div><h2>Recent repair attempts</h2></div><span id="codeRepairCount" class="small muted">Not loaded</span></div>
             <div class="code-filter-toolbar" role="group" aria-label="Filter repair jobs">
@@ -407,7 +451,7 @@
           </section>
           <section class="surface panel-pad">
             <div class="panel-heading"><div><div class="eyebrow">DURABLE APPROVAL QUEUE</div><h2>Patch reviews</h2></div><span id="codeReviewCounts" class="small muted">Awaiting load</span></div>
-            <p class="context-hint">Only successful verifier results can enter the queue. A review pins a SHA-256 hash and base commit. Independent approval is required before publication. Publication re-runs verification, creates a new commit in an isolated worktree, and pushes without force to <code>origin/ecai/reviews/&lt;id&gt;</code>.</p>
+            <p class="context-hint">Only successful verifier results can enter the queue. A review pins a SHA-256 hash and base commit. Independent approval is required before publication. Publication re-runs verification, creates a new commit in an isolated worktree, and pushes without force to the configured review remote and branch prefix.</p>
             <div class="code-filter-toolbar" role="group" aria-label="Filter patch reviews">
               <label class="code-filter-search">Search patches<input id="codeReviewSearch" type="search" placeholder="Module, summary, SHA or fingerprint…" autocomplete="off"></label>
               <label>Review state<select id="codeReviewStatus"><option value="">All review states</option><option value="pending">Awaiting approval</option><option value="approved">Approved</option><option value="rejected">Rejected</option><option value="publishing">Publishing</option><option value="published">Published</option><option value="publish_failed">Push failed</option><option value="reconcile_required">Reconciliation required</option></select></label>
@@ -435,9 +479,9 @@
                 <div class="inline-actions wrap-actions"><button type="button" class="button button-primary button-sm" id="codeApprove" disabled>Approve immutable diff</button><button type="button" class="button button-outline button-sm danger-outline" id="codeReject" disabled>Reject patch</button></div>
               </form>
               <hr class="section-rule">
-              <div class="eyebrow">SEPARATE PUBLISH GATE</div><p class="context-hint">The publisher must be a different node admin from every approving reviewer. Approval alone never pushes. Push must also be enabled server-side and the base commit must still match the configured repository HEAD.</p>
+              <div class="eyebrow">SEPARATE PUBLISH GATE</div><p class="context-hint">The publisher must be a different authorized publisher from every approving reviewer. Approval alone never pushes. Push must also be enabled and the base commit must still match the configured review repository HEAD.</p>
               <div id="codePublishGate" class="code-publish-gate" role="status" aria-live="polite">Open a reviewed patch to inspect publication eligibility.</div>
-              <label for="codePublishPhrase">To authorize this push, type <code>push to origin</code><input id="codePublishPhrase" autocomplete="off" placeholder="push to origin"></label>
+              <label for="codePublishPhrase">To authorize this push, type <code>push reviewed branch</code><input id="codePublishPhrase" autocomplete="off" placeholder="push reviewed branch"></label>
               <div class="inline-actions wrap-actions"><button type="button" class="button button-primary button-sm" id="codePublish" disabled>Publish reviewed branch ↗</button><button type="button" class="button button-outline button-sm" id="codeReloadReview" disabled>Reload review</button></div>
               <div class="context-hint" id="codeActionStatus" role="status" aria-live="polite">Review a patch before taking an action.</div>
               <div class="eyebrow code-diff-label">AUDIT TRAIL</div><pre class="code-display code-status" id="codeReviewAudit">No audit events selected.</pre>

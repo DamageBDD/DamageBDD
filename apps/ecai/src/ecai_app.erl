@@ -101,6 +101,7 @@ get_trails() ->
             ecai_mm_dashboard_http,
             ecai_index_pool_http,
             ecai_index_jobs_http,
+            ecai_quick_index_http,
             ecai_compute_settings_http,
             ecai_private_http,
             ecai_wikimedia_http,
