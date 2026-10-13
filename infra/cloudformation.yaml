@@ -1,0 +1,118 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Secure generic EC2 launch template for a DamageBDD node
+
+Parameters:
+  AmiId:
+    Type: AWS::EC2::Image::Id
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+  InstanceType:
+    Type: String
+    Default: t3.small
+  RoleName:
+    Type: String
+    Default: damage-node-prod
+    AllowedPattern: "[A-Za-z0-9+=,.@_-]{1,64}"
+  SecretArn:
+    Type: String
+    Description: Exact Secrets Manager ARN for the nsecbunker passphrase
+  KmsKeyArn:
+    Type: String
+    Default: ""
+    Description: Optional customer-managed KMS key ARN used by the secret
+  MetadataHopLimit:
+    Type: Number
+    Default: 1
+    AllowedValues: [1, 2]
+
+Conditions:
+  HasCustomerKmsKey: !Not [!Equals [!Ref KmsKeyArn, ""]]
+
+Resources:
+  DamageNodeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: damage-node-secret-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadExactVaultPassphrase
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref SecretArn
+              - !If
+                - HasCustomerKmsKey
+                - Sid: DecryptVaultPassphraseThroughSecretsManager
+                  Effect: Allow
+                  Action: kms:Decrypt
+                  Resource: !Ref KmsKeyArn
+                  Condition:
+                    StringEquals:
+                      kms:ViaService: !Sub secretsmanager.${AWS::Region}.amazonaws.com
+                    StringLike:
+                      kms:EncryptionContext:SecretARN: !Ref SecretArn
+                - !Ref AWS::NoValue
+              - Sid: RejectCredentialsDeliveredByIMDSv1
+                Effect: Deny
+                Action: "*"
+                Resource: "*"
+                Condition:
+                  NumericLessThan:
+                    ec2:RoleDelivery: "2.0"
+
+  DamageNodeInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Ref RoleName
+      Roles: [!Ref DamageNodeRole]
+
+  DamageNodeSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: DamageBDD node with no default inbound access
+      VpcId: !Ref VpcId
+
+  DamageNodeLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub ${RoleName}-launch-template
+      LaunchTemplateData:
+        ImageId: !Ref AmiId
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile:
+          Name: !Ref DamageNodeInstanceProfile
+        MetadataOptions:
+          HttpEndpoint: enabled
+          HttpTokens: required
+          HttpPutResponseHopLimit: !Ref MetadataHopLimit
+          InstanceMetadataTags: disabled
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: false
+            SubnetId: !Ref SubnetId
+            Groups: [!Ref DamageNodeSecurityGroup]
+        BlockDeviceMappings:
+          - DeviceName: /dev/xvda
+            Ebs:
+              Encrypted: true
+              VolumeType: gp3
+              DeleteOnTermination: true
+
+Outputs:
+  RoleName:
+    Value: !Ref DamageNodeRole
+  InstanceProfileArn:
+    Value: !GetAtt DamageNodeInstanceProfile.Arn
+  LaunchTemplateId:
+    Value: !Ref DamageNodeLaunchTemplate

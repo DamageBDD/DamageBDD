@@ -1,0 +1,4 @@
+[
+  { "cid": "QmSaePitmi9NaZmZ2DmbtC7sSMSQBBsz113qVvpY2Wd9K3", "title": "HTTP smoke test", "subtitle": "GET /version then /execute_feature" },
+  { "cid": "bafy....", "title": "CDP login flow", "subtitle": "Browser automation sample" }
+]

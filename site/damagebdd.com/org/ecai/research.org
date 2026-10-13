@@ -1,0 +1,8 @@
+Injective encoding with curves: https://eprint.iacr.org/2013/373.pdf
+Merkle trees with curves : https://eprint.iacr.org/2022/756.pdf
+Use of Elliptic Curves in Term Discrimination: https://link.springer.com/chapter/10.1007/978-3-642-21587-2_37
+Probabilistic Record Linkage with Elliptic Curve Operations : https://www.proquest.com/openview/df4d5d51e49f2e9379631a44aef648ee/1?pq-origsite=gscholar&cbl=18750&diss=y
+
+https://martin.kleppmann.com/papers/curve25519.pdf
+
+Erlang implementation https://www.nccgroup.com/media/3qzbte3h/_a_tour_of_curve25519_in_erlang-1.pdf

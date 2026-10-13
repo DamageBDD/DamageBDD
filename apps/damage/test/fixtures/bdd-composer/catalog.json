@@ -1,0 +1,15 @@
+{
+  "revision": "preview-fixture-not-a-deployed-catalog",
+  "step_count": 6,
+  "module_count": 1,
+  "unavailable_modules": [],
+  "engine": {"name": "ECAI", "generator_available": true, "knowledge_available": true},
+  "steps": [
+    {"id":"server","module":"steps_http","source_line":1,"keywords":["Given"],"template":"I am using server \"<Server>\""},
+    {"id":"get","module":"steps_http","source_line":2,"keywords":["When"],"template":"I make a GET request to \"<Path>\""},
+    {"id":"status","module":"steps_http","source_line":3,"keywords":["Then"],"template":"the response status must be \"<Status>\""},
+    {"id":"json","module":"steps_http","source_line":4,"keywords":["Then"],"template":"the json at path \"<Path>\" must be \"<Expected>\""},
+    {"id":"header","module":"steps_http","source_line":5,"keywords":["Given"],"template":"I set \"<Header>\" header to \"<Value>\""},
+    {"id":"contains","module":"steps_http","source_line":6,"keywords":["Then"],"template":"the response must contain text \"<Contains>\""}
+  ]
+}

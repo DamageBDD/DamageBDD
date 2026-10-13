@@ -1,0 +1,306 @@
+%% damage_ssh_git_listener.erl
+%% OTP-managed SSH listener that only serves Git smart-SSH
+%% Commands allowed:
+%%   git-upload-pack  '<repo>.git'
+%%   git-receive-pack '<repo>.git'
+
+-module(damage_ssh_git_listener).
+-author("Steven Joseph <steven@stevenjoseph.in>").
+
+-copyright("Steven Joseph <steven@stevenjoseph.in>").
+
+-license("Apache-2.0").
+
+-behaviour(gen_server).
+
+-include_lib("kernel/include/logger.hrl").
+
+-export([start_link/0, child_spec/0]).
+-export([app_env/2, authorize_push/2, check_repo_path/1]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
+
+-record(state, {
+    daemon_pid,
+    %% string() path, e.g. "/srv/git"
+    repos_root,
+    %% #{<<"secure.git">> => [<<"ak_xxx">>, ...] | <<"*">> | all}
+    allow_push = #{}
+}).
+
+%%% ---------- Public
+
+start_link() ->
+    case subsystem_enabled(git, false) of
+        false ->
+            ?LOG_INFO("damage_ssh_git_listener disabled by config", []),
+            ignore;
+        true ->
+            %% SSH is an optional subsystem. A bad host-key directory, missing
+            %% host key or occupied port must not prevent the damage app booting.
+            case gen_server:start_link({local, ?MODULE}, ?MODULE, [], []) of
+                {ok, _Pid} = Ok ->
+                    Ok;
+                {error, Reason} ->
+                    ?LOG_ERROR("Git SSH subsystem unavailable; continuing without it reason=~p", [
+                        Reason
+                    ]),
+                    ignore
+            end
+    end.
+
+child_spec() ->
+    #{id => ?MODULE, start => {?MODULE, start_link, []}, restart => permanent, type => worker}.
+
+%%% ---------- gen_server
+
+init([]) ->
+    %% App env (provide sane XDG-state defaults).
+    StateDir = damage_state_dir(),
+    {ok, ListenAddr} = app_env(listen_addr, {127, 0, 0, 1}),
+    {ok, Port} = app_env(port, 2222),
+    {ok, SystemDir0} = app_env(system_dir, filename:join([StateDir, "ssh", "git", "system"])),
+    {ok, UserDir0} = app_env(user_dir, filename:join([StateDir, "ssh", "git", "user"])),
+    {ok, Repos0} = app_env(repos_root, filename:join(StateDir, "git")),
+    {ok, AllowPush0} = app_env(allow_push, []),
+    AllowPush = config_map(AllowPush0),
+
+    SystemDir = normalize_path(SystemDir0),
+    UserDir = normalize_path(UserDir0),
+    Repos = normalize_path(Repos0),
+    ok = ensure_dirs([SystemDir, UserDir, Repos]),
+    ensure_host_key_hint(SystemDir),
+
+    Opts = [
+        {system_dir, SystemDir},
+        {user_dir, UserDir},
+        {auth_methods, "publickey"},
+        {shell, disabled},
+        {subsystems, []},
+        %% Git smart-SSH needs a live channel so stdin from the SSH client can be
+        %% forwarded into git-upload-pack/git-receive-pack and stdout can be
+        %% streamed back. Do not use {exec,{direct,Fun}} here: that callback
+        %% only receives the command/user/client info and cannot pump channel IO.
+        {ssh_cli, {damage_ssh_git_channel, [git_cli]}},
+        {connectfun, fun connect_fun/3},
+        {failfun, fun fail_fun/3},
+        {parallel_login, true},
+        {idle_time, 600000},
+        {id_string, "DamageGitSSH"},
+        {tcpip_tunnel_in, false},
+        {tcpip_tunnel_out, false}
+    ],
+
+    case ssh:daemon(ListenAddr, Port, Opts) of
+        {ok, DaemonPid} ->
+            ?LOG_INFO("Damage Git SSH daemon listening on ~p:~p repos=~s", [ListenAddr, Port, Repos]),
+            {ok, #state{
+                daemon_pid = DaemonPid,
+                repos_root = Repos,
+                allow_push = AllowPush
+            }};
+        {error, eaddrinuse} ->
+            ?LOG_ERROR("Git SSH listener port already in use at ~p:~p", [ListenAddr, Port]),
+            {stop, {ssh_port_in_use, ListenAddr, Port}};
+        {error, Reason} ->
+            ?LOG_ERROR("Failed to start Git SSH daemon on ~p:~p reason=~p", [
+                ListenAddr, Port, Reason
+            ]),
+            {stop, {ssh_daemon_start_failed, Reason}}
+    end.
+
+handle_call(_Req, _From, State) -> {reply, ok, State}.
+handle_cast(_Msg, State) -> {noreply, State}.
+handle_info(_Info, State) -> {noreply, State}.
+terminate(_Reason, _State) -> ok.
+code_change(_Vsn, State, _Extra) -> {ok, State}.
+
+%%% ---------- SSH callbacks
+
+connect_fun(User, Peer, Method) ->
+    ?LOG_INFO("Git SSH connected user=~p from=~p via=~p", [User, Peer, Method]),
+    ok.
+
+fail_fun(User, Peer, Reason) ->
+    ?LOG_WARNING("Git SSH auth failed user=~p from=~p reason=~p", [User, Peer, Reason]),
+    ok.
+
+%%% ---------- Helpers
+
+app_env(Key, Default) ->
+    case application:get_env(damage, ssh_git) of
+        {ok, SSHConfig} when is_list(SSHConfig) ->
+            {ok, proplists:get_value(Key, SSHConfig, Default)};
+        _ ->
+            {ok, Default}
+    end.
+
+subsystem_enabled(Name, Default) ->
+    case application:get_env(damage, ssh_subsystems) of
+        {ok, Subsystems} when is_list(Subsystems) ->
+            lists:any(fun(Value) -> subsystem_name(Value) =:= Name end, Subsystems);
+        _ ->
+            {ok, Enabled} = app_env(enabled, Default),
+            config_bool(Enabled, Default)
+    end.
+
+subsystem_name(Value) when is_atom(Value) -> Value;
+subsystem_name(Value) when is_binary(Value) -> subsystem_name(binary_to_list(Value));
+subsystem_name(Value) when is_list(Value) ->
+    try list_to_existing_atom(string:lowercase(Value)) of
+        Name -> Name
+    catch
+        _:_ -> undefined
+    end;
+subsystem_name(_) ->
+    undefined.
+
+config_bool(true, _Default) -> true;
+config_bool(false, _Default) -> false;
+config_bool(<<"true">>, _Default) -> true;
+config_bool(<<"false">>, _Default) -> false;
+config_bool("true", _Default) -> true;
+config_bool("false", _Default) -> false;
+config_bool(_, Default) -> Default.
+
+ensure_dirs([Dir | Rest]) ->
+    case ensure_dir(Dir) of
+        ok -> ensure_dirs(Rest);
+        {error, _} = Error -> Error
+    end;
+ensure_dirs([]) ->
+    ok.
+
+normalize_path(Path) when is_binary(Path) ->
+    normalize_path(binary_to_list(Path));
+normalize_path("~") ->
+    home_dir();
+normalize_path("~/" ++ Rest) ->
+    filename:join(home_dir(), Rest);
+normalize_path(Path) when is_list(Path) ->
+    Path.
+
+config_map(M) when is_map(M) -> M;
+config_map(L) when is_list(L) -> maps:from_list(L);
+config_map(_) -> #{}.
+
+home_dir() ->
+    case os:getenv("HOME") of
+        Home when is_list(Home), Home =/= "" ->
+            Home;
+        _ ->
+            erlang:error(home_directory_unavailable)
+    end.
+
+damage_state_dir() ->
+    case application:get_env(damage, state_dir) of
+        {ok, Dir} when is_binary(Dir); is_list(Dir) ->
+            normalize_path(Dir);
+        _ ->
+            default_damage_state_dir()
+    end.
+
+default_damage_state_dir() ->
+    case os:getenv("XDG_STATE_HOME") of
+        Xdg when is_list(Xdg), Xdg =/= "" ->
+            try normalize_path(Xdg) of
+                Expanded ->
+                    case filename:pathtype(Expanded) of
+                        absolute -> filename:join(Expanded, "damage");
+                        _ -> default_home_state_dir()
+                    end
+            catch
+                error:home_directory_unavailable ->
+                    default_home_state_dir()
+            end;
+        _ ->
+            default_home_state_dir()
+    end.
+
+default_home_state_dir() ->
+    case os:getenv("HOME") of
+        Home when is_list(Home), Home =/= "" ->
+            filename:join([Home, ".local", "state", "damage"]);
+        _ ->
+            "/var/lib/damage"
+    end.
+
+ensure_dir(D0) ->
+    D = normalize_path(D0),
+    %% ensure_dir expects a *file* path; append a sentinel filename.
+    case filelib:ensure_dir(filename:join(D, ".keep")) of
+        ok ->
+            ok;
+        {error, Reason} ->
+            ?LOG_ERROR(
+                "Cannot create Git SSH directory ~s (~p). Configure damage state_dir or ssh_git paths to writable locations.",
+                [D, Reason]
+            ),
+            {error, {ssh_directory_unavailable, D, Reason}}
+    end.
+
+host_key_files(SystemDir) ->
+    [
+        filename:join(SystemDir, "ssh_host_ed25519_key"),
+        filename:join(SystemDir, "ssh_host_rsa_key"),
+        filename:join(SystemDir, "ssh_host_ecdsa_key"),
+        filename:join(SystemDir, "ssh_host_dsa_key")
+    ].
+
+ensure_host_key_hint(SystemDir) ->
+    case lists:any(fun filelib:is_regular/1, host_key_files(SystemDir)) of
+        true ->
+            ok;
+        false ->
+            ?LOG_WARNING(
+                "No Git SSH host key found in ~s. Generate one before enabling damage_ssh_git_listener, for example: ssh-keygen -t ed25519 -N '' -f ~s",
+                [SystemDir, filename:join(SystemDir, "ssh_host_ed25519_key")]
+            ),
+            ok
+    end.
+
+%% Only allow pushes for repos and accounts you approve.
+authorize_push(Repo, _CM) ->
+    case whereis(?MODULE) of
+        P when is_pid(P) ->
+            State = sys:get_state(P),
+            RepoBase = list_to_binary(filename:basename(strip_leading_slashes(Repo))),
+            case maps:get(RepoBase, State#state.allow_push, deny) of
+                all ->
+                    ok;
+                <<"*">> ->
+                    ok;
+                deny ->
+                    {error, not_allowed};
+                List when is_list(List) ->
+                    case lists:member(<<"*">>, List) of
+                        true -> ok;
+                        false -> {error, not_allowed}
+                    end;
+                _ ->
+                    {error, not_allowed}
+            end;
+        _ ->
+            {error, listener_not_ready}
+    end.
+
+strip_leading_slashes([$/ | Rest]) ->
+    strip_leading_slashes(Rest);
+strip_leading_slashes(Path) ->
+    Path.
+
+check_repo_path(Repo0) ->
+    %% Harden against path traversal and require .git suffix. Git clients using
+    %% ssh://host/repo.git often send '/repo.git'; treat that as 'repo.git'.
+    RelRepo = strip_leading_slashes(Repo0),
+    case (filename:basename(RelRepo) =:= RelRepo) andalso lists:suffix(".git", RelRepo) of
+        true ->
+            State = sys:get_state(?MODULE),
+            Root = State#state.repos_root,
+            Abs = filename:join(Root, RelRepo),
+            case filelib:is_dir(Abs) of
+                true -> {ok, Abs};
+                false -> {error, enoent}
+            end;
+        false ->
+            {error, invalid}
+    end.

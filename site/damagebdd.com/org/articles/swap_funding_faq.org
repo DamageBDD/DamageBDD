@@ -1,0 +1,295 @@
+#+TITLE: Swap Funding FAQ
+#+SUBTITLE: Regulator-aware answers to common concerns and adoption friction
+#+AUTHOR: Steven Joseph
+#+DATE: 2025-12-23
+#+OPTIONS: toc:t num:nil
+#+TOC: headlines 2
+
+* Purpose
+This FAQ explains *Swap Funding* in clear, regulator-aware terms. It is written to address common concerns from regulators, compliance teams, enterprise buyers, and conservative engineers.
+
+Swap Funding is designed to be:
+- *Non-custodial*
+- *Software-only utility scope*
+- *No pooled capital*
+- *No promise of profit or yield*
+- *Deterministic release based on verifiable behaviour*
+
+* Definitions
+- *Operator*: Steven Joseph (sole trader) providing DamageBDD software and related utilities.
+- *DAMAGE*: A cryptographic utility token used within the DamageBDD ecosystem for metering and settling software verification activity.
+- *Swap*: A user-initiated exchange (e.g., Lightning BTC -> DAMAGE) that converts liquidity into software execution capacity.
+- *BDD Specification*: Human-readable, executable behavioural requirements (Gherkin) that define what “correct” means.
+- *Verification*: Deterministic test execution that confirms whether a system behaves as specified.
+- *Issue Ticket*: A coordination object (e.g., a GitHub issue) that describes work scope and links to the relevant BDD specifications.
+
+* General Concept
+** What is Swap Funding?
+Swap Funding is a mechanism where users exchange liquidity (for example, via the Bitcoin Lightning Network) into DAMAGE tokens, which are then applied to software execution and verification. Release to contributors occurs only when predefined, machine-verifiable behaviour passes.
+
+Swap Funding does not involve pooled capital, custody, or promises of return.
+
+** How is Swap Funding different from crowdfunding or venture funding?
+Traditional funding commits capital based on belief, narrative, or discretionary approval.
+
+Swap Funding applies liquidity based on verification:
+- No fundraising rounds
+- No pooled treasury
+- No lock-in
+- No discretionary operator allocation
+- Liquidity can stop or re-route at any time
+
+* Custody and Escrow Concerns
+** Is Swap Funding an escrow arrangement?
+No.
+
+Escrow typically involves:
+- Custody transfer to a third party or contract
+- Lock-in until resolution
+- Binary release (pay/refund)
+- Adjudication (human or oracle decision)
+
+Swap Funding has none of these properties:
+- No funds are held “for later”
+- No lock-in
+- No binary “winner/loser” release event
+- No adjudicator
+
+** Who controls funds during the process?
+Users retain control of their assets. The operator does not hold or manage user assets on their behalf.
+
+** Can funds be frozen, seized, or reversed?
+No. Transactions are user-initiated and irreversible.
+
+* Regulatory and Compliance Concerns
+** Is Swap Funding an investment product?
+No.
+
+Swap Funding does not involve:
+- Profit expectation
+- Yield, dividends, or revenue share
+- Equity or debt claims
+- Guaranteed appreciation
+- Managed capital allocation on behalf of users
+
+DAMAGE is used for software utility: metering and settling verification activity.
+
+** Is this a managed investment scheme (MIS)?
+No.
+
+Swap Funding does not include:
+- Pooling of participant funds
+- Operator discretion over capital deployment
+- A common enterprise with profit expectation
+- Promises of financial return
+
+Users independently choose whether and where to route liquidity.
+
+** Does this require AUSTRAC registration?
+Based on the current design scope:
+- No custody
+- No fiat services
+- No remittance/money transmission service
+- Software-only utility usage
+
+If functionality materially changes (especially custody or fiat rails), regulatory position should be reviewed.
+
+** Is this financial advice?
+No.
+
+The operator does not:
+- Recommend where to route liquidity
+- Provide return expectations
+- Provide investment advice
+
+All routing decisions are made by users.
+
+* Tokenomics and Economic Design
+** How is DAMAGE used in Swap Funding?
+DAMAGE is used to:
+- Meter verification execution
+- Unlock software pathways
+- Settle deterministic outcomes
+- Coordinate testing capacity
+
+DAMAGE is consumed for software execution, not invested for financial return.
+
+** Does DAMAGE provide yield or guaranteed value?
+No guarantees are made.
+
+DAMAGE does not represent:
+- A claim on profits
+- A redemption right
+- A buyback right
+- A guaranteed external market value
+
+Any secondary market activity is external to the operator.
+
+** Can DAMAGE be resold?
+That depends on third-party markets and is outside the scope of the operator. The operator does not operate secondary markets.
+
+* Payments and Operator Fees
+** Does the operator charge fees?
+Yes, for software services and conversion services only.
+
+Fees may apply to:
+- Swap boundary (e.g., Lightning -> DAMAGE conversion fee/spread)
+- Verification execution (metered compute and infrastructure)
+- Optional tooling layers (dashboards, reporting, integrations)
+
+** Does the operator take a cut of contributor payouts?
+No.
+
+To avoid custody and outcome-based profit participation, operator fees are not charged as:
+- Success fees
+- A percentage of “released” funding
+- Outcome-contingent fees linked to BDD passing
+
+* Contributors and Work Delivery
+** How are contributors paid?
+Contributors are paid in DAMAGE only when the relevant BDD specifications pass.
+
+This is deterministic and non-adjudicated:
+- If BDD passes: release occurs
+- If BDD fails: nothing is released
+
+** What happens if work fails?
+No release occurs. There is no confiscation, penalty, or seizure mechanism within Swap Funding.
+
+Liquidity simply continues routing elsewhere.
+
+** Is this exploitative to contributors?
+Contributors:
+- Choose whether to participate
+- See acceptance criteria in advance (BDD)
+- Are paid for verified execution only
+
+No one is obligated to continue work.
+
+* Governance and Control
+** Who decides which issues get funded?
+No one centrally.
+
+Funding emerges from user-directed routing and verification outcomes, not votes, committees, or operator discretion.
+
+** Is there DAO governance?
+Swap Funding does not require DAO governance:
+- No voting
+- No proposals
+- No token-weighted allocation decisions
+
+* Risk and Liability
+** What are the risks to users?
+Users bear:
+- Software execution risk
+- User error risk (keys, addresses, compatibility)
+- Market risk (if interacting with third-party markets)
+
+The operator provides software “as is” without guaranteeing outcomes.
+
+** What are the risks to the operator?
+Because Swap Funding is non-custodial and outcome-neutral:
+- No custody obligations are assumed
+- No fiduciary role is created
+- No investment promises are made
+
+* Adoption and Enterprise Concerns
+** Why would enterprises consider this model?
+Swap Funding can reduce:
+- Governance overhead
+- Subjective acceptance disputes
+- Capital misallocation due to weak execution signals
+
+Verification replaces trust. Measurement replaces persuasion.
+
+** Can this coexist with traditional procurement and venture funding?
+Yes.
+
+Swap Funding can complement:
+- Payroll
+- Procurement
+- Venture funding
+- Fixed-bid delivery
+
+It is suited to funding *verifiable execution*, not promising organizational outcomes.
+
+* Allocation vs Holding Clarification
+** Are funds being held after a Lightning invoice is paid, pending test results?
+No.
+
+Once a user pays a Lightning invoice to a DamageBDD node, the Bitcoin payment is *final and unconditional*. The Operator is paid immediately for software conversion and infrastructure services.
+
+There is no state in which Bitcoin funds are held, locked, or pending a future outcome.
+
+** What does it mean when DAMAGE is "allocated" after payment?
+After payment, DAMAGE is allocated to the user’s context as *non-redeemable software execution capacity*.
+
+Allocated DAMAGE:
+- Is not Bitcoin or fiat
+- Is not refundable or redeemable
+- Is not pooled with other users’ assets
+- Does not represent stored monetary value
+- Functions as prepaid usage credits within software systems
+
+This allocation is analogous to prepaid cloud compute credits or API quotas, not held funds.
+
+** Is DAMAGE locked until tests pass?
+No.
+
+DAMAGE is not locked or immobilized pending test outcomes.
+
+DAMAGE may be:
+- Consumed to execute verification
+- Routed to different verification tasks
+- Left unused by the user
+
+There is no “waiting” or “holding” state where assets are frozen pending a decision.
+
+** How does contributor payment occur if tests pass?
+If a BDD specification passes, a *new transfer* of DAMAGE may occur to a contributor as payment for verified execution.
+
+This is not a release of previously held funds.
+
+Key distinction:
+- Bitcoin payment settled earlier
+- DAMAGE execution capacity was consumed
+- Contributor payment is a consequence of verified execution, not an escrow release
+
+** Why this is not escrow or custody
+Holding or escrow would require all of the following:
+- Operator custody of user assets
+- Asset lock-in pending resolution
+- Binary release or refund
+- Adjudication by a human or oracle
+
+Swap Funding has none of these properties:
+- No custody of Bitcoin
+- No lock-in of DAMAGE
+- No refund or seizure mechanism
+- No adjudication or discretionary release
+
+** Summary
+Bitcoin payments settle immediately.
+DAMAGE represents prepaid, non-redeemable software execution capacity.
+Verification consumes DAMAGE.
+Contributor payment is a new transfer triggered by deterministic verification, not the release of held assets.
+
+At no point are user funds held pending test results.
+
+* Regulator Summary
+** One-sentence summary
+Swap Funding is a non-custodial, software-only mechanism where users apply liquidity to verification-gated execution, without pooling, lock-in, profit expectation, or discretionary asset management.
+
+** What this is *not*
+- Not an investment product
+- Not escrow
+- Not a managed investment scheme
+- Not a custodial wallet service
+- Not remittance or money transmission
+- Not financial advice
+
+* Contact
+For questions regarding Swap Funding:
+
+Steven Joseph
+Operator, DamageBDD

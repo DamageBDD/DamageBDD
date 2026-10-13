@@ -1,0 +1,647 @@
+-module(damage_utils).
+
+-author("Steven Joseph <steven@stevenjoseph.in>").
+
+-copyright("Steven Joseph <steven@stevenjoseph.in>").
+
+-license("Apache-2.0").
+
+-include_lib("kernel/include/logger.hrl").
+
+-export(
+    [
+        tokenize/1,
+        binarystr_join/1,
+        binarystr_join/2,
+        config/2,
+        loaded_steps/0,
+        lists_concat/2,
+        strf/2,
+        get_context_value/3,
+        get_context_value/4,
+        load_template/2,
+        load_template/3,
+        send_email/4,
+        send_email/5,
+        prepare_email/5,
+        send_prepared_email/1,
+        atom_to_binary_keys/1,
+        binary_to_atom_keys/1,
+        get_concurrency_level/1,
+        get_ip/1,
+        test_send_email/0,
+        test_send_email/1,
+        idhash_keys/1,
+        json_decode/1,
+        yaml_decode/1,
+        is_valid_email/1,
+        ensure_dir/1,
+        ensure_group/1,
+        ensure_user/2,
+        chown_r/2,
+        ensure_ssh_host_key/1,
+        exists_cmd/1,
+        render/2,
+        normalize_context/1,
+        to_bin/1,
+        to_int/1,
+        ct_id/2,
+        float_to_full_integer/1,
+        generate_8_digit_random_int/0
+    ]
+).
+-export([yaml_encode/1, yaml_encode_to_file/2]).
+-export([max_by/2]).
+-export([normalize_email/1, denormalize_email/1]).
+-export([map_strings_to_binary/1]).
+-export([memory_usage_mb/0]).
+-export([get_all_memory_stats/0]).
+
+memory_usage_mb() ->
+    TotalBytes = erlang:memory(total),
+    % 1 Megabyte = 1024 * 1024 bytes (1,048,576 bytes)
+    % Use float/1 for floating-point division to get a precise result
+    TotalMB = (float(TotalBytes) / (1024 * 1024)),
+    {ok, TotalMB}.
+
+get_all_memory_stats() ->
+    % erlang:memory(all) returns a list of {Key, Bytes} tuples
+    StatsBytes = erlang:memory(),
+    % Convert all byte values to MB for easier reading
+    lists:foldl(
+        fun({Key, Bytes}, Acc) ->
+            MB = float(Bytes) / (1024 * 1024),
+            [{Key, MB} | Acc]
+        end,
+        [],
+        StatsBytes
+    ).
+
+tokenize(Step) when is_binary(Step) -> tokenize(binary_to_list(Step));
+tokenize(Step) -> damage_step_tokenizer:tokenize(Step).
+
+binarystr_join(ListSep) -> binarystr_join(ListSep, <<"">>).
+
+-spec binarystr_join([binary()], binary()) -> binary().
+binarystr_join([], _Sep) ->
+    <<>>;
+binarystr_join([Part], _Sep) ->
+    Part;
+binarystr_join(List, Sep) ->
+    lists:foldr(
+        fun(A, B) ->
+            if
+                bit_size(B) > 0 -> <<A/binary, Sep/binary, B/binary>>;
+                true -> A
+            end
+        end,
+        <<>>,
+        List
+    ).
+
+config(Config, Key) ->
+    {Key, Value} = lists:keyfind(Key, 1, Config),
+    Value.
+
+loaded_steps() ->
+    case discover_step_modules_on_path() of
+        [] ->
+            throw({error, steps_notfound});
+        Mods ->
+            [
+                begin
+                    code:ensure_loaded(M),
+                    M
+                end
+             || M <- Mods
+            ]
+    end.
+
+discover_step_modules_on_path() ->
+    Beams =
+        lists:append(
+            [
+                filelib:wildcard(filename:join(Dir, "steps_*.beam"))
+             || Dir <- code:get_path()
+            ]
+        ),
+    Mods0 = [list_to_atom(filename:basename(F, ".beam")) || F <- Beams],
+    Mods = [M || M <- Mods0, not lists:suffix("_SUITE", atom_to_list(M))],
+    lists:usort(Mods).
+
+strf(String, Args) -> lists:flatten(io_lib:format(String, Args)).
+
+lists_concat(L, N) -> lists:flatten(string:join([[X] || X <- L], N)).
+
+-spec get_context_value(atom(), map(), list()) -> any().
+get_context_value(Key, Context, Config) ->
+    case lists:keyfind(key, 1, Config) of
+        {_, Default} -> maps:get(Key, Context, Default);
+        false -> maps:get(Key, Context)
+    end.
+-spec get_context_value(atom(), map(), list(), list()) -> any().
+get_context_value(Key, Context, Config, Default) ->
+    case lists:keyfind(key, 1, Config) of
+        {_, Default} -> maps:get(Key, Context, Default);
+        false -> maps:get(Key, Context, Default)
+    end.
+
+atom_to_binary_keys(Map) ->
+    maps:from_list(
+        lists:map(
+            fun
+                ({Key, Value}) when is_atom(Key) -> {atom_to_binary(Key), Value};
+                (Value) -> Value
+            end,
+            maps:to_list(Map)
+        )
+    ).
+
+binary_to_atom_keys(Map) ->
+    maps:from_list(
+        lists:map(
+            fun
+                ({Key, Value}) when is_binary(Key) -> {binary_to_atom(Key), Value};
+                (Value) -> Value
+            end,
+            maps:to_list(Map)
+        )
+    ).
+
+load_template(App, Template, Context) ->
+    PrivDir =
+        case code:priv_dir(App) of
+            {error, enoent} ->
+                %% Fallback: Locate priv relative to this module's .beam file
+                EbinDir = filename:dirname(code:which(?MODULE)),
+                filename:join(filename:dirname(EbinDir), "priv");
+            Path ->
+                Path
+        end,
+    FilePath = filename:join([PrivDir, "templates", Template]),
+    {ok, TemplateBin} = file:read_file(FilePath),
+    bbmustache:render(TemplateBin, normalize_context(Context)).
+load_template(Template, Context) ->
+    PrivDir =
+        case code:priv_dir(damage) of
+            {error, enoent} ->
+                %% Fallback: Locate priv relative to this module's .beam file
+                EbinDir = filename:dirname(code:which(?MODULE)),
+                filename:join(filename:dirname(EbinDir), "priv");
+            Path ->
+                Path
+        end,
+    FilePath = filename:join([PrivDir, "templates", Template]),
+    {ok, TemplateBin} = file:read_file(FilePath),
+    bbmustache:render(TemplateBin, normalize_context(Context)).
+
+normalize_context(Context) when is_map(Context) ->
+    maps:from_list([{key_to_string(K), V} || {K, V} <- maps:to_list(Context)]);
+normalize_context(Context) when is_list(Context) ->
+    maps:from_list([{key_to_string(K), V} || {K, V} <- Context]);
+normalize_context({K, V}) ->
+    maps:from_list([{key_to_string(K), V}]);
+normalize_context(_) ->
+    #{}.
+
+key_to_string(K) when is_atom(K) ->
+    atom_to_list(K);
+key_to_string(K) when is_binary(K) ->
+    binary_to_list(K);
+key_to_string(K) when is_list(K) ->
+    %% already a string
+    K;
+key_to_string(K) ->
+    %% fallback to string
+    io_lib:format("~p", [K]).
+
+map_strings_to_binary(Map) when is_map(Map) ->
+    maps:from_list(
+        [{convert_value(K), convert_value(V)} || {K, V} <- maps:to_list(Map)]
+    ).
+
+%% Helper to convert values recursively
+convert_value(V) when is_map(V) ->
+    map_strings_to_binary(V);
+convert_value(V) when is_list(V) ->
+    case is_string_list(V) of
+        true -> list_to_binary(V);
+        false -> [convert_value(E) || E <- V]
+    end;
+convert_value(Else) ->
+    Else.
+
+%% Simple string detection
+is_string_list([]) ->
+    true;
+is_string_list(L) when is_list(L) ->
+    lists:all(fun(C) -> is_integer(C) end, L).
+
+render(Template, Context) when is_list(Template) ->
+    render(list_to_binary(Template), Context);
+render(Template, Context) when is_binary(Template) ->
+    bbmustache:render(Template, normalize_context(Context)).
+
+%% Attachment-aware synchronous mail API. send_email/4 retains its existing
+%% asynchronous behaviour; an outbox should prepare, persist sending, then send.
+prepare_email(To, Subject, Text, Html, Options) ->
+    damage_mail:prepare(To, Subject, Text, Html, Options).
+send_prepared_email(Prepared) -> damage_mail:send(Prepared).
+send_email(To, Subject, Text, Html, Options) ->
+    case prepare_email(To, Subject, Text, Html, Options) of
+        {ok, Prepared} -> send_prepared_email(Prepared);
+        Error -> Error
+    end.
+
+send_email({ToName, To}, Subject, TextBody, HtmlBody) ->
+    {ok, SmtpHost} = application:get_env(damage, smtp_host),
+    {ok, SmtpUser} = application:get_env(damage, smtp_user),
+    {ok, SmtpHostname} = application:get_env(damage, smtp_hostname),
+    {ok, SmtpPort} = application:get_env(damage, smtp_port),
+    {ok, {FromName, From}} = application:get_env(damage, smtp_from),
+    case secrets:retrieve_decrypt(smtp_password) of
+        {ok, SmtpPassword} ->
+            %Body1 =
+            %  "Subject: {{subject}}\r\nFrom: {{from_name}} <{{from}}>\r\nTo: {{to_name}} <{{to}}>\r\n\r\n{{body}}",
+            %Body0 =
+            %  mustache:render(
+            %    Body1,
+            %    convert_context(
+            %      #{
+            %        body => Body,
+            %        subject => Subject,
+            %        from => From,
+            %        from_name => FromName,
+            %        to => To,
+            %        to_name => ToName
+            %      }
+            %    )
+            %  ),
+            FromNameBin = list_to_binary(FromName),
+            FromBin = list_to_binary(From),
+            %ToBin = list_to_binary(To),
+            MultipartEmail =
+                {
+                    <<"multipart">>,
+                    <<"alternative">>,
+                    [
+                        {<<"From">>, <<FromNameBin/binary, " <", FromBin/binary, ">">>},
+                        {<<"To">>, <<ToName/binary, " <", To/binary, ">">>},
+                        {<<"Subject">>, Subject},
+                        {<<"MIME-Version">>, <<"1.0">>},
+                        {
+                            <<"Content-Type">>,
+                            <<"multipart/alternative; boundary=---damagebdd-0001">>
+                        }
+                    ],
+                    #{
+                        content_type_params => [{<<"boundary">>, <<"---damagebdd-0001">>}],
+                        disposition => <<"inline">>,
+                        disposition_params => []
+                    },
+                    [
+                        {
+                            <<"text">>,
+                            <<"plain">>,
+                            [
+                                {
+                                    <<"Content-Type">>,
+                                    <<"text/plain;charset=US-ASCII;format=flowed">>
+                                },
+                                {<<"Content-Transfer-Encoding">>, <<"quoted-printable">>}
+                            ],
+                            #{
+                                content_type_params =>
+                                    [{<<"charset">>, <<"US-ASCII">>}, {<<"format">>, <<"flowed">>}],
+                                disposition => <<"inline">>,
+                                disposition_params => []
+                            },
+                            TextBody
+                        },
+                        {
+                            <<"text">>,
+                            <<"html">>,
+                            [
+                                {<<"Content-Type">>, <<"text/html;charset=US-ASCII">>},
+                                {<<"Content-Transfer-Encoding">>, <<"base64">>}
+                            ],
+                            #{
+                                content_type_params => [{<<"charset">>, <<"US-ASCII">>}],
+                                disposition => <<"inline">>,
+                                disposition_params => []
+                            },
+                            HtmlBody
+                        }
+                    ]
+                },
+            Email = {From, [To], mimemail:encode(MultipartEmail)},
+            %CaCerts = certifi:cacerts(),
+            TlsOptions =
+                [
+                    {versions, ['tlsv1.3', 'tlsv1.2']},
+                    {verify, verify_peer},
+                    {cacerts, public_key:cacerts_get()},
+                    {depth, 4},
+                    {server_name_indication, SmtpHost},
+                    {customize_hostname_check, [
+                        {match_fun, public_key:pkix_verify_hostname_match_fun(https)}
+                    ]},
+
+                    %% EXTRA HARDENING
+                    {secure_renegotiate, true},
+                    {reuse_sessions, false}
+                ],
+
+            gen_smtp_client:send(
+                Email,
+                [
+                    {tls_options, TlsOptions},
+                    {tls, always},
+                    {auth, always},
+                    {relay, SmtpHost},
+                    {port, SmtpPort},
+                    {hostname, SmtpHostname},
+                    {username, SmtpUser},
+                    {password, SmtpPassword}
+                ]
+            );
+        Error ->
+            ?LOG_ERROR("Failed to get email auth ~p", [Error]),
+            error
+    end.
+
+get_concurrency_level(<<"sk_baby">>) -> 1;
+get_concurrency_level(<<"sk_easy">>) -> 10;
+get_concurrency_level(<<"sk_medium">>) -> 100;
+get_concurrency_level(<<"sk_hard">>) -> 1000;
+get_concurrency_level(<<"sk_nightmare">>) -> 10000;
+get_concurrency_level(Other) when is_integer(Other) -> Other;
+get_concurrency_level(Other) when is_binary(Other) -> binary_to_integer(Other).
+
+get_ip(Req0) ->
+    case cowboy_req:peer(Req0) of
+        {{IP, _}, _} -> IP;
+        {IP, _} -> IP
+    end.
+
+idhash(BinString) when is_binary(BinString) ->
+    idhash(binary_to_list(BinString));
+idhash(String) when is_list(String) -> crypto:hash(sha256, String).
+
+idhash_keys(List) ->
+    base64:encode(
+        idhash(
+            string:join(
+                lists:map(
+                    fun
+                        (BinStr) when is_binary(BinStr) -> binary_to_list(BinStr);
+                        (String) -> String
+                    end,
+                    List
+                ),
+                ""
+            )
+        ),
+        #{padding => false, mode => urlsafe}
+    ).
+
+json_decode(BinaryStr) when is_binary(BinaryStr) ->
+    json_decode(binary_to_list(BinaryStr));
+json_decode(String) ->
+    %% First, we decode the binary string into a list of integers
+    lists:foldl(
+        fun(Str, Acc) -> lists:concat(string:replace(Acc, Str, "", all)) end,
+        String,
+        ["\"", ":", "\\/", "\\\\", "\\\"", "\\\""]
+    ).
+yaml_decode(BinaryStr) when is_binary(BinaryStr) ->
+    yaml_decode(binary_to_list(BinaryStr));
+yaml_decode(String) when is_list(String) ->
+    try
+        %% Parse YAML into Erlang terms
+        Parsed = yamerl_constr:string(String),
+
+        %% Sanitize the parsed structure
+        {ok, [sanitize_yaml(Doc) || Doc <- Parsed]}
+    catch
+        _:Reason ->
+            {error, Reason}
+    end.
+
+%% @doc Encode an Erlang term as a single-document YAML string (UTF-8 binary).
+-spec yaml_encode(term()) -> binary().
+yaml_encode(Data) ->
+    %% yamerl returns an iolist; wrap Data in a list to emit one YAML document.
+    BinIolist = yaml_simple:encode(Data),
+    iolist_to_binary(BinIolist).
+
+%% @doc Encode and write YAML to a file. Returns ok | {error, Reason}.
+-spec yaml_encode_to_file(file:filename(), term()) -> ok | {error, term()}.
+yaml_encode_to_file(File, Data) ->
+    Bin = yaml_encode(Data),
+    file:write_file(File, Bin).
+
+%% Recursive sanitization - remove unwanted keys or values
+sanitize_yaml({Key, Value}) ->
+    {sanitize_yaml(Key), sanitize_yaml(Value)};
+sanitize_yaml([H | T]) ->
+    [sanitize_yaml(H) | sanitize_yaml(T)];
+sanitize_yaml(Map) when is_map(Map) ->
+    maps:map(fun(_K, V) -> sanitize_yaml(V) end, Map);
+sanitize_yaml(Tuple) when is_tuple(Tuple) ->
+    list_to_tuple([sanitize_yaml(E) || E <- tuple_to_list(Tuple)]);
+sanitize_yaml(Value) ->
+    case is_dangerous(Value) of
+        true -> undefined;
+        false -> Value
+    end.
+
+%% Define what you consider "dangerous" here
+is_dangerous(Value) when is_list(Value) ->
+    lists:any(fun(Needle) -> lists:member(Needle, Value) end, ["rm -rf", ":(){", "`", "$(", "eval"]);
+is_dangerous(_) ->
+    false.
+
+% Finds the maximum element in List using CompareFun as the comparison function
+max_by([H | T], CompareFun) ->
+    lists:foldl(
+        fun(Elem, Max) ->
+            case CompareFun(Elem, Max) of
+                true ->
+                    % Elem is "greater" than Max
+                    Elem;
+                false ->
+                    % Max remains
+                    Max
+            end
+        end,
+        H,
+        T
+    );
+max_by([], _) ->
+    undefined.
+
+%% Normalize an email address for file system storage
+
+normalize_email(Email) when is_list(Email) ->
+    String = lists:map(fun replace_char/1, Email),
+    lists:flatten(String).
+
+%% Denormalize a stored file name back to an email address
+
+denormalize_email(FileName) when is_list(FileName) ->
+    String = lists:map(fun reverse_replace_char/1, FileName),
+    lists:flatten(String).
+
+%% Replace problematic characters
+
+replace_char(Char) ->
+    case Char of
+        '@' -> "-at-";
+        '.' -> "-dot-";
+        '/' -> "-slash-";
+        '\\' -> "-backslash-";
+        _ -> Char
+    end.
+
+%% Reverse the replacements
+
+reverse_replace_char(Char) ->
+    case Char of
+        $- ->
+            % Starting point to check combinations
+            "-";
+        _ ->
+            Char
+    end.
+
+test_send_email() ->
+    {ok, TestUserEmail} = application:get_env(damage, test_user),
+    test_send_email(TestUserEmail).
+
+test_send_email(TestUserEmail) ->
+    ToEmail = {<<"DamageBdd Test">>, list_to_binary(TestUserEmail)},
+    Context =
+        #{
+            <<"first_name">> => <<"FirstName">>,
+            <<"last_name">> => <<"Lastname">>,
+            <<"password_reset_url">> =>
+                <<"https://github.com/jagguli/DamageBDD/blob/master/LICENSE">>
+        },
+    TextBody = damage_utils:load_template("signup_email.txt.mustache", Context),
+    HtmlBody = damage_utils:load_template("signup_email.html.mustache", Context),
+    ?LOG_DEBUG("Email body ~p~n htmlBody: ~p", [TextBody, HtmlBody]),
+    {ok, _Pid} = damage_utils:send_email(
+        ToEmail,
+        <<"DamageBDD Email Test">>,
+        TextBody,
+        HtmlBody
+    ).
+is_valid_email(Email) when is_binary(Email) ->
+    is_valid_email(binary_to_list(Email));
+is_valid_email(Email) when is_list(Email) ->
+    Regex = "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$",
+    case re:run(Email, Regex, [{capture, none}]) of
+        match -> true;
+        nomatch -> false
+    end.
+
+sudo_prefix() ->
+    case string:trim(os:cmd("id -u")) of
+        % root doesn't need sudo
+        "0" -> "";
+        _ -> "sudo "
+    end.
+
+run(Cmd) ->
+    ?LOG_INFO("exec: ~s", [Cmd]),
+    case exec:run(Cmd, [sync, stdout, stderr]) of
+        {ok, _Pid, _Out} ->
+            ok;
+        {ok, _Out} ->
+            ok;
+        {error, Reason} ->
+            ?LOG_ERROR("exec failed ~p for: ~s", [Reason, Cmd]),
+            {error, Reason}
+    end.
+
+ensure_dir(Dir) ->
+    case filelib:is_dir(Dir) of
+        true ->
+            ok;
+        false ->
+            case filelib:ensure_dir(filename:join(Dir, ".keep")) of
+                ok -> ok;
+                {error, exists} -> ok;
+                {error, eexists} -> ok
+            end
+    end.
+
+exists_cmd(Cmd) ->
+    case os:find_executable(Cmd) of
+        false -> false;
+        _ -> true
+    end.
+
+ensure_group(Group) ->
+    case os:cmd("getent group " ++ Group) of
+        "" ->
+            run(sudo_prefix() ++ "groupadd --system " ++ Group);
+        _ ->
+            ok
+    end.
+
+ensure_user(User, Group) ->
+    case os:cmd("getent passwd " ++ User) of
+        "" ->
+            ShellPath =
+                case filelib:is_file("/usr/bin/nologin") of
+                    true -> "/usr/bin/nologin";
+                    false -> "/usr/sbin/nologin"
+                end,
+            Cmd = damage_utils:strf(
+                "useradd --system --create-home --gid ~s --shell ~s --comment \"User for DamageBDD system service\" ~s",
+                [Group, ShellPath, User]
+            ),
+            run(sudo_prefix() ++ Cmd);
+        _ ->
+            ok
+    end.
+
+chown_r(Path, OwnerGroup) ->
+    %% chown recursively; best done via system chown
+    run(sudo_prefix() ++ damage_utils:strf("chown -R ~s ~s", [OwnerGroup, Path])).
+
+ensure_ssh_host_key(KeyPath) ->
+    case filelib:is_file(KeyPath) of
+        true ->
+            ok;
+        false ->
+            ok = ensure_dir(filename:dirname(KeyPath) ++ "/"),
+            run(damage_utils:strf("ssh-keygen -t rsa -f ~s -N '' -q", [KeyPath]))
+    end.
+
+to_bin(B) when is_binary(B) -> B;
+to_bin(L) when is_list(L) -> list_to_binary(L);
+to_bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
+to_bin(T) -> iolist_to_binary(io_lib:format("~p", [T])).
+
+ct_id(Key, ContractId) ->
+    case application:get_env(damage, Key) of
+        {ok, C} -> C;
+        _ -> ContractId
+    end.
+
+-spec float_to_full_integer(float()) -> integer().
+float_to_full_integer(F) when is_float(F) ->
+    round(F).
+
+to_int(V) when is_integer(V) -> V;
+to_int(V) when is_float(V) -> float_to_full_integer(V);
+to_int(V) when is_binary(V) -> list_to_integer(binary_to_list(V));
+to_int(V) when is_list(V) -> list_to_integer(V).
+generate_8_digit_random_int() ->
+    Min = 10000000,
+    Max = 99999999,
+    % Formula: Min + rand:uniform(Max - Min + 1)
+    Min + rand:uniform(Max - Min + 1).

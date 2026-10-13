@@ -1,0 +1,378 @@
+/* bop.css - Bitcoin Only Party CSS */
+
+/* Systematic base: minimalism, clarity, no bloat */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+
+html {
+  font-size: 16px;
+  scroll-behavior: smooth;
+}
+
+
+body {
+  font-family: "Ubuntu Mono", monospace, sans-serif;
+  background-color: #fefefe;
+  color: #1a1a1a;
+  line-height: 1.6;
+  padding: 0 1rem;
+}
+
+
+/* Main content */
+.content {
+  max-width: 800px;
+  margin: 2rem auto;
+  padding-bottom: 3rem;
+}
+
+
+h1.title {
+  font-size: 2rem;
+  margin-bottom: 1rem;
+  border-bottom: 3px solid #f7931a;
+  padding-bottom: 0.3rem;
+}
+
+
+h2, h3 {
+  color: #111;
+  margin-top: 2rem;
+  margin-bottom: 0.5rem;
+}
+
+
+ul.org-ul {
+  margin-left: 1.5rem;
+  list-style-type: square;
+}
+
+
+code {
+  background: #eee;
+  padding: 0.2em 0.4em;
+  border-radius: 4px;
+  font-family: "Ubuntu Mono", monospace;
+}
+
+
+blockquote {
+  border-left: 4px solid #f7931a;
+  padding-left: 1rem;
+  font-style: italic;
+  margin: 1.5rem 0;
+  color: #444;
+}
+
+
+/* Table of contents */
+#table-of-contents {
+  background: #f0f0f0;
+  padding: 1rem;
+  border-left: 4px solid #f7931a;
+  margin-bottom: 2rem;
+}
+
+
+#table-of-contents h2 {
+  margin-top: 0;
+}
+
+
+#text-table-of-contents ul {
+  list-style: none;
+  padding-left: 0;
+}
+
+
+#text-table-of-contents a {
+  text-decoration: none;
+  color: #1a1a1a;
+}
+
+
+.org-center {
+  text-align: center;
+  font-weight: bold;
+  margin-top: 2rem;
+}
+
+
+/* Accessibility */
+a:focus,
+button:focus,
+input:focus {
+  outline: 2px solid #f7931a;
+}
+
+
+/* Responsive */
+  .site-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+
+  .nav-menu {
+    flex-direction: column;
+  }
+
+
+  .nav-menu li {
+    margin-bottom: 0.5rem;
+  }
+
+}
+
+#lnaddress{
+    font-size:1.2em;
+    padding:0.4em;
+    text-align:center;
+    width:80%;
+}
+
+
+#registration-stack {
+  text-align: center;
+  padding: 2em;
+  max-width: 600px;
+  margin: auto;
+}
+
+
+#registration-stack input {
+  font-size: 1.1em;
+  padding: 0.5em;
+  width: 90%;
+  max-width: 400px;
+  text-align: center;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background-color: #f9f9f9;
+  margin-bottom: 1em;
+}
+
+
+#stack-btn {
+  font-size: 1.2em;
+  padding: 0.75em 2em;
+  background: linear-gradient(135deg, #f7931a, #ffcc00);
+  color: #111;
+  font-weight: bold;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+  transition: all 0.2s ease-in-out;
+}
+
+
+#stack-btn:hover {
+  transform: scale(1.05);
+  box-shadow: 0 6px 15px rgba(0,0,0,0.3);
+  background: linear-gradient(135deg, #ffd700, #f7931a);
+}
+
+
+#registration-stack-recents {
+  list-style: none;
+  padding: 0;
+  margin-top: 1.5em;
+  font-family: monospace;
+  background: #f5f5f5;
+  border-radius: 0.5em;
+  padding: 1em;
+  text-align: left;
+  display: inline-block;
+  max-width: 100%;
+}
+
+
+/* Container to hold input and icon */
+.input-icon-container {
+  position: relative;
+  display: inline-block;
+  width: 240px;
+  max-width: 100%;
+}
+
+
+.input-icon-container .input-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 1.2em;
+  pointer-events: none;
+  color: #f7931a;
+}
+
+
+.input-icon-container input {
+  font-size: 1em;
+  padding: 0.5em 1em 0.5em 2.2em; /* extra left padding for icon */
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  background-color: #f9f9f9;
+  width: 100%;
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+}
+
+
+/* Header and Branding */
+
+.logo-link {
+  flex-shrink: 0;
+}
+
+
+.logo {
+  height: 64px;
+  width: auto;
+}
+
+
+.identity-text {
+  flex-grow: 1;
+}
+
+
+.site-title {
+  margin: 0;
+  font-size: 1.8em;
+}
+
+
+.tagline {
+  margin: 0.2em 0 0;
+  font-size: 1em;
+  color: #666;
+}
+
+
+.main-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1em;
+  flex-wrap: wrap;
+}
+
+
+
+
+.nav-icon {
+  margin-right: 0.3em;
+}
+
+
+.login-form {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  flex-wrap: wrap;
+}
+
+
+
+.input-icon {
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  transform: translateY(-50%);
+  font-size: 1.2em;
+  color: #f7931a;
+  pointer-events: none;
+}
+
+
+
+#login-btn {
+  font-size: 1em;
+  padding: 0.5em 1.2em;
+  background: linear-gradient(135deg, #f7931a, #ffcc00);
+  color: #111;
+  font-weight: bold;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+  transition: all 0.2s ease-in-out;
+}
+
+
+#login-btn:hover {
+  transform: scale(1.03);
+  background: linear-gradient(135deg, #ffd700, #f7931a);
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+}
+
+
+
+
+
+
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+
+
+/** footer **/
+.footer {
+  background: #f5f5f5;
+  padding: 2em 1em;
+  text-align: center;
+  font-size: 0.95em;
+  color: #333;
+  border-top: 1px solid #e0e0e0;
+  margin-top: 3em;
+}
+
+
+.footer-message h2 {
+  font-size: 1.3em;
+  margin-bottom: 0.5em;
+  color: #f7931a;
+  font-weight: bold;
+}
+
+
+.centered-message {
+  font-size: 1.1em;
+  color: #444;
+  line-height: 1.6;
+  max-width: 600px;
+  margin: 0 auto 1.5em;
+}
+
+
+.footer .meta {
+  font-size: 0.9em;
+  color: #666;
+}
+
+
+.footer .meta a {
+  color: #f7931a;
+  text-decoration: none;
+  margin: 0 0.5em;
+}
+
+
+.footer .meta a:hover {
+  text-decoration: underline;
+}
+
+
+/** end footer **/

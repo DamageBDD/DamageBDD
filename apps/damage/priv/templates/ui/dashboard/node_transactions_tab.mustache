@@ -1,0 +1,101 @@
+<!-- -*- mode: html -*- -->
+<section class="transactions-workspace" aria-labelledby="node-transactions-heading">
+  <div class="workspace-heading transactions-heading">
+    <div>
+      <p class="workspace-eyebrow">NODE ADMINISTRATION</p>
+      <h1 id="node-transactions-heading">Transactions</h1>
+      <p>Inspect Bitcoin, Lightning, and Aeternity activity from this node in one readable ledger view.</p>
+    </div>
+    <div class="transactions-heading-actions">
+      <label class="transactions-limit" for="node-transaction-limit">
+        <span>Recent rows</span>
+        <select id="node-transaction-limit" aria-label="Number of recent transactions to load">
+          <option value="25">25</option>
+          <option value="50" selected>50</option>
+          <option value="100">100</option>
+        </select>
+      </label>
+      <button id="refresh-node-transactions" class="workspace-button workspace-primary" type="button">Refresh all</button>
+    </div>
+  </div>
+
+  <div id="node-transaction-summary" class="transactions-summary" aria-live="polite">
+    <article class="transaction-stat">
+      <span class="transaction-stat-label">Bitcoin</span>
+      <strong>Loading…</strong>
+      <small>On-chain outputs</small>
+    </article>
+    <article class="transaction-stat">
+      <span class="transaction-stat-label">Lightning</span>
+      <strong>Loading…</strong>
+      <small>Invoices and payments</small>
+    </article>
+    <article class="transaction-stat">
+      <span class="transaction-stat-label">Aeternity</span>
+      <strong>Loading…</strong>
+      <small>Node account activity</small>
+    </article>
+  </div>
+
+  <section class="workspace-card transactions-surface" aria-label="Node transaction ledgers">
+    <div class="transactions-tabs" role="tablist" aria-label="Transaction network">
+      <button id="transactions-tab-bitcoin" class="transactions-tab is-active" type="button" role="tab"
+              aria-selected="true" aria-controls="transactions-panel-bitcoin" data-transaction-tab="bitcoin">
+        <span class="transactions-tab-mark" aria-hidden="true">₿</span>
+        <span>Bitcoin</span>
+      </button>
+      <button id="transactions-tab-lightning" class="transactions-tab" type="button" role="tab"
+              aria-selected="false" aria-controls="transactions-panel-lightning" data-transaction-tab="lightning" tabindex="-1">
+        <span class="transactions-tab-mark" aria-hidden="true">ϟ</span>
+        <span>Lightning</span>
+      </button>
+      <button id="transactions-tab-aeternity" class="transactions-tab" type="button" role="tab"
+              aria-selected="false" aria-controls="transactions-panel-aeternity" data-transaction-tab="aeternity" tabindex="-1">
+        <span class="transactions-tab-mark" aria-hidden="true">Æ</span>
+        <span>Aeternity</span>
+      </button>
+      <span id="node-transactions-updated" class="transactions-updated" aria-live="polite"></span>
+    </div>
+
+    <div class="transactions-panels">
+      <section id="transactions-panel-bitcoin" class="transactions-panel is-active" role="tabpanel"
+               aria-labelledby="transactions-tab-bitcoin" data-transaction-panel="bitcoin">
+        <div class="transactions-panel-heading">
+          <div>
+            <p class="transactions-kicker">BITCOIN L1</p>
+            <h2>On-chain funds &amp; channel funding</h2>
+            <p>Unspent outputs and channel funding records reported by Core Lightning.</p>
+          </div>
+          <button id="refresh-node-onchain" class="workspace-button" type="button">Refresh Bitcoin</button>
+        </div>
+        <div id="node-onchain-json" class="admin-data"><div class="admin-loading">Loading Bitcoin activity…</div></div>
+      </section>
+
+      <section id="transactions-panel-lightning" class="transactions-panel" role="tabpanel"
+               aria-labelledby="transactions-tab-lightning" data-transaction-panel="lightning" hidden>
+        <div class="transactions-panel-heading">
+          <div>
+            <p class="transactions-kicker">LIGHTNING</p>
+            <h2>Invoices &amp; payments</h2>
+            <p>Readable incoming invoices, outgoing payments, and payment attempts from Core Lightning.</p>
+          </div>
+          <button id="refresh-node-lightning" class="workspace-button" type="button">Refresh Lightning</button>
+        </div>
+        <div id="node-lightning-json" class="admin-data"><div class="admin-loading">Loading Lightning activity…</div></div>
+      </section>
+
+      <section id="transactions-panel-aeternity" class="transactions-panel" role="tabpanel"
+               aria-labelledby="transactions-tab-aeternity" data-transaction-panel="aeternity" hidden>
+        <div class="transactions-panel-heading">
+          <div>
+            <p class="transactions-kicker">AETERNITY</p>
+            <h2>Node account activity</h2>
+            <p>Recent chain transactions for the node account, decoded into type, direction, value, counterparty, block, and time.</p>
+          </div>
+          <button id="refresh-node-aeternity" class="workspace-button" type="button">Refresh Aeternity</button>
+        </div>
+        <div id="node-aeternity-json" class="admin-data"><div class="admin-loading">Loading Aeternity activity…</div></div>
+      </section>
+    </div>
+  </section>
+</section>

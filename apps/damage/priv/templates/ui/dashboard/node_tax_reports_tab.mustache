@@ -1,0 +1,139 @@
+<!-- Private tax panel: SSR gated by the authenticated tax_admin or node_admin role. -->
+<section class="admin-tab tax-reports-workspace" id="tax-reports-workspace" aria-labelledby="tax-reports-heading">
+  <div class="admin-heading workspace-heading">
+    <div>
+      <p class="workspace-eyebrow">TAX ADMINISTRATION / FINANCE</p>
+      <h1 id="tax-reports-heading">Tax reports</h1>
+      <p>Jurisdiction-aware financial-year workpapers, local-currency historical valuations and verifiable evidence manifests.</p>
+    </div>
+  </div>
+  {{^tax_enabled}}
+  <section class="tax-panel tax-panel-setup" aria-labelledby="tax-setup-heading">
+    <h2 id="tax-setup-heading">Tax reporting is disabled</h2>
+    <p>Set the CLN tax owner and enable the reporting service below, then restart the node. Tax administrators can configure tax reporting without access to other node settings.</p>
+    <a class="tax-action" href="#tax-settings-heading">Configure Tax &amp; provenance</a>
+  </section>
+  {{/tax_enabled}}
+  <section class="tax-panel" aria-labelledby="tax-settings-heading" id="tax-configuration">
+    <div class="tax-panel-title">
+      <div>
+        <h2 id="tax-settings-heading">Tax module configuration</h2>
+        <p>Settings are private and restricted to node administrators and delegated tax administrators. Changes to enablement, CLN owner, evidence directory or startup backfill require a node restart.</p>
+      </div>
+      <button type="button" class="tax-action tax-action-secondary" id="tax-settings-refresh">Reload settings</button>
+    </div>
+    <form id="tax-settings-form" class="tax-settings-form" autocomplete="off">
+      <div id="tax-settings-fields" class="tax-settings-fields" aria-live="polite"></div>
+      <div class="tax-export-actions">
+        <button type="submit" class="tax-action" id="tax-settings-save" disabled>Save tax settings</button>
+        <button type="button" class="tax-action tax-action-secondary" id="tax-settings-discard" disabled>Discard edits</button>
+      </div>
+    </form>
+    <p class="tax-settings-status" id="tax-settings-status" role="status" aria-live="polite">Loading tax configuration…</p>
+    <p class="tax-info" id="tax-settings-restart" hidden></p>
+    <p class="tax-info">Access is controlled by the operator's node-admin and tax-admin allowlists. These controls cannot grant or change administrator roles.</p>
+  </section>
+  {{#tax_enabled}}
+  <div id="tax-reports-enabled" class="tax-report-panel">
+    <p class="tax-review-notice" role="note"><strong>Accounting review required.</strong> Draft workpapers are not tax returns or automated tax advice. Tax residency, transaction classifications, cost basis, valuation, VAT/GST and jurisdiction-specific obligations require independent review. Filtered catalog exports contain metadata only.</p>
+
+    <div class="tax-metrics" aria-label="Latest reports summary">
+      <div class="tax-metric"><span>Country / reporting periods</span><strong id="tax-years-count">—</strong></div>
+      <div class="tax-metric"><span>Indexed events (latest per period)</span><strong id="tax-events-count">—</strong></div>
+      <div class="tax-metric"><span>Review items (latest per period)</span><strong id="tax-review-count">—</strong></div>
+    </div>
+
+    <section class="tax-panel" aria-labelledby="tax-report-list-heading">
+      <div class="tax-panel-title">
+        <div>
+          <h2 id="tax-report-list-heading">Report history</h2>
+          <p>Filter immutable report revisions and download the underlying manifests or transaction CSVs.</p>
+        </div>
+        <button id="tax-reports-refresh" type="button" class="tax-action tax-action-secondary">Refresh</button>
+      </div>
+      <div class="tax-filters" role="group" aria-label="Report filters">
+        <label for="tax-filter-jurisdiction">Jurisdiction
+          <select id="tax-filter-jurisdiction"><option value="all">All countries</option></select>
+        </label>
+        <label for="tax-filter-year">Financial year
+          <select id="tax-filter-year"><option value="all">All years</option></select>
+        </label>
+        <label for="tax-filter-status">Review status
+          <select id="tax-filter-status">
+            <option value="all">All statuses</option>
+            <option value="review">Review required</option>
+            <option value="ready">Evidence review complete</option>
+          </select>
+        </label>
+        <label for="tax-filter-revisions">Revisions
+          <select id="tax-filter-revisions">
+            <option value="latest">Latest per year</option>
+            <option value="all">All revisions</option>
+          </select>
+        </label>
+        <label for="tax-filter-search">Search
+          <input id="tax-filter-search" type="search" maxlength="128" placeholder="Year or manifest hash" autocomplete="off" spellcheck="false">
+        </label>
+      </div>
+      <div class="tax-results-toolbar">
+        <span id="tax-reports-count" role="status" aria-live="polite">Loading reports…</span>
+        <div class="tax-export-actions" role="group" aria-label="Export filtered catalog">
+          <button id="tax-export-csv" class="tax-action tax-action-secondary" type="button" disabled>Export filtered CSV index</button>
+          <button id="tax-export-json" class="tax-action tax-action-secondary" type="button" disabled>Export filtered JSON index</button>
+        </div>
+      </div>
+      <div class="tax-table-scroll">
+        <table class="tax-reports-table">
+          <caption class="tax-visually-hidden">Private financial-year tax reports and downloads</caption>
+          <thead><tr><th scope="col">Country</th><th scope="col">Currency</th><th scope="col">Year</th><th scope="col">Generated</th><th scope="col">Events</th><th scope="col">Review</th><th scope="col">Status</th><th scope="col">Manifest SHA-256</th><th scope="col">Download</th></tr></thead>
+          <tbody id="tax-reports-rows"><tr><td colspan="9">Loading reports…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="tax-pagination" aria-label="Report pagination">
+        <button id="tax-prev-page" type="button" class="tax-action tax-action-secondary" disabled>Previous</button>
+        <span id="tax-page-label">Page 1</span>
+        <button id="tax-next-page" type="button" class="tax-action tax-action-secondary" disabled>Next</button>
+      </div>
+      <p class="tax-info">CSV and JSON index exports contain only the filtered report summaries, across all pages. Individual report downloads include transaction-level data and require node-admin or delegated tax-admin access.</p>
+    </section>
+
+    <section class="tax-panel" aria-labelledby="tax-report-backfill-heading">
+      <div class="tax-panel-title">
+        <div>
+          <h2 id="tax-report-backfill-heading">Generate or refresh reports</h2>
+          <p>Import settled CLN history and create a new immutable FY draft, or regenerate from the local tax journal.</p>
+        </div>
+      </div>
+      <form id="tax-backfill-form" class="tax-backfill-form">
+        <label for="tax-backfill-jurisdiction">Report country
+          <select id="tax-backfill-jurisdiction" required aria-describedby="tax-period-note"></select>
+        </label>
+        <label for="tax-backfill-offset">Standard UTC offset (minutes)
+          <input id="tax-backfill-offset" type="number" required min="-720" max="840" step="1" value="600">
+        </label>
+        <label for="tax-backfill-month">Period starts in
+          <select id="tax-backfill-month">
+            <option value="1">January</option><option value="2">February</option>
+            <option value="3">March</option><option value="4">April</option>
+            <option value="5">May</option><option value="6">June</option>
+            <option value="7">July</option><option value="8">August</option>
+            <option value="9">September</option><option value="10">October</option>
+            <option value="11">November</option><option value="12">December</option>
+          </select>
+        </label>
+        <label for="tax-backfill-year">Financial year
+          <select id="tax-backfill-year"><option value="all">All available years</option></select>
+        </label>
+        <label class="tax-check" for="tax-backfill-journal">
+          <input type="checkbox" id="tax-backfill-journal"> Journal only (do not fetch CLN)
+        </label>
+        <button id="tax-backfill-run" type="submit" class="tax-action">Start backfill</button>
+      </form>
+      <p class="tax-info" id="tax-period-note">Country presets use a fixed UTC offset for period boundaries; confirm your business fiscal year and time zone. Custom fiscal periods are available where supported. No tax return is filed.</p>
+      <p id="tax-backfill-status" class="tax-backfill-status" role="status" aria-live="polite">Checking job status…</p>
+      <p id="tax-backfill-detail" class="tax-info"></p>
+      <p class="tax-info">Reports are stored privately on this node. Backfill does not automatically publish an on-chain attestation.</p>
+    </section>
+  </div>
+  {{/tax_enabled}}
+</section>

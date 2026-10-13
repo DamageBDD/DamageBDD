@@ -1,0 +1,32 @@
+%% Controllable TTS boundary; exercises the production tuning coordinator.
+-module(erm_tts).
+-export([say/1, status/0, tuning_cue/1, cancel_cue/1]).
+say(Text) ->
+    case persistent_term:get(native_tts_mode, unavailable) of
+        unavailable -> {error, not_ready};
+        held ->
+            persistent_term:put(native_tts_speaking, true),
+            persistent_term:put({erm_tts, suppress_until}, erlang:monotonic_time(millisecond)+60000),
+            persistent_term:get(native_test_owner) ! {tts_prompt, Text},
+            ok;
+        immediate ->
+            case persistent_term:get(native_test_owner,undefined) of
+                P when is_pid(P) -> P ! {tts_prompt, Text};
+                _ -> ok
+            end,
+            ok
+    end.
+status() ->
+    #{speaking => persistent_term:get(native_tts_speaking, false),
+        listening_suppressed => erlang:monotonic_time(millisecond) <
+            persistent_term:get({erm_tts, suppress_until}, erlang:monotonic_time(millisecond))}.
+
+tuning_cue(Kind) ->
+    Ref=make_ref(),
+    case persistent_term:get(native_cue_mode, immediate) of
+        unavailable -> {error, not_ready};
+        immediate -> self() ! {tts_cue,Ref,ok}, {ok,Ref};
+        held -> persistent_term:get(native_test_owner) ! {cue_requested,Kind,self(),Ref}, {ok,Ref}
+    end.
+cancel_cue(Ref) ->
+    persistent_term:get(native_test_owner) ! {cue_cancelled,Ref}, ok.

@@ -1,0 +1,86 @@
+#+TITLE: BoP Domestic Payment Verification Policy and BDD Spec
+#+AUTHOR: Bitcoin Only Party of Australia
+#+DATE: 2025-05-01
+#+OPTIONS: toc:nil
+
+* 🇦🇺 Domestic Payment Attestation Policy (for Payments ≥ AUD 100)
+
+** Purpose
+To ensure that Bitcoin payments equal to or exceeding AUD 100 are verifiably made from within Australian territory, supporting sovereign participation.
+
+** Scope
+This policy applies to all Bitcoin transactions ≥ 100 AUD made to the BoP multisig infrastructure or affiliated services.
+
+** Rules
+
+*** 1. Threshold Enforcement
+- All payments ≥ 100 AUD (in BTC) must be geoverified.
+- Spot conversion based on trusted oracles (e.g., Kraken, BTCMarkets).
+
+*** 2. Acceptable Proof-of-Origin Methods
+At least *one* of the following geolocation attestations must be attached:
+  - IP geolocation signed by trusted Australian Nostr relay.
+  - SIM card geotag via Australian telecom.
+  - GPS-verified LNURL-auth session initiated from Australian network.
+  - Multi-sig co-sign from a guardian oracle operating in Australia.
+
+*** 3. Multi-signature Enforcement
+- Use 2-of-3 multisig wallet:
+  - Key 1: Payer
+  - Key 2: BoP Validator
+  - Key 3: Geo Oracle
+- Oracle key must not sign unless geo attestation confirms Australian origin.
+
+*** 4. Verification Registry
+- All successful verifications are hashed and published via:
+  - Nostr relay log
+  - DamageBDD verification log (for auditability)
+
+*** 5. Fallback Mechanism
+If location verification fails:
+  - Hold funds in escrow for 72 hours.
+  - Attempt re-verification or provide refund.
+  - Notify payer of verification failure and options.
+
+*** 6. Privacy and Sovereignty
+- No KYC. No data retention.
+- Use pubkey-only attestations and anonymized geo proofs.
+- Maximize sovereignty, minimize friction.
+
+* 🧪 BDD Specification: Verify Australian-Origin Bitcoin Payments
+
+#+BEGIN_SRC gherkin
+Feature: Verify Bitcoin Payments Are Made From Within Australia
+
+  Scenario: Payment >= 100 AUD made from Australia
+    Given a Bitcoin payment valued at 100 AUD or more
+    When the payment is received by the BoP multisig address
+    Then at least one of the following must verify Australian origin:
+      | Source                |
+      | IP Geolocation Oracle |
+      | SIM Card Geotag       |
+      | LNURL-auth Session    |
+    And a co-signature must be received from the geolocation oracle
+    And the multisig wallet must approve fund access
+
+  Scenario: Payment < 100 AUD (no strict location enforcement)
+    Given a Bitcoin payment valued under 100 AUD
+    When the payment is received
+    Then no geolocation verification is required
+    But transaction is still recorded in the BDD ledger
+
+  Scenario: Payment >= 100 AUD without origin proof
+    Given a Bitcoin payment valued at 100 AUD or more
+    And no valid geolocation proof is received within 72 hours
+    Then the funds shall be returned or held in escrow
+    And the payer is notified with a challenge message
+#+END_SRC
+
+* 🛠 Implementation Notes
+- Oracles can be embedded into LN wallets as plugins.
+- Nostr relays may expose signed attestation endpoints.
+- Consider integration with DamageBDD's Lightning payout triggers.
+
+* 🧠 Rationale
+Only those who reside under the governance of a sovereign nation should be able to financially influence its Bitcoin-only movement. This guarantees fairness, jurisdictional alignment, and long-term integrity.
+

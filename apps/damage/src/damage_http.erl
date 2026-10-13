@@ -1,0 +1,2771 @@
+-module(damage_http).
+
+-vsn("0.1.0").
+
+-author("Steven Joseph <steven@stevenjoseph.in>").
+
+-copyright("Steven Joseph <steven@stevenjoseph.in>").
+
+-license("Apache-2.0").
+
+-include_lib("kernel/include/logger.hrl").
+-include_lib("damage.hrl").
+-export([init/2]).
+-export([content_types_accepted/2]).
+-export([content_types_provided/2]).
+-export([to_html/2]).
+-export([to_json/2]).
+-export([to_text/2]).
+-export([from_json/2, allowed_methods/2, from_html/2, is_authorized/2]).
+-export([trails/0]).
+-import(damage_utils, [float_to_full_integer/1, to_bin/1]).
+
+-define(TRAILS_TAG, ["Executing Tests"]).
+
+%% Focused test visibility. Production builds keep these helpers private.
+-ifdef(TEST).
+-export([
+    effective_context/2,
+    execute_bdd/4,
+    normalize_execution_json_context/1,
+    execution_context_from_request/2,
+    stream_final_body/2
+]).
+-endif.
+
+trails() ->
+    [
+        trails:trail(
+            "/version/",
+            damage_http,
+            #{action => version},
+            #{
+                get =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description =>
+                            "Return DamageBDD release provenance including build, Git, NFT origin, runtime overrides and Erlang runtime information.",
+                        produces => ["application/json"]
+                    }
+            }
+        ),
+        trails:trail(
+            "/api/version",
+            damage_http,
+            #{action => version},
+            #{
+                get =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description =>
+                            "Return DamageBDD release provenance including build, Git, NFT origin, runtime overrides and Erlang runtime information.",
+                        produces => ["application/json"]
+                    }
+            }
+        ),
+        trails:trail(
+            "/api/node/balances",
+            damage_http,
+            #{action => node_balances},
+            #{
+                get =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description =>
+                            "Return DamageBDD node wallet balances.",
+                        produces => ["application/json"]
+                    }
+            }
+        ),
+        trails:trail(
+            "/api/ipfs/ls",
+            damage_http,
+            #{action => ipfs_ls},
+            #{
+                post =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description =>
+                            "List a validated IPFS CID/path through the node's configured Kubo service.",
+                        produces => ["application/json"],
+                        parameters =>
+                            [
+                                #{
+                                    name => <<"path">>,
+                                    description => <<"IPFS path such as /ipfs/<cid>/features.">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"string">>
+                                }
+                            ]
+                    }
+            }
+        ),
+        trails:trail(
+            "/tx/",
+            damage_http,
+            #{action => tx},
+            #{
+                get =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "Form to execute a test on this DamageBDD server.",
+                        produces => ["text/html"]
+                    },
+                put =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "Get an lightning invoice from signed message",
+                        produces => ["application/json"],
+                        parameters =>
+                            [
+                                #{
+                                    name => <<"message">>,
+                                    description => <<"Test feature data.">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"string">>
+                                },
+                                #{
+                                    name => <<"account">>,
+                                    description => <<"account.">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"string">>
+                                },
+                                #{
+                                    name => <<"signature">>,
+                                    description => <<"signature of message.">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"string">>
+                                }
+                            ]
+                    }
+            }
+        ),
+        trails:trail(
+            "/execute_feature/",
+            damage_http,
+            #{action => execute_feature},
+            #{
+                get =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "Form to execute a test on this DamageBDD server.",
+                        produces => ["text/html"]
+                    },
+                put =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "Execute a test on post",
+                        produces => ["application/json"],
+                        parameters =>
+                            [
+                                #{
+                                    name => <<"feature">>,
+                                    description => <<"Test feature data.">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"string">>
+                                }
+                            ]
+                    }
+            }
+        ),
+        trails:trail(
+            "/execute_feature_from_ipfs/",
+            damage_http,
+            #{action => execute_feature_from_ipfs},
+            #{
+                get =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description =>
+                            "Form to execute an IPFS-hosted feature on this DamageBDD server.",
+                        produces => ["text/html"]
+                    },
+                put =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "Execute a feature fetched from IPFS (feature CID).",
+                        produces => ["application/json"],
+                        parameters =>
+                            [
+                                #{
+                                    name => <<"feature_cid">>,
+                                    description => <<"IPFS CID of the feature file (gherkin).">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"string">>
+                                },
+                                #{
+                                    name => <<"vars">>,
+                                    description => <<"Variables to merge into execution context.">>,
+                                    in => <<"body">>,
+                                    required => false,
+                                    type => <<"object">>
+                                }
+                            ]
+                    }
+            }
+        ),
+        trails:trail(
+            "/execute_feature_ipfs/",
+            damage_http,
+            #{action => execute_feature_from_ipfs},
+            #{
+                get =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description =>
+                            "Form to execute an IPFS-hosted feature on this DamageBDD server.",
+                        produces => ["text/html"]
+                    },
+                post =>
+                    #{
+                        tags => ?TRAILS_TAG,
+                        description => "Execute a feature fetched from IPFS (feature CID/path).",
+                        produces => ["application/json"],
+                        parameters =>
+                            [
+                                #{
+                                    name => <<"feature_cid">>,
+                                    description =>
+                                        <<"IPFS CID or CID-relative path of the feature file.">>,
+                                    in => <<"body">>,
+                                    required => true,
+                                    type => <<"string">>
+                                },
+                                #{
+                                    name => <<"vars">>,
+                                    description => <<"Variables to merge into execution context.">>,
+                                    in => <<"body">>,
+                                    required => false,
+                                    type => <<"object">>
+                                }
+                            ]
+                    }
+            }
+        )
+    ].
+init(Req, Opts) -> {cowboy_rest, Req, Opts}.
+
+is_authorized(Req, #{action := version} = State) ->
+    {true, Req, State};
+is_authorized(Req, #{action := node_balances} = State) ->
+    {true, Req, State};
+is_authorized(Req, #{action := tx} = State) ->
+    %% The legacy path does not bind payment proof to an immutable execution quote.
+    %% Do not broadcast a supplied transaction or open a channel from this endpoint.
+    {stop,
+        cowboy_req:reply(
+            409,
+            #{<<"content-type">> => <<"application/json">>, <<"cache-control">> => <<"no-store">>},
+            jsx:encode(damage_wallet_policy:rejection()),
+            Req
+        ),
+        State};
+is_authorized(Req, State0) ->
+    damage_auth:require_auth(
+        Req,
+        State0,
+        fun generate_l402_invoice/2,
+        fun(Req1, _Reason, State1) ->
+            generate_l402_invoice(Req1, State1)
+        end
+    ).
+
+generate_l402_invoice(Req0, State) ->
+    Action = maps:get(action, State, unknown),
+    Scope = iolist_to_binary(["/", atom_to_list(Action)]),
+
+    case Action of
+        %% Context administration/proof routes require normal authenticated
+        %% access. Never turn missing/invalid auth into a payable L402 challenge.
+        node_context ->
+            {{false, ?AUTH_HEADER}, Req0, State};
+        account_proof ->
+            {{false, ?AUTH_HEADER}, Req0, State};
+        node_anchor ->
+            {{false, ?AUTH_HEADER}, Req0, State};
+        %% Browsing the node's configured IPFS daemon is an authenticated UI
+        %% helper, not a paid execution operation.
+        ipfs_ls ->
+            {{false, ?AUTH_HEADER}, Req0, State};
+        _ ->
+            case node_secrets_ready() of
+                true ->
+                    generate_l402_invoice_ready(Action, Req0, State, Scope);
+                false ->
+                    node_secrets_unavailable_reply(Req0, State, node_locked)
+            end
+    end.
+
+generate_l402_invoice_ready(execute_feature, Req, State, Scope) ->
+    maybe_dynamic_price(Req, State, Scope);
+generate_l402_invoice_ready(execute_feature_from_ipfs, Req, State, Scope) ->
+    maybe_dynamic_ipfs_price(Req, State, Scope);
+generate_l402_invoice_ready(_Action, Req, State, Scope) ->
+    static_l402(Req, State, Scope).
+
+maybe_dynamic_price(Req0, State, Scope) ->
+    case cowboy_req:has_body(Req0) of
+        true ->
+            {ok, FeatureBin, Req1} = cowboy_req:read_body(Req0),
+            case dry_run_cost_msat(FeatureBin, State, Req1) of
+                {ok, AmountMsat, DryRec} ->
+                    Body = jsx:encode(#{
+                        status => <<"payment_required">>,
+                        scope => Scope,
+                        amount_msat => AmountMsat,
+                        dry_run => DryRec
+                    }),
+                    handle_l402_challenge(
+                        Req1,
+                        State,
+                        fun() ->
+                            damage_l402:challenge_with_body(
+                                Req1, Scope, AmountMsat, Body
+                            )
+                        end
+                    );
+                {error, _Why} ->
+                    static_l402(Req1, State, Scope)
+            end;
+        false ->
+            static_l402(Req0, State, Scope)
+    end.
+
+maybe_dynamic_ipfs_price(Req0, State, Scope) ->
+    case cowboy_req:has_body(Req0) of
+        true ->
+            {ok, Body, Req1} = cowboy_req:read_body(Req0),
+            case decode_json(Body) of
+                {ok, Json0} when is_map(Json0) ->
+                    case hydrate_feature_json(Json0) of
+                        {ok, Json1} ->
+                            case normalize_execution_json_context(Json1) of
+                                {ok, ExecutionJson} ->
+                                    case dry_run_ipfs_cost_msat(ExecutionJson, State, Req1) of
+                                        {ok, AmountMsat, DryRec} ->
+                                            BodyOut = jsx:encode(#{
+                                                status => <<"payment_required">>,
+                                                scope => Scope,
+                                                amount_msat => AmountMsat,
+                                                dry_run => DryRec
+                                            }),
+                                            handle_l402_challenge(
+                                                Req1,
+                                                State,
+                                                fun() ->
+                                                    damage_l402:challenge_with_body(
+                                                        Req1, Scope, AmountMsat, BodyOut
+                                                    )
+                                                end
+                                            );
+                                        {error, _Why} ->
+                                            static_l402(Req1, State, Scope)
+                                    end;
+                                {error, _Why} ->
+                                    static_l402(Req1, State, Scope)
+                            end;
+                        {error, _Why} ->
+                            static_l402(Req1, State, Scope)
+                    end;
+                _ ->
+                    static_l402(Req1, State, Scope)
+            end;
+        false ->
+            static_l402(Req0, State, Scope)
+    end.
+
+static_l402(Req, State, Scope) ->
+    PriceMsat = application:get_env(damage, l402_price_msat, 1000),
+    handle_l402_challenge(
+        Req,
+        State,
+        fun() -> damage_l402:challenge(Req, Scope, PriceMsat) end
+    ).
+
+handle_l402_challenge(Req0, State, Fun) when is_function(Fun, 0) ->
+    try Fun() of
+        {Req1, _Meta} when is_map(Req1) ->
+            {stop, Req1, State};
+        {error, Reason} ->
+            l402_unavailable_reply(Req0, State, Reason);
+        Other ->
+            l402_unavailable_reply(
+                Req0, State, {unexpected_l402_challenge_result, Other}
+            )
+    catch
+        error:{badmap, {error, secrets_not_ready}} ->
+            node_secrets_unavailable_reply(Req0, State, secrets_not_ready);
+        error:{badmap, {error, node_locked}} ->
+            node_secrets_unavailable_reply(Req0, State, node_locked);
+        Class:Reason:Stacktrace ->
+            case secrets_unavailable_reason(Reason) of
+                true ->
+                    node_secrets_unavailable_reply(Req0, State, Reason);
+                false ->
+                    ?LOG_ERROR(
+                        "L402 challenge failed class=~p reason=~p stack=~p",
+                        [Class, Reason, Stacktrace]
+                    ),
+                    l402_unavailable_reply(Req0, State, {Class, Reason})
+            end
+    end.
+
+l402_unavailable_reply(Req0, State, Reason) ->
+    case secrets_unavailable_reason(Reason) of
+        true ->
+            node_secrets_unavailable_reply(Req0, State, Reason);
+        false ->
+            Body = jsx:encode(#{
+                status => <<"notok">>,
+                error => <<"L402_UNAVAILABLE">>,
+                message =>
+                    <<"Payment challenge service is temporarily unavailable.">>,
+                retryable => true
+            }),
+            Req = cowboy_req:reply(
+                503,
+                #{
+                    <<"content-type">> => <<"application/json">>,
+                    <<"cache-control">> => <<"no-store">>,
+                    <<"retry-after">> => <<"5">>
+                },
+                Body,
+                Req0
+            ),
+            {stop, Req, State}
+    end.
+
+node_secrets_unavailable_reply(Req0, State, Reason) ->
+    Body = jsx:encode(#{
+        status => <<"notok">>,
+        error => <<"NODE_SECRETS_LOCKED">>,
+        message =>
+            <<"Node secrets are locked. Unlock the node and retry the request.">>,
+        reason => secret_reason_bin(Reason),
+        retryable => true
+    }),
+    Req = cowboy_req:reply(
+        503,
+        #{
+            <<"content-type">> => <<"application/json">>,
+            <<"cache-control">> => <<"no-store">>,
+            <<"retry-after">> => <<"5">>
+        },
+        Body,
+        Req0
+    ),
+    {stop, Req, State}.
+
+node_secrets_ready() ->
+    try secrets:ready() of
+        true -> true;
+        _ -> false
+    catch
+        _:_ ->
+            %% Hot-upgrade compatibility with an older secrets module.
+            try secrets:node_keypair() of
+                #{public_key := _Pub, private_key := Priv} when is_binary(Priv) -> true;
+                _ -> false
+            catch
+                _:_ -> false
+            end
+    end.
+
+secrets_unavailable_reason(node_locked) ->
+    true;
+secrets_unavailable_reason(secrets_not_ready) ->
+    true;
+secrets_unavailable_reason({error, Reason}) ->
+    secrets_unavailable_reason(Reason);
+secrets_unavailable_reason({master_key_unavailable, Reason}) ->
+    secrets_unavailable_reason(Reason);
+secrets_unavailable_reason({context_master_key_failed, Reason}) ->
+    secrets_unavailable_reason(Reason);
+secrets_unavailable_reason({context_scope_unavailable, _Scope, Reason}) ->
+    secrets_unavailable_reason(Reason);
+secrets_unavailable_reason(Tuple) when is_tuple(Tuple) ->
+    lists:any(fun secrets_unavailable_reason/1, tuple_to_list(Tuple));
+secrets_unavailable_reason(List) when is_list(List) ->
+    lists:any(fun secrets_unavailable_reason/1, List);
+secrets_unavailable_reason(_) ->
+    false.
+
+secret_reason_bin(Reason) ->
+    case secrets_unavailable_reason(Reason) of
+        true -> <<"node_locked">>;
+        false -> to_bin(io_lib:format("~p", [Reason]))
+    end.
+
+dry_run_cost_msat(FeatureBin, State, Req) ->
+    case l402_execution_account() of
+        {ok, L402Account} ->
+            %% Price the protected execution using the same account that will
+            %% execute after payment: the node's configured l402_account.
+            Context0 = #{
+                feature => FeatureBin,
+                stream => nostream,
+                concurrency => 1,
+                color_formatter => false,
+                public_key => L402Account
+            },
+            dry_run_cost_msat_for_context(Context0, State, Req);
+        {error, _Why} = Error ->
+            Error
+    end.
+
+dry_run_ipfs_cost_msat(ExecutionJson, State, Req) ->
+    case l402_execution_account() of
+        {ok, L402Account} ->
+            Context0 = maps:merge(
+                ExecutionJson,
+                #{
+                    stream => nostream,
+                    concurrency => 1,
+                    color_formatter => false,
+                    public_key => L402Account
+                }
+            ),
+            dry_run_cost_msat_for_context(Context0, State, Req);
+        {error, _Why} = Error ->
+            Error
+    end.
+
+dry_run_cost_msat_for_context(Context0, State, Req) ->
+    case execute_bdd(Context0, State, Req, [{dry_run, true}]) of
+        {200, #{status := <<"ok">>, cost := Cost, feature_hash := FeatureHash} = DryRec} ->
+            %% Convert DAMAGE cost hits -> whole DAMAGE -> sats -> msat.
+            CostDamage = ceil_damage(cost_hits_to_damage(Cost)),
+            ?LOG_DEBUG("cost_hits=~p cost_damage=~p", [Cost, CostDamage]),
+            Sats = price_feed:damage_to_sats(CostDamage),
+            MinSats = application:get_env(damage, l402_min_sats, 1),
+            Sats1 = max(MinSats, Sats),
+            AmountMsat = Sats1 * 1000,
+
+            %% Return dry-run + explicit keys client wants
+            DryOut =
+                DryRec#{
+                    cost_hits => Cost,
+                    cost_damage => CostDamage,
+                    feature_hash => FeatureHash,
+                    sats => Sats1,
+                    amount_msat => AmountMsat
+                },
+
+            {ok, AmountMsat, DryOut};
+        {200, Other} ->
+            {error, {dry_run_not_ok, Other}};
+        {Code, Err} ->
+            {error, {dry_run_failed, Code, Err}}
+    end.
+
+l402_execution_account() ->
+    case application:get_env(damage, l402_account) of
+        {ok, AeAccount0} ->
+            {ok, to_bin(AeAccount0)};
+        Other ->
+            ?LOG_DEBUG("L402 not enabled config=~p", [Other]),
+            {error, l402_not_enabled}
+    end.
+
+content_types_provided(Req, State) ->
+    {
+        [
+            {{<<"text">>, <<"html">>, '*'}, to_html},
+            {{<<"application">>, <<"json">>, []}, to_json},
+            {{<<"text">>, <<"plain">>, '*'}, to_text}
+        ],
+        Req,
+        State
+    }.
+
+content_types_accepted(Req, State) ->
+    {
+        [
+            {{<<"text">>, <<"plain">>, '*'}, from_html},
+            {{<<"application">>, <<"x-www-form-urlencoded">>, '*'}, from_html},
+            {{<<"application">>, <<"json">>, '*'}, from_json}
+        ],
+        Req,
+        State
+    }.
+
+allowed_methods(Req, State) -> {[<<"GET">>, <<"POST">>, <<"PUT">>], Req, State}.
+
+%% Streaming is an explicit transport choice. Concurrency controls runner
+%% parallelism only; it must never implicitly switch the HTTP response into
+%% streaming mode.
+%%
+%% text/plain / form requests opt in with:
+%%   X-Damage-Stream: true
+%%
+%% Streaming currently requires concurrency=1 because formatter output is
+%% written through a single Cowboy request stream.
+stream_mode(Req, Concurrency) ->
+    Requested =
+        case cowboy_req:header(<<"x-damage-stream">>, Req, undefined) of
+            <<"true">> ->
+                true;
+            <<"1">> ->
+                true;
+            <<"false">> ->
+                false;
+            <<"0">> ->
+                false;
+            <<"auto">> ->
+                cli_streaming_client(Req);
+            undefined ->
+                cli_streaming_client(Req);
+            _ ->
+                false
+        end,
+
+    case {Requested, Concurrency} of
+        {true, 1} ->
+            maybe_stream;
+        {true, _} ->
+            %% Current formatter streaming is a single-response stream.
+            %% Concurrent execution remains buffered.
+            nostream;
+        _ ->
+            nostream
+    end.
+cli_streaming_client(Req) ->
+    UserAgent =
+        lowercase_binary(
+            cowboy_req:header(<<"user-agent">>, Req, <<>>)
+        ),
+
+    cli_user_agent(UserAgent).
+
+cli_user_agent(<<"curl/", _/binary>>) ->
+    true;
+cli_user_agent(<<"wget/", _/binary>>) ->
+    true;
+cli_user_agent(<<"httpie/", _/binary>>) ->
+    true;
+cli_user_agent(<<"xh/", _/binary>>) ->
+    true;
+cli_user_agent(_) ->
+    false.
+
+lowercase_binary(Bin) when is_binary(Bin) ->
+    list_to_binary(
+        string:lowercase(binary_to_list(Bin))
+    ).
+
+json_stream_mode(Context) ->
+    Concurrency = normalize_concurrency(
+        maps:get(concurrency, Context, maps:get(<<"concurrency">>, Context, 1))
+    ),
+    Stream0 = maps:get(stream, Context, maps:get(<<"stream">>, Context, false)),
+    case parse_stream_flag(Stream0) of
+        {ok, false} ->
+            nostream;
+        {ok, true} when Concurrency =:= 1 ->
+            maybe_stream;
+        {ok, true} ->
+            {error, <<"streaming requires concurrency=1">>};
+        {error, _} = Error ->
+            Error
+    end.
+
+parse_stream_flag(undefined) ->
+    {ok, false};
+parse_stream_flag(false) ->
+    {ok, false};
+parse_stream_flag(true) ->
+    {ok, true};
+parse_stream_flag(0) ->
+    {ok, false};
+parse_stream_flag(1) ->
+    {ok, true};
+parse_stream_flag(Value) when is_list(Value) ->
+    parse_stream_flag(unicode:characters_to_binary(Value));
+parse_stream_flag(Value) when is_binary(Value) ->
+    Normalized = list_to_binary(string:lowercase(string:trim(binary_to_list(Value)))),
+    case Normalized of
+        <<>> -> {ok, false};
+        <<"false">> -> {ok, false};
+        <<"0">> -> {ok, false};
+        <<"no">> -> {ok, false};
+        <<"off">> -> {ok, false};
+        <<"true">> -> {ok, true};
+        <<"1">> -> {ok, true};
+        <<"yes">> -> {ok, true};
+        <<"on">> -> {ok, true};
+        _ -> {error, <<"invalid stream flag; expected true or false">>}
+    end;
+parse_stream_flag(_) ->
+    {error, <<"invalid stream flag; expected true or false">>}.
+
+normalize_concurrency(Value) when is_integer(Value), Value > 0 -> Value;
+normalize_concurrency(Value) when is_binary(Value) ->
+    try binary_to_integer(Value) of
+        I when I > 0 -> I;
+        _ -> 1
+    catch
+        _:_ -> 1
+    end;
+normalize_concurrency(Value) when is_list(Value) ->
+    try list_to_integer(Value) of
+        I when I > 0 -> I;
+        _ -> 1
+    catch
+        _:_ -> 1
+    end;
+normalize_concurrency(_) ->
+    1.
+get_stream_config(Config, Context, Req) ->
+    %% stream logs via text formatter to cowboy stream
+    %Req = cowboy_req:stream_reply(
+    %    200, #{<<"content-type">> => <<"text/plain">>}, Req0
+    %),
+    Formatters = [
+        {text, #{
+            output => Req,
+            color => maps:get(color_formatter, Context, false)
+        }}
+    ],
+    AeAccount = maps:get(public_key, Context, undefined),
+    ContinueOnFail =
+        maps:get(
+            continue_on_fail,
+            Context,
+            proplists:get_value(continue_on_fail, Config, false)
+        ),
+    RunnerOpts = [{continue_on_fail, ContinueOnFail}],
+    Config0 = damage_config:get_default_config(
+        RunnerOpts ++
+            [{public_key, AeAccount}, {concurrency, 1}, {formatters, Formatters} | Config]
+    ),
+    Config0.
+get_config(Config, Context, Req0) ->
+    Concurrency = maps:get(concurrency, Context, 1),
+    %% No implicit streaming. The request handler must opt in and open the
+    %% Cowboy stream before a streaming formatter is installed.
+    StreamFlag = maps:get(stream, Context, nostream),
+    ContinueOnFail =
+        maps:get(
+            continue_on_fail,
+            Context,
+            proplists:get_value(continue_on_fail, Config, false)
+        ),
+    RunnerOpts = [{continue_on_fail, ContinueOnFail}],
+    case {Concurrency, StreamFlag} of
+        {1, maybe_stream} ->
+            get_stream_config(Config, Context, Req0);
+        {1, true} ->
+            get_stream_config(Config, Context, Req0);
+        _ ->
+            %% non-stream path; keep formatters as supplied (or none)
+            AeAccount = maps:get(public_key, Context, maps:get(address, Context, undefined)),
+            Concurrency1 = damage_utils:get_concurrency_level(Concurrency),
+            damage_config:get_default_config(
+                RunnerOpts ++
+                    [{public_key, AeAccount}, {concurrency, Concurrency1} | Config]
+            )
+    end.
+
+%%--------------------------------------------------------------------
+%% Low-level: execute a single feature run against Config/Context.
+%%  - Always returns {StatusCode, Map}.
+%%  - Map always carries 'status' => <<"ok">> | <<"notok">>.
+%%--------------------------------------------------------------------
+-spec execute_bdd_once(proplists:proplist(), map(), binary()) ->
+    {200 | 400 | 500 | 503, map()}.
+execute_bdd_once(Config, Context, FeatureData) ->
+    Response =
+        case damage:execute_data(Config, Context, FeatureData) of
+            %% Failing step (runner-level assertion failure)
+            [
+                #{
+                    fail := FailReason,
+                    failing_step := {_KeyWord, Line, Step, _Args}
+                }
+                | _
+            ] ->
+                ?LOG_DEBUG("BDD assertion failed line=~p", [Line]),
+                {200, #{
+                    status => <<"notok">>,
+                    line => Line,
+                    failing_step =>
+                        list_to_binary(damage_utils:lists_concat(Step, " ")),
+                    reason => FailReason
+                }};
+            %% Failed run map. This must come before report_hash success,
+            %% because damage:execute_data/3 may still return hashes for failed runs.
+            #{fail := FailReason, failing_step := {_KeyWord, Line, Step, _Args}} ->
+                {400, #{
+                    status => <<"notok">>,
+                    line => Line,
+                    failing_step =>
+                        list_to_binary(damage_utils:lists_concat(Step, " ")),
+                    reason => FailReason
+                }};
+            #{fail := FailReason} = Result ->
+                {400,
+                    maps:merge(Result, #{
+                        status => <<"notok">>,
+                        reason => FailReason
+                    })};
+            %% Current RunRecord may carry result instead of fail.
+            #{result := Result0} = Result when
+                Result0 =/= <<"success">>,
+                Result0 =/= "success",
+                Result0 =/= success
+            ->
+                {400,
+                    maps:merge(Result, #{
+                        status => <<"notok">>,
+                        reason => Result0
+                    })};
+            %% Parser/lexer error with pretty message
+            {parse_error, LineNo, MessagePretty} ->
+                formatter:format(Config, error, {LineNo, MessagePretty}),
+                ?LOG_DEBUG("BDD parse failed line=~p", [LineNo]),
+                {400, #{
+                    status => <<"notok">>,
+                    message => MessagePretty,
+                    line => LineNo
+                }};
+            %% Dry run success (explicit match on dry_run := true)
+            #{dry_run := true, report_hash := _, cost := Cost} = Result ->
+                {200, add_cost_units(maps:merge(Result, #{status => <<"ok">>, cost => Cost}))};
+            %% Successful run (non-dry). We don't guard; the dry-run clause above
+            %% already caught the dry-run case.
+            #{report_hash := _} = Result ->
+                {200, maps:merge(Result, #{status => <<"ok">>})};
+            {error, {context_scope_unavailable, Scope, Reason}} ->
+                case secrets_unavailable_reason(Reason) of
+                    true ->
+                        node_secrets_unavailable_response(Reason);
+                    false ->
+                        {503, #{
+                            status => <<"notok">>,
+                            error => <<"CONTEXT_SCOPE_UNAVAILABLE">>,
+                            message => <<"Required context scope is unavailable.">>,
+                            scope => to_bin(io_lib:format("~p", [Scope])),
+                            reason => to_bin(io_lib:format("~p", [Reason]))
+                        }}
+                end;
+            {error, {context_ipfs_publish_failed, Reason}} ->
+                {500, #{
+                    status => <<"notok">>,
+                    error => <<"CONTEXT_IPFS_PUBLISH_FAILED">>,
+                    message =>
+                        <<"Context proof could not be published to IPFS; report was not published.">>,
+                    reason => to_bin(io_lib:format("~p", [Reason]))
+                }};
+            {error, {context_proof_write_failed, Reason}} ->
+                {500, #{
+                    status => <<"notok">>,
+                    error => <<"CONTEXT_PROOF_WRITE_FAILED">>,
+                    message => <<"Context proof could not be written; report was not published.">>,
+                    reason => to_bin(io_lib:format("~p", [Reason]))
+                }};
+            %% Anything unexpected
+            Error ->
+                ?LOG_ERROR("execute_bdd unexpected failure ~s.", [redacted_log_term(Context, Error)]),
+                {500, #{
+                    status => <<"notok">>,
+                    message => to_bin(io_lib:format("~p", [Error])),
+                    hint =>
+                        <<"Make sure POST data is binary, e.g.: ",
+                            "curl --data-binary @features/test.feature ...">>
+                }}
+        end,
+    with_release_info(Response).
+
+%% Keep every execution response self-describing. Run records produced by
+%% damage:execute_data/3 already contain the exact release snapshot captured
+%% before report publication; parser/infrastructure failures do not, so add the
+%% current release identity without overwriting fields already returned by the
+%% runner.
+with_release_info({Status, Response}) when is_map(Response) ->
+    Release =
+        case maps:get(release, Response, undefined) of
+            Existing when is_map(Existing) -> Existing;
+            _ -> safe_release_info()
+        end,
+    {Status, maps:merge(release_http_fields(Release), Response)};
+with_release_info(Other) ->
+    Other.
+
+release_http_fields(Release) when is_map(Release) ->
+    Base = #{
+        release => Release,
+        release_version =>
+            maps:get(release_version, Release, maps:get(version, Release, <<"unknown">>)),
+        release_git_sha => maps:get(git_sha, Release, <<"unknown">>),
+        release_origin => maps:get(release_origin, Release, package),
+        runtime_modified => maps:get(runtime_modified, Release, false),
+        runtime_code_hash => maps:get(runtime_code_hash, Release, <<"unknown">>)
+    },
+    case {maps:get(release_origin, Release, package), maps:get(nft, Release, null)} of
+        {nft, Nft} when is_map(Nft) ->
+            Base#{
+                release_nft_contract => maps:get(contract_id, Nft, <<>>),
+                release_nft_token_id => maps:get(token_id, Nft, 0),
+                release_asset_cid => maps:get(asset_cid, Nft, <<>>),
+                release_metadata_cid => maps:get(metadata_cid, Nft, <<>>),
+                release_package_sha256 => maps:get(package_sha256, Nft, <<>>)
+            };
+        _ ->
+            Base
+    end.
+
+safe_release_info() ->
+    try damage_release:info() of
+        Release when is_map(Release) ->
+            Release
+    catch
+        Class:Reason:Stack ->
+            ?LOG_WARNING(
+                "Release provenance lookup failed error=~p:~p stack=~p",
+                [Class, Reason, Stack]
+            ),
+            #{
+                application => <<"damage">>,
+                version => <<"unknown">>,
+                release_version => <<"unknown">>,
+                git_sha => <<"unknown">>,
+                release_origin => package,
+                provenance_status => unavailable,
+                runtime_modified => false,
+                runtime_code_hash => <<"unknown">>,
+                nft => null
+            }
+    end.
+
+%%--------------------------------------------------------------------
+%% Public orchestration: dry-run, then (optionally) paid run
+%%
+%%  - execute_bdd(Context, State, Req0) -> … uses [] as Config overrides
+%%  - execute_bdd(Context, State, Req0, ConfigOverrides) -> …
+%%
+%%  If ConfigOverrides includes {dry_run,true}, returns dry-run result only.
+%%--------------------------------------------------------------------
+
+-spec execute_bdd(map(), map(), cowboy_req:req()) ->
+    {integer(), map()} | {error, map()}.
+execute_bdd(Context, State, Req0) ->
+    execute_bdd(Context, State, Req0, []).
+
+%% API: with overrides (e.g., [{dry_run,true}])
+-spec execute_bdd(map(), map(), cowboy_req:req(), proplists:proplist()) ->
+    {integer(), map()} | {error, map()}.
+execute_bdd(Context0, State, Req0, ConfigOverrides) ->
+    Response =
+        try
+            %% Build and freeze effective context once for both dry and paid runs.
+            ContextIn = effective_context(Context0, State),
+            FeatureData = maps:get(feature, Context0),
+
+            %% --- 1) DRY RUN (force nostream) ----------------------------------------
+            DryOverrides = [{dry_run, true} | ConfigOverrides],
+            DryContext = maps:put(stream, nostream, ContextIn),
+
+            case
+                execute_bdd_once(
+                    get_config(DryOverrides, DryContext, Req0),
+                    DryContext,
+                    FeatureData
+                )
+            of
+                %% Dry run OK
+                {200, DryRes} ->
+                    %% If caller wanted only dry-run, return immediately
+                    case dry_run_only(ConfigOverrides) of
+                        true ->
+                            {200, add_cost_units(DryRes)};
+                        false ->
+                            %% Must have a cost in dry-run success
+                            Cost = maps:get(cost, DryRes, 0),
+
+                            %% Find account id (support public_key or address)
+                            AeAccount =
+                                case ContextIn of
+                                    #{public_key := PK} -> PK;
+                                    #{address := PK} -> PK;
+                                    _ -> undefined
+                                end,
+
+                            Charge = charge_hits(Cost),
+
+                            ?LOG_INFO("has_enough_damage ~p ~p", [AeAccount, Charge]),
+                            case damage_balance_cache:has_enough_damage(AeAccount, Charge) of
+                                {ok, _Balance, _BalanceSnapshot} ->
+                                    %% Original execution path for both normal auth and
+                                    %% L402 auth. L402 auth has already mapped State to
+                                    %% the configured l402_account in damage_auth.
+                                    RunConfig0 = get_config(ConfigOverrides, ContextIn, Req0),
+                                    RunConfig = [{defer_summary, true} | RunConfig0],
+                                    case execute_bdd_once(RunConfig, ContextIn, FeatureData) of
+                                        {RunStatus, #{report_hash := _} = Result0} when
+                                            RunStatus =:= 200; RunStatus =:= 400
+                                        ->
+                                            %% Only published runs enter settlement. Feature
+                                            %% assertion failures remain billable when the runner
+                                            %% produced a committed report; infrastructure failures
+                                            %% and non-publishable errors return immediately.
+                                            case safe_confirm_spend(RunConfig, Result0) of
+                                                {ok, Spend, TxHash} ->
+                                                    ?LOG_INFO("Result ~p", [Spend]),
+                                                    observe_analytics_settlement(
+                                                        Result0, TxHash, chain_confirmed
+                                                    ),
+                                                    Result1 =
+                                                        maps:put(
+                                                            tx_hash,
+                                                            to_bin(TxHash),
+                                                            maps:put(spend, Spend, Result0)
+                                                        ),
+                                                    Result2 = maps:put(cost, Cost, Result1),
+                                                    Summary0 = add_cost_units(
+                                                        maybe_l402_result_meta(ContextIn, Result2)
+                                                    ),
+                                                    Summary = Summary0#{
+                                                        status => maps:get(
+                                                            status, Summary0, <<"ok">>
+                                                        ),
+                                                        result => maps:get(
+                                                            result, Summary0, <<"success">>
+                                                        ),
+                                                        public_key => AeAccount
+                                                    },
+                                                    formatter:format(
+                                                        RunConfig,
+                                                        summary,
+                                                        Summary
+                                                    ),
+                                                    {RunStatus, Summary};
+                                                {pending, TxHash, ChainError} ->
+                                                    observe_analytics_settlement(
+                                                        Result0, TxHash, pending_chain
+                                                    ),
+                                                    ?LOG_WARNING(
+                                                        "confirm spend pending account=~p tx_hash=~p error=~p",
+                                                        [AeAccount, TxHash, ChainError]
+                                                    ),
+                                                    Pending0 =
+                                                        add_cost_units(
+                                                            maybe_l402_result_meta(
+                                                                ContextIn,
+                                                                maps:put(cost, Cost, Result0)
+                                                            )
+                                                        ),
+                                                    Pending = Pending0#{
+                                                        status => <<"pending">>,
+                                                        result => maps:get(
+                                                            result, Pending0, <<"success">>
+                                                        ),
+                                                        settlement_status => <<"pending">>,
+                                                        error => <<"CONFIRM_SPEND_PENDING">>,
+                                                        message =>
+                                                            <<
+                                                                "Execution completed and the spend transaction was submitted, "
+                                                                "but it was not mined before the confirmation timeout. "
+                                                                "Do not rerun the feature; verify tx_hash before retrying settlement."
+                                                            >>,
+                                                        tx_hash => to_bin(TxHash),
+                                                        public_key => AeAccount,
+                                                        retry_feature => false,
+                                                        chain_reason => confirm_spend_reason(
+                                                            ChainError
+                                                        )
+                                                    },
+                                                    formatter:format(RunConfig, summary, Pending),
+                                                    {202, Pending};
+                                                {error, insufficient_balance, Spend, ChainError} ->
+                                                    ?LOG_WARNING(
+                                                        "confirm spend insufficient balance account=~p spend=~p error=~p",
+                                                        [AeAccount, Spend, ChainError]
+                                                    ),
+                                                    {402, #{
+                                                        status => <<"notok">>,
+                                                        error => <<"ACCOUNT_INSUFFICIENT_BALANCE">>,
+                                                        message => insufficient_balance_message(
+                                                            ContextIn
+                                                        ),
+                                                        balance => damage_balance_cache:execution_damage_balance(
+                                                            AeAccount
+                                                        ),
+                                                        required => Spend,
+                                                        required_damage => cost_hits_to_damage(
+                                                            Spend
+                                                        ),
+                                                        required_sats => cost_hits_to_sats(Spend),
+                                                        chain_reason => confirm_spend_reason(
+                                                            ChainError
+                                                        )
+                                                    }};
+                                                {error, Reason, Spend, ChainError} ->
+                                                    ?LOG_ERROR(
+                                                        "confirm spend failed account=~p spend=~p reason=~p error=~p",
+                                                        [AeAccount, Spend, Reason, ChainError]
+                                                    ),
+                                                    {500, #{
+                                                        status => <<"notok">>,
+                                                        error => <<"CONFIRM_SPEND_FAILED">>,
+                                                        reason => confirm_spend_reason(Reason),
+                                                        required => Spend,
+                                                        required_damage => cost_hits_to_damage(
+                                                            Spend
+                                                        ),
+                                                        required_sats => cost_hits_to_sats(Spend),
+                                                        chain_reason => confirm_spend_reason(
+                                                            ChainError
+                                                        )
+                                                    }};
+                                                {exception, Class, Reason, Stack} ->
+                                                    ?LOG_ERROR(
+                                                        "confirm spend crashed account=~p error=~p:~p stack=~p",
+                                                        [AeAccount, Class, Reason, Stack]
+                                                    ),
+                                                    {500, #{
+                                                        status => <<"notok">>,
+                                                        error => <<"CONFIRM_SPEND_CRASH">>,
+                                                        class => to_bin(Class),
+                                                        reason => confirm_spend_reason(Reason)
+                                                    }};
+                                                Other ->
+                                                    ?LOG_ERROR(
+                                                        "confirm spend unexpected result account=~p result=~p",
+                                                        [AeAccount, Other]
+                                                    ),
+                                                    {500, #{
+                                                        status => <<"notok">>,
+                                                        error =>
+                                                            <<"CONFIRM_SPEND_UNEXPECTED_RESULT">>,
+                                                        reason => confirm_spend_reason(Other)
+                                                    }}
+                                            end;
+                                        {RunStatus, RunError} ->
+                                            {RunStatus, RunError}
+                                    end;
+                                {error, insufficient_damage, Balance, _BalanceSnapshot} ->
+                                    {402, #{
+                                        status => <<"notok">>,
+                                        message => insufficient_balance_message(ContextIn),
+                                        balance => Balance,
+                                        required => Charge,
+                                        required_damage => cost_hits_to_damage(Charge),
+                                        required_sats => cost_hits_to_sats(Charge)
+                                    }}
+                            end
+                    end;
+                %% Dry run failed; bubble it up as-is
+                {DryCode, DryRes} ->
+                    {DryCode, DryRes}
+            end
+        catch
+            error:{context_scope_unavailable, Scope, Reason0}:Stacktrace ->
+                ?LOG_ERROR(
+                    "Context preparation failed scope=~p reason=~p stack=~p",
+                    [Scope, Reason0, Stacktrace]
+                ),
+                case secrets_unavailable_reason(Reason0) of
+                    true ->
+                        node_secrets_unavailable_response(Reason0);
+                    false ->
+                        {503, #{
+                            status => <<"notok">>,
+                            error => <<"CONTEXT_SCOPE_UNAVAILABLE">>,
+                            message => <<"Required context scope is unavailable.">>,
+                            scope => to_bin(io_lib:format("~p", [Scope])),
+                            reason => to_bin(io_lib:format("~p", [Reason0]))
+                        }}
+                end
+        end,
+    with_release_info(Response).
+
+node_secrets_unavailable_response(Reason) ->
+    {503, #{
+        status => <<"notok">>,
+        error => <<"NODE_SECRETS_LOCKED">>,
+        message =>
+            <<"Node secrets are locked. Unlock the node and retry the request.">>,
+        reason => secret_reason_bin(Reason),
+        retryable => true
+    }}.
+
+%% Build one immutable scoped execution context after authentication. Internal
+%% preparation/proof fields are never accepted from the request body.
+-spec effective_context(map(), map()) -> map().
+effective_context(Context0, State0) ->
+    SecretKeys = auth_transport_secret_keys(),
+    %% Remove reserved transport credentials from BOTH inputs. Removing them
+    %% only from authenticated State would leave client-supplied values behind.
+    ClientContext = maps:without(internal_context_keys() ++ SecretKeys, Context0),
+
+    %% Authentication proves who the caller is, but bearer/session credentials
+    %% are transport secrets and must never become BDD step/report context.
+    State = maps:without(SecretKeys, State0),
+
+    Ctx1 = maps:merge(ClientContext, State),
+    damage_context:prepare_run_context(Ctx1).
+
+auth_transport_secret_keys() ->
+    Atoms = [
+        access_token,
+        authorization,
+        private_key,
+        password,
+        sessionid,
+        cookie,
+        l402,
+        l402_macaroon
+    ],
+    Atoms ++ [atom_to_binary(Key, utf8) || Key <- Atoms].
+
+internal_context_keys() ->
+    Atoms = [
+        damage_context_effective,
+        context_proofs,
+        context_ipfs_hash,
+        context_ipfs_uri,
+        context_ipfs_url,
+        context_url,
+        account_context,
+        node_context
+    ],
+    Atoms ++ [atom_to_binary(Key, utf8) || Key <- Atoms].
+
+%% Helper: true iff overrides explicitly request dry-run only
+-spec dry_run_only(proplists:proplist()) -> boolean().
+dry_run_only(Overrides) ->
+    proplists:get_value(dry_run, Overrides, false) =:= true.
+
+maybe_l402_result_meta(#{auth_type := l402} = Context, Result) ->
+    maps:merge(
+        Result,
+        #{
+            payment_type => <<"l402">>,
+            l402_payment_hash_hex => maps:get(l402_payment_hash_hex, Context, <<>>)
+        }
+    );
+maybe_l402_result_meta(_Context, Result) ->
+    Result.
+
+insufficient_balance_message(#{auth_type := l402}) ->
+    <<"Configured l402_account has insufficient DAMAGE balance for execution">>;
+insufficient_balance_message(_Context) ->
+    <<"Insufficient balance, please top up at `/api/accounts/topup`">>.
+
+charge_hits(Value) when is_integer(Value) ->
+    Value;
+charge_hits(Value) when is_float(Value) ->
+    ceil_damage(Value);
+charge_hits(Value) when is_binary(Value) ->
+    binary_to_integer(Value);
+charge_hits(Value) when is_list(Value) ->
+    list_to_integer(Value);
+charge_hits(_) ->
+    0.
+
+observe_analytics_settlement(RunRecord, TxHash, Settlement) ->
+    try
+        damage_analytics_store:settle_run(RunRecord, TxHash, Settlement)
+    catch
+        _:_ -> ok
+    end.
+
+safe_confirm_spend(Config, Result) ->
+    try damage_ae:confirm_spend(Config, Result) of
+        Reply ->
+            Reply
+    catch
+        exit:Reason:Stack ->
+            case confirm_spend_pending(Reason) of
+                {ok, TxHash, ChainError} ->
+                    {pending, TxHash, ChainError};
+                error ->
+                    {exception, exit, Reason, Stack}
+            end;
+        Class:Reason:Stack ->
+            {exception, Class, Reason, Stack}
+    end.
+
+confirm_spend_pending(
+    {timeout_error, {polling_failed, ChainError, _PollFun, [TxHash]}}
+) ->
+    {ok, TxHash, ChainError};
+confirm_spend_pending(
+    {
+        {timeout_error, {polling_failed, ChainError, _PollFun, [TxHash]}},
+        {gen_server, call, _Call}
+    }
+) ->
+    {ok, TxHash, ChainError};
+confirm_spend_pending(_) ->
+    error.
+
+confirm_spend_reason({error, Reason}) ->
+    confirm_spend_reason(Reason);
+confirm_spend_reason(#{"return_value" := Reason}) ->
+    confirm_spend_reason(Reason);
+confirm_spend_reason(#{<<"return_value">> := Reason}) ->
+    confirm_spend_reason(Reason);
+confirm_spend_reason(Value) when is_binary(Value) ->
+    Value;
+confirm_spend_reason(Value) when is_atom(Value) ->
+    atom_to_binary(Value, utf8);
+confirm_spend_reason(Value) when is_integer(Value) ->
+    integer_to_binary(Value);
+confirm_spend_reason(Value) when is_list(Value) ->
+    try unicode:characters_to_binary(Value) of
+        Bin when is_binary(Bin) -> Bin
+    catch
+        _:_ -> iolist_to_binary(io_lib:format("~p", [Value]))
+    end;
+confirm_spend_reason(Value) ->
+    iolist_to_binary(io_lib:format("~p", [Value])).
+cost_hits_to_damage(CostHits) when is_integer(CostHits); is_float(CostHits) ->
+    CostHits / math:pow(10, ?DAMAGE_DECIMALS);
+cost_hits_to_damage(_) ->
+    0.
+
+cost_hits_to_sats(CostHits) ->
+    Damage = cost_hits_to_damage(CostHits),
+    try price_feed:damage_to_sats(Damage) of
+        Sats -> Sats
+    catch
+        Class:Reason ->
+            ?LOG_WARNING(
+                "Failed to convert cost to sats cost_hits=~p damage=~p error=~p:~p",
+                [CostHits, Damage, Class, Reason]
+            ),
+            undefined
+    end.
+
+add_cost_units(#{cost := Cost} = Result) ->
+    CostDamage = cost_hits_to_damage(Cost),
+    CostSats = cost_hits_to_sats(Cost),
+    Result#{
+        cost_hits => Cost,
+        cost_damage => CostDamage,
+        cost_sats => CostSats,
+        cost_btc => sats_to_btc(CostSats),
+        cost_ae => cost_to_ae(CostDamage, CostSats)
+    };
+add_cost_units(#{spend := Spend} = Result) ->
+    add_cost_units(maps:put(cost, Spend, Result));
+add_cost_units(Result) ->
+    Result.
+
+sats_to_btc(Sats) when is_integer(Sats); is_float(Sats) ->
+    Sats / 100000000;
+sats_to_btc(_) ->
+    undefined.
+
+cost_to_ae(Damage, Sats) when
+    (is_integer(Damage) orelse is_float(Damage)),
+    (is_integer(Sats) orelse is_float(Sats))
+->
+    case code:ensure_loaded(price_feed) of
+        {module, price_feed} ->
+            cost_to_ae_loaded(Damage, Sats);
+        Error ->
+            ?LOG_WARNING(
+                "Cannot convert execution cost to AE: price_feed unavailable error=~p",
+                [Error]
+            ),
+            undefined
+    end;
+cost_to_ae(_, _) ->
+    undefined.
+
+cost_to_ae_loaded(Damage, Sats) ->
+    case erlang:function_exported(price_feed, damage_to_ae, 1) of
+        true ->
+            safe_ae_conversion(
+                fun() -> price_feed:damage_to_ae(Damage) end,
+                damage_to_ae
+            );
+        false ->
+            cost_sats_to_ae(Sats)
+    end.
+
+cost_sats_to_ae(Sats) ->
+    case erlang:function_exported(price_feed, sats_to_ae, 1) of
+        true ->
+            safe_ae_conversion(
+                fun() -> price_feed:sats_to_ae(Sats) end,
+                sats_to_ae
+            );
+        false ->
+            cost_sats_to_ae_using_unit_price(Sats)
+    end.
+
+cost_sats_to_ae_using_unit_price(Sats) ->
+    case erlang:function_exported(price_feed, ae_to_sats, 1) of
+        true ->
+            safe_ae_conversion(
+                fun() ->
+                    case price_feed:ae_to_sats(1) of
+                        AeSats when is_integer(AeSats), AeSats > 0 ->
+                            Sats / AeSats;
+                        AeSats when is_float(AeSats), AeSats > 0 ->
+                            Sats / AeSats;
+                        Unexpected ->
+                            {error, {invalid_ae_sats_price, Unexpected}}
+                    end
+                end,
+                ae_to_sats
+            );
+        false ->
+            ?LOG_WARNING(
+                "Cannot convert execution cost to AE: price_feed exports none of "
+                "damage_to_ae/1, sats_to_ae/1 or ae_to_sats/1",
+                []
+            ),
+            undefined
+    end.
+
+safe_ae_conversion(Fun, Conversion) ->
+    try Fun() of
+        Ae when is_integer(Ae); is_float(Ae) ->
+            Ae;
+        {error, Reason} ->
+            ?LOG_WARNING(
+                "AE cost conversion failed conversion=~p reason=~p",
+                [Conversion, Reason]
+            ),
+            undefined;
+        Unexpected ->
+            ?LOG_WARNING(
+                "Unexpected AE cost conversion result conversion=~p result=~p",
+                [Conversion, Unexpected]
+            ),
+            undefined
+    catch
+        Class:Reason:Stack ->
+            ?LOG_WARNING(
+                "AE cost conversion crashed conversion=~p error=~p:~p stack=~p",
+                [Conversion, Class, Reason, Stack]
+            ),
+            undefined
+    end.
+
+ceil_damage(Value) when is_integer(Value) ->
+    Value;
+ceil_damage(Value) when is_float(Value) ->
+    Trunc = trunc(Value),
+    case Value > Trunc of
+        true -> Trunc + 1;
+        false -> Trunc
+    end;
+ceil_damage(_) ->
+    0.
+
+redacted_log_term(Context, Term) ->
+    try
+        damage_context:redact_text(
+            Context,
+            to_bin(io_lib:format("~p", [Term]))
+        )
+    catch
+        _:_ -> <<"XX-REDACTED-LOG-ERROR-XX">>
+    end.
+
+decode_json(Data) ->
+    try
+        {ok, jsx:decode(Data, [{labels, atom}, return_maps])}
+    catch
+        Class:Reason:Stack ->
+            {error, {Class, Reason, Stack}}
+    end.
+
+hydrate_feature_json(Json0) when is_map(Json0) ->
+    case maps:is_key(feature_cid, Json0) of
+        true ->
+            case damage_ipfs:hydrate_feature_from_ipfs(Json0) of
+                {ok, Hydrated} -> {ok, maps:remove(feature_cid, Hydrated)};
+                {error, _} = Error -> Error
+            end;
+        false ->
+            {ok, Json0}
+    end.
+
+ipfs_hydration_error_reply(Req0, State, Why) ->
+    Body = jsx:encode(#{status => <<"notok">>, error => to_bin(Why)}),
+    Req = cowboy_req:reply(
+        400,
+        #{<<"content-type">> => <<"application/json">>},
+        Body,
+        Req0
+    ),
+    {stop, Req, State}.
+
+ipfs_ls_response(Path) ->
+    case damage_ipfs:ls(Path) of
+        {ok, [#{<<"Objects">> := [#{<<"Links">> := Links} | _]} | _]} when is_list(Links) ->
+            {200, #{status => <<"ok">>, path => to_bin(Path), links => normalize_ipfs_links(Links)}};
+        {ok, #{<<"Objects">> := [#{<<"Links">> := Links} | _]}} when is_list(Links) ->
+            {200, #{status => <<"ok">>, path => to_bin(Path), links => normalize_ipfs_links(Links)}};
+        {error, Reason} ->
+            {400, #{status => <<"notok">>, error => to_bin(io_lib:format("~p", [Reason]))}};
+        Other ->
+            {502, #{
+                status => <<"notok">>,
+                error => <<"IPFS_LS_BAD_RESPONSE">>,
+                reason => to_bin(io_lib:format("~p", [Other]))
+            }}
+    end.
+
+normalize_ipfs_links(Links) ->
+    [normalize_ipfs_link(Link) || Link <- Links, is_map(Link)].
+
+normalize_ipfs_link(Link) ->
+    Type0 = maps:get(<<"Type">>, Link, maps:get(type, Link, 0)),
+    Type =
+        case Type0 of
+            1 -> <<"dir">>;
+            5 -> <<"dir">>;
+            <<"Directory">> -> <<"dir">>;
+            <<"HAMTShard">> -> <<"dir">>;
+            "Directory" -> <<"dir">>;
+            _ -> <<"file">>
+        end,
+    #{
+        name => maps:get(<<"Name">>, Link, maps:get(name, Link, <<>>)),
+        hash => maps:get(<<"Hash">>, Link, maps:get(hash, Link, <<>>)),
+        size => maps:get(<<"Size">>, Link, maps:get(size, Link, 0)),
+        type => Type
+    }.
+%% Runtime context accepted by execution endpoints.
+%%
+%% JSON:
+%%   {"feature":"...", "context":{"server":"https://example.com"}}
+%%
+%% text/plain / form POST:
+%%   X-Damage-Context: {"server":"https://example.com"}
+%%   X-Damage-Context-region: au
+%%
+%% Explicit request control fields win over nested/header context so context
+%% cannot replace feature, concurrency, stream, channel_id, signed_tx, etc.
+normalize_execution_json_context(Json0) when is_map(Json0) ->
+    Runtime0 =
+        case maps:find(context, Json0) of
+            {ok, ContextValue} ->
+                ContextValue;
+            error ->
+                case maps:find(<<"context">>, Json0) of
+                    {ok, BinaryContextValue} ->
+                        BinaryContextValue;
+                    error ->
+                        case maps:find(runtime_context, Json0) of
+                            {ok, RuntimeValue} -> RuntimeValue;
+                            error -> maps:get(<<"runtime_context">>, Json0, undefined)
+                        end
+                end
+        end,
+    Base = maps:without([context, <<"context">>, runtime_context, <<"runtime_context">>], Json0),
+    case Runtime0 of
+        undefined ->
+            {ok, Base};
+        Runtime when is_map(Runtime) ->
+            case normalize_runtime_context_map(Runtime) of
+                {ok, NormalizedRuntime0} ->
+                    %% Outer request fields always win, including arbitrary
+                    %% runtime fields whose atom/binary representations differ.
+                    BaseKeys = [
+                        normalize_runtime_context_key(Key)
+                     || Key <- maps:keys(Base)
+                    ],
+                    NormalizedRuntime = maps:without(BaseKeys, NormalizedRuntime0),
+                    {ok, maps:merge(NormalizedRuntime, Base)};
+                {error, _} = Error ->
+                    Error
+            end;
+        _ ->
+            {error, <<"context must be a JSON object">>}
+    end.
+
+normalize_runtime_context_map(Map) when is_map(Map) ->
+    maps:fold(fun normalize_runtime_context_entry/3, {ok, #{}}, Map).
+
+normalize_runtime_context_entry(_Key0, _Value, {error, _} = Error) ->
+    Error;
+normalize_runtime_context_entry(Key0, Value, {ok, Acc}) ->
+    Key = normalize_runtime_context_key(Key0),
+    case runtime_context_key_allowed(Key) of
+        false ->
+            {error, <<"runtime context key is reserved: ", Key/binary>>};
+        true ->
+            case maps:is_key(Key, Acc) of
+                true ->
+                    {error, <<"duplicate runtime context key after normalization: ", Key/binary>>};
+                false ->
+                    {ok, maps:put(Key, Value, Acc)}
+            end
+    end.
+
+normalize_runtime_context_key(Key) when is_binary(Key) -> Key;
+normalize_runtime_context_key(Key) when is_atom(Key) -> atom_to_binary(Key, utf8);
+normalize_runtime_context_key(Key) when is_list(Key) -> unicode:characters_to_binary(Key);
+normalize_runtime_context_key(Key) -> to_bin(Key).
+
+runtime_context_key_allowed(Key) ->
+    Lower = list_to_binary(string:lowercase(binary_to_list(Key))),
+    not lists:member(Lower, runtime_context_forbidden_keys()).
+
+runtime_context_forbidden_keys() ->
+    [
+        <<"feature">>,
+        <<"feature_cid">>,
+        <<"vars">>,
+        <<"stream">>,
+        <<"dry_run">>,
+        <<"concurrency">>,
+        <<"continue_on_fail">>,
+        <<"color_formatter">>,
+        <<"channel_id">>,
+        <<"signed_tx">>,
+        <<"unsigned_tx">>,
+        <<"tx">>,
+        <<"action">>,
+        <<"payfor">>,
+        <<"signature">>,
+        <<"message">>,
+        <<"pubkey">>,
+        <<"address">>,
+        <<"public_key">>,
+        <<"private_key">>,
+        <<"access_token">>,
+        <<"auth_type">>,
+        <<"username">>,
+        <<"node_public_key">>,
+        <<"token_contract">>,
+        <<"run_id">>,
+        <<"run_dir">>,
+        <<"data_dir">>,
+        <<"runs_dir">>,
+        <<"reports_dir">>,
+        <<"artifacts_dir">>,
+        <<"feature_filename">>,
+        <<"report_hash">>,
+        <<"report_dir">>,
+        <<"feature_hash">>,
+        <<"context">>,
+        <<"runtime_context">>,
+        <<"context_scopes">>,
+        <<"context_proofs">>,
+        <<"context_redactions">>,
+        <<"context_redaction_ref">>,
+        <<"damage_context_effective">>,
+        <<"account_context">>,
+        <<"node_context">>,
+        <<"context_ipfs_hash">>,
+        <<"context_ipfs_uri">>,
+        <<"context_ipfs_url">>,
+        <<"context_url">>,
+        <<"l402">>,
+        <<"l402_macaroon">>,
+        <<"l402_payment_hash_hex">>
+    ].
+
+runtime_context_from_headers(Req) ->
+    case runtime_context_json_header(Req) of
+        {ok, Base} ->
+            Headers = cowboy_req:headers(Req),
+            Prefix = <<"x-damage-context-">>,
+            PrefixSize = byte_size(Prefix),
+            PerKey =
+                maps:fold(
+                    fun(Name, Value, Acc) ->
+                        case Name of
+                            <<Prefix:PrefixSize/binary, Key/binary>> when Key =/= <<>> ->
+                                maps:put(Key, decode_header_context_value(Value), Acc);
+                            _ ->
+                                Acc
+                        end
+                    end,
+                    #{},
+                    Headers
+                ),
+            normalize_runtime_context_map(maps:merge(Base, PerKey));
+        {error, _} = Error ->
+            Error
+    end.
+
+runtime_context_json_header(Req) ->
+    case cowboy_req:header(<<"x-damage-context">>, Req, undefined) of
+        undefined ->
+            {ok, #{}};
+        <<>> ->
+            {ok, #{}};
+        Header ->
+            try jsx:decode(Header, [return_maps]) of
+                Map when is_map(Map) ->
+                    {ok, Map};
+                _ ->
+                    {error, <<"x-damage-context must contain a JSON object">>}
+            catch
+                _:_ ->
+                    {error, <<"x-damage-context contains invalid JSON">>}
+            end
+    end.
+
+decode_header_context_value(Value) ->
+    try jsx:decode(Value, [return_maps]) of
+        Decoded -> Decoded
+    catch
+        _:_ -> Value
+    end.
+
+runtime_context_error_reply(Req, State, Reason) ->
+    Body = jsx:encode(#{
+        status => <<"notok">>,
+        error => <<"INVALID_RUNTIME_CONTEXT">>,
+        message => Reason
+    }),
+    Req1 = cowboy_req:reply(
+        400,
+        #{<<"content-type">> => <<"application/json">>},
+        Body,
+        Req
+    ),
+    {stop, Req1, State}.
+
+json_decode_failed(Req, State, Prefix, {Class, Reason, Stack}) ->
+    ?LOG_ERROR("~s ~p:~p ~p", [Prefix, Class, Reason, Stack]),
+    Req1 = cowboy_req:reply(
+        400,
+        #{<<"content-type">> => <<"text/plain">>},
+        <<"Json decoding failed.">>,
+        Req
+    ),
+    {stop, Req1, State}.
+
+%% Streaming responses already emit human-readable formatter output while the
+%% run executes. Successful executions already end with the formatted summary,
+%% so do not append the result map or another summary-like footer.
+%%
+%% Structured results are still returned by the non-streaming JSON response
+%% path. Successful streams append only release provenance (the formatter has
+%% already printed the human-readable execution summary); pending/error streams
+%% include the same provenance in their compact diagnostic footer.
+stream_final_body(200, Resp) when is_map(Resp) ->
+    stream_release_footer(Resp);
+stream_final_body(Status, Resp) when is_map(Resp) ->
+    stream_map_footer(Status, Resp);
+stream_final_body(Status, Resp) when is_binary(Resp) ->
+    case stream_blank(Resp) of
+        true ->
+            case status_success(Status) of
+                true -> <<>>;
+                false -> stream_map_footer(Status, #{})
+            end;
+        false ->
+            Resp
+    end;
+stream_final_body(Status, Resp) ->
+    stream_map_footer(Status, #{response => Resp}).
+
+stream_map_footer(Status, Resp) ->
+    iolist_to_binary([
+        "\n---\n",
+        "status: ",
+        printable_stream_value(stream_status_value(Status, Resp)),
+        "\n",
+        "http_status: ",
+        status_to_iodata(Status),
+        "\n",
+        stream_line("message: ", stream_map_get([message, <<"message">>], Resp)),
+        stream_line("reason: ", stream_map_get([reason, <<"reason">>], Resp)),
+        stream_line("error: ", stream_map_get([error, <<"error">>], Resp)),
+        stream_line("failing_step: ", stream_map_get([failing_step, <<"failing_step">>], Resp)),
+        stream_line("line: ", stream_map_get([line, <<"line">>], Resp)),
+        stream_line(
+            "result: ",
+            stream_map_get([result, <<"result">>, result_status, <<"result_status">>], Resp)
+        ),
+        stream_line("run_id: ", stream_map_get([run_id, <<"run_id">>], Resp)),
+        stream_line("feature_hash: ", stream_map_get([feature_hash, <<"feature_hash">>], Resp)),
+        stream_line("report_hash: ", stream_map_get([report_hash, <<"report_hash">>], Resp)),
+        stream_line("report: ", stream_map_get([report_dir, <<"report_dir">>], Resp)),
+        stream_line(
+            "context: ",
+            stream_map_get(
+                [context_url, <<"context_url">>, context_ipfs_url, <<"context_ipfs_url">>],
+                Resp
+            )
+        ),
+        stream_line("tx_hash: ", stream_map_get([tx_hash, <<"tx_hash">>], Resp)),
+        stream_line("balance: ", stream_map_get([balance, <<"balance">>], Resp)),
+        stream_line("required: ", stream_map_get([required, <<"required">>], Resp)),
+        stream_line(
+            "required_damage: ", stream_map_get([required_damage, <<"required_damage">>], Resp)
+        ),
+        stream_line("required_sats: ", stream_map_get([required_sats, <<"required_sats">>], Resp)),
+        stream_line("spend: ", stream_map_get([spend, <<"spend">>], Resp)),
+        stream_line("response: ", stream_map_get([response, <<"response">>], Resp)),
+        stream_release_lines(Resp),
+        "\n"
+    ]).
+
+stream_release_footer(Resp) ->
+    case stream_release_lines(Resp) of
+        [] ->
+            <<>>;
+        Lines ->
+            iolist_to_binary([
+                "\n--- release ---\n",
+                Lines,
+                "\n"
+            ])
+    end.
+
+stream_release_lines(Resp) ->
+    lists:append([
+        stream_line(
+            "release_version: ",
+            stream_map_get([release_version, <<"release_version">>], Resp)
+        ),
+        stream_line(
+            "release_git_sha: ",
+            stream_map_get([release_git_sha, <<"release_git_sha">>], Resp)
+        ),
+        stream_line(
+            "release_origin: ",
+            stream_map_get([release_origin, <<"release_origin">>], Resp)
+        ),
+        stream_line(
+            "runtime_modified: ",
+            stream_map_get([runtime_modified, <<"runtime_modified">>], Resp)
+        ),
+        stream_line(
+            "runtime_code_hash: ",
+            stream_map_get([runtime_code_hash, <<"runtime_code_hash">>], Resp)
+        ),
+        stream_line(
+            "release_nft_contract: ",
+            stream_map_get([release_nft_contract, <<"release_nft_contract">>], Resp)
+        ),
+        stream_line(
+            "release_nft_token_id: ",
+            stream_map_get([release_nft_token_id, <<"release_nft_token_id">>], Resp)
+        ),
+        stream_line(
+            "release_asset_cid: ",
+            stream_map_get([release_asset_cid, <<"release_asset_cid">>], Resp)
+        ),
+        stream_line(
+            "release_metadata_cid: ",
+            stream_map_get([release_metadata_cid, <<"release_metadata_cid">>], Resp)
+        ),
+        stream_line(
+            "release_package_sha256: ",
+            stream_map_get([release_package_sha256, <<"release_package_sha256">>], Resp)
+        )
+    ]).
+
+stream_status_value(Status, Resp) ->
+    case stream_map_get([status, <<"status">>], Resp) of
+        {ok, Value} ->
+            Value;
+        none ->
+            case status_success(Status) of
+                true -> <<"ok">>;
+                false -> <<"notok">>
+            end
+    end.
+
+stream_line(_Label, none) ->
+    [];
+stream_line(Label, {ok, Value}) ->
+    [Label, printable_stream_value(Value), "\n"].
+
+stream_map_get([], _Map) ->
+    none;
+stream_map_get([Key | Rest], Map) ->
+    case maps:find(Key, Map) of
+        {ok, Value} ->
+            case stream_blank(Value) of
+                true -> stream_map_get(Rest, Map);
+                false -> {ok, Value}
+            end;
+        error ->
+            stream_map_get(Rest, Map)
+    end.
+
+stream_blank(undefined) ->
+    true;
+stream_blank(null) ->
+    true;
+stream_blank(false) ->
+    true;
+stream_blank(<<>>) ->
+    true;
+stream_blank("") ->
+    true;
+stream_blank(_) ->
+    false.
+
+status_success(Status) when is_integer(Status), Status >= 200, Status < 300 ->
+    true;
+status_success(_Status) ->
+    false.
+
+status_to_iodata(Status) when is_integer(Status) ->
+    integer_to_list(Status);
+status_to_iodata(Status) ->
+    io_lib:format("~p", [Status]).
+
+printable_stream_value(Value) when is_binary(Value) ->
+    Value;
+printable_stream_value(Value) when is_integer(Value) ->
+    integer_to_binary(Value);
+printable_stream_value(Value) when is_float(Value) ->
+    list_to_binary(io_lib:format("~p", [Value]));
+printable_stream_value(Value) when is_list(Value) ->
+    try unicode:characters_to_binary(Value) of
+        Bin when is_binary(Bin) ->
+            Bin
+    catch
+        _:_ ->
+            iolist_to_binary(io_lib:format("~p", [Value]))
+    end;
+printable_stream_value(Value) when is_atom(Value) ->
+    atom_to_binary(Value, utf8);
+printable_stream_value(Value) ->
+    iolist_to_binary(io_lib:format("~p", [Value])).
+
+execution_context_from_request(Json, Overrides) ->
+    Runtime = maps:without(execution_request_internal_keys(), Json),
+    maps:merge(Runtime, Overrides).
+
+execution_request_internal_keys() ->
+    [
+        feature,
+        <<"feature">>,
+        feature_cid,
+        <<"feature_cid">>,
+        vars,
+        <<"vars">>,
+        concurrency,
+        <<"concurrency">>,
+        stream,
+        <<"stream">>,
+        color_formatter,
+        <<"color_formatter">>,
+        signed_tx,
+        <<"signed_tx">>,
+        unsigned_tx,
+        <<"unsigned_tx">>,
+        address,
+        <<"address">>,
+        data_dir,
+        <<"data_dir">>,
+        runs_dir,
+        <<"runs_dir">>,
+        run_dir,
+        <<"run_dir">>,
+        reports_dir,
+        <<"reports_dir">>,
+        artifacts_dir,
+        <<"artifacts_dir">>,
+        feature_filename,
+        <<"feature_filename">>,
+        action,
+        <<"action">>,
+        payfor,
+        <<"payfor">>,
+        signature,
+        <<"signature">>,
+        message,
+        <<"message">>,
+        pubkey,
+        <<"pubkey">>,
+        tx,
+        <<"tx">>
+    ].
+
+do_action_tx_throttled(Json, State, Req) ->
+    IP = damage_utils:get_ip(Req),
+    case throttle:check(damage_api_rate, IP) of
+        {limit_exceeded, _, _} ->
+            ?LOG_WARNING("IP ~p exceeded api limit", [IP]),
+            {429, <<"throttled">>};
+        _ ->
+            do_action_tx(Json, State, Req)
+    end.
+get_bin(Key, M) ->
+    V = maps:get(Key, M),
+    case V of
+        B when is_binary(B) -> B;
+        L when is_list(L) -> list_to_binary(L)
+    end.
+
+get_int(Key, M) ->
+    V = maps:get(Key, M),
+    case V of
+        I when is_integer(I) -> I;
+        B when is_binary(B) -> list_to_integer(binary_to_list(B));
+        L when is_list(L) -> list_to_integer(L)
+    end.
+
+%% action = "prepare_create_channel"
+%% ------------------------------------------------------------
+%% PREPARE: build final unsigned channel_create_tx (node = responder)
+%% ------------------------------------------------------------
+do_action_tx(#{action := <<"prepare_create_channel">>} = J, State, Req) ->
+    Ini = get_bin(initiator_id, J),
+    IniAmt = get_int(initiator_amount, J),
+    ResAmt = get_int(responder_amount, J),
+    Reserve = get_int(channel_reserve, J),
+    Lock = get_int(lock_period, J),
+    TTL = get_int(ttl, J),
+    Fee = get_int(fee, J),
+
+    #{public_key := NodePub} = secrets:node_keypair(),
+    Responder = NodePub,
+
+    case
+        damage_channels:build_channel_create_tx(
+            Ini, Responder, IniAmt, ResAmt, Reserve, Lock, TTL, Fee
+        )
+    of
+        {ok, #{tx := Unsigned, tx_hash := TxHash}} ->
+            Reply = #{
+                status => <<"ok">>,
+                tx => Unsigned,
+                tx_hash => to_bin(TxHash),
+                responder => Responder
+            },
+            {stop, cowboy_req:reply(200, cowboy_req:set_resp_body(jsx:encode(Reply), Req)), State};
+        {error, Reason} ->
+            Reply = #{status => <<"notok">>, error => Reason},
+            {stop, cowboy_req:reply(400, cowboy_req:set_resp_body(jsx:encode(Reply), Req)), State}
+    end;
+%% ------------------------------------------------------------
+%% FINALIZE: verify initiator signer; optionally wrap in paying_for; post
+%% ------------------------------------------------------------
+do_action_tx(
+    #{
+        action := <<"finalize_create_channel">>,
+        unsigned_tx := Unsigned,
+        signed_tx := Signed
+    } = J,
+    State,
+    Req
+) ->
+    PayFor = maps:get(payfor, J, true),
+    case damage_channels:finalize_channel_create(Unsigned, Signed, PayFor) of
+        {ok, #{<<"tx_hash">> := _TxHash} = R} ->
+            Reply = R#{status => <<"ok">>},
+            {stop, cowboy_req:reply(200, cowboy_req:set_resp_body(jsx:encode(Reply), Req)), State};
+        {error, Reason} ->
+            Reply = #{status => <<"notok">>, error => list_to_binary(Reason)},
+            {stop, cowboy_req:reply(400, cowboy_req:set_resp_body(jsx:encode(Reply), Req)), State}
+    end;
+do_action_tx(
+    #{
+        feature := FeatureData,
+        signed_tx := SignedTx,
+        concurrency := Concurrency,
+        address := AeAccount
+    } = Json,
+    State,
+    Req
+) ->
+    ?LOG_DEBUG("signed tx received bytes=~p", [byte_size(to_bin(SignedTx))]),
+    {ok, #{"tx_hash" := ContractCallTxHash}} = vanillae:post_tx(SignedTx),
+    #{
+        "caller_id" := _,
+        "caller_nonce" := _,
+        "contract_id" := _,
+        "gas_price" := _GasPrice,
+        "gas_used" := _GasUsed,
+        "height" := _Height,
+        "log" := _Log,
+        "return_type" := <<"ok">>,
+        "return_value" := {}
+    } = damage_ae:wait_tx(ContractCallTxHash),
+    ExecutionContext = execution_context_from_request(
+        Json,
+        #{
+            feature => FeatureData,
+            color_formatter => maps:get(color_formatter, Json, false),
+            concurrency => Concurrency,
+            stream => maps:get(stream, Json, nostream)
+        }
+    ),
+    case
+        execute_bdd(
+            ExecutionContext,
+            maps:put(public_key, AeAccount, State),
+            Req
+        )
+    of
+        {Status, Response} ->
+            {Status, Response}
+    end;
+%do_action_tx(
+%    #{feature := _FeatureData, concurrency := _Concurrency, address := AeAccount} = Json, State, Req
+%) ->
+%    #{public_key := NodeAeAccount} = secrets:node_keypair(),
+%
+%    case
+%        execute_bdd(
+%            maps:put(stream, nostream, Json), State, Req, [{dry_run, true}]
+%        )
+%    of
+%        {200, DryRunRecord} ->
+%            #{cost := Cost, feature_hash := FeatureHash, report_hash := ReportHash} =
+%                DryRunRecord,
+%            Args = [
+%                NodeAeAccount,
+%                integer_to_list(round(Cost)),
+%                binary_to_list(FeatureHash),
+%                binary_to_list(ReportHash)
+%            ],
+%            ?LOG_DEBUG("creating execute tx ~p", [Args]),
+%            Tx = damage_ae:contract_call_prepare_tx(
+%                #{public_key => AeAccount},
+%                ?DAMAGE_TOKEN_CONTRACT,
+%                "contracts/token.aes",
+%                "spend",
+%                Args
+%            ),
+%            {200, maps:put(tx, Tx, maps:put(cost, Cost, DryRunRecord))};
+%        {Status, Response} ->
+%            {Status, Response}
+%    end;
+%% Initialise a job in the channel and snapshot after execution
+do_action_tx(
+    #{
+        feature := _FeatureData,
+        concurrency := _Concurrency,
+        address := AeAccount,
+        channel_id := ChannelId
+    } = ContextIn0,
+    State,
+    Req
+) ->
+    %% Node’s AE account (responder in the channel)
+    %#{public_key := NodeAeAccount} = secrets:node_keypair(),
+
+    %% 1) Dry-run to get cost + hashes (no side effects)
+    ContextIn = effective_context(ContextIn0, State),
+    DryOverrides = [{dry_run, true}],
+    DryContext = maps:put(stream, nostream, ContextIn),
+    FeatureData = maps:get(feature, ContextIn),
+
+    case
+        execute_bdd_once(
+            get_config(DryOverrides, DryContext, Req),
+            DryContext,
+            FeatureData
+        )
+    of
+        {200, DryRunRecord} ->
+            #{
+                cost := Cost,
+                feature_hash := FeatureHash,
+                report_hash := ReportHash
+            } = DryRunRecord,
+
+            %% 2) Initialise the job inside the channel (JobRegistry via channel contract call)
+            %%    damage_channels:init_job/3 should:
+            %%      - ensure/reuse an AE state-channel between AeAccount and NodeAeAccount
+            %%      - call JobRegistry (off-chain) to register the job
+            %%      - return job_id and the channel pid/info
+            case
+                damage_channels:init_job(
+                    ChannelId,
+                    #{
+                        cost => Cost,
+                        feature_hash => FeatureHash,
+                        report_hash_dry_run => ReportHash
+                    }
+                )
+            of
+                {ok, #{job_id := JobId, channel_pid := ChanPid} = InitInfo} ->
+                    %% 3) Execute the BDD for real, charging via the channel
+                    %%    execute_bdd/5 can use job_id + channel_pid to:
+                    %%      - call damage_jobs:record_step/6 via the channel
+                    %%      - update JobRegistry off-chain per step
+                    ExecOpts = [
+                        {dry_run, false},
+                        {job_id, JobId},
+                        {channel_pid, ChanPid}
+                    ],
+                    {200, ExecResult} =
+                        execute_bdd_once(
+                            get_stream_config(ExecOpts, ContextIn, Req), ContextIn, FeatureData
+                        ),
+                    %#{
+                    %%  public_key := AeAccount,
+                    %%  feature_hash := FeatureHash,
+                    %%  report_hash := ReportHash,
+                    %  node_public_key := NodePublicKey
+                    % } = ExecResult,
+                    %Spend = maps:get(step_spend, ExecResult, 1 * math:pow(10, ?DAMAGE_DECIMALS)),
+                    %ok = damage_channels:channel_contract_call(
+                    %?DAMAGE_TOKEN_CONTRACT,
+                    %"contracts/token.aes",
+                    %"spend",
+                    %[
+                    %    binary_to_list(NodePublicKey),
+                    %    integer_to_list(float_to_full_integer(Spend)),
+                    %    FeatureHash,
+                    %    ReportHash
+                    %]),
+
+                    %% 4) Finalise by snapshotting latest channel state on-chain
+                    %%    damage_channels:finalize_snapshot/2 should:
+                    %%      - fetch {channel_id, round, state_hash} from ChanPid
+                    %%      - build & post channel_snapshot_solo_tx (or force_progress if needed)
+                    ?LOG_INFO("Execition compl;ete finalizing ~p", [ExecResult]),
+                    SnapRes = damage_channels:finalize_snapshot(
+                        ChanPid,
+                        #{from_id => AeAccount}
+                    ),
+                    ?LOG_INFO("Execution compl;ete finalized ~p", [SnapRes]),
+
+                    Reply = #{
+                        status => <<"ok">>,
+                        job_id => JobId,
+                        dry_run => DryRunRecord,
+                        init => InitInfo,
+                        exec => ExecResult,
+                        snapshot => SnapRes
+                    },
+                    ?LOG_DEBUG("execute_bdd wallet channel success ~p", [Reply]),
+                    {200, Reply};
+                {error, Reason} ->
+                    ?LOG_ERROR("execute_bdd wallet channel success ~p", [Reason]),
+                    {500, #{status => <<"notok">>, error => Reason}}
+            end;
+        {Status, Response} ->
+            {Status, Response}
+    end;
+do_action_tx(#{signature := Sig, message := Message, pubkey := PubKey} = _Json, _State, _Req) ->
+    case vanillae:verify_signature(Sig, Message, PubKey) of
+        {ok, _Result} ->
+            case decode_json(Message) of
+                {ok, #{amount := Amount}} ->
+                    Description = <<"Pay amount for amount of DAMAGE">>,
+                    {ok, Timestamp} = datestring:format(
+                        "YmdHMS", erlang:localtime()
+                    ),
+                    Label0 = list_to_binary("buy:" ++ Timestamp ++ ":"),
+                    Label = <<Label0/binary, PubKey/binary>>,
+
+                    #{
+                        payment_hash := PaymentHash,
+                        expires_at := Expiry,
+                        bolt11 := Bolt11,
+                        payment_secret := _PaymentSecret,
+                        created_index := _CreatedIndex
+                    } =
+                        damage_cln:create_invoice(
+                            Amount * 1000, Description, 3600, Label
+                        ),
+                    ?LOG_INFO(
+                        "Created DAMAGE purchase invoice payment_hash=~p expires_at=~p",
+                        [PaymentHash, Expiry]
+                    ),
+                    {
+                        200,
+                        #{payment_request => Bolt11}
+                    };
+                {ok, DecodeOther} ->
+                    {
+                        400,
+                        #{message => DecodeOther}
+                    };
+                {error, {Class, DecodeReason, Stack}} ->
+                    ?LOG_ERROR("Json decoding failed ~p:~p ~p", [Class, DecodeReason, Stack]),
+                    {
+                        400,
+                        #{message => <<"Json decoding failed.">>}
+                    }
+            end;
+        {error, Reason} ->
+            {
+                400,
+                #{
+                    message =>
+                        Reason
+                }
+            }
+    end.
+from_json(Req0, #{action := ipfs_ls} = State) ->
+    {ok, Data, Req1} = cowboy_req:read_body(Req0),
+    case decode_json(Data) of
+        {ok, Json} when is_map(Json) ->
+            case maps:get(path, Json, undefined) of
+                undefined ->
+                    Req = cowboy_req:reply(
+                        400,
+                        #{<<"content-type">> => <<"application/json">>},
+                        jsx:encode(#{status => <<"notok">>, error => <<"missing_path">>}),
+                        Req1
+                    ),
+                    {stop, Req, State};
+                Path ->
+                    {Status, Response} = ipfs_ls_response(Path),
+                    Req = cowboy_req:reply(
+                        Status,
+                        #{<<"content-type">> => <<"application/json">>},
+                        jsx:encode(Response),
+                        Req1
+                    ),
+                    {stop, Req, State}
+            end;
+        {error, DecodeError} ->
+            json_decode_failed(Req1, State, "JSON decoding failed", DecodeError);
+        {ok, _Other} ->
+            Req = cowboy_req:reply(
+                400,
+                #{<<"content-type">> => <<"application/json">>},
+                jsx:encode(#{status => <<"notok">>, error => <<"invalid_json_payload">>}),
+                Req1
+            ),
+            {stop, Req, State}
+    end;
+from_json(Req0, #{action := tx} = State) ->
+    {ok, Data, Req1} = cowboy_req:read_body(Req0),
+    case decode_json(Data) of
+        {error, DecodeError} ->
+            json_decode_failed(Req1, State, "Json decoding failed", DecodeError);
+        {ok, Json0} when is_map(Json0) ->
+            case hydrate_feature_json(Json0) of
+                {ok, HydratedJson} ->
+                    case normalize_execution_json_context(HydratedJson) of
+                        {ok, Json} ->
+                            {Status0, Response0} = do_action_tx_throttled(Json, State, Req1),
+                            {
+                                stop,
+                                cowboy_req:reply(
+                                    Status0,
+                                    cowboy_req:set_resp_body(jsx:encode(Response0), Req1)
+                                ),
+                                State
+                            };
+                        {error, Reason} ->
+                            runtime_context_error_reply(Req1, State, Reason)
+                    end;
+                {error, Why} ->
+                    ipfs_hydration_error_reply(Req1, State, Why)
+            end;
+        {ok, _Other} ->
+            Req2 = cowboy_req:reply(
+                400,
+                #{<<"content-type">> => <<"text/plain">>},
+                <<"Missing or invalid JSON payload.">>,
+                Req1
+            ),
+            {stop, Req2, State}
+    end;
+from_json(Req0, State) ->
+    {ok, Data, Req1} = cowboy_req:read_body(Req0),
+    case decode_json(Data) of
+        {error, DecodeError} ->
+            json_decode_failed(Req1, State, "JSON decoding failed", DecodeError);
+        {ok, Json0} when is_map(Json0) ->
+            case hydrate_feature_json(Json0) of
+                {ok, Json} ->
+                    case normalize_execution_json_context(Json) of
+                        {ok, ExecutionJson0} ->
+                            case json_stream_mode(ExecutionJson0) of
+                                {error, Reason} ->
+                                    stream_mode_error_reply(Req1, State, Reason);
+                                StreamMode ->
+                                    ExecutionJson = maps:put(stream, StreamMode, ExecutionJson0),
+                                    execute_feature_http(ExecutionJson, State, Req1, StreamMode)
+                            end;
+                        {error, Reason} ->
+                            runtime_context_error_reply(Req1, State, Reason)
+                    end;
+                {error, Why} ->
+                    ipfs_hydration_error_reply(Req1, State, Why)
+            end
+    end.
+
+from_html(Req0, State) ->
+    try
+        {ok, Body, Req1} = cowboy_req:read_body(Req0),
+        Concurrency = normalize_concurrency(
+            cowboy_req:header(<<"x-damage-concurrency">>, Req1, <<"1">>)
+        ),
+        ColorFormatter =
+            case cowboy_req:match_qs([{color, [], <<"true">>}], Req1) of
+                #{color := <<"true">>} -> true;
+                _ -> false
+            end,
+        ContinueOnFail =
+            case cowboy_req:header(<<"x-damage-continue-on-fail">>, Req1, <<"false">>) of
+                <<"true">> -> true;
+                <<"1">> -> true;
+                _ -> false
+            end,
+        case stream_mode(Req1, Concurrency) of
+            {error, StreamReason} ->
+                stream_mode_error_reply(Req1, State, StreamReason);
+            StreamMode ->
+                case runtime_context_from_headers(Req1) of
+                    {error, ContextReason} ->
+                        runtime_context_error_reply(Req1, State, ContextReason);
+                    {ok, RuntimeContext} ->
+                        BaseContext = #{
+                            feature => Body,
+                            concurrency => Concurrency,
+                            stream => StreamMode,
+                            continue_on_fail => ContinueOnFail,
+                            color_formatter => ColorFormatter
+                        },
+                        Context = maps:merge(RuntimeContext, BaseContext),
+                        execute_feature_http(Context, State, Req1, StreamMode)
+                end
+        end
+    catch
+        Class:Reason:Stack ->
+            ?LOG_ERROR("from_html request preparation crashed ~p:~p ~p", [
+                Class, Reason, Stack
+            ]),
+            reply_execution_crash(Req0, State, Class, Reason)
+    end.
+
+%% Own the complete streaming lifecycle in one place. A caller must never pass
+%% a normal Cowboy request to get_stream_config/3 and expect the formatter to
+%% create the stream on its behalf.
+%%
+%% Check the node lock before opening a Cowboy stream. Once stream_reply/3 has
+%% emitted status 200 the HTTP status cannot be changed, so lock state belongs
+%% at this transport boundary rather than in a later formatter footer.
+execute_feature_http(Context0, State, Req0, StreamMode) ->
+    case node_secrets_ready() of
+        true ->
+            execute_feature_http_ready(Context0, State, Req0, StreamMode);
+        false ->
+            node_secrets_unavailable_reply(Req0, State, node_locked)
+    end.
+
+execute_feature_http_ready(Context0, State, Req0, nostream) ->
+    Context = maps:put(stream, nostream, Context0),
+    try execute_bdd(Context, State, Req0) of
+        {Status, Response} ->
+            Req = cowboy_req:reply(
+                Status,
+                #{
+                    <<"content-type">> => <<"application/json">>,
+                    <<"cache-control">> => <<"no-cache">>
+                },
+                jsx:encode(Response),
+                Req0
+            ),
+            {stop, Req, State}
+    catch
+        Class:Reason:Stack ->
+            ?LOG_ERROR("non-stream execution crashed ~p:~p ~p", [Class, Reason, Stack]),
+            reply_execution_crash(Req0, State, Class, Reason)
+    end;
+execute_feature_http_ready(Context0, State, Req0, maybe_stream) ->
+    Context = maps:put(stream, maybe_stream, Context0),
+    %% Once these headers are sent, the transport status is necessarily 200.
+    %% Any later execution error is represented by stream_final_body/2, whose
+    %% footer carries the real execution status.
+    ReqStream = cowboy_req:stream_reply(
+        200,
+        #{
+            <<"content-type">> => <<"text/plain; charset=utf-8">>,
+            <<"cache-control">> => <<"no-cache, no-transform">>,
+            <<"x-damage-stream">> => <<"true">>,
+            <<"x-accel-buffering">> => <<"no">>
+        },
+        Req0
+    ),
+    %% Do not leave a long-running execution completely silent. The execution
+    %% worker produces the normal formatter/progress output while this handler
+    %% process owns the transport and emits a small heartbeat. This keeps curl,
+    %% reverse proxies and TLS intermediaries from treating a quiet build/test
+    %% as a dead connection.
+    HeartbeatMs = stream_heartbeat_interval(),
+    cowboy_req:stream_body(
+        <<"[damagebdd] execution started; streaming progress follows\n">>,
+        nofin,
+        ReqStream
+    ),
+    Parent = self(),
+    Worker = spawn_monitor(fun() ->
+        Result =
+            try execute_bdd(Context, State, ReqStream) of
+                Value -> {ok, Value}
+            catch
+                Class:Reason:Stack ->
+                    {crash, Class, Reason, Stack}
+            end,
+        Parent ! {damage_stream_execution, self(), Result}
+    end),
+    stream_execution_loop(
+        ReqStream,
+        Worker,
+        State,
+        erlang:monotonic_time(millisecond),
+        HeartbeatMs
+    ).
+
+stream_heartbeat_interval() ->
+    case application:get_env(damage, http_stream_heartbeat_ms, 10000) of
+        Value when is_integer(Value), Value >= 1000 -> Value;
+        _ -> 10000
+    end.
+
+stream_execution_loop(
+    ReqStream,
+    {Worker, MonitorRef} = Monitor,
+    State,
+    StartedMs,
+    HeartbeatMs
+) ->
+    receive
+        {damage_stream_execution, Worker, {ok, {Status, Response}}} ->
+            FinalBody = stream_final_body(Status, Response),
+            Req = cowboy_req:stream_body(FinalBody, fin, ReqStream),
+            {stop, Req, State};
+        {damage_stream_execution, Worker, {crash, Class, Reason, Stack}} ->
+            ?LOG_ERROR("stream execution crashed ~p:~p ~p", [Class, Reason, Stack]),
+            Footer = stream_crash_footer(Class, Reason),
+            Req = cowboy_req:stream_body(Footer, fin, ReqStream),
+            {stop, Req, State};
+        {'DOWN', MonitorRef, process, Worker, Reason} ->
+            %% A worker can die before delivering its result. Never leave the
+            %% HTTP connection hanging forever in that case.
+            ?LOG_ERROR("stream execution worker died reason=~p", [Reason]),
+            Footer = stream_crash_footer(error, Reason),
+            Req = cowboy_req:stream_body(Footer, fin, ReqStream),
+            {stop, Req, State}
+    after HeartbeatMs ->
+        NowMs = erlang:monotonic_time(millisecond),
+        Elapsed = max(0, NowMs - StartedMs),
+        Heartbeat = stream_heartbeat_body(Elapsed),
+        cowboy_req:stream_body(Heartbeat, nofin, ReqStream),
+        stream_execution_loop(
+            ReqStream,
+            Monitor,
+            State,
+            StartedMs,
+            HeartbeatMs
+        )
+    end.
+
+stream_heartbeat_body(ElapsedMs) ->
+    iolist_to_binary([
+        "\n[damagebdd] heartbeat: execution still running elapsed_ms=",
+        integer_to_binary(ElapsedMs),
+        "\n"
+    ]).
+
+stream_mode_error_reply(Req0, State, Reason) ->
+    Req = cowboy_req:reply(
+        400,
+        #{<<"content-type">> => <<"application/json">>},
+        jsx:encode(#{
+            status => <<"notok">>,
+            error => <<"INVALID_STREAM_MODE">>,
+            message => Reason
+        }),
+        Req0
+    ),
+    {stop, Req, State}.
+
+reply_execution_crash(Req0, State, Class, Reason) ->
+    ReleaseFields = release_http_fields(safe_release_info()),
+    {Status, ErrorCode, Message} =
+        case secrets_unavailable_reason(Reason) of
+            true ->
+                {
+                    503,
+                    <<"NODE_SECRETS_LOCKED">>,
+                    <<"Node secrets are locked. Unlock the node and retry the request.">>
+                };
+            false ->
+                {500, <<"internal_error">>, <<"Internal execution error.">>}
+        end,
+    Body = maps:merge(
+        ReleaseFields,
+        #{
+            status => <<"notok">>,
+            error => ErrorCode,
+            message => Message,
+            class => to_bin(Class),
+            reason => secret_reason_bin(Reason),
+            retryable => Status =:= 503
+        }
+    ),
+    Headers0 = #{
+        <<"content-type">> => <<"application/json">>,
+        <<"cache-control">> => <<"no-store">>
+    },
+    Headers =
+        case Status of
+            503 -> maps:put(<<"retry-after">>, <<"5">>, Headers0);
+            _ -> Headers0
+        end,
+    Req = cowboy_req:reply(Status, Headers, jsx:encode(Body), Req0),
+    {stop, Req, State}.
+
+stream_crash_footer(Class, Reason) ->
+    ReleaseFields = release_http_fields(safe_release_info()),
+    {HttpStatus, ErrorCode} =
+        case secrets_unavailable_reason(Reason) of
+            true -> {503, <<"NODE_SECRETS_LOCKED">>};
+            false -> {500, <<"internal_error">>}
+        end,
+    iolist_to_binary([
+        "\n---\n",
+        "status: notok\n",
+        "http_status: ",
+        integer_to_binary(HttpStatus),
+        "\n",
+        "error: ",
+        ErrorCode,
+        "\n",
+        "class: ",
+        printable_stream_value(Class),
+        "\n",
+        "reason: ",
+        secret_reason_bin(Reason),
+        "\n",
+        stream_release_lines(ReleaseFields),
+        "\n"
+    ]).
+
+to_html(Req, #{action := version} = State) ->
+    to_json(Req, State);
+to_html(Req, #{action := node_balances} = State) ->
+    to_json(Req, State);
+to_html(Req, State) ->
+    Body = damage_utils:load_template("api.mustache", #{body => <<"Test">>}),
+    {Body, Req, State}.
+
+onion_version_info() ->
+    try damage_tor:onion_address() of
+        {ok, Address0} ->
+            Address = to_bin(Address0),
+            #{
+                available => true,
+                address => Address,
+                url => <<"http://", Address/binary, "/">>
+            };
+        {error, Reason} ->
+            ?LOG_DEBUG("Tor onion address unavailable reason=~p", [Reason]),
+            #{available => false}
+    catch
+        Class:Reason:Stack ->
+            ?LOG_WARNING(
+                "Tor onion address lookup failed error=~p:~p stack=~p",
+                [Class, Reason, Stack]
+            ),
+            #{available => false}
+    end.
+
+to_json(Req, #{action := version} = State) ->
+    {
+        jsx:encode(#{
+            ok => true,
+            version => safe_release_info(),
+            onion => onion_version_info()
+        }),
+        Req,
+        State
+    };
+to_json(Req, #{action := node_balances} = State) ->
+    case secrets:node_keypair() of
+        #{public_key := PubKey, private_key := _NodePrivateKey} ->
+            %% A usable keypair is the readiness signal. Individual balance
+            %% providers can be degraded without making the node "locked".
+            NodeDamageBalance = safe_json_call(fun damage_ae:node_damage_balance/0),
+            NodeAeBalance = safe_json_call(fun damage_ae:node_ae_balance/0),
+            NodeBtcBalance = safe_json_call(fun damage_cln:get_node_balance/0),
+            {
+                jsx:encode(#{
+                    ok => true,
+                    public_key => to_bin(PubKey),
+                    damage_balance => NodeDamageBalance,
+                    ae_balance => NodeAeBalance,
+                    btc_balance => NodeBtcBalance
+                }),
+                Req,
+                State
+            };
+        {error, Error} ->
+            Body = jsx:encode(#{
+                ok => false,
+                status => <<"notok">>,
+                error =>
+                    case secrets_unavailable_reason(Error) of
+                        true -> <<"NODE_SECRETS_LOCKED">>;
+                        false -> <<"NODE_KEYPAIR_UNAVAILABLE">>
+                    end,
+                reason => secret_reason_bin(Error),
+                retryable => true
+            }),
+            Req1 = cowboy_req:reply(
+                503,
+                #{
+                    <<"content-type">> => <<"application/json">>,
+                    <<"cache-control">> => <<"no-store">>,
+                    <<"retry-after">> => <<"5">>
+                },
+                Body,
+                Req
+            ),
+            {stop, Req1, State}
+    end;
+to_json(Req0, State) ->
+    Body = <<"{\"rest\": \"Hello World!\", \"status\": \"ok\"}">>,
+    %Req1 = cowboy_req:set_resp_header(<<"X-CSRFToken">>, <<"testtoken">>, Req0),
+    %Req =
+    %  cowboy_req:set_resp_header(<<"X-SessionID">>, <<"testsessionid">>, Req1),
+    {Body, Req0, State}.
+
+to_text(Req, #{action := version} = State) ->
+    to_json(Req, State);
+to_text(Req, State) ->
+    {<<"REST Hello World as text!">>, Req, State}.
+
+safe_json_call(Fun) when is_function(Fun, 0) ->
+    try Fun() of
+        Value -> json_safe_runtime_value(Value)
+    catch
+        Class:Reason ->
+            #{available => false, error => to_bin(io_lib:format("~p:~p", [Class, Reason]))}
+    end.
+
+json_safe_runtime_value({error, Reason}) ->
+    #{available => false, error => to_bin(io_lib:format("~p", [Reason]))};
+json_safe_runtime_value({ok, Value}) ->
+    json_safe_runtime_value(Value);
+json_safe_runtime_value(Map) when is_map(Map) ->
+    maps:from_list([
+        {json_safe_runtime_key(K), json_safe_runtime_value(V)}
+     || {K, V} <- maps:to_list(Map)
+    ]);
+json_safe_runtime_value(Tuple) when is_tuple(Tuple) ->
+    [json_safe_runtime_value(V) || V <- tuple_to_list(Tuple)];
+json_safe_runtime_value(List) when is_list(List) ->
+    [json_safe_runtime_value(V) || V <- List];
+json_safe_runtime_value(true) ->
+    true;
+json_safe_runtime_value(false) ->
+    false;
+json_safe_runtime_value(null) ->
+    null;
+json_safe_runtime_value(Value) when is_atom(Value) -> atom_to_binary(Value, utf8);
+json_safe_runtime_value(Value) ->
+    Value.
+
+json_safe_runtime_key(Key) when is_atom(Key); is_binary(Key) -> Key;
+json_safe_runtime_key(Key) when is_list(Key) -> unicode:characters_to_binary(Key);
+json_safe_runtime_key(Key) -> to_bin(io_lib:format("~p", [Key])).

@@ -1,0 +1,535 @@
+/* Scheduled verification dashboard workspace.
+ * Keep this file scoped to #schedules-tab so its controls remain isolated
+ * from global application styles. */
+.damage-dashboard #schedules-tab {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  margin: 0;
+  padding: 28px 0;
+  overflow: visible;
+}
+
+.damage-dashboard #schedules-tab .schedules-v2-root,
+.damage-dashboard #schedules-tab .sv2-shell,
+.damage-dashboard #schedules-tab .sv2-modal {
+  --sv2-bg: var(--ws-bg, #0c111b);
+  --sv2-panel: var(--ws-panel, #141c29);
+  --sv2-input: var(--ws-input, #0d1420);
+  --sv2-raised: var(--ws-raised, #1b2637);
+  --sv2-border: var(--ws-line, #2d3b4e);
+  --sv2-text: var(--ws-text, #eef3fa);
+  --sv2-muted: var(--ws-muted, #a7b6c9);
+  --sv2-accent: var(--ws-accent, #b0e274);
+  --sv2-accent-text: var(--ws-accent-text, #17250c);
+  --sv2-danger: var(--ws-error, #ffb5b5);
+  --sv2-warning: #f4ca7a;
+  --sv2-info: #9fc7ff;
+  color: var(--sv2-text);
+}
+
+.damage-dashboard #schedules-tab .schedules-v2-root { min-width: 0; }
+.damage-dashboard #schedules-tab .sv2-bootstrap {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  color: var(--ws-muted);
+  border: 1px dashed var(--ws-line);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ws-panel) 70%, transparent);
+}
+.damage-dashboard #schedules-tab .sv2-shell {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  font-family: inherit;
+}
+
+/* Explicitly beat legacy #schedules-tab button[type="button"] rules. */
+.damage-dashboard #schedules-tab .sv2-shell button,
+.damage-dashboard #schedules-tab .sv2-modal button {
+  appearance: none;
+  min-height: 36px;
+  margin: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--sv2-border);
+  border-radius: 7px;
+  background: var(--sv2-raised);
+  color: var(--sv2-text);
+  box-shadow: none;
+  font: 550 12px/1.35 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  cursor: pointer;
+  transition: background-color .12s ease, border-color .12s ease, color .12s ease, opacity .12s ease;
+  transform: none;
+}
+.damage-dashboard #schedules-tab .sv2-shell button:hover,
+.damage-dashboard #schedules-tab .sv2-modal button:hover {
+  background: #28364a;
+  border-color: #697b90;
+  box-shadow: none;
+  transform: none;
+}
+.damage-dashboard #schedules-tab .sv2-shell button:focus-visible,
+.damage-dashboard #schedules-tab .sv2-modal button:focus-visible,
+.damage-dashboard #schedules-tab .sv2-modal :is(input, textarea, select):focus-visible {
+  outline: 3px solid var(--sv2-accent);
+  outline-offset: 2px;
+}
+.damage-dashboard #schedules-tab .sv2-shell button:disabled,
+.damage-dashboard #schedules-tab .sv2-modal button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+  transform: none;
+}
+.damage-dashboard #schedules-tab .sv2-shell .sv2-primary,
+.damage-dashboard #schedules-tab .sv2-modal .sv2-primary {
+  background: var(--sv2-accent);
+  border-color: var(--sv2-accent);
+  color: var(--sv2-accent-text);
+  font-weight: 750;
+}
+.damage-dashboard #schedules-tab .sv2-shell .sv2-primary:hover,
+.damage-dashboard #schedules-tab .sv2-modal .sv2-primary:hover {
+  background: #c5ef95;
+  border-color: #c5ef95;
+}
+.damage-dashboard #schedules-tab .sv2-shell .sv2-secondary,
+.damage-dashboard #schedules-tab .sv2-modal .sv2-secondary { background: var(--sv2-raised); }
+.damage-dashboard #schedules-tab .sv2-shell .sv2-danger,
+.damage-dashboard #schedules-tab .sv2-modal .sv2-danger {
+  background: transparent;
+  color: #ffc2c8;
+  border-color: #75454c;
+}
+.damage-dashboard #schedules-tab .sv2-shell .sv2-danger:hover,
+.damage-dashboard #schedules-tab .sv2-modal .sv2-danger:hover { background: #2a191d; }
+.damage-dashboard #schedules-tab .sv2-shell .sv2-link,
+.damage-dashboard #schedules-tab .sv2-modal .sv2-link {
+  min-height: auto;
+  padding-inline: 7px;
+  background: transparent;
+  border-color: transparent;
+  color: #c1d7f5;
+}
+.damage-dashboard #schedules-tab .sv2-shell .sv2-link:hover,
+.damage-dashboard #schedules-tab .sv2-modal .sv2-link:hover {
+  background: transparent;
+  border-color: transparent;
+  text-decoration: underline;
+}
+
+.damage-dashboard #schedules-tab .sv2-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin: 0 0 24px;
+}
+.damage-dashboard #schedules-tab .sv2-heading h2 {
+  margin: 4px 0 7px;
+  color: var(--sv2-text);
+  font-size: clamp(25px, 2.4vw, 31px);
+  font-weight: 650;
+  letter-spacing: -.7px;
+}
+.damage-dashboard #schedules-tab .sv2-heading p { margin: 0; color: var(--sv2-muted); font-size: 13px; }
+.damage-dashboard #schedules-tab .sv2-eyebrow {
+  margin: 0;
+  color: var(--sv2-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+.damage-dashboard #schedules-tab .sv2-heading-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+.damage-dashboard #schedules-tab .sv2-chain-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 280px;
+  min-height: 34px;
+  padding: 6px 10px;
+  overflow: hidden;
+  border: 1px solid var(--sv2-border);
+  border-radius: 999px;
+  color: var(--sv2-muted);
+  background: transparent;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.damage-dashboard #schedules-tab .sv2-chain-pill::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: #708096;
+}
+.damage-dashboard #schedules-tab .sv2-chain-pill.ok { color: #d8edc3; border-color: #506a45; }
+.damage-dashboard #schedules-tab .sv2-chain-pill.ok::before { background: var(--sv2-accent); }
+.damage-dashboard #schedules-tab .sv2-chain-pill.warn { color: #f4d99a; border-color: #665327; }
+.damage-dashboard #schedules-tab .sv2-chain-pill.warn::before { background: #d29922; }
+
+.damage-dashboard #schedules-tab .sv2-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 18px;
+  flex-wrap: wrap;
+}
+.damage-dashboard #schedules-tab .sv2-range {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--sv2-border);
+  border-radius: 9px;
+  background: var(--sv2-input);
+}
+.damage-dashboard #schedules-tab .sv2-range button {
+  min-height: 30px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #c4d1e2;
+}
+.damage-dashboard #schedules-tab .sv2-range button:hover { background: #1b2636; border-color: transparent; }
+.damage-dashboard #schedules-tab .sv2-range button.active {
+  background: #25364c;
+  color: var(--sv2-text);
+  box-shadow: inset 0 0 0 1px #38506f;
+}
+.damage-dashboard #schedules-tab .sv2-custom-range { display: flex; align-items: center; gap: 7px; color: var(--sv2-muted); }
+.damage-dashboard #schedules-tab .sv2-custom-range input,
+.damage-dashboard #schedules-tab .sv2-modal :is(input, textarea, select) {
+  min-height: 36px;
+  border: 1px solid var(--sv2-border);
+  border-radius: 7px;
+  background: var(--sv2-input);
+  color: var(--sv2-text);
+  box-shadow: none;
+  font: inherit;
+}
+.damage-dashboard #schedules-tab .sv2-custom-range input { padding: 7px 9px; color-scheme: dark; }
+
+.damage-dashboard #schedules-tab .sv2-stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0 0 12px;
+}
+.damage-dashboard #schedules-tab .sv2-stat,
+.damage-dashboard #schedules-tab .sv2-chart-card,
+.damage-dashboard #schedules-tab .sv2-schedule {
+  min-width: 0;
+  border: 1px solid var(--sv2-border);
+  border-radius: 12px;
+  background: var(--sv2-panel);
+  box-shadow: none;
+}
+.damage-dashboard #schedules-tab .sv2-stat { position: relative; padding: 15px 16px 14px; overflow: hidden; }
+.damage-dashboard #schedules-tab .sv2-stat::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #304158;
+}
+.damage-dashboard #schedules-tab .sv2-stat:first-child::before { background: #6f8c55; }
+.damage-dashboard #schedules-tab :is(.sv2-stat, .sv2-schedule-grid, .sv2-preview-grid, .sv2-lock-row) label {
+  display: block;
+  color: var(--sv2-muted);
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: .9px;
+  text-transform: uppercase;
+}
+.damage-dashboard #schedules-tab .sv2-stat strong {
+  display: block;
+  margin: 6px 0 2px;
+  color: var(--sv2-text);
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+.damage-dashboard #schedules-tab :is(.sv2-stat, .sv2-schedule-grid, .sv2-lock-row) small { color: var(--sv2-muted); font-size: 10px; }
+
+.damage-dashboard #schedules-tab .sv2-chart-card { padding: 16px; margin: 0 0 22px; }
+.damage-dashboard #schedules-tab .sv2-card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 0 0 10px;
+  color: #dce6f4;
+  font-size: 12px;
+  font-weight: 650;
+}
+.damage-dashboard #schedules-tab .sv2-card-title small { color: var(--sv2-muted); font-weight: 400; }
+.damage-dashboard #schedules-tab .sv2-chart { min-height: 150px; overflow-x: auto; }
+.damage-dashboard #schedules-tab .sv2-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 7px;
+  min-width: max-content;
+  height: 118px;
+  padding: 6px 0 0;
+  border-bottom: 1px solid #263548;
+  background-image: linear-gradient(to bottom, #26354855 1px, transparent 1px);
+  background-size: 100% 25%;
+}
+.damage-dashboard #schedules-tab .sv2-bar-col {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+  width: 29px;
+  height: 112px;
+}
+.damage-dashboard #schedules-tab .sv2-bar-stack { display: flex; align-items: flex-end; gap: 2px; width: 18px; height: 89px; }
+.damage-dashboard #schedules-tab .sv2-bar-stack i { display: block; flex: 1; min-height: 2px; border-radius: 2px 2px 0 0; }
+.damage-dashboard #schedules-tab .sv2-bar-stack i.runs,
+.damage-dashboard #schedules-tab .sv2-chart-legend i.runs { background: #7aa7dc; }
+.damage-dashboard #schedules-tab .sv2-bar-stack i.spend,
+.damage-dashboard #schedules-tab .sv2-chart-legend i.spend { background: var(--sv2-accent); }
+.damage-dashboard #schedules-tab .sv2-bar-col span { color: #7f91a8; font-size: 8px; white-space: nowrap; transform: rotate(-35deg); }
+.damage-dashboard #schedules-tab .sv2-chart-legend { display: flex; gap: 15px; margin-top: 10px; color: var(--sv2-muted); font-size: 10px; }
+.damage-dashboard #schedules-tab .sv2-chart-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.damage-dashboard #schedules-tab .sv2-chart-legend i { width: 8px; height: 8px; border-radius: 2px; }
+
+.damage-dashboard #schedules-tab .sv2-list-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 10px;
+}
+.damage-dashboard #schedules-tab .sv2-list-heading > div { display: flex; align-items: baseline; gap: 9px; }
+.damage-dashboard #schedules-tab .sv2-list-heading h3 { margin: 0; color: var(--sv2-text); font-size: 15px; font-weight: 650; }
+.damage-dashboard #schedules-tab .sv2-list-heading span { color: var(--sv2-muted); font-size: 10px; }
+.damage-dashboard #schedules-tab .sv2-list { display: grid; gap: 10px; }
+.damage-dashboard #schedules-tab .sv2-schedule { padding: 17px 18px 15px; }
+.damage-dashboard #schedules-tab .sv2-schedule-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.damage-dashboard #schedules-tab .sv2-feature-title { color: var(--sv2-text); font-size: 15px; font-weight: 680; }
+.damage-dashboard #schedules-tab .sv2-feature-meta { display: flex; align-items: center; gap: 5px; margin-top: 4px; color: var(--sv2-muted); }
+.damage-dashboard #schedules-tab .sv2-feature-meta code { color: #9eb0c7; font-size: 10px; }
+.damage-dashboard #schedules-tab .sv2-shell .sv2-copy {
+  min-height: auto;
+  padding: 2px 5px;
+  border: 0;
+  background: transparent;
+  color: var(--sv2-muted);
+}
+.damage-dashboard #schedules-tab .sv2-shell .sv2-copy:hover { background: transparent; color: var(--sv2-text); }
+.damage-dashboard #schedules-tab .sv2-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid #3c4b60;
+  border-radius: 999px;
+  background: #1b2637;
+  color: #bdc8d8;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .7px;
+  text-transform: uppercase;
+}
+.damage-dashboard #schedules-tab .sv2-status.active { color: #d8edc3; border-color: #506a45; background: #17251b; }
+.damage-dashboard #schedules-tab .sv2-status.paused { color: #f4d99a; border-color: #6b5a36; background: #2a2418; }
+.damage-dashboard #schedules-tab .sv2-status.exhausted { color: #ffd0a6; border-color: #75503a; background: #2c2018; }
+.damage-dashboard #schedules-tab .sv2-status.cancelled { color: #d9aab4; border-color: #5c3a42; background: #24191d; }
+.damage-dashboard #schedules-tab .sv2-schedule-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 2fr) repeat(3, minmax(130px, 1fr));
+  gap: 0;
+  margin: 16px 0;
+  border-block: 1px solid #263548;
+}
+.damage-dashboard #schedules-tab .sv2-schedule-grid > div { min-width: 0; padding: 12px 14px; border-right: 1px solid #263548; }
+.damage-dashboard #schedules-tab .sv2-schedule-grid > div:first-child { padding-left: 0; }
+.damage-dashboard #schedules-tab .sv2-schedule-grid > div:last-child { padding-right: 0; border-right: 0; }
+.damage-dashboard #schedules-tab .sv2-schedule-grid strong { display: block; margin: 5px 0 1px; color: #dce6f4; font-size: 12px; font-weight: 650; overflow-wrap: anywhere; }
+.damage-dashboard #schedules-tab .sv2-schedule-grid strong.good { color: #cbeab0; }
+.damage-dashboard #schedules-tab .sv2-schedule-grid strong.bad { color: #ffc2c8; }
+.damage-dashboard #schedules-tab .sv2-budget { padding: 1px 0 0; }
+.damage-dashboard #schedules-tab .sv2-budget-row,
+.damage-dashboard #schedules-tab .sv2-budget-foot { display: flex; justify-content: space-between; gap: 12px; font-size: 10px; }
+.damage-dashboard #schedules-tab .sv2-budget-row { color: #d1dcea; }
+.damage-dashboard #schedules-tab .sv2-budget-foot { margin-top: 5px; color: var(--sv2-muted); }
+.damage-dashboard #schedules-tab .sv2-progress { height: 6px; margin: 7px 0; overflow: hidden; border-radius: 999px; background: #263548; }
+.damage-dashboard #schedules-tab .sv2-progress i { display: block; height: 100%; background: var(--sv2-accent); }
+.damage-dashboard #schedules-tab .sv2-actions { display: flex; align-items: center; gap: 7px; margin-top: 13px; flex-wrap: wrap; }
+.damage-dashboard #schedules-tab .sv2-actions .sv2-danger { margin-left: auto; }
+
+.damage-dashboard #schedules-tab .sv2-empty {
+  min-height: 142px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 24px;
+  border: 1px dashed #35465d;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--sv2-panel) 55%, transparent);
+  color: var(--sv2-muted);
+  text-align: center;
+}
+.damage-dashboard #schedules-tab .sv2-empty strong { color: #dce6f4; }
+.damage-dashboard #schedules-tab .sv2-empty.compact { min-height: 100px; }
+.damage-dashboard #schedules-tab .sv2-empty.error { color: #ffc2c8; border-color: #75454c; }
+.damage-dashboard #schedules-tab .sv2-empty .sv2-primary { margin-top: 8px; }
+
+/* Scheduling uses its own accessible dialog within the dashboard workspace. */
+.damage-dashboard #schedules-tab .sv2-modal { position: fixed; inset: 0; z-index: 5000; }
+.damage-dashboard #schedules-tab .sv2-modal[hidden] { display: none !important; }
+.damage-dashboard #schedules-tab .sv2-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: auto;
+  padding: 5vh 18px;
+  background: rgba(3, 8, 15, .78);
+  backdrop-filter: blur(4px);
+}
+.damage-dashboard #schedules-tab .sv2-modal-card {
+  position: relative;
+  width: min(800px, 100%);
+  margin: 0;
+  padding: 23px;
+  border: 1px solid #34445a;
+  border-radius: 14px;
+  background: #111a27;
+  color: var(--sv2-text);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .46);
+}
+.damage-dashboard #schedules-tab .sv2-modal-card h3 { margin: 4px 0 8px; color: var(--sv2-text); font-size: 22px; font-weight: 650; }
+.damage-dashboard #schedules-tab .sv2-modal .sv2-modal-close {
+  position: absolute;
+  top: 11px;
+  right: 12px;
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--sv2-muted);
+  font-size: 22px;
+  line-height: 1;
+}
+.damage-dashboard #schedules-tab .sv2-modal .sv2-modal-close:hover { background: #1b2637; border-color: #35465d; color: var(--sv2-text); }
+.damage-dashboard #schedules-tab .sv2-form-intro { margin: 0 0 19px; color: var(--sv2-muted); font-size: 12px; }
+.damage-dashboard #schedules-tab .sv2-field { display: block; margin: 0 0 13px; }
+.damage-dashboard #schedules-tab .sv2-field > span { display: block; margin-bottom: 6px; color: #d3deec; font-size: 11px; font-weight: 650; }
+.damage-dashboard #schedules-tab .sv2-field :is(textarea, input, select),
+.damage-dashboard #schedules-tab .sv2-lock-row input {
+  width: 100%;
+  padding: 9px 10px;
+  color-scheme: dark;
+}
+.damage-dashboard #schedules-tab .sv2-field textarea {
+  min-height: 165px;
+  resize: vertical;
+  color: #dfe8f6;
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.damage-dashboard #schedules-tab .sv2-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.damage-dashboard #schedules-tab .sv2-presets { display: flex; gap: 6px; flex-wrap: wrap; }
+.damage-dashboard #schedules-tab .sv2-presets button.active { color: #d8edc3; border-color: #506a45; background: #17251b; }
+.damage-dashboard #schedules-tab .sv2-timezone-note { margin: -4px 0 15px; color: var(--sv2-muted); font-size: 10px; }
+.damage-dashboard #schedules-tab .sv2-preview-card { margin: 12px 0; padding: 14px; border: 1px solid #33445a; border-radius: 10px; background: var(--sv2-input); }
+.damage-dashboard #schedules-tab .sv2-preview-empty { padding: 13px; color: var(--sv2-muted); text-align: center; }
+.damage-dashboard #schedules-tab .sv2-preview-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.damage-dashboard #schedules-tab .sv2-preview-grid strong { display: block; margin-top: 5px; color: #dfe8f6; font-size: 13px; font-variant-numeric: tabular-nums; }
+.damage-dashboard #schedules-tab .sv2-lock-row { display: grid; grid-template-columns: 1fr 220px; align-items: center; gap: 14px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #2c3a4d; }
+.damage-dashboard #schedules-tab .sv2-cap-note { margin-top: 8px; color: var(--sv2-muted); font-size: 10px; }
+.damage-dashboard #schedules-tab .sv2-form-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 17px; }
+.damage-dashboard #schedules-tab .sv2-details dl { display: grid; grid-template-columns: 145px minmax(0, 1fr); gap: 9px 14px; margin: 18px 0 0; }
+.damage-dashboard #schedules-tab .sv2-details dt { color: var(--sv2-muted); font-size: 11px; }
+.damage-dashboard #schedules-tab .sv2-details dd { min-width: 0; margin: 0; color: #dce6f4; overflow-wrap: anywhere; }
+
+.damage-dashboard #schedules-tab .sv2-history { margin-top: 20px; padding-top: 16px; border-top: 1px solid #2c3a4d; }
+.damage-dashboard #schedules-tab .sv2-history h4 { margin: 0 0 10px; color: var(--sv2-text); font-size: 13px; }
+.damage-dashboard #schedules-tab .sv2-history-list { display: grid; gap: 6px; }
+.damage-dashboard #schedules-tab .sv2-history-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.5fr) minmax(145px, 1.2fr) .7fr 1fr minmax(110px, 1fr);
+  gap: 9px;
+  align-items: center;
+  padding: 8px 9px;
+  border: 1px solid #2c3a4d;
+  border-radius: 7px;
+  background: var(--sv2-input);
+  color: #c9d5e4;
+  font-size: 11px;
+}
+.damage-dashboard #schedules-tab .sv2-run-state { font-weight: 650; }
+.damage-dashboard #schedules-tab .sv2-run-state.success { color: #cbeab0; }
+.damage-dashboard #schedules-tab :is(.sv2-run-state.failed, .sv2-run-state.execution_failed, .sv2-run-state.settlement_failed, .sv2-run-state.actual_cost_over_cap, .sv2-run-state.dry_run_failed, .sv2-run-state.dry_run_over_cap) { color: #ffc2c8; }
+.damage-dashboard #schedules-tab :is(.sv2-run-state.reservation_reconciliation_required, .sv2-run-state.settlement_reconciliation_required) { color: #f4d99a; }
+
+.damage-dashboard #schedules-tab .sv2-toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 6000;
+  max-width: 420px;
+  padding: 11px 14px;
+  border: 1px solid var(--sv2-border);
+  border-radius: 9px;
+  background: #182334;
+  color: var(--sv2-text);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, .38);
+  font-size: 12px;
+}
+.damage-dashboard #schedules-tab .sv2-toast.success { border-color: #506a45; color: #d8edc3; }
+.damage-dashboard #schedules-tab .sv2-toast.error { border-color: #75454c; color: #ffc2c8; }
+
+@media (max-width: 1100px) {
+  .damage-dashboard #schedules-tab .sv2-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .damage-dashboard #schedules-tab .sv2-schedule-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .damage-dashboard #schedules-tab .sv2-schedule-grid > div { border-right: 0; border-bottom: 1px solid #263548; padding-inline: 0 12px; }
+  .damage-dashboard #schedules-tab .sv2-schedule-grid > div:nth-last-child(-n+2) { border-bottom: 0; }
+}
+@media (max-width: 760px) {
+  .damage-dashboard #schedules-tab { padding-top: 20px; }
+  .damage-dashboard #schedules-tab .sv2-heading { flex-direction: column; gap: 14px; }
+  .damage-dashboard #schedules-tab .sv2-heading-actions { width: 100%; justify-content: space-between; }
+  .damage-dashboard #schedules-tab .sv2-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .damage-dashboard #schedules-tab .sv2-form-grid,
+  .damage-dashboard #schedules-tab .sv2-schedule-grid { grid-template-columns: 1fr; }
+  .damage-dashboard #schedules-tab .sv2-schedule-grid > div { padding: 10px 0; border-bottom: 1px solid #263548; }
+  .damage-dashboard #schedules-tab .sv2-schedule-grid > div:nth-last-child(-n+2) { border-bottom: 1px solid #263548; }
+  .damage-dashboard #schedules-tab .sv2-schedule-grid > div:last-child { border-bottom: 0; }
+  .damage-dashboard #schedules-tab .sv2-actions .sv2-danger { margin-left: 0; }
+  .damage-dashboard #schedules-tab .sv2-preview-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .damage-dashboard #schedules-tab .sv2-lock-row { grid-template-columns: 1fr; }
+  .damage-dashboard #schedules-tab .sv2-history-row { grid-template-columns: 1fr 1fr; }
+  .damage-dashboard #schedules-tab .sv2-history-row span:last-child { grid-column: 1 / -1; }
+}
+@media (max-width: 520px) {
+  .damage-dashboard #schedules-tab .sv2-stats { grid-template-columns: 1fr; }
+  .damage-dashboard #schedules-tab .sv2-custom-range { width: 100%; flex-wrap: wrap; }
+  .damage-dashboard #schedules-tab .sv2-custom-range input { flex: 1 1 130px; }
+  .damage-dashboard #schedules-tab .sv2-preview-grid { grid-template-columns: 1fr; }
+  .damage-dashboard #schedules-tab .sv2-modal-backdrop { padding: 8px; }
+  .damage-dashboard #schedules-tab .sv2-modal-card { padding: 19px 14px; }
+  .damage-dashboard #schedules-tab .sv2-details dl { grid-template-columns: 1fr; }
+  .damage-dashboard #schedules-tab .sv2-details dt { margin-top: 7px; }
+}

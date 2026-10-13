@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <title>Tax evidence · DamageBDD node administration</title>
+  <link rel="stylesheet" href="/static/css/tax-admin.css">
+  <script src="/static/js/tax-admin.js" defer></script>
+</head>
+<body>
+  <div class="layout">
+    <header class="topbar">
+      <a href="/" class="brand"><span class="brand-mark">D</span> DamageBDD</a>
+      <nav aria-label="Administration navigation">
+        <a href="/#node-tax-reports-tab">Dashboard tax reports</a>
+        <a href="/dashboard/node/settings/damage#settings-feature-tax">Tax settings</a>
+        <span aria-current="page" class="current">Tax evidence</span>
+      </nav>
+    </header>
+    <main>
+      <div class="heading">
+        <div>
+          <p class="eyebrow">NODE ADMINISTRATION / FINANCE</p>
+          <h1>Country-specific tax evidence</h1>
+          <p class="intro">Historical Lightning and imported chain records, valued in their selected reporting currency with immutable source evidence.</p>
+        </div>
+        <div class="tag">Private · Admin only</div>
+      </div>
+      <section class="notice" aria-label="Compliance notice">
+        <strong>Accounting review required.</strong> Reports are provisional accountant workpapers, not official tax returns. Classification, taxable income, capital gains and VAT/GST require independent review. Chain attestations must be reviewed and signed separately.
+      </section>
+      <div class="metrics" aria-label="Summary statistics">
+        <div class="metric"><span>Reports available</span><strong id="reportCount">—</strong></div>
+        <div class="metric"><span>Events indexed</span><strong id="eventCount">—</strong></div>
+        <div class="metric"><span>Items for review</span><strong id="reviewCount">—</strong></div>
+      </div>
+      <section class="panel" aria-labelledby="backfillHeading">
+        <div class="panel-head">
+          <div><h2 id="backfillHeading">Prepare historical reports</h2><p>Reconcile settled CLN invoices and outgoing payments, fetch archived historical fiat prices and create a distinct draft for each jurisdiction and reporting period.</p></div>
+        </div>
+        <form id="backfillForm" class="backfill-form">
+          <label for="region">Country</label>
+          <select id="region" name="region" required></select>
+          <label for="offset">UTC offset (minutes)</label>
+          <input id="offset" type="number" min="-720" max="840" step="1" value="600" required>
+          <label for="startMonth">Financial year start</label>
+          <select id="startMonth" name="startMonth">
+            <option value="1">January</option><option value="2">February</option>
+            <option value="3">March</option><option value="4">April</option>
+            <option value="5">May</option><option value="6">June</option>
+            <option value="7">July</option><option value="8">August</option>
+            <option value="9">September</option><option value="10">October</option>
+            <option value="11">November</option><option value="12">December</option>
+          </select>
+          <label for="scope">Financial year</label>
+          <select id="scope" name="scope"><option value="all">All available years</option></select>
+          <label class="offline-option" for="journalOnly"><input type="checkbox" id="journalOnly"> Journal only (no CLN fetch)</label>
+          <button id="startBackfill" type="submit">Run historical backfill</button>
+          <button type="button" id="refresh" class="secondary">Refresh</button>
+        </form>
+        <p class="intro">Country selection applies to this report run only. The UTC offset is a fixed reporting boundary; confirm your financial year and local time zone with your accountant.</p>
+        <div class="job-line" aria-live="polite">
+          <span class="dot" id="jobDot" aria-hidden="true"></span>
+          <span id="jobStatus">Checking backfill status…</span>
+        </div>
+        <div id="jobDetail" class="job-detail" aria-live="polite"></div>
+      </section>
+      <section class="panel" aria-labelledby="reportsHeading">
+        <div class="panel-head"><div><h2 id="reportsHeading">Financial-year reports</h2><p>Each digest identifies a fixed, independently verifiable version. Old revisions remain downloadable.</p></div></div>
+        <div id="feedback" class="feedback" role="status" aria-live="polite">Loading reports…</div>
+        <div class="table-viewport">
+          <table>
+            <thead><tr><th>Country</th><th>Currency</th><th>Tax year</th><th>Transactions</th><th>Review</th><th>Status</th><th>Manifest SHA-256</th><th>Download</th></tr></thead>
+            <tbody id="reportRows"></tbody>
+          </table>
+        </div>
+      </section>
+      <footer>
+        <span>All records are stored on this node. Raw CLN credentials, preimages and BOLT11 payloads are not included in reports.</span>
+        <span>Tax evidence v1</span>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>

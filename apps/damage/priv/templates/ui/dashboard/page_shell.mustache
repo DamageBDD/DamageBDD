@@ -1,0 +1,195 @@
+<!-- -*- mode: html -*- -->
+<!DOCTYPE html>
+<html lang="en">
+
+  <head>
+    <meta charset="UTF-8">
+    <meta name="referrer" content="no-referrer">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- OpenGraph (Slack / LinkedIn / Nostr / Discord) -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="DamageBDD — Behaviour Driven Development at Planetary Scale">
+    <meta property="og:description" content="DamageBDD turns behaviour into executable infrastructure. Define software expectations in plain language and verify them continuously with deterministic execution, Lightning payments, and cryptographic assurance.">
+    <meta property="og:url" content="https://damagebdd.com">
+    <meta property="og:site_name" content="DamageBDD">
+    <meta property="og:image" content="https://damagebdd.com/static/img/og-damagebdd.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+
+    <!-- Twitter / X -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="DamageBDD — Behaviour Driven Development at Planetary Scale">
+    <meta name="twitter:description" content="Behaviour becomes executable verification. DamageBDD runs plain-language expectations directly against software with deterministic execution and Lightning-native automation.">
+    <meta name="twitter:image" content="https://damagebdd.com/static/img/og-damagebdd.png">
+    <meta name="twitter:creator" content="@damagebdd">
+
+
+    <link rel="icon" type="image/x-icon" href="/static/img/favicon.ico">
+    <title>DamageBDD - Behaviour Driven Development At Planetary Scale</title>
+
+    <script src="/static/js/three.min.js"></script>
+    <script src="/static/js/qrcode.min.js"></script>
+    <script src="/static/js/micromodal.min.js"></script>
+    <script src="/static/js/tabby.polyfills.min.js"></script>
+
+    <script type='module' src='/static/js/sidekick.js'></script>
+
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/pure-min.css"
+          integrity="sha384-X38yfunGUhNzHpBaEBsWLO+A0HDYOQi8ufWDkZ0k9e0eXz/tH3II7uKZ9msv++Ls"
+          crossorigin="anonymous">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/grids-responsive-min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/base-min.css">
+
+    <link rel="stylesheet" type="text/css" href='/static/css/micromodal.css' />
+    <link rel="stylesheet" type="text/css" href='/static/css/tabby-ui.min.css' />
+    <link rel="stylesheet" type="text/css" href='/static/css/damage-lightning-ui.css' />
+    <link rel="stylesheet" type="text/css" href='/static/css/feature-picker.css' />
+    <link rel="stylesheet" type="text/css" href="/static/css/tango-steven-theme.css" />
+    <link rel="stylesheet" type="text/css" href='/static/css/prism.css' />
+    <link rel="stylesheet" type="text/css" href='/static/css/main.css' />
+    <link rel="stylesheet" type="text/css" href='/static/css/auth.css' />
+    <link rel="stylesheet" type="text/css" href='/static/css/ecai-jobs.css' />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs/themes/prism-tomorrow.min.css" />
+    <link rel="stylesheet" type="text/css" href='/static/css/topbar.css' />
+    <link rel="stylesheet" type="text/css" href='/static/css/invoice-modal.css' />
+    <link rel="stylesheet" href="/static/css/ipfs-filepicker.css">
+    <link rel="stylesheet" href="/static/css/nwc.css">
+
+    <!-- Dashboard foundation first; feature workspaces extend these tokens below. -->
+    <link rel="stylesheet" href="/static/css/dashboard-workspace.css">
+    <link rel="stylesheet" href="/static/css/dashboard-shell.css">
+    <link rel="stylesheet" href="/static/css/schedules-v2.css">
+    <link rel="stylesheet" type="text/css" href='/static/css/reports.css' />
+    <link rel="stylesheet" type="text/css" href='/static/css/gallery.css' />
+    <link rel="stylesheet" href="/static/css/billing.css">
+    <link rel="stylesheet" href="/static/css/account-settings.css">
+    <link rel="stylesheet" href="/static/css/dashboard-guest.css">
+    <link rel="stylesheet" href="/static/css/dashboard-tax-reports.css">
+    <link rel="stylesheet" href="/static/css/dashboard-wallet.css">
+    <noscript><style>
+      .damage-dashboard [data-dashboard-view][hidden] { display: block !important; }
+      .damage-dashboard #dashboard-nav-toggle, .damage-dashboard #dashboard-nav-close { display: none; }
+    </style></noscript>
+
+  </head>
+  <body class="damage-dashboard" data-session-mode="{{auth_mode}}" data-node-admin="{{node_admin}}" data-logo-image="{{logo_image}}">
+    {{#reset_password}}
+    {{/reset_password}}
+    {{{auth_modal}}}
+    {{{node_wallet_modal}}}
+    {{{node_set_password_modal}}}
+    {{{node_public_key_modal}}}
+    {{{node_unlock_modal}}}
+    {{{file_picker_modal}}}
+    {{{invoice_modal}}}
+    {{{logout_modal}}}
+    {{{install_modal}}}
+    {{{feature_picker_modal}}}
+    {{{notification_modal}}}
+    {{{ecai_job_detail_modal}}}
+    {{{nwc_modal}}}
+    <div id="background" aria-hidden="true"></div>
+    {{#authenticated}}<a class="workspace-skip" href="#dashboard-main">Skip to main content</a>{{/authenticated}}
+    {{^authenticated}}<a class="workspace-skip" href="#guest-main">Skip to main content</a>{{/authenticated}}
+{{#authenticated}}
+    <div class="dashboard-app" data-dashboard-shell>
+      {{{sidebar}}}
+      <div id="dashboard-main" class="dashboard-main" tabindex="-1">
+        {{{topbar}}}
+        <main id="content" class="dashboard-panels" aria-label="Dashboard content">
+
+          <div id="execution-tab" class="dashboard-panel execute-container" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-execution">
+            {{{execution_tab}}}
+          </div>
+          <div id="activity-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-activity" hidden>
+            {{{activity_tab}}}
+          </div>
+          <div id="analytics-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-analytics" hidden>
+            {{{analytics_tab}}}
+          </div>
+          <div id="schedules-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-schedules" hidden>
+            {{{schedules_tab}}}
+          </div>
+          <div id="billing-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-billing" hidden>
+            {{{billing_tab}}}
+          </div>
+          <div id="wallet-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-wallet" hidden>
+            {{{wallet_tab}}}
+          </div>
+          <div id="settings-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-settings" hidden>
+            {{{settings_tab}}}
+          </div>
+          <div id="swap-options-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-swap-options" hidden>
+            {{{swaps_tab}}}
+          </div>
+          <div id="ecai-jobs-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-ecai-jobs" hidden>
+            {{{gallery_tab}}}
+          </div>
+          {{#node_admin}}
+          <div id="node-context-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-node-context" hidden>
+            {{{node_context_tab}}}
+          </div>
+          <div id="node-transactions-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-node-transactions" hidden>
+            {{{node_transactions_tab}}}
+          </div>
+          <div id="node-channels-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-node-channels" hidden>
+            {{{node_channels_tab}}}
+          </div>
+          <div id="node-cln-admin-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-node-cln-admin" hidden>
+            {{{node_cln_admin_tab}}}
+          </div>
+          {{/node_admin}}
+          {{#tax_admin}}
+          <div id="node-tax-reports-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-node-tax-reports" hidden>
+            {{{node_tax_reports_tab}}}
+          </div>
+          {{/tax_admin}}
+        </main>
+      </div>
+      <div id="dashboard-nav-backdrop" class="dashboard-nav-backdrop" aria-hidden="true" hidden></div>
+    </div>
+{{/authenticated}}
+{{^authenticated}}
+    {{{guest_landing}}}
+{{/authenticated}}
+
+    <script src="https://cdn.jsdelivr.net/npm/prismjs/prism.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/prismjs/components/prism-gherkin.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js" integrity="sha256-uqjf5+HZM2uY6Jhrp+IOoV582+oe9CpZ1ZR4Yy+kWh0=" crossorigin="anonymous"></script>
+    <script type="module" src="https://unpkg.com/bitcoin-qr@1.4.1/dist/bitcoin-qr/bitcoin-qr.esm.js"></script>
+
+    <script src="/static/js/lineNumbers.js"></script>
+    <script  src="/static/js/balances.js" ></script>
+    <script type="module" src="/static/js/nwc.js"></script>
+    <script type='module' src='/static/js/damage-lightning-ui.js' defer></script>
+    <script type='module' src="/static/js/installer.js" defer></script>
+    <script type='module' src="/static/js/wallet.js" defer></script>
+    <script type='module' src="/static/js/wallet-switcher.js" defer></script>
+    <script type='module' src="/static/js/wallet-dashboard.js" defer></script>
+    <script type='module' src="/static/js/filter.js" defer></script>
+    <script type='module' src="/static/js/reports.js" defer></script>
+    <script type='module' src="/static/js/gallery.js" defer></script>
+    <script type='module' src="/static/js/analytics.js" defer></script>
+    <script type='module' src="/static/js/pricing.js" defer></script>
+
+    <script type="module" src="/static/js/dashboard-navigation.js"></script>
+    {{#tax_admin}}<script type="module" src="/static/js/dashboard-tax-reports.js"></script>
+    <script type="module" src="/static/js/dashboard-tax-settings.js"></script>{{/tax_admin}}
+    {{^authenticated}}<script type="module" src="/static/js/dashboard-guest.js"></script>{{/authenticated}}
+    <script type='module' src="/static/js/auth-ui.js?v=ecai-browser-v1"></script>
+    <script type='module' src="/static/js/main.js" defer></script>
+    <script type="module" src="/static/js/settings.js"></script>
+    <script type="module" src="/static/js/billing.js"></script>
+    <script type="module" src="/static/js/bdd-composer.js"></script>
+    {{#node_admin}}
+    <script src="/static/js/node-admin.js"></script>
+    <script>
+      document.addEventListener("DOMContentLoaded", () => {
+      window.nodeAdmin.bindDefaultUi();
+      });
+    </script>
+    {{/node_admin}}
+  </body>
+</html>
+

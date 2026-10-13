@@ -1,0 +1,75 @@
+@compiler >= 6
+
+contract DamageAgentExecutionLedger =
+
+  datatype result_status = Passed | Failed | Error | Cancelled
+
+  record receipt =
+    { agent_id        : string
+    , job_id          : string
+    , requester       : address
+    , executor        : address
+    , feature_hash    : string
+    , report_hash     : string
+    , input_hash      : string
+    , output_hash     : string
+    , cost            : int
+    , status          : result_status
+    , started_at      : int
+    , ended_at        : int
+    }
+
+  record state =
+    { owner    : address
+    , receipts : map(string, receipt)
+    }
+
+  datatype event =
+    ReceiptWritten(string, string, string)
+
+  entrypoint init() =
+    { owner = Call.caller, receipts = {} }
+
+  stateful entrypoint write_receipt(
+    receipt_id : string,
+    agent_id : string,
+    job_id : string,
+    requester : address,
+    executor : address,
+    feature_hash : string,
+    report_hash : string,
+    input_hash : string,
+    output_hash : string,
+    cost : int,
+    status : result_status,
+    started_at : int,
+    ended_at : int) =
+    require_owner()
+    require(!exists(receipt_id), "RECEIPT_EXISTS")
+    put(state{
+      receipts[receipt_id] =
+        { agent_id = agent_id
+        , job_id = job_id
+        , requester = requester
+        , executor = executor
+        , feature_hash = feature_hash
+        , report_hash = report_hash
+        , input_hash = input_hash
+        , output_hash = output_hash
+        , cost = cost
+        , status = status
+        , started_at = started_at
+        , ended_at = ended_at }
+    })
+    Chain.event(ReceiptWritten(receipt_id, agent_id, job_id))
+
+  entrypoint get_receipt(receipt_id : string) : option(receipt) =
+    Map.lookup(receipt_id, state.receipts)
+
+  function exists(receipt_id : string) : bool =
+    switch(Map.lookup(receipt_id, state.receipts))
+      None => false
+      Some(_) => true
+
+  function require_owner() =
+    require(Call.caller == state.owner, "ONLY_OWNER")

@@ -1,0 +1,5 @@
+-module(ecai_ollama_rag).
+-export([retrieve_sources/3]).
+retrieve_sources(Dir, Query, K) ->
+    persistent_term:get(voice_test_owner) ! {ecai_retrieve,Dir,Query,K},
+    [#{title=><<"Indexed source">>,cid=><<"test-cid">>,text=>binary:copy(<<"x">>,2000)}].

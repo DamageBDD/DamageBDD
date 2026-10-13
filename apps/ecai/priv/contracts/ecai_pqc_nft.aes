@@ -1,0 +1,171 @@
+@compiler >= 6
+
+include "Option.aes"
+include "Set.aes"
+include "String.aes"
+
+contract ECAIPQCNFT =
+
+    datatype event
+        = Transfer(address, address, int)
+        | Approval(address, address, int, string)
+        | ApprovalForAll(address, address, string)
+        | Mint(address, int)
+        | Burn(address, int)
+
+    datatype metadata_type = URL | OBJECT_ID | MAP
+    datatype metadata = MetadataIdentifier(string) | MetadataMap(map(string, string))
+
+    record meta_info =
+        { name: string
+        , symbol: string
+        , base_url: option(string)
+        , metadata_type : metadata_type }
+
+    record state =
+        { owner: address
+        , meta_info: meta_info
+        , token_to_owners: map(int, address)
+        , owners_to_tokens: map(address, Set.set(int))
+        , balances: map(address, int)
+        , approvals: map(int, address)
+        , operators: map(address, map(address, bool))
+        , metadata: map(int, metadata)
+        , total_supply: int
+        , counter: int }
+
+    stateful entrypoint init(name: string, symbol: string) =
+        require(String.length(name) >= 1, "STRING_TOO_SHORT_NAME")
+        require(String.length(symbol) >= 1, "STRING_TOO_SHORT_SYMBOL")
+        { owner = Contract.creator,
+          meta_info = { name = name, symbol = symbol, base_url = None, metadata_type = MAP },
+          token_to_owners = {},
+          owners_to_tokens = {},
+          balances = {},
+          approvals = {},
+          operators = {},
+          metadata = {},
+          total_supply = 0,
+          counter = 1 }
+
+    entrypoint aex141_extensions() : list(string) =
+        ["mintable", "burnable"]
+
+    entrypoint meta_info() : meta_info =
+        state.meta_info
+
+    entrypoint metadata(token_id: int) : option(metadata) =
+        Map.lookup(token_id, state.metadata)
+
+    entrypoint total_supply() : int =
+        state.total_supply
+
+    entrypoint balance(owner: address) : option(int) =
+        Map.lookup(owner, state.balances)
+
+    entrypoint owner(token_id: int) : option(address) =
+        Map.lookup(token_id, state.token_to_owners)
+
+    stateful entrypoint transfer(to: address, token_id: int, _data: option(string)) =
+        let from = require_authorized(token_id)
+        require(from != to, "SENDER_MUST_NOT_BE_RECEIVER")
+        remove_approval(token_id)
+        put(state{
+            balances[from] @balance1 = balance1 - 1,
+            balances[to = 0] @balance2 = balance2 + 1,
+            token_to_owners[token_id] = to,
+            owners_to_tokens[from] @from_tokens = Set.delete(token_id, from_tokens),
+            owners_to_tokens[to = Set.new()] @to_tokens = Set.insert(token_id, to_tokens)
+        })
+        Chain.event(Transfer(from, to, token_id))
+
+    stateful entrypoint approve(approved: address, token_id: int, enabled: bool) =
+        let owner = require_owner(token_id)
+        require(
+            Call.caller == owner || is_approved_for_all(owner, Call.caller),
+            "ONLY_OWNER_OR_OPERATOR_CALL_ALLOWED"
+        )
+        if(enabled)
+            put(state{approvals[token_id] = approved})
+        else
+            remove_approval(token_id)
+        Chain.event(Approval(owner, approved, token_id, bool_to_string(enabled)))
+
+    stateful entrypoint approve_all(operator: address, enabled: bool) =
+        put(state{
+            operators @ ops = ops{
+                [Call.caller = {}] @ op = op{[operator] = enabled}
+            }
+        })
+        Chain.event(ApprovalForAll(Call.caller, operator, bool_to_string(enabled)))
+
+    entrypoint get_approved(token_id: int) : option(address) =
+        Map.lookup(token_id, state.approvals)
+
+    entrypoint is_approved(token_id: int, a: address) : bool =
+        switch(Map.lookup(token_id, state.approvals))
+            None => false
+            Some(o) => o == a
+
+    entrypoint is_approved_for_all(owner: address, operator: address) : bool =
+        switch(Map.lookup(owner, state.operators))
+            None => false
+            Some(ops) =>
+                switch(Map.lookup(operator, ops))
+                    None => false
+                    Some(v) => v
+
+    stateful entrypoint mint(to: address, metadata: option(metadata), _data: option(string)) : int =
+        require_contract_owner()
+        switch(metadata)
+            None => abort("NO_METADATA_PROVIDED")
+            Some(MetadataIdentifier(_)) => abort("NOT_METADATA_MAP")
+            Some(v) =>
+                let token_id = state.counter
+                put(state{
+                    counter = state.counter + 1,
+                    total_supply = state.total_supply + 1,
+                    balances[to = 0] @balance = balance + 1,
+                    token_to_owners[token_id] = to,
+                    owners_to_tokens[to = Set.new()] @owners_tokens = Set.insert(token_id, owners_tokens),
+                    metadata[token_id] = v
+                })
+                Chain.event(Mint(to, token_id))
+                token_id
+
+    stateful entrypoint burn(token_id: int) =
+        let owner = require_authorized(token_id)
+        remove_approval(token_id)
+        put(state{
+            balances[owner] @balance = balance - 1,
+            total_supply = state.total_supply - 1,
+            token_to_owners = Map.delete(token_id, state.token_to_owners),
+            owners_to_tokens[owner] @owners_tokens = Set.delete(token_id, owners_tokens),
+            metadata = Map.delete(token_id, state.metadata)
+        })
+        Chain.event(Burn(owner, token_id))
+
+    function require_contract_owner() =
+        require(Call.caller == state.owner, "ONLY_CONTRACT_OWNER_CALL_ALLOWED")
+
+    function require_owner(token_id: int) : address =
+        switch(owner(token_id))
+            None => abort("TOKEN_NOT_EXISTS")
+            Some(v) => v
+
+    function require_authorized(token_id: int) : address =
+        let owner = require_owner(token_id)
+        require(
+            Call.caller == owner
+            || is_approved(token_id, Call.caller)
+            || is_approved_for_all(owner, Call.caller),
+            "ONLY_OWNER_APPROVED_OR_OPERATOR_CALL_ALLOWED"
+        )
+        owner
+
+    stateful function remove_approval(token_id: int) =
+        if(Map.member(token_id, state.approvals))
+            put(state{ approvals = Map.delete(token_id, state.approvals) })
+
+    function bool_to_string(v: bool) : string =
+        if(v) "true" else "false"

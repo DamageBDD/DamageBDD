@@ -1,0 +1,386 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage{geometry}
+\geometry{margin=2.4cm}
+
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{setspace}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{lipsum}
+\usepackage{xcolor}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=black,
+    urlcolor=blue,
+    citecolor=black
+}
+
+\setstretch{1.15}
+
+\titleformat{\section}{\large\bfseries}{\thesection}{1em}{}
+\titleformat{\subsection}{\normalsize\bfseries}{\thesubsection}{1em}{}
+
+\title{\bfseries\LARGE DamageBDD Mobile Platform \\[4pt]
+\Large Multiplayer Behaviour Verification \\[4pt]
+and On-Chain Social Proof System}
+\author{DamageBDD}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+DamageBDD is building the world’s first mobile-first Behaviour Driven Development (BDD) platform with real-time streaming execution, multiplayer collaboration, and an on-chain social verification layer powered by Aeternity smart contracts and the Damage Token (AEX-9). This document outlines the product vision, on-chain architecture, market opportunity, revenue model, and a concrete development roadmap for investor review.
+\end{abstract}
+
+\newpage
+
+\tableofcontents
+\newpage
+
+% ============================================================
+\section{Executive Summary}
+
+DamageBDD introduces a new category of software engineering infrastructure:
+a \textbf{real-time, multiplayer, cryptographically verified behaviour platform}
+that blends:
+
+\begin{itemize}[leftmargin=1.3cm]
+    \item Mobile-first BDD creation
+    \item AI-assisted step completion
+    \item Real-time streaming execution visualisation
+    \item Multiplayer collaboration and competitive verification
+    \item Fully on-chain reputation, identity, and economic incentives
+\end{itemize}
+
+We propose a disruptive transformation of the global QA, audit, verification, and compliance industries. The platform turns software correctness into a social, verifiable, economically-incentivised experience that can run on any mobile phone, anywhere in the world.
+
+DamageBDD is simultaneously:
+
+\begin{enumerate}
+    \item A developer tool,
+    \item A verification marketplace,
+    \item A crypto-economic coordination engine,
+    \item A thin-mobile client for deterministic proofs of behaviour.
+\end{enumerate}
+
+At scale, DamageBDD becomes the \textbf{verification layer for the internet}.
+
+% ============================================================
+\section{Product Overview}
+
+\subsection{Vision}
+
+Make it possible for any human, anywhere, on any mobile phone, to:
+
+\begin{enumerate}
+    \item Describe how software \emph{should} behave in human-readable English.
+    \item Execute that behaviour with a single tap.
+    \item Stream real-time, animated verification results.
+    \item Earn rewards for successful verification.
+    \item Build provable reputation on-chain.
+    \item Join a multiplayer arena of software testing.
+\end{enumerate}
+
+Software reliability becomes a social experience, not a corporate silo.
+
+\subsection{Core Differentiators}
+
+\begin{itemize}[leftmargin=1.4cm]
+    \item \textbf{Mobile-first BDD editor} — thumb-optimised, keyword-aware, and AI-assisted.
+    \item \textbf{Streaming execution engine} — real-time progress visualised as cinematic animations.
+    \item \textbf{Multiplayer verification} — multiple users running the same feature synchronously.
+    \item \textbf{On-chain social layer} — claps, comments, forks, runs, identity, performance.
+    \item \textbf{Economic incentives} — DAMAGE token for payouts, stakes, bounties, and proofs.
+    \item \textbf{Decentralised proof-of-behaviour} — every result secured by blockchain.
+\end{itemize}
+
+% ============================================================
+\section{Mobile BDD Editor}
+
+\subsection{Interface Principles}
+
+The editor emphasises:
+\begin{itemize}
+    \item Maximum ergonomic usage with a single thumb.
+    \item Zero learning curve for non-technical contributors.
+    \item Real-time suggestions from step libraries.
+    \item Smooth fallback to raw Gherkin mode for experts.
+\end{itemize}
+
+\subsection{Features}
+
+\begin{enumerate}[leftmargin=1.2cm]
+    \item \textbf{Keyword completion:} Given / When / Then / And chips.
+    \item \textbf{Step templates:} Auto-insert HTTP steps, variable steps, JSON assertions.
+    \item \textbf{Smart autocompletion:} Matching pre-existing variables.
+    \item \textbf{Scenario builders:} One-tap generation of common scenario structures.
+    \item \textbf{Syntax highlighting:} Mobile-friendly monospaced layout with gutters.
+\end{enumerate}
+
+\subsection{Execution}
+
+Upon running the scenario:
+\begin{itemize}
+    \item The client posts the feature to a DamageBDD endpoint.
+    \item Real-time streaming begins (via Cowboy HTTP chunking).
+    \item Each step animates on the screen (pending → active → pass/fail).
+\end{itemize}
+
+% ============================================================
+\section{Multiplayer Verification}
+
+\subsection{Sessions}
+
+When multiple users execute the same \texttt{feature\_hash}, the execution becomes a \textbf{shared session}. The UI displays:
+
+\begin{itemize}
+    \item Avatars of participants
+    \item Per-step grids showing how each player progressed
+    \item Mixed pass/fail indicators
+    \item Live updates
+\end{itemize}
+
+\subsection{Arena Mode}
+
+The Arena is a global and local social environment:
+
+\begin{itemize}
+    \item Featured tests trending by run count
+    \item Active challenges with bounties
+    \item Personal squads formed through co-verification
+    \item Fork trees showing descendant scenarios
+\end{itemize}
+
+\subsection{Competitive Mechanics}
+
+Verification becomes a game-like environment:
+\begin{itemize}
+    \item On-chain “first verifier” bonuses
+    \item Time-to-verification leaderboards
+    \item Co-op debugging sessions
+    \item Bounties for bug discovery
+\end{itemize}
+
+% ============================================================
+\section{On-Chain Architecture}
+
+\subsection{Contracts}
+
+\subsubsection{Profile Contract}
+
+Maps:
+\[
+\texttt{account} \rightarrow \{handle, avatar\_cid, socials, reputation\_scores\}
+\]
+
+Provides decentralised identity linking.
+
+\subsubsection{FeatureRuns Contract}
+
+Each run publishes:
+\[
+\{\texttt{feature\_hash},\ \texttt{account},\ \texttt{status},\ \texttt{damage\_spent},\ \texttt{payout\_sats},\ \texttt{timestamp}\}
+\]
+
+This is the canonical source of truth for all verification results.
+
+\subsubsection{Reactions Contract}
+
+Supports:
+\[
+\texttt{clap},\ \texttt{comment(ipfs\_cid)},\ \texttt{fork},\ \texttt{share(platform)}
+\]
+
+\subsection{Immutable Proofs}
+
+Everything is reconstructable from on-chain events:
+\begin{itemize}
+    \item Feature popularity
+    \item Developer productivity
+    \item Historical correctness
+    \item Reputation and trust scores
+    \item Challenge participation
+\end{itemize}
+
+\subsection{Economic Layer}
+
+Powered by the \textbf{DAMAGE Token (AEX-9)}:
+\begin{itemize}
+    \item Verification fees
+    \item Bounties
+    \item Staking incentives
+    \item Anti-spam economics
+    \item Revenue share for the network
+\end{itemize}
+
+% ============================================================
+\section{Social Media Integration}
+
+\subsection{On-Chain Tracking of Off-Chain Shares}
+
+While posting to X/LinkedIn is done via native share sheets, the \emph{fact} of sharing is stored on-chain for reputation:
+
+\[
+\texttt{share(feature\_hash, account, platform)}
+\]
+
+\subsection{Comments \& Discussions}
+
+All comments store text on IPFS and reference it via:
+\[
+\texttt{comment(feature\_hash, account, ipfs\_cid)}
+\]
+
+\subsection{Fork Trees}
+
+Forking a feature creates a lineage:
+\[
+\texttt{fork(parent\_hash,\ child\_hash,\ account)}
+\]
+
+This creates a long-term evolutionary tree of BDD specifications for a domain.
+
+% ============================================================
+\section{Market Opportunity}
+
+\subsection{Industry Pain Points}
+
+\begin{itemize}
+    \item Software failure costs companies trillions annually.
+    \item QA is underfunded and often treated as a cost centre.
+    \item Verification lacks transparency and accountability.
+    \item Remote contributors have no reliable reputation currency.
+    \item Trust in software claims is low.
+\end{itemize}
+
+\subsection{DamageBDD Advantages}
+
+\begin{itemize}
+    \item Globally crowdsourced verification.
+    \item Pay-per-proof model.
+    \item Immutable audit trail of correctness.
+    \item Strong incentives for quality outcomes.
+    \item A mobile-first distribution strategy for global reach.
+\end{itemize}
+
+\subsection{Target Customers}
+
+\begin{itemize}
+    \item Enterprise QA teams
+    \item Blockchain projects seeking real verification
+    \item Fintech, healthcare, compliance-heavy sectors
+    \item Open-source maintainers
+    \item Freelance testers and global verification labour
+\end{itemize}
+
+% ============================================================
+\section{Business Model}
+
+\subsection{Revenue Streams}
+
+\begin{enumerate}
+    \item \textbf{Verification Fees}  
+          Companies pay in DAMAGE or BTC for verifications.
+    \item \textbf{Marketplace Bounties}  
+          Users complete challenges and receive rewards.
+    \item \textbf{Reputation Economy}  
+          High-ranked verifiers receive premium payout rates.
+    \item \textbf{Enterprise Licenses}  
+          Private networks, custom integrations, compliance suites.
+    \item \textbf{Token Appreciation}  
+          As utility grows, token demand increases naturally.
+\end{enumerate}
+
+% ============================================================
+\section{Roadmap}
+
+\subsection{Phase 1 — Mobile BDD MVP (0–3 Months)}
+
+\begin{itemize}
+    \item Mobile-first BDD editor
+    \item Step completion library
+    \item Feature execution with streaming results
+    \item Basic wallet integration
+    \item Minimal identity system
+\end{itemize}
+
+\subsection{Phase 2 — On-Chain Verification Layer (3–6 Months)}
+
+\begin{itemize}
+    \item Deploy Profile, FeatureRuns, Reactions contracts
+    \item On-chain result publishing
+    \item Visual live run sessions
+    \item Tokenised payouts
+\end{itemize}
+
+\subsection{Phase 3 — Multiplayer Arena (6–9 Months)}
+
+\begin{itemize}
+    \item Challenges and bounties
+    \item Coop/competitive verification modes
+    \item Fork trees and collaborative debugging
+    \item Reputation ranking algorithms
+\end{itemize}
+
+\subsection{Phase 4 — Enterprise Expansion (9–18 Months)}
+
+\begin{itemize}
+    \item Compliance modules
+    \item Regulatory-grade reporting
+    \item High-concurrency load verification
+    \item Integration marketplace
+\end{itemize}
+
+% ============================================================
+\section{Investment Request}
+
+DamageBDD is seeking strategic investment to accelerate development and scale the platform globally.
+
+\subsection{Use of Funds}
+
+\begin{itemize}
+    \item Core engineering team expansion
+    \item Mobile development (iOS and Android)
+    \item Smart contract engineering and audits
+    \item Infrastructure scaling
+    \item Marketing, community, and enterprise outreach
+\end{itemize}
+
+\subsection{Investor Benefits}
+
+\begin{itemize}
+    \item Early token allocation
+    \item Equity stake or revenue share options
+    \item Governance participation
+    \item Access to enterprise verification data analytics
+\end{itemize}
+
+% ============================================================
+\section{Conclusion}
+
+DamageBDD is not merely a developer tool. It is:
+
+\begin{itemize}
+    \item A verified computing platform,
+    \item A crypto-economic coordination engine,
+    \item A global multiplayer QA network,
+    \item A new digital labour market,
+    \item And the foundation of a future \emph{Proof of Behaviour} standard.
+\end{itemize}
+
+This proposal outlines a path to build the verification layer for the modern software world. With strategic investment, we can expand from a powerful working product into a global standard for correctness, accountability, and trust.
+
+\vfill
+\begin{center}
+\textbf{DamageBDD} \\[4pt]
+\url{https://damagebdd.com}
+\end{center}
+
+\end{document}

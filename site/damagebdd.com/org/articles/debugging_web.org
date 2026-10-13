@@ -1,0 +1,41 @@
+#+Title:  Manual: Using Chrome Inspector to Capture Request Results
+#+INCLUDE: "../header.org"
+
+**Purpose**: This guide shows testers how to capture the results of a network request using Chrome DevTools (Inspector).
+
+** Steps:
+
+1. **Open Chrome DevTools**:
+   - Right-click anywhere on the webpage and select **Inspect**.
+   - Alternatively, use the shortcut:  
+     **Windows/Linux**: `Ctrl + Shift + I`  
+     **Mac**: `Cmd + Option + I`.
+
+2. **Access the Network Tab**:
+   - In the DevTools window, click on the **Network** tab.
+   - Ensure the tab is open before triggering the request to capture all relevant network activity.
+
+3. **Filter Network Requests**:
+   - To narrow down results, use the **Filter** text box (e.g., search for `XHR` or `Fetch`).
+   - You can also click on specific categories like **XHR**, **JS**, **CSS**, etc., to focus on specific request types.
+
+4. **Trigger the Request**:
+   - Perform the action on the page that sends the request (e.g., click a button, refresh the page).
+
+5. **Find the Relevant Request**:
+   - In the **Network** panel, locate the request you're interested in.
+   - Click on it to view details.
+
+6. **View Request & Response**:
+   - Go to the **Headers** tab to view request details such as URL, method, and status.
+   - Switch to the **Response** tab to see the response data (JSON, HTML, etc.).
+
+7. **Copy the Request/Response**:
+   - Right-click the request and select **Copy** to copy the full request, headers, or response for further analysis.
+
+** Notes:
+
+- **Clear Logs**: If you have too many entries, click the trash icon in the Network panel to clear logs and focus only on new requests.
+- **Preserve Log**: Check the **Preserve log** option if you want to keep network data across page reloads.
+
+This method allows you to inspect how web applications communicate with servers and identify any issues with the requests or responses.

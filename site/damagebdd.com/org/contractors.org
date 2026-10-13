@@ -1,0 +1,223 @@
+#+TITLE: DamageBDD Contractor Development Process
+#+OPTIONS: toc:nil
+#+TOC: headlines 2
+
+* Purpose
+
+This page defines a **lightweight, self-managed workflow** for contractors contributing to DamageBDD.
+It is intentionally simple. You do **not** need to understand Behavior-Driven Development (BDD) to start.
+You only need a GitHub account and a BTC or Lightning wallet.
+
+Over time, you will naturally learn BDD because every task in the project is verified using it.
+
+This process is:
+- Non-custodial
+- Non-employment
+- Non-investment
+- Globally permissionless
+- Fully auditable via GitHub
+
+* Communication Rule
+  **All communication happens via GitHub Issues.**
+  No email, no DMs, no meetings unless absolutely required.
+
+Each issue represents:
+
+*** =The scope=
+*** =The expected output=
+*** =The acceptance criteria=
+*** =The payout=
+*** =The payment method (one-off BTC address or Lightning invoice)=
+
+This protects both sides and removes management overhead.
+
+* Workflow Overview
+
+1. **Find an issue** labelled =open= or =help-wanted=.
+2. **Comment “/claim”** if you want to work on it.
+3. Maintainer assigns the issue to you.
+4. **Open a branch**, build the solution, and push a PR referencing the issue.
+5. Maintainer reviews & merges.
+6. **You get paid in BTC (on-chain or Lightning)** to a one-off address or invoice you provide inside the PR.
+
+That’s all.
+
+BDD only becomes relevant later when the issue itself *contains a feature file* you must implement.
+
+* Step-By-Step Process
+
+** 1. Pick an Issue**
+Go to the repository’s *Issues* page. Look for:
+
+*** =bounty=
+*** =open=
+*** =help-wanted=
+*** =easy=, =medium=, or =advanced=
+
+Each issue already contains:
+
+*** =A short description=
+*** =A task breakdown=
+*** =Payout amount listed in sats=
+*** =Expected “definition of done”=
+*** =(Optional) BDD feature to implement=
+
+    If you need clarification, **ask inside the issue**, not privately.
+
+** 2. Claiming Work**
+Comment on the issue:
+
+#+begin_example
+/claim
+I agree to deliver this task for the quoted sats.
+Work will begin now.
+#+end_example
+
+The maintainer will assign you.
+This avoids schedule / responsibility confusion.
+
+---
+
+** 3. Working on the Task**
+Create a branch in your fork:
+
+#+begin_src sh
+git checkout -b feat/<short-task-id>
+#+end_src
+
+Implement the solution.
+
+If the issue includes BDD, just follow it as best as you can.
+If you don’t know how yet—don’t worry. The maintainer will help clean it up.
+The key is:
+**deliver the thing**.
+
+---
+
+** 4. Submit a Pull Request**
+Open a PR with this exact structure:
+
+#+begin_src markdown
+
+### Summary
+
+Fixes issue #<id>
+
+### Verification
+
+Describe:
+
+,* What you changed
+,* How you tested it (manual is OK initially)
+,* Any output or logs
+
+### Payout
+
+Payment Rail: BTC (on-chain) | Lightning
+
+One-Off BTC Address or BOLT11 Lightning Invoice:
+<insert your one-off address or invoice here>
+
+Amount: <as listed in issue>
+
+I confirm:
+- This is a fresh, one-time payout destination.
+- I control this wallet.
+- This is a non-custodial wallet.
+- This payment is for completed work only.
+
+### Notes
+
+Anything extra we should know.
+#+end_src
+
+This is your *invoice*.
+There is no extra emailing or admin.
+
+---
+
+** 5. Review & Merge**
+Maintainer reviews your PR.
+If changes are needed, they are requested inside GitHub.
+Once approved and merged, you mark the issue as:
+
+#+begin_src markdown
+/ready-for-payment
+#+end_src
+
+---
+
+** 6. Payment**
+You are paid **in BTC (on-chain or Lightning)** to your quoted address or Lightning invoice.
+This is finalised inside the Issue thread so the record is permanent.
+
+For Lightning:
+- Only **BOLT11 invoices** are accepted.
+- Invoices must be **non-custodial**.
+- Expired invoices require resubmission.
+- Lightning payments are final.
+
+DAMAGE token liquidity, pricing, or conversions are *not your concern*.
+The treasury handles that.
+
+---
+
+* Payment & Wallet Rules (Strict)
+
+- **Never reuse payout addresses.** Always generate a fresh one.
+- **Never submit exchange deposit addresses.**
+- **Never submit custodial Lightning invoices.**
+- **One work item = one payout destination.**
+- **All payout details must live in the PR.**
+- **No payout details via DM, email, or chat.**
+
+Failure to follow these rules may void payout eligibility for security reasons.
+
+---
+
+* Legal & Relationship Clarification
+
+By participating in this workflow, you acknowledge:
+
+- You are an **independent contractor**, not an employee.
+- This is **not an investment**, not revenue sharing, and not equity.
+- Payments are **final compensation for completed work only**.
+- You are responsible for your own **tax, reporting, and compliance**.
+- DamageBDD does not custody funds on your behalf.
+
+---
+
+* Best Practices for Contractors
+
+- Never reuse BTC addresses or Lightning invoices.
+- Put *all questions inside the issue*.
+- Keep branches small—one issue = one PR.
+- Don’t wait for permission. If it’s assigned to you, build.
+- If you’re stuck, comment in the issue.
+
+Over time you will see that nearly every problem in DamageBDD ends with:
+**write the behaviour in Gherkin and let the platform verify it.**
+
+You’ll naturally transition into BDD-driven development without being forced.
+
+---
+
+* Why This Workflow Works
+
+- Maintainer doesn’t micro-manage.
+- Contractors control their own time.
+- GitHub holds the full audit trail.
+- Issues → PR → Merge → Pay.
+- Scaling team ≠ scaling overhead.
+- No off-platform chatter.
+- No dependency on contractors learning BDD on day one.
+- Lightning enables instant, global, non-custodial micro-payouts.
+
+Everything else—BDD pipelines, DAMAGE token, Aeternity receipts, Lightning settlement—runs behind the scenes.
+
+---
+
+* One Sentence Summary
+
+**Do the work, open a PR, submit a one-off BTC address or Lightning invoice, get paid. GitHub is the contract.**
+

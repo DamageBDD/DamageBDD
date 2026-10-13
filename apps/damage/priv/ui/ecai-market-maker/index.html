@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ECAI • Market Maker</title>
+  <link rel="stylesheet" href="/ecai/market-maker/styles.css">
+  <script src="/ecai/market-maker/app.js" defer></script>
+</head>
+<body>
+  <main class="page">
+    <header class="topbar">
+      <div class="brand"><span class="glyph">◉</span><span>ECAI <small>MARKET MAKER</small></span></div>
+      <div class="header-meta"><span class="chip paper">PAPER EXECUTION</span><span id="feed-state" class="chip offline">Connecting</span><span id="last-updated" class="clock">No data</span></div>
+    </header>
+    <section class="intro">
+      <div><p class="eyebrow">GEOMETRIC LIQUIDITY ENGINE / COINSTORE</p><h1>DamageToken <span>/</span> Bitcoin</h1><p class="subtext">Inventory-aware quotes, elliptic-curve decision fingerprints, and auditable mark-to-market performance.</p></div>
+      <div class="commit"><span class="subtle">P-256 STATE COMMITMENT</span><code id="audit-tip">Awaiting first market observation</code><span class="subtle" id="event-count">0 events</span></div>
+    </section>
+    <div id="banner" class="banner" role="status">No market data yet. The dashboard only plots observations received from your configured ECAI worker.</div>
+    <section class="stats">
+      <article><span>DAMAGE / USDT</span><strong id="damage-price">—</strong><small>Coinstore order-book mid</small></article>
+      <article><span>BTC / USDT</span><strong id="btc-price">—</strong><small>Coinstore ticker</small></article>
+      <article><span>NET PAPER P&L</span><strong id="net-pnl">—</strong><small id="return-pct">Since initial mark</small></article>
+      <article><span>EQUITY / USDT</span><strong id="equity">—</strong><small id="inventory-ratio">Marked to DAMAGE mid</small></article>
+      <article><span>MAX DRAWDOWN</span><strong id="drawdown">—</strong><small>Since engine start</small></article>
+      <article><span>MAKER FEES / USDT</span><strong id="fees">—</strong><small>Recorded paper fills</small></article>
+    </section>
+    <section class="charts">
+      <article class="panel">
+        <div class="panel-head"><div><p class="eyebrow">RELATIVE MARKET PERFORMANCE</p><h2>DAMAGE vs BTC</h2></div><span class="panel-tag">INDEXED TO 100</span></div>
+        <div class="legend"><span><i class="dot damage"></i>DAMAGEUSDT</span><span><i class="dot btc"></i>BTCUSDT</span></div>
+        <div class="plot"><canvas id="market-chart" aria-label="DAMAGE and BTC relative price movement"></canvas><div id="market-empty" class="empty">Collecting real Coinstore samples…</div></div>
+      </article>
+      <article class="panel">
+        <div class="panel-head"><div><p class="eyebrow">PAPER PERFORMANCE / USDT</p><h2>Market maker vs BTC</h2></div><span class="panel-tag">MARK-TO-MARKET</span></div>
+        <div class="legend"><span><i class="dot equity"></i>Paper equity</span><span><i class="dot bench"></i>100% BTC benchmark</span></div>
+        <div class="plot"><canvas id="pnl-chart" aria-label="Paper equity and BTC benchmark"></canvas><div id="pnl-empty" class="empty">Collecting paper performance samples…</div></div>
+      </article>
+    </section>
+    <section class="tables">
+      <article class="panel">
+        <div class="panel-head"><div><p class="eyebrow">DETERMINISTIC QUOTE LADDER</p><h2>Working paper quotes</h2></div><span class="panel-tag" id="quote-count">0 QUOTES</span></div>
+        <div class="tablewrap"><table><thead><tr><th>Side</th><th>Level</th><th class="right">Price (USDT)</th><th class="right">DAMAGE Qty</th><th class="right">Notional</th></tr></thead><tbody id="quotes-table"><tr><td colspan="5" class="placeholder">No active quotes</td></tr></tbody></table></div>
+      </article>
+      <article class="panel">
+        <div class="panel-head"><div><p class="eyebrow">TRADE ATTRIBUTION</p><h2>Paper fills</h2></div><span class="panel-tag" id="fill-count">0 FILLS</span></div>
+        <div class="tablewrap"><table><thead><tr><th>Time</th><th>Side</th><th class="right">Price (USDT)</th><th class="right">Qty</th><th class="right">Fee</th></tr></thead><tbody id="fills-table"><tr><td colspan="5" class="placeholder">No confirmed paper fills</td></tr></tbody></table></div>
+      </article>
+    </section>
+    <footer><span>Data: Coinstore public spot API with DamageBDD <code>price_feed</code> reference</span><span>Read-only dashboard · No live exchange orders are sent</span></footer>
+  </main>
+</body>
+</html>

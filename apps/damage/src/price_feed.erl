@@ -1,0 +1,276 @@
+-module(price_feed).
+-behaviour(gen_server).
+
+%% API
+-export([start_link/0, get_prices/0]).
+
+-export([sats_to_damage/1]).
+-export([damage_to_sats_quote/2]).
+-export([fetch_coinstore_prices/0]).
+
+%% gen_server callbacks
+-export([init/1, handle_info/2, handle_call/3, handle_cast/2, terminate/2, code_change/3]).
+-export([damage_to_sats/1]).
+
+-include_lib("kernel/include/logger.hrl").
+
+% 10 minutes in milliseconds
+-define(INTERVAL, 10 * 60 * 1000).
+
+-record(state, {
+    %% keep existing (BTC/AUD) if you still want it
+    price = undefined :: undefined | float(),
+    btc_usdt = undefined :: undefined | float(),
+    damage_usdt = undefined :: undefined | float(),
+    updated_ms = 0 :: non_neg_integer()
+}).
+
+%%%===================================================================
+%%% API
+%%%===================================================================
+
+start_link() ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+
+get_prices() ->
+    gen_server:call(?MODULE, get_prices).
+
+%% Strict spot quote for value-sensitive operations such as NFT sales.
+%% Unlike damage_to_sats/1 this never falls back to hard-coded prices.
+-spec damage_to_sats_quote(number(), pos_integer()) ->
+    {ok, map()} | {error, term()}.
+damage_to_sats_quote(Damage, MaxAgeMs) when
+    is_number(Damage),
+    Damage > 0,
+    is_integer(MaxAgeMs),
+    MaxAgeMs > 0
+->
+    try get_prices() of
+        {ok, #{btc_usdt := BTCUSDT, damage_usdt := DamageUSDT, updated_ms := UpdatedMs}} when
+            is_number(BTCUSDT),
+            BTCUSDT > 0,
+            is_number(DamageUSDT),
+            DamageUSDT > 0,
+            is_integer(UpdatedMs),
+            UpdatedMs > 0
+        ->
+            NowMs = erlang:system_time(millisecond),
+            AgeMs = max(0, NowMs - UpdatedMs),
+            case AgeMs =< MaxAgeMs of
+                true ->
+                    Sats0 = Damage * DamageUSDT / BTCUSDT * 1.0e8,
+                    {ok, #{
+                        damage_amount => Damage,
+                        sats => max(1, erlang:ceil(Sats0)),
+                        btc_usdt => BTCUSDT,
+                        damage_usdt => DamageUSDT,
+                        price_updated_ms => UpdatedMs,
+                        quoted_at_ms => NowMs,
+                        price_age_ms => AgeMs
+                    }};
+                false ->
+                    {error, {stale_price_feed, #{age_ms => AgeMs, max_age_ms => MaxAgeMs}}}
+            end;
+        {ok, Prices} ->
+            {error, {invalid_price_feed, Prices}};
+        {error, _} = Error ->
+            Error;
+        Other ->
+            {error, {unexpected_price_feed_response, Other}}
+    catch
+        exit:Reason -> {error, {price_feed_unavailable, Reason}};
+        Class:Reason -> {error, {price_feed_failed, Class, Reason}}
+    end;
+damage_to_sats_quote(_Damage, _MaxAgeMs) ->
+    {error, invalid_quote_arguments}.
+
+damage_to_sats(Damage0) ->
+    Damage =
+        case Damage0 of
+            I when is_integer(I) -> I * 1.0;
+            F when is_float(F) -> F;
+            B when is_binary(B) ->
+                try
+                    binary_to_float(B)
+                catch
+                    _:_ -> list_to_float(binary_to_list(B))
+                end;
+            L when is_list(L) ->
+                try
+                    list_to_float(L)
+                catch
+                    _:_ -> list_to_float(L)
+                end;
+            _ ->
+                0.0
+        end,
+
+    {BTCUSDT, DamageUSDT} =
+        case get_prices() of
+            {ok, #{btc_usdt := B0, damage_usdt := D}} -> {B0, D};
+            _ -> {112000.0, 0.0117}
+        end,
+
+    %% DAMAGE -> USDT -> BTC -> sats
+    USDT = Damage * DamageUSDT,
+    BTC = USDT / BTCUSDT,
+    round(BTC * 1.0e8).
+%%%===================================================================
+%%% gen_server callbacks
+%%%===================================================================
+
+init([]) ->
+    self() ! fetch,
+    {ok, #state{}}.
+
+handle_info(fetch, State) ->
+    NewState2 =
+        case fetch_coinstore_prices() of
+            {ok, #{btc_usdt := BTCUSDT, damage_usdt := DamageUSDT}} ->
+                State#state{
+                    btc_usdt = BTCUSDT,
+                    damage_usdt = DamageUSDT,
+                    updated_ms = erlang:system_time(millisecond)
+                };
+            {error, Reason2} ->
+                ?LOG_WARNING("Failed to fetch Coinstore prices: ~p", [Reason2]),
+                State
+        end,
+
+    erlang:send_after(?INTERVAL, self(), fetch),
+    {noreply, NewState2};
+handle_info(_, State) ->
+    {noreply, State}.
+
+handle_call(get_prices, _From, State) ->
+    Reply =
+        case {State#state.btc_usdt, State#state.damage_usdt} of
+            {B, D} when is_float(B), is_float(D) ->
+                {ok, #{btc_usdt => B, damage_usdt => D, updated_ms => State#state.updated_ms}};
+            _ ->
+                {error, not_ready}
+        end,
+    {reply, Reply, State};
+handle_call(_, _From, State) ->
+    {reply, ok, State}.
+
+handle_cast(_, State) ->
+    {noreply, State}.
+
+terminate(_Reason, _State) ->
+    ok.
+
+code_change(_OldVsn, State, _Extra) ->
+    {ok, State}.
+
+-spec fetch_coinstore_prices() ->
+    {ok, #{btc_usdt := float(), damage_usdt := float()}} | {error, term()}.
+fetch_coinstore_prices() ->
+    Host = "api.coinstore.com",
+    Path = "/api/v1/market/tickers?symbol=btcusdt,damageusdt",
+    Timeout = 30000,
+
+    Opts = #{
+        transport => tls,
+        tls_opts => damage_gun:tls_opts(Host),
+        connect_timeout => Timeout
+    },
+
+    case damage_gun:open(Host, 443, Opts, none) of
+        {ok, ConnPid} ->
+            try
+                case damage_gun:await_up(ConnPid, Timeout) of
+                    {ok, _Protocol} ->
+                        Headers = [
+                            {<<"accept">>, <<"application/json">>},
+                            {<<"user-agent">>, <<"damagebdd/price-feed">>}
+                        ],
+                        StreamRef = gun:get(ConnPid, Path, Headers),
+                        await_coinstore_response(ConnPid, StreamRef, Timeout);
+                    Error ->
+                        Error
+                end
+            after
+                damage_otp_compat:catch_value(fun() -> gun:close(ConnPid) end)
+            end;
+        Error ->
+            Error
+    end.
+
+await_coinstore_response(ConnPid, StreamRef, Timeout) ->
+    case gun:await(ConnPid, StreamRef, Timeout) of
+        {response, nofin, Status, _Headers} ->
+            case gun:await_body(ConnPid, StreamRef, Timeout) of
+                {ok, Body} when Status >= 200, Status < 300 ->
+                    decode_coinstore_price_body(Body);
+                {ok, Body} ->
+                    {error, {http_status, Status, Body}};
+                {error, Reason} ->
+                    {error, Reason}
+            end;
+        {response, fin, Status, _Headers} ->
+            {error, {empty_response, Status}};
+        {error, Reason} ->
+            {error, Reason};
+        Other ->
+            {error, {unexpected_gun_response, Other}}
+    end.
+decode_coinstore_price_body(Body) ->
+    case damage_otp_compat:catch_value(fun() -> jsx:decode(Body, [return_maps]) end) of
+        #{<<"code">> := 0, <<"data">> := Data} when is_list(Data) ->
+            %% Data items look like: #{<<"symbol">> := <<"btcusdt">>, <<"price">> := <<"400">>}
+            case {find_price(<<"BTCUSDT">>, Data), find_price(<<"DAMAGEUSDT">>, Data)} of
+                {{ok, BTCUSDT}, {ok, DamageUSDT}} ->
+                    {ok, #{btc_usdt => BTCUSDT, damage_usdt => DamageUSDT}};
+                Other ->
+                    {error, {missing_prices, Other}}
+            end;
+        Other ->
+            {error, {bad_json, Other}}
+    end.
+
+find_price(Symbol, Items) ->
+    case
+        lists:filter(
+            fun
+                (#{<<"symbol">> := S}) when is_binary(S) -> S =:= Symbol;
+                (_) -> false
+            end,
+            Items
+        )
+    of
+        [#{<<"ask">> := P0} | _] ->
+            try
+                {ok, binary_to_float(P0)}
+            catch
+                _:_ ->
+                    %% fallback: integer string (e.g. <<"123">>)
+                    try
+                        {ok, float(binary_to_integer(P0))}
+                    catch
+                        _:_ ->
+                            {error, {bad_price, Symbol, P0}}
+                    end
+            end;
+        [] ->
+            {error, {not_found, Symbol}}
+    end.
+sats_to_damage(Sats) ->
+    try get_prices() of
+        {ok, #{btc_usdt := BTCUSDT, damage_usdt := DamageUSDT}} ->
+            BTC = Sats / 1.0e8,
+            USDT = BTC * BTCUSDT,
+            Damage = USDT / DamageUSDT,
+            round(Damage);
+        _ ->
+            %% fallback (optional)
+            BTCUSDT = 112000,
+            DamageUSDT = 0.0117,
+            BTC = Sats / 1.0e8,
+            USDT = BTC * BTCUSDT,
+            Damage = USDT / DamageUSDT,
+            round(Damage)
+    catch
+        exit:Reason -> {error, {price_feed_unavailable, Reason}};
+        Class:Reason -> {error, {price_feed_failed, Class, Reason}}
+    end.

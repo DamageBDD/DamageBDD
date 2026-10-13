@@ -1,0 +1,56 @@
+#+TITLE: Terms and Conditions
+#+DESCRIPTION: Terms and Conditions governing use of DamageBDD SaaS, including data submission rules, liability limits, intellectual property and Australian law compliance.
+#+KEYWORDS: DamageBDD terms and conditions, SaaS agreement, user terms, liability limitation, intellectual property policy, data usage policy, Australian governing law, software service terms
+
+#+INCLUDE: "header.org"
+#+options: num:2
+
+
+
+* Agreement to Terms
+
+By using our Services, you agree to these terms and conditions
+(“Terms”). If you do not agree with these Terms, you must not use our
+Services.
+
+* Definition of Services
+
+Our Services refer to the software as a service (SaaS) provided by
+DamageBDD via damagebdd.com.
+
+* Data Submission
+
+Users are strictly prohibited from submitting any real or sensitive
+data to the Service. Only test data should be submitted.
+
+By submitting test data, you grant us a worldwide, non-exclusive,
+royalty-free license to use, reproduce, and display such data solely
+for the purpose of providing the Service.
+
+* Compliance with Laws
+
+Users must use our Services in compliance with all local and
+international laws and regulations applicable in Australia.
+
+* Intellectual Property
+
+All intellectual property rights in our Services are owned by or
+licensed to DamageBDD.
+
+* Liability
+
+Our liability for any claim arising out of or in connection with the
+Service will be limited to the amount paid by you for the Service.
+
+We are not liable for any indirect, special, or consequential damages,
+even if advised of the possibility of such damages.
+
+* Governing Law
+
+These Terms will be governed by and construed in accordance with the
+laws of Australia.
+
+* Contact Us
+
+For any questions regarding these Terms, please contact us at
+legal@damagebdd.com.

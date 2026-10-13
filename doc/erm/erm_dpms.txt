@@ -1,0 +1,43 @@
+Arch dependencies:
+  sudo pacman -S libxcb xcb-proto
+
+Build:
+  make -C c_src
+
+Example:
+  {ok, _} = erm_dpms:start_link(#{
+      poll_ms => 100,
+      screensaver_timeout => 300,
+      dpms_on_saver => off,
+      on_start => {shell, "logger -t erm-dpms 'screensaver started'"},
+      on_stop  => {shell, "logger -t erm-dpms 'screensaver stopped'"}
+  }).
+
+  erm_dpms:status().
+  erm_dpms:sleep().
+  erm_dpms:wake().
+  erm_dpms:force_dpms(off).
+  erm_dpms:force_dpms(on).
+  erm_dpms:inhibit(true).
+  erm_dpms:inhibit(false).
+
+Supervisor child:
+  #{
+      id => erm_dpms,
+      start => {erm_dpms, start_link, []},
+      restart => permanent,
+      shutdown => 5000,
+      type => worker,
+      modules => [erm_dpms]
+  }
+
+sys.config example under the damage application:
+  {damage, [
+      {erm_dpms, [
+          {poll_ms, 100},
+          {screensaver_timeout, 300},
+          {dpms_on_saver, off},
+          {on_start, {shell, "logger -t erm-dpms saver-start"}},
+          {on_stop,  {shell, "logger -t erm-dpms saver-stop"}}
+      ]}
+  ]}

@@ -1,0 +1,5 @@
+-module(erm_voice).
+-export([command/1,options/1]).
+options(M) when is_map(M)->{ok,M};
+options(L) when is_list(L)->{ok,maps:from_list(L)}.
+command(C)->persistent_term:get(native_test_owner)!{command,C},ok.

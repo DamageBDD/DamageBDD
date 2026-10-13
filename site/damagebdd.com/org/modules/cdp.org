@@ -1,0 +1,440 @@
+#+TITLE: DamageBDD Browser (CDP) Steps
+#+SUBTITLE: Describing and verifying real user behaviour in a browser
+#+AUTHOR: DamageBDD
+#+OPTIONS: toc:3 num:nil
+
+* Browser (CDP) Steps
+
+These steps allow you to describe **what a real user sees and does**
+in a real web browser.
+
+They are used to test:
+- Pages loading
+- Buttons and links
+- Text visibility
+- Layout and alignment
+- Mobile vs desktop behaviour
+- Visual bugs that users complain about
+
+You do *not* need to understand browsers, JavaScript, or automation.
+
+If you can explain the behaviour to another human,
+you can write these steps.
+
+
+
+**Important rule**
+
+Every browser scenario must start by attaching to the browser.
+
+
+
+**Example minimal structure**
+
+#+BEGIN_SRC gherkin
+Scenario: User opens homepage
+  Given I attach CDP
+  When I open "https://example.com"
+  Then the page should contain "Welcome"
+#+END_SRC
+
+
+
+* Connecting to the Browser
+
+** Given I attach CDP
+
+Attaches DamageBDD to a real browser session.
+
+This step:
+- Starts (or connects to) the browser
+- Prepares it for interaction
+- Must appear before *any* browser action
+
+#+BEGIN_SRC gherkin
+Given I attach CDP
+#+END_SRC
+
+Use this **once per scenario**.
+
+
+
+* Opening Pages
+
+** When I open "{{URL}}"
+
+Opens a web page and waits until it finishes loading.
+
+#+BEGIN_SRC gherkin
+When I open "https://example.com"
+#+END_SRC
+
+This behaves like:
+- Typing the address into the browser
+- Pressing Enter
+- Waiting until the page is ready
+
+
+
+* Waiting for the Page
+
+Modern websites load things gradually.
+These steps help your scenario behave like a patient human.
+
+
+
+** And I wait for "{{Selector}}"
+
+Waits until a specific element appears on the page.
+
+#+BEGIN_SRC gherkin
+And I wait for "#login-button"
+#+END_SRC
+
+Use this:
+- After opening a page
+- After clicking a button
+- Before typing into a field
+
+
+
+** And I wait until the page contains "{{Text}}"
+
+Waits until visible text appears anywhere on the page.
+
+#+BEGIN_SRC gherkin
+And I wait until the page contains "Welcome back"
+#+END_SRC
+
+This prevents timing-related failures.
+
+
+
+* Clicking Things
+
+
+
+** And I click "{{Selector}}"
+
+Clicks an element using its identifier.
+
+#+BEGIN_SRC gherkin
+And I click "#submit"
+#+END_SRC
+
+Use this when you know the element identifier.
+
+
+
+*** And I click text "{{Text}}"
+
+Clicks a button or link by the text the user sees.
+
+#+BEGIN_SRC gherkin
+And I click text "Sign in"
+#+END_SRC
+
+This is usually the **most readable** way to click.
+
+
+
+* Typing and Keyboard Input
+
+
+
+** And I type "{{Text}}" into "{{Selector}}"
+
+Types text into a form field.
+
+#+BEGIN_SRC gherkin
+And I type "alice@example.com" into "#email"
+#+END_SRC
+
+This behaves like real typing.
+
+
+
+** And I press Enter
+
+Presses the Enter key on the currently focused element.
+
+#+BEGIN_SRC gherkin
+And I press Enter
+#+END_SRC
+
+Useful for:
+- Login forms
+- Search boxes
+
+
+
+* Reading and Verifying Content
+
+
+
+** Then the page should contain "{{Text}}"
+
+Checks that the given text is visible on the page.
+
+#+BEGIN_SRC gherkin
+Then the page should contain "Dashboard"
+#+END_SRC
+
+This verifies **what the user actually sees**.
+
+
+
+** And I save text of "{{Selector}}" as "{{Name}}"
+
+Reads visible text from the page and stores it for later use.
+
+#+BEGIN_SRC gherkin
+And I save text of "#order-id" as "OrderId"
+#+END_SRC
+
+You can later use this value in other checks.
+
+
+
+* Viewport and Screen Size
+
+These steps simulate different devices.
+
+
+
+** Given I set viewport to "{{Width}} x {{Height}}"
+
+Simulates a screen of the given size.
+
+#+BEGIN_SRC gherkin
+Given I set viewport to 390 x 844
+#+END_SRC
+
+This is useful for:
+- Mobile testing
+- Tablet testing
+- Responsive layout checks
+
+
+
+** Given I set viewport to "{{Width}} x {{Height}} scale "{{Scale}}"
+
+Like the previous step, but with explicit scaling.
+
+#+BEGIN_SRC gherkin
+Given I set viewport to 1440 x 900 scale 1
+#+END_SRC
+
+
+
+* Layout and Visual Correctness
+
+These steps verify **visual alignment**, not code.
+
+They catch bugs users complain about.
+
+
+
+** Then the element "{{A}}" should be the same size as "{{B}}"
+
+Ensures two elements are visually the same size.
+
+#+BEGIN_SRC gherkin
+Then the element "#logo-header" should be the same size as "#logo-footer"
+#+END_SRC
+
+
+
+** Then the element "{{A}}" should be the same size as "{{B}}" within "{{Px}}" px
+
+Allows a small tolerance.
+
+#+BEGIN_SRC gherkin
+Then the element "#card1" should be the same size as "#card2" within 2 px
+#+END_SRC
+
+
+
+** Then the text of element "{{Selector}}" should be center aligned
+
+Checks that text is centered according to styling rules.
+
+#+BEGIN_SRC gherkin
+Then the text of element "#title" should be center aligned
+#+END_SRC
+
+
+
+** Then the text of element "{{Selector}}" should be visually centered within "{{Px}}" px
+
+Checks what the human eye perceives as centered.
+
+#+BEGIN_SRC gherkin
+Then the text of element "#title" should be visually centered within 2 px
+#+END_SRC
+
+
+
+* Alignment Between Elements
+
+
+
+** Then the elements "{{A}}" and "{{B}}" should be horizontally aligned at "{{left|center|right}}"
+
+Checks horizontal alignment.
+
+#+BEGIN_SRC gherkin
+Then the elements "#price" and "#buy-button" should be horizontally aligned at center
+#+END_SRC
+
+
+
+** Then the elements "{{A}}" and "{{B}}" should be vertically aligned at "{{top|center|bottom}}"
+
+Checks vertical alignment.
+
+#+BEGIN_SRC gherkin
+Then the elements "#icon" and "#label" should be vertically aligned at center
+#+END_SRC
+
+
+
+* Overflow and Screen Safety
+
+These steps prevent “broken on mobile” bugs.
+
+
+
+** Then the page should have no horizontal overflow
+
+Ensures the page does not scroll sideways.
+
+#+BEGIN_SRC gherkin
+Then the page should have no horizontal overflow
+#+END_SRC
+
+
+
+** Then the page should have no horizontal overflow within "{{Px}}" px
+
+Allows a small tolerance.
+
+#+BEGIN_SRC gherkin
+Then the page should have no horizontal overflow within 1 px
+#+END_SRC
+
+
+
+** Then the element "{{Selector}}" should be within the viewport horizontally
+
+Ensures an element stays on screen.
+
+#+BEGIN_SRC gherkin
+Then the element "#menu" should be within the viewport horizontally
+#+END_SRC
+
+* Console & JavaScript Error Verification
+
+These steps allow DamageBDD to deterministically verify that a page executed
+without JavaScript errors and that expected console output occurred.
+
+Unlike DOM assertions, these steps inspect the browser runtime itself via the
+Chrome DevTools Protocol (CDP), ensuring that silent failures, uncaught
+exceptions, and runtime errors are detected reliably.
+** Then the page must have no JavaScript errors
+
+Asserts that no JavaScript runtime errors or uncaught exceptions occurred on the
+page.
+
+This step fails if:
+- Any `Runtime.exceptionThrown` event is observed
+- Any console message with level `error` is emitted
+
+This guarantees that the page executed cleanly at the JavaScript runtime level,
+not merely that it rendered successfully.
+
+*** Example
+#+begin_src gherkin
+Then the page must have no JavaScript errors
+#+end_src
+
+** Then the page console should contain log "<text>"
+
+Asserts that a console log message containing the given text was emitted.
+
+This step is useful for:
+- Verifying application lifecycle milestones
+- Confirming feature flags or execution paths
+- Ensuring client-side initialization completed
+
+The match is a substring match against the console message text.
+
+*** Example
+#+begin_src gherkin
+Then the page console should contain log "App started"
+#+end_src
+
+** Then the page console should have no error logs
+
+Asserts that the browser console contains no messages with level `error`.
+
+This step is stricter than DOM-based checks and will fail the feature if any
+JavaScript errors, failed imports, or runtime violations are logged.
+
+*** Example
+#+begin_src gherkin
+Then the page console should have no error logs
+#+end_src
+** Notes on Console Verification
+
+- Console logs are captured directly from the browser runtime via CDP
+- No DOM inspection or JavaScript injection is used
+- Logs are accumulated across the scenario execution
+- Errors cannot be hidden by try/catch or silent failures
+
+This makes console verification suitable for:
+- Continuous integration
+- Economic verification (paid test execution)
+- Frontend regression detection
+- Trust-minimized browser validation
+
+
+* Complete Example
+
+#+BEGIN_SRC gherkin
+Scenario: Mobile login page behaves correctly
+  Given I attach CDP
+  And I set viewport to 390 x 844
+  When I open "https://example.com/login"
+  And I wait for "#email"
+  And I type "alice@example.com" into "#email"
+  And I type "secret" into "#password"
+  And I click text "Sign in"
+  Then the page should contain "Welcome back"
+  And the page should have no horizontal overflow
+#+END_SRC
+
+
+
+* How to Think as a BDD Writer
+
+Ask:
+- What does the user see?
+- What feels broken if wrong?
+- What would support report say?
+
+Write *that*.
+
+
+
+* Summary
+
+CDP steps allow you to turn:
+- Visual expectations
+- Design rules
+- UX promises
+
+into **verifiable behaviour**.
+
+If a human can complain about it,
+DamageBDD can test it.

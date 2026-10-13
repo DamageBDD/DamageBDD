@@ -1,0 +1,7 @@
+-module(playlist).
+-export([all/0, current/0, sync_current_path/1, set_current/1]).
+all() -> persistent_term:get(voice_test_tracks, []).
+current() ->
+    case all() of [{_, T} | _] -> {ok, T}; [] -> {error, empty} end.
+sync_current_path(_) -> ok.
+set_current(_) -> ok.

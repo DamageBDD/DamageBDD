@@ -1,0 +1,221 @@
+name: build-release
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Apple Silicon runner
+          - target: macos-arm64
+            os: macos-14
+            profile: "mac,prod"
+          # Intel runner
+          - target: macos-x86_64
+            os: macos-13
+            profile: "mac,prod"
+          # Linux runner
+          - target: linux-x86_64
+            os: ubuntu-22.04
+            profile: "linux,prod"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Erlang/OTP + rebar3
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: "28"
+          rebar3-version: "3.26.0"
+
+      - name: Cache rebar3 + build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/rebar3
+            _build
+          key: ${{ runner.os }}-${{ matrix.target }}-otp28-${{ hashFiles('rebar.config', '**/*.app.src', '**/*.erl', '**/*.hrl', '**/Makefile', '**/*.c', '**/*.h') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-otp28-
+
+      # ---------------------------
+      # OS dependencies
+      # ---------------------------
+      - name: Install deps (macOS)
+        if: startsWith(matrix.os, 'macos')
+        run: |
+          set -euxo pipefail
+          brew update
+          brew install libsodium gmp openssl@3 
+          echo "SODIUM_PREFIX=$(brew --prefix libsodium)" >> "$GITHUB_ENV"
+          echo "OPENSSL_PREFIX=$(brew --prefix openssl@3 )" >> "$GITHUB_ENV"
+          echo "GMP_PREFIX=$(brew --prefix gmp )" >> "$GITHUB_ENV"
+
+      - name: Install deps (Linux)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential make pkg-config \
+            libgmp-dev \
+            libssl-dev \
+            libsodium-dev \
+            libgtk-4-dev \
+            nvidia-cuda-toolkit
+
+      # ---------------------------
+      # Tool + env info
+      # ---------------------------
+      - name: Show versions
+        run: |
+          set -euxo pipefail
+          uname -a
+          uname -m
+          erl -noshell -eval 'io:format("OTP=~p~n",[erlang:system_info(otp_release)]), halt().'
+          rebar3 --version
+
+      # ---------------------------
+      # Build
+      # ---------------------------
+      - name: Set native build env (macOS)
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          # OTP root from setup-beam
+          OTP_ROOT="$(erl -noshell -eval 'io:format("~s", [code:root_dir()]), halt().' )"
+
+          # EI include/lib
+          EI_INCDIR="$OTP_ROOT/usr/include"
+          EI_LIBDIR="$OTP_ROOT/usr/lib"
+          [ -d "$EI_INCDIR" ] || EI_INCDIR="$OTP_ROOT/lib/erlang/usr/include"
+          [ -d "$EI_LIBDIR" ] || EI_LIBDIR="$OTP_ROOT/lib/erlang/usr/lib"
+
+          # Homebrew prefixes (already installed earlier)
+          SODIUM_PREFIX="${SODIUM_PREFIX:-$(brew --prefix libsodium)}"
+          OPENSSL_PREFIX="${OPENSSL_PREFIX:-$(brew --prefix openssl@3 )}"
+          GMP_PREFIX="${GMP_PREFIX:-$(brew --prefix gmp )}"
+
+          CPPFLAGS=""
+          LDFLAGS=""
+
+          add_prefix () {
+            local p="$1"
+            [ -n "$p" ] || return 0
+            [ -d "$p/include" ] && CPPFLAGS="-I$p/include $CPPFLAGS"
+            [ -d "$p/lib" ] && LDFLAGS="-L$p/lib $LDFLAGS"
+          }
+
+          # Order matters: OTP EI first, then brew libs
+          add_prefix "$OTP_ROOT/usr"         # catches some OTP layouts
+          CPPFLAGS="-I$EI_INCDIR $CPPFLAGS"
+          LDFLAGS="-L$EI_LIBDIR $LDFLAGS"
+
+          add_prefix "$SODIUM_PREFIX"
+          add_prefix "$OPENSSL_PREFIX"
+          add_prefix "$GMP_PREFIX"
+
+          # Persist for subsequent steps
+          {
+            echo "OTP_ROOT=$OTP_ROOT"
+            echo "ERL_EI_INCDIR=$EI_INCDIR"
+            echo "ERL_EI_LIBDIR=$EI_LIBDIR"
+            echo "CPPFLAGS=$CPPFLAGS"
+            echo "LDFLAGS=$LDFLAGS"
+            echo "CFLAGS=${CFLAGS:-} $CPPFLAGS"
+            echo "ERL_CFLAGS=${ERL_CFLAGS:-} $CPPFLAGS"
+            echo "ERL_LDFLAGS=${ERL_LDFLAGS:-} $LDFLAGS"
+          } >> "$GITHUB_ENV"
+
+          # Sanity checks
+          test -f "$EI_INCDIR/ei.h" || true
+          test -f "$EI_LIBDIR/libei.a" -o -f "$EI_LIBDIR/libei.dylib"
+          test -f "$SODIUM_PREFIX/include/sodium.h"
+          echo "CPPFLAGS=$CPPFLAGS"
+          echo "LDFLAGS=$LDFLAGS"
+
+      - name: Export Erlang EI paths (macOS)
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          # Where OTP is installed by setup-beam
+          OTP_ROOT="$(erl -noshell -eval 'io:format("~s", [code:root_dir()]), halt().' )"
+          echo "OTP_ROOT=$OTP_ROOT" >> "$GITHUB_ENV"
+
+          # EI include + lib directories
+          EI_INCDIR="$OTP_ROOT/usr/include"
+          EI_LIBDIR="$OTP_ROOT/usr/lib"
+
+          # Some OTP layouts use lib/erlang/usr/*
+          [ -d "$EI_LIBDIR" ] || EI_LIBDIR="$OTP_ROOT/lib/erlang/usr/lib"
+          [ -d "$EI_INCDIR" ] || EI_INCDIR="$OTP_ROOT/lib/erlang/usr/include"
+
+          echo "ERL_EI_INCDIR=$EI_INCDIR" >> "$GITHUB_ENV"
+          echo "ERL_EI_LIBDIR=$EI_LIBDIR" >> "$GITHUB_ENV"
+
+          # Make sure compiler & linker see it
+          echo "CPPFLAGS=-I$EI_INCDIR ${CPPFLAGS:-}" >> "$GITHUB_ENV"
+          echo "LDFLAGS=-L$EI_LIBDIR ${LDFLAGS:-}" >> "$GITHUB_ENV"
+          echo "CFLAGS=${CFLAGS:-} -I$EI_INCDIR" >> "$GITHUB_ENV"
+          echo "ERL_CFLAGS=${ERL_CFLAGS:-} -I$EI_INCDIR" >> "$GITHUB_ENV"
+          echo "ERL_LDFLAGS=${ERL_LDFLAGS:-} -L$EI_LIBDIR" >> "$GITHUB_ENV"
+
+          # sanity
+          ls -la "$EI_LIBDIR" | head
+          test -e "$EI_LIBDIR/libei.a" -o -e "$EI_LIBDIR/libei.dylib"
+
+      - name: Compile
+        run: |
+          set -euxo pipefail
+          rebar3 clean
+          rebar3 as ${{ matrix.profile }} compile
+
+      - name: Release
+        run: |
+          set -euxo pipefail
+          rebar3 as ${{ matrix.profile }} release
+
+      # ---------------------------
+      # Package artifacts
+      # ---------------------------
+      - name: Package tarball
+        run: |
+          set -euxo pipefail
+
+          # Find the release directory (handles profile naming differences)
+          REL_DIR="$(find _build -maxdepth 4 -type d -path '*/rel/damage' | head -n 1)"
+          if [ -z "$REL_DIR" ]; then
+            echo "ERROR: could not find _build/**/rel/damage" >&2
+            find _build -maxdepth 6 -type d -print
+            exit 1
+          fi
+
+          ARCH="$(uname -m)"
+          OUT="damage-${{ matrix.target }}-${ARCH}.tar.gz"
+
+          # Tar the release root folder 'damage'
+          cd "$(dirname "$REL_DIR")"
+          tar -czf "$GITHUB_WORKSPACE/$OUT" damage
+
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
+          ls -lh "$GITHUB_WORKSPACE/$OUT"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.OUT }}
+          path: ${{ env.OUT }}
+          if-no-files-found: error

@@ -1,0 +1,24 @@
+<dialog id="indexerLoginDialog" class="ecai-indexer-login-dialog" aria-labelledby="indexerLoginTitle">
+  <form id="indexerLoginForm" class="ecai-indexer-login-form">
+    <div class="ecai-indexer-dialog-heading">
+      <div>
+        <h2 id="indexerLoginTitle">Sign in to DamageBDD</h2>
+        <p class="ecai-indexer-muted">Use your existing DamageBDD email and password.</p>
+      </div>
+      <button id="closeLoginBtn" type="button" aria-label="Close sign in dialog">×</button>
+    </div>
+
+    <label>
+      Email
+      <input id="loginEmail" name="username" type="email" autocomplete="username" required>
+    </label>
+
+    <label>
+      Password
+      <input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
+    </label>
+
+    <button id="loginSubmitBtn" type="submit">Sign in</button>
+    <p id="loginStatus" class="ecai-indexer-muted" role="status" aria-live="polite"></p>
+  </form>
+</dialog>

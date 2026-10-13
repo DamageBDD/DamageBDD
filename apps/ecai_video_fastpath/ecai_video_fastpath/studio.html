@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ECAI Video Fastpath Studio</title>
+<style>
+:root{font-family:ui-sans-serif,system-ui,Arial;background:#0c1017;color:#e8eef5;color-scheme:dark}
+*{box-sizing:border-box}body{margin:0}header{border-bottom:1px solid #293749;padding:1.25rem 2rem;display:flex;justify-content:space-between;gap:1rem;align-items:center}
+.logo{font-size:1.35rem;font-weight:800;letter-spacing:.06em}.logo small{font-size:.68rem;font-weight:500;display:block;letter-spacing:.12em;color:#7cdad0}
+main{max-width:1200px;margin:1.5rem auto;padding:0 1.25rem;display:grid;grid-template-columns:380px minmax(0,1fr);gap:1.25rem}
+section{background:#141d2a;border:1px solid #2a3a4d;border-radius:14px;padding:1.25rem;margin-bottom:1.25rem}
+h1{font-size:1.45rem;margin:0}h2{font-size:1.04rem;margin:.1rem 0 1rem}h3{font-size:.92rem;margin:0 0 .6rem}
+p,.minor{color:#a3b5c6;font-size:.88rem;line-height:1.5}.minor{font-size:.75rem}
+label{display:block;color:#bcd1df;font-size:.79rem;margin:.75rem 0 .3rem}input,textarea,select{width:100%;border:1px solid #435569;background:#0a121d;border-radius:8px;padding:.65rem .7rem;color:#eef7fa;font:inherit}
+input[type=file]{font-size:.75rem}textarea{min-height:75px}button{background:#49cbb8;border:0;border-radius:8px;padding:.64rem .85rem;color:#062820;font-size:.85rem;font-weight:800;cursor:pointer}
+button.secondary{background:#2e4355;color:#d6e7f2}button:disabled{opacity:.4;cursor:default}.actions{display:flex;flex-wrap:wrap;gap:.5rem;margin-top:1rem}
+#status{max-width:450px;font-size:.8rem;color:#a9dacf}.layout{display:grid;grid-template-columns:1fr 1fr;gap:1rem}.layout>section{margin:0}
+video{width:100%;max-height:420px;background:#05080e;border-radius:8px}.versions{padding:0;margin:0;list-style:none;max-height:290px;overflow-y:auto}
+.versions li{padding:.65rem;border:1px solid #34485a;border-radius:9px;margin-bottom:.5rem;cursor:pointer;word-break:break-word}
+.versions li.selected{border-color:#4dd9c7;background:#173138}.chips{display:flex;gap:.5rem;flex-wrap:wrap}.chip{border:1px solid #42566a;border-radius:999px;padding:.22rem .6rem;font-size:.73rem;color:#9bdccc}
+pre{padding:1rem;border-radius:8px;background:#060d16;overflow:auto;max-height:300px;font-size:.72rem;white-space:pre-wrap;word-break:break-word}
+footer{margin:1rem 0;color:#788fa1;font-size:.75rem}@media(max-width:850px){main{grid-template-columns:1fr}.layout{grid-template-columns:1fr}header{flex-direction:column;align-items:flex-start}}
+</style></head>
+<body>
+<header><div class="logo">ECAI <small>VIDEO FASTPATH · BRING YOUR OWN BACKEND</small></div><div id="status">Connect with your workspace key. No API key is persisted in the browser.</div></header>
+<main><aside>
+<section><h2>1. Connect</h2><label for="key">Workspace API key</label><input id="key" type="password" autocomplete="off" placeholder="Bearer API key"><div class="actions"><button id="connect">Connect</button></div><p class="minor">Use TLS in production. Key remains in this tab's JavaScript memory only.</p></section>
+<section><h2>2. Workspace</h2><label for="project-select">Current project</label><select id="project-select"><option value="">Create or load a project</option></select>
+<label for="title">New project</label><input id="title" placeholder="Spring campaign"><label for="license">License identifier</label><input id="license" value="all-rights-reserved"><div class="actions"><button id="make-project">Create project</button><button id="refresh" class="secondary">Refresh</button></div></section>
+<section><h2>3. Add source footage</h2><p>Upload an existing MP4 to skip AI generation completely, or plug in a configured provider below.</p><label for="upload">MP4 from your current workflow</label><input id="upload" type="file" accept="video/mp4"><div class="actions"><button id="upload-btn">Import & sign</button></div><hr style="border:0;border-top:1px solid #2e4053;margin:1.25rem 0">
+<label for="backend">Configured backend</label><select id="backend"></select><label for="prompt">Generation request</label><textarea id="prompt">Clean product shot on a dark background, cinematic orbit, subtle highlights.</textarea><div class="actions"><button id="generate">Generate via backend</button></div><p class="minor">The demo backend produces synthetic test footage, not AI video.</p>
+<details style="margin-top:1rem"><summary style="cursor:pointer;font-weight:bold">Connect your own video backend</summary>
+<p class="minor" id="connection-policy">Only operator-approved HTTPS backend hosts are accepted. Your provider key is encrypted at rest.</p>
+<label>Connection name</label><input id="vendor-id" placeholder="my_video_api">
+<label>Connection type</label><select id="vendor-kind"><option value="http_sync">HTTP response with video URL</option><option value="fal_queue">fal.ai asynchronous queue</option></select>
+<label>Endpoint URL</label><input id="vendor-url" placeholder="https://queue.fal.run/fal-ai/...">
+<label>Your provider API key</label><input type="password" id="vendor-key" autocomplete="off">
+<label>Authorization scheme</label><select id="vendor-auth"><option>Bearer</option><option>Key</option></select>
+<label>Approved video download hosts (comma-separated)</label><input id="vendor-hosts" placeholder="fal.media,v3.fal.media">
+<label>Result URL field</label><input id="vendor-output" value="video_url" placeholder="video.url">
+<label>Default model inputs (JSON)</label><textarea id="vendor-defaults">{}</textarea>
+<div class="actions"><button class="secondary" id="vendor-connect">Save encrypted connection</button></div>
+</details></section>
+</aside>
+<div>
+<section><h2>4. Reuse, alter, and prove</h2><div class="chips"><span class="chip">No model call for revisions</span><span class="chip">SHA-256 asset IDs</span><span class="chip">secp256k1 signed manifests</span></div>
+<p>Choose an existing version. Metadata changes reuse the exact MP4 bytes. Captions alter video pixels locally with FFmpeg, without calling the generation provider again.</p>
+<div class="layout"><div><label for="operation">Operation</label><select id="operation"><option value="metadata">Metadata-only · zero re-encode</option><option value="caption">Burn in caption · local render</option><option value="trim">Trim · local render</option></select><label for="change">Caption or metadata note</label><input id="change" placeholder="Limited edition · 20% off"><div id="trim-fields" hidden><label>Start (seconds)</label><input id="start" type="number" step="0.1" value="0"><label>End (seconds)</label><input id="end" type="number" step="0.1" value="1"></div><div class="actions"><button id="revise">Create verified revision</button></div></div>
+<div><label>Selected version</label><div id="selected" class="minor">Select a version in the timeline.</div><div class="actions"><button id="verify" class="secondary">Verify signature + bytes</button><button id="download" class="secondary">Download MP4</button></div></div></div></section>
+<section><h2>Preview</h2><video id="preview" controls playsinline></video><div class="actions"><button id="manifest" class="secondary">Show signed manifest</button><button id="graph" class="secondary">Show version graph</button><button id="metrics" class="secondary">Show reuse metrics</button></div><pre id="output">Signed provenance, graph and metrics will appear here.</pre></section>
+<section><h2>Version history</h2><ul id="versions" class="versions"><li>No versions yet</li></ul></section>
+<section><h2>5. NFT handoff (optional)</h2><p>Add the CID after independently pinning the MP4. This produces draft NFT metadata, not a mint or proof that the CID matches the file.</p><label for="cid">Published IPFS video CID</label><input id="cid" placeholder="bafy..."><div class="actions"><button id="nft">Prepare NFT draft</button></div></section>
+<footer>Video Fastpath 0.1 · Deterministic reuse and verifiable lineage. External model output remains probabilistic.</footer>
+</div></main>
+<script>
+(()=>{
+let token='',currentProject='',selectedVersion='',previewUrl=null, timer=null;
+const el=id=>document.getElementById(id);
+const say=(msg,error=false)=>{el('status').textContent=msg;el('status').style.color=error?'#ff9c91':'#a9dacf'};
+async function request(path, opts={}){
+ const h={...(opts.headers||{}),Authorization:'Bearer '+token};
+ if(!(opts.body instanceof FormData)&&opts.body!==undefined)h['Content-Type']='application/json';
+ const r=await fetch(path,{...opts,headers:h});
+ if(!r.ok){let m;try{m=(await r.json()).detail}catch{}throw Error(m||`HTTP ${r.status}`)}
+ if(opts.binary)return await r.blob();return await r.json();
+}
+const show=obj=>el('output').textContent=JSON.stringify(obj,null,2);
+async function op(fn){try{await fn()}catch(e){say(e.message,true)}}
+function project(){if(!currentProject)throw Error('Create or select a project')}
+function chosen(){project();if(!selectedVersion)throw Error('Select a version')}
+async function loadProjects(){const ps=await request('/v1/projects');const sel=el('project-select');sel.replaceChildren();for(const p of ps){let o=new Option(p.title+' / '+p.id.slice(0,8),p.id);sel.add(o)}if(ps.length){currentProject=ps.some(p=>p.id===currentProject)?currentProject:ps[0].id;sel.value=currentProject;await loadVersions()}else{currentProject='';selectedVersion='';el('versions').replaceChildren()}}
+async function loadVersions(){project();const vs=await request('/v1/projects/'+currentProject+'/versions');const ul=el('versions');ul.replaceChildren();for(const v of vs.slice().reverse()){const li=document.createElement('li');li.textContent=v.operation+' · '+v.id.slice(0,12)+' · '+v.output_sha256.slice(0,13);li.onclick=()=>op(()=>select(v.id));if(v.id===selectedVersion)li.classList.add('selected');ul.append(li)}if(!vs.some(v=>v.id===selectedVersion))selectedVersion=vs.length?vs[vs.length-1].id:'';if(selectedVersion)await select(selectedVersion);if(!vs.length)ul.textContent='No versions yet';}
+async function select(id){selectedVersion=id;const v=await request('/v1/versions/'+id);el('selected').textContent=v.operation+' / '+id.slice(0,12)+' / SHA '+v.output_sha256.slice(0,16);for(const li of el('versions').children)li.classList.toggle('selected',li.textContent.includes(id.slice(0,12)));
+ const blob=await request('/v1/versions/'+id+'/video',{binary:true});if(previewUrl)URL.revokeObjectURL(previewUrl);previewUrl=URL.createObjectURL(blob);el('preview').src=previewUrl;}
+el('connect').onclick=()=>op(async()=>{token=el('key').value.trim();if(!token)throw Error('Enter an API key');const b=await request('/v1/backends');el('backend').replaceChildren();for(const item of b)el('backend').add(new Option(item.label+(item.is_demo?' (synthetic)':''),item.id));await loadProjects();const policy=await request('/v1/backend-connection-policy');el('connection-policy').textContent=policy.enabled?'Approved hosts: '+policy.approved_hosts.join(', '):'Self-service connections not enabled by operator. Ask to allow your provider hostname and set a credential encryption key.';say('Workspace connected')});
+el('refresh').onclick=()=>op(async()=>{await loadProjects();say('Refreshed')});
+el('vendor-connect').onclick=()=>op(async()=>{
+ const requestBody={id:el('vendor-id').value.trim(),kind:el('vendor-kind').value,url:el('vendor-url').value.trim(),
+  api_key:el('vendor-key').value,auth_scheme:el('vendor-auth').value,
+  download_hosts:el('vendor-hosts').value.split(',').map(x=>x.trim()).filter(Boolean),
+  output_path:el('vendor-output').value.trim(),defaults:JSON.parse(el('vendor-defaults').value)};
+ const b=await request('/v1/backends',{method:'POST',body:JSON.stringify(requestBody)});
+ el('vendor-key').value='';const list=await request('/v1/backends');el('backend').replaceChildren();for(const item of list)el('backend').add(new Option(item.label+(item.is_demo?' (synthetic)':''),item.id));el('backend').value=b.id;say('Customer video backend connected; provider credential encrypted at rest');
+});
+el('project-select').onchange=e=>op(async()=>{currentProject=e.target.value;selectedVersion='';await loadVersions()});
+el('make-project').onclick=()=>op(async()=>{const title=el('title').value.trim();if(!title)throw Error('Enter a project name');const p=await request('/v1/projects',{method:'POST',body:JSON.stringify({title,license:el('license').value.trim()||'all-rights-reserved'})});currentProject=p.id;selectedVersion='';await loadProjects();say('Project created')});
+el('upload-btn').onclick=()=>op(async()=>{project();const file=el('upload').files[0];if(!file)throw Error('Choose a video file');say('Importing MP4 and signing provenance...');const f=new FormData();f.append('file',file);const r=await request(`/v1/projects/${currentProject}/assets`,{method:'POST',body:f});selectedVersion=r.version.id;await loadVersions();show(r);say('Imported and signed; original media is reusable')});
+el('generate').onclick=()=>op(async()=>{project();say('Sending generation to your configured backend...');const job=await request(`/v1/projects/${currentProject}/generations`,{method:'POST',body:JSON.stringify({backend_id:el('backend').value,prompt:el('prompt').value})});show(job);say('Backend job '+job.id.slice(0,8)+' queued');if(timer)clearInterval(timer);timer=setInterval(()=>op(async()=>{const r=await request('/v1/jobs/'+job.id);show(r);if(['completed','failed','needs_review'].includes(r.state)){clearInterval(timer);timer=null;if(r.state==='completed'){selectedVersion=r.version_id;await loadVersions();say('Generation completed and signed')}else{say('Job '+r.state+': '+r.error,true)}}}),1200)});
+el('operation').onchange=()=>{el('trim-fields').hidden=el('operation').value!=='trim'};
+el('revise').onclick=()=>op(async()=>{chosen();const operation=el('operation').value;const options=operation==='caption'?{text:el('change').value}:operation==='trim'?{start_seconds:Number(el('start').value),end_seconds:Number(el('end').value)}:{note:el('change').value};say('Computing affected components...');const r=await request(`/v1/projects/${currentProject}/versions`,{method:'POST',body:JSON.stringify({parent_version_id:selectedVersion,operation,options})});selectedVersion=r.id;await loadVersions();show({cache_hit:r.cache_hit||false, processing:r.sealed_manifest.manifest.processing, version_id:r.id});say('Verified revision created without model regeneration')});
+el('verify').onclick=()=>op(async()=>{chosen();const r=await request('/v1/versions/'+selectedVersion+'/verify');show(r);say(r.verified?'Signature and local media integrity verified':'Verification failed',!r.verified)});
+el('manifest').onclick=()=>op(async()=>{chosen();show(await request('/v1/versions/'+selectedVersion+'/manifest'))});
+el('graph').onclick=()=>op(async()=>{project();show(await request(`/v1/projects/${currentProject}/graph`))});
+el('metrics').onclick=()=>op(async()=>{project();show(await request(`/v1/projects/${currentProject}/value`))});
+el('download').onclick=()=>op(async()=>{chosen();const b=await request('/v1/versions/'+selectedVersion+'/video',{binary:true});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download='ecai-'+selectedVersion+'.mp4';a.click();setTimeout(()=>URL.revokeObjectURL(u),2000)});
+el('nft').onclick=()=>op(async()=>{chosen();const r=await request(`/v1/versions/${selectedVersion}/nft-draft`,{method:'POST',body:JSON.stringify({video_cid:el('cid').value.trim()})});show(r);say('Draft prepared; CID integrity and rights not yet verified for minting')});
+})();
+</script></body></html>

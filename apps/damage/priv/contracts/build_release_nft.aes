@@ -1,0 +1,372 @@
+@compiler >= 6
+
+include "String.aes"
+
+contract interface IAEX141Receiver =
+  entrypoint on_aex141_received : (option(address), int, option(string)) => bool
+
+contract BuildReleaseNFT =
+
+  datatype metadata_type = URL | OBJECT_ID | MAP
+  datatype metadata = MetadataIdentifier(string) | MetadataMap(map(string, string))
+
+  record meta_info =
+    { name : string,
+      symbol : string,
+      base_url : option(string),
+      metadata_type : metadata_type }
+
+  record release_info =
+    { token_id : int,
+      release_name : string,
+      platform : string,
+      git_sha : string,
+      metadata_cid : string,
+      asset_cid : string,
+      published_height : int }
+
+  type query_type = string
+  type answer_type = string
+  type query_id = oracle_query(query_type, answer_type)
+  type oracle_id = oracle(query_type, answer_type)
+
+  datatype event
+    = Transfer(address, address, int)
+    | Approval(address, address, int, string)
+    | ApprovalForAll(address, address, string)
+    | Mint(address, int)
+    | ReleasePinned(int, string)
+    | OracleReleasePinned(int, string)
+
+  record state =
+    { admin : address,
+      meta_info : meta_info,
+      token_to_owners : map(int, address),
+      balances : map(address, int),
+      approvals : map(int, address),
+      operators : map(address, map(address, bool)),
+      metadata : map(int, metadata),
+      releases : map(int, release_info),
+      release_ids : map(string, int),
+      latest_by_platform : map(string, int),
+      latest_token : option(int),
+      total_supply : int,
+      counter : int,
+      release_oracle : option(oracle_id) }
+
+  // init is deliberately pure. Native oracle registration is stateful and is
+  // performed later through register_oracle/1.
+  entrypoint init() : state =
+    { admin = Contract.creator,
+      meta_info = { name = "DamageBDD Build Releases", symbol = "DBUILD", base_url = None, metadata_type = MAP },
+      token_to_owners = {},
+      balances = {},
+      approvals = {},
+      operators = {},
+      metadata = {},
+      releases = {},
+      release_ids = {},
+      latest_by_platform = {},
+      latest_token = None,
+      total_supply = 0,
+      counter = 1,
+      release_oracle = None }
+
+  // -------------------------------------------------------------------------
+  // AEX-141 core + mintable extension
+  // -------------------------------------------------------------------------
+
+  entrypoint aex141_extensions() : list(string) =
+    ["mintable", "damagebdd_build_release_oracle"]
+
+  entrypoint meta_info() : meta_info =
+    state.meta_info
+
+  entrypoint metadata(token_id : int) : option(metadata) =
+    Map.lookup(token_id, state.metadata)
+
+  entrypoint total_supply() : int =
+    state.total_supply
+
+  entrypoint balance(owner : address) : option(int) =
+    Map.lookup(owner, state.balances)
+
+  entrypoint owner(token_id : int) : option(address) =
+    Map.lookup(token_id, state.token_to_owners)
+
+  stateful entrypoint transfer(to : address, token_id : int, data : option(string)) =
+    let from = require_authorized(token_id)
+    require(from != to, "SENDER_MUST_NOT_BE_RECEIVER")
+    remove_approval(token_id)
+    put(state{ balances[from] @from_balance = from_balance - 1,
+               balances[to = 0] @to_balance = to_balance + 1,
+               token_to_owners[token_id] = to })
+    switch(invoke_nft_receiver(Some(from), to, token_id, data))
+      (true, false) => abort("SAFE_TRANSFER_FAILED")
+      _ => Chain.event(Transfer(from, to, token_id))
+
+  stateful entrypoint transfer_to_contract(token_id : int) =
+    let to = Call.caller
+    require(Address.is_contract(to), "CALLER_MUST_BE_A_CONTRACT")
+    let from = require_authorized(token_id)
+    require(from != to, "SENDER_MUST_NOT_BE_RECEIVER")
+    remove_approval(token_id)
+    put(state{ balances[from] @from_balance = from_balance - 1,
+               balances[to = 0] @to_balance = to_balance + 1,
+               token_to_owners[token_id] = to })
+    Chain.event(Transfer(from, to, token_id))
+
+  stateful entrypoint approve(approved : address, token_id : int, enabled : bool) =
+    let token_owner = require_token_owner(token_id)
+    require(Call.caller == token_owner || is_approved_for_all(token_owner, Call.caller),
+            "ONLY_OWNER_OR_OPERATOR_CALL_ALLOWED")
+    if(enabled)
+      put(state{approvals[token_id] = approved})
+    else
+      remove_approval(token_id)
+    Chain.event(Approval(token_owner, approved, token_id, bool_string(enabled)))
+
+  stateful entrypoint approve_all(operator : address, enabled : bool) =
+    let owner_ops = Map.lookup_default(Call.caller, state.operators, {})
+    let owner_ops1 = owner_ops{[operator] = enabled}
+    put(state{operators[Call.caller] = owner_ops1})
+    Chain.event(ApprovalForAll(Call.caller, operator, bool_string(enabled)))
+
+  entrypoint get_approved(token_id : int) : option(address) =
+    Map.lookup(token_id, state.approvals)
+
+  entrypoint is_approved(token_id : int, approved : address) : bool =
+    switch(Map.lookup(token_id, state.approvals))
+      None => false
+      Some(a) => a == approved
+
+  entrypoint is_approved_for_all(owner : address, operator : address) : bool =
+    switch(Map.lookup(owner, state.operators))
+      None => false
+      Some(owner_ops) => Map.lookup_default(operator, owner_ops, false)
+
+  stateful entrypoint mint(to : address, md : option(metadata), data : option(string)) : int =
+    require_admin()
+    switch(md)
+      None => abort("NO_METADATA_PROVIDED")
+      Some(MetadataIdentifier(_)) => abort("NOT_METADATA_MAP")
+      Some(value) =>
+        let token_id = state.counter
+        put(state{ counter = token_id + 1,
+                   total_supply = state.total_supply + 1,
+                   balances[to = 0] @to_balance = to_balance + 1,
+                   token_to_owners[token_id] = to,
+                   metadata[token_id] = value })
+        switch(invoke_nft_receiver(None, to, token_id, data))
+          (true, false) => abort("SAFE_TRANSFER_FAILED")
+          _ => Chain.event(Mint(to, token_id))
+        token_id
+
+  // One immutable NFT per platform/release pair.
+  stateful entrypoint mint_release(to : address, release_name : string, platform : string, git_sha : string, metadata_cid : string, asset_cid : string) : int =
+    require_admin()
+    require(String.length(release_name) > 0, "RELEASE_REQUIRED")
+    require(String.length(platform) > 0, "PLATFORM_REQUIRED")
+    require(String.length(metadata_cid) > 0, "METADATA_CID_REQUIRED")
+    require(String.length(asset_cid) > 0, "ASSET_CID_REQUIRED")
+    let key = release_key(release_name, platform)
+    require(!Map.member(key, state.release_ids), "RELEASE_ALREADY_MINTED")
+    let token_id = state.counter
+    let release_value =
+      { token_id = token_id,
+        release_name = release_name,
+        platform = platform,
+        git_sha = git_sha,
+        metadata_cid = metadata_cid,
+        asset_cid = asset_cid,
+        published_height = Chain.block_height }
+    let md = MetadataMap(
+      { ["url"] = String.concat("ipfs://", metadata_cid),
+        ["asset"] = String.concat("ipfs://", asset_cid),
+        ["release"] = release_name,
+        ["platform"] = platform,
+        ["git_sha"] = git_sha })
+    put(state{ counter = token_id + 1,
+               total_supply = state.total_supply + 1,
+               balances[to = 0] @to_balance = to_balance + 1,
+               token_to_owners[token_id] = to,
+               metadata[token_id] = md,
+               releases[token_id] = release_value,
+               release_ids[key] = token_id,
+               latest_by_platform[platform] = token_id,
+               latest_token = Some(token_id) })
+    switch(invoke_nft_receiver(None, to, token_id, None))
+      (true, false) => abort("SAFE_TRANSFER_FAILED")
+      _ => Chain.event(Mint(to, token_id))
+    Chain.event(ReleasePinned(token_id, release_answer(release_value)))
+    token_id
+
+  // -------------------------------------------------------------------------
+  // Release lookup
+  // -------------------------------------------------------------------------
+
+  entrypoint release(token_id : int) : option(release_info) =
+    Map.lookup(token_id, state.releases)
+
+  entrypoint release_token(release_name : string, platform : string) : option(int) =
+    Map.lookup(release_key(release_name, platform), state.release_ids)
+
+  entrypoint latest_release() : option(release_info) =
+    release_from_token(state.latest_token)
+
+  entrypoint latest_release_for(platform : string) : option(release_info) =
+    release_from_token(Map.lookup(platform, state.latest_by_platform))
+
+  entrypoint latest_release_value() : option(string) =
+    release_value_from_token(state.latest_token)
+
+  entrypoint latest_release_value_for(platform : string) : option(string) =
+    release_value_from_token(Map.lookup(platform, state.latest_by_platform))
+
+  // -------------------------------------------------------------------------
+  // Native aeternity oracle
+  // -------------------------------------------------------------------------
+
+  // The contract address is the oracle account, therefore no delegation
+  // signature is required by Oracle.register/respond/extend.
+  stateful entrypoint register_oracle(ttl : int) : oracle_id =
+    require_admin()
+    require(ttl > 0, "ORACLE_TTL_INVALID")
+    switch(state.release_oracle)
+      None => create_oracle(ttl)
+      Some(o) =>
+        if(Oracle.check(o))
+          o
+        else
+          create_oracle(ttl)
+
+  entrypoint oracle_registered() : bool =
+    switch(state.release_oracle)
+      None => false
+      Some(o) => Oracle.check(o)
+
+  entrypoint get_oracle() : option(oracle_id) =
+    state.release_oracle
+
+  entrypoint oracle_expiry() : option(int) =
+    switch(state.release_oracle)
+      None => None
+      Some(o) =>
+        if(Oracle.check(o))
+          Some(Oracle.expiry(o))
+        else
+          None
+
+  // Empty platform means the canonical global "latest" question. Otherwise
+  // the platform itself is used as the question string.
+  stateful entrypoint create_latest_query(platform : string, query_ttl : int, response_ttl : int) : query_id =
+    require(query_ttl > 0, "QUERY_TTL_INVALID")
+    require(response_ttl > 0, "RESPONSE_TTL_INVALID")
+    let o = require_oracle()
+    let question = if(platform == "") "latest" else platform
+    Oracle.query(o, question, 0, RelativeTTL(query_ttl), RelativeTTL(response_ttl))
+
+  stateful entrypoint respond_latest(query : query_id) =
+    require_admin()
+    let o = require_oracle()
+    require(Oracle.check_query(o, query), "ORACLE_QUERY_INVALID")
+    let question = Oracle.get_question(o, query)
+    let token_id = token_for_question(question)
+    let release_value = state.releases[token_id]
+    let answer = release_answer(release_value)
+    Oracle.respond(o, query, answer)
+    Chain.event(OracleReleasePinned(token_id, question))
+
+  entrypoint get_oracle_answer(query : query_id) : option(string) =
+    let o = require_oracle()
+    require(Oracle.check_query(o, query), "ORACLE_QUERY_INVALID")
+    Oracle.get_answer(o, query)
+
+  stateful entrypoint extend_oracle(ttl : int) =
+    require_admin()
+    require(ttl > 0, "ORACLE_TTL_INVALID")
+    let o = require_oracle()
+    Oracle.extend(o, RelativeTTL(ttl))
+
+  // -------------------------------------------------------------------------
+  // Internal helpers
+  // -------------------------------------------------------------------------
+
+  function require_admin() =
+    require(Call.caller == state.admin, "ONLY_ADMIN_CALL_ALLOWED")
+
+  function require_token_owner(token_id : int) : address =
+    switch(owner(token_id))
+      None => abort("TOKEN_NOT_EXISTS")
+      Some(a) => a
+
+  function require_authorized(token_id : int) : address =
+    let token_owner = require_token_owner(token_id)
+    require(Call.caller == token_owner || is_approved(token_id, Call.caller) || is_approved_for_all(token_owner, Call.caller),
+            "ONLY_OWNER_APPROVED_OR_OPERATOR_CALL_ALLOWED")
+    token_owner
+
+  stateful function remove_approval(token_id : int) =
+    if(Map.member(token_id, state.approvals))
+      put(state{approvals = Map.delete(token_id, state.approvals)})
+
+  function invoke_nft_receiver(from : option(address), to : address, token_id : int, data : option(string)) : (bool * bool) =
+    if(Address.is_contract(to))
+      let receiver : IAEX141Receiver = Address.to_contract(to)
+      switch(receiver.on_aex141_received(from, token_id, data, protected = true) : option(bool))
+        None => (true, false)
+        Some(value) => (true, value)
+    else
+      (false, false)
+
+  function bool_string(value : bool) : string =
+    if(value) "true" else "false"
+
+  function release_key(release_name : string, platform : string) : string =
+    String.concat(platform, String.concat(":", release_name))
+
+  function release_from_token(token : option(int)) : option(release_info) =
+    switch(token)
+      None => None
+      Some(token_id) => Map.lookup(token_id, state.releases)
+
+  function release_value_from_token(token : option(int)) : option(string) =
+    switch(release_from_token(token))
+      None => None
+      Some(value) => Some(release_answer(value))
+
+  function token_for_question(question : string) : int =
+    if(question == "latest")
+      switch(state.latest_token)
+        None => abort("NO_RELEASE_PINNED")
+        Some(token_id) => token_id
+    else
+      switch(Map.lookup(question, state.latest_by_platform))
+        None => abort("NO_RELEASE_FOR_PLATFORM")
+        Some(token_id) => token_id
+
+  function release_answer(value : release_info) : string =
+    String.concats(
+      [Int.to_str(value.token_id),
+       "|",
+       value.release_name,
+       "|",
+       value.platform,
+       "|",
+       value.git_sha,
+       "|ipfs://",
+       value.metadata_cid,
+       "|ipfs://",
+       value.asset_cid])
+
+  stateful function create_oracle(ttl : int) : oracle_id =
+    let o : oracle_id = Oracle.register(Contract.address, 0, RelativeTTL(ttl))
+    put(state{release_oracle = Some(o)})
+    o
+
+  function require_oracle() : oracle_id =
+    switch(state.release_oracle)
+      None => abort("ORACLE_NOT_REGISTERED")
+      Some(o) =>
+        require(Oracle.check(o), "ORACLE_NOT_ACTIVE")
+        o

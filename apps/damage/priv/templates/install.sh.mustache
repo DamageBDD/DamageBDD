@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -e
+DEB_IPFS_HASH=QmUMYUsNdtKw34V3dUbe9PVqZCjRePoQkzzcuWpteUqCNi
+DEB_URL="https://ipfs.damagebdd.com/ipfs/${DEB_IPFS_HASH}"
+DEB_PATH="${DEB_PATH:-/tmp/damage.deb}"
+
+ARCH_IPFS_HASH=QmUMYUsNdtKw34V3dUbe9PVqZCjRePoQkzzcuWpteUqCNi
+ARCH_URL="https://ipfs.damagebdd.com/ipfs/${ARCH_IPFS_HASH}"
+ARCH_PATH="${ARCH_PATH:-/tmp/damage.pkg.tar.zst}"
+
+FEDORA_IPFS_HASH=QmUMYUsNdtKw34V3dUbe9PVqZCjRePoQkzzcuWpteUqCNi
+FEDORA_URL="https://ipfs.damagebdd.com/ipfs/${FEDORA_IPFS_HASH}"
+FEDORA_PATH="${ARCH_PATH:-/tmp/damage.rpm}"
+log() { printf '[install] %s\n' "$*" >&2; }
+die() { printf '[install][ERROR] %s\n' "$*" >&2; exit 1; }
+log("=== DamageBDD Install Script ===")
+
+# Detect distro
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    DISTRO=$ID
+else
+    die "Cannot detect Linux distribution."
+fi
+# use sudo if not root
+if [ "${EUID:-$(id -u)}" -ne 0 ]; then SUDO="sudo"; else SUDO=""; fi
+
+case "$DISTRO" in
+    ubuntu|debian|linuxmint)
+        log "[*] Installing DamageBDD Debian deb."
+        $SUDO apt-get update
+        curl -fsSL "$DEB_URL" -o "$DEB_PATH" || die "Download failed"
+        $SUDO apt-get install -y "$DEB_PATH" || die "apt-get install failed"
+        ;;
+    arch)
+        log "[*] Installing DamageBDD Arch package ..."
+        curl -fsSL "$ARCH_URL" -o "$ARCH_PATH" || die "ARCH Pkg Download failed"
+        $SUDO pacman -Uy --noconfirm "$ARCH_PATH" || die "pacman -Uy failed"
+        ;;
+    fedora)
+        log "[*] Installing DamageBDD from Fedora rpm ..."
+        curl -fsSL "$RPM_URL" -o "$RPM_PATH" || die "RPM Download failed"
+        $SUDO dnf install -y  "$RPM_PATH" || die "dnf install y failed"
+        ;;
+    *)
+        log "Distro not recognized. Please install DamageBDD manually."
+        exit 1
+        ;;
+esac
+
+
+log "=== Installation Complete ==="
+

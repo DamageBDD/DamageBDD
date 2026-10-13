@@ -1,0 +1,12 @@
+{
+  "appId": "com.ecai.app",
+  "appName": "ECAI",
+  "webDir": "www",
+  "appendUserAgent": " ECAI-Mobile/0.1",
+  "loggingBehavior": "debug",
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}

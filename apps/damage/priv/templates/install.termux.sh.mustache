@@ -1,0 +1,95 @@
+#!/data/data/com.termux/files/usr/bin/bash
+set -euo pipefail
+
+# DamageBDD Termux installer (Android)
+# Notes:
+# - Uses Termux packages (no root required)
+# - Runs node under termux-services (runit)
+# - TLS/80 binding on Android is limited; recommend reverse proxy/tunnel on a server for public exposure
+
+DOMAIN='{{domain}}'
+EMAIL='{{email}}'
+REPO='{{repo}}'
+BRANCH='{{branch}}'
+PORT='{{port}}'
+
+prefix="${PREFIX:-/data/data/com.termux/files/usr}"
+export PATH="$prefix/bin:$PATH"
+
+echo ">>> Termux install for DamageBDD"
+termux-wake-lock || true
+
+echo ">>> Updating packages"
+pkg update -y
+pkg upgrade -y
+
+echo ">>> Installing dependencies"
+# erlang + build toolchain + rebar3 + services + rsync
+pkg install -y git clang make erlang rebar3 termux-services rsync
+
+# Optional (useful):
+# pkg install -y openssl ncurses-utils
+
+echo ">>> Enable termux-services (runit)"
+sv-enable() {
+  # runit service symlink helper
+  mkdir -p "$prefix/var/service" "$prefix/etc/service"
+  ln -sf "$prefix/etc/service/$1" "$prefix/var/service/$1" 2>/dev/null || true
+}
+mkdir -p "$prefix/opt/damagebdd" "$prefix/etc/damagebdd" "$prefix/var/log/damagebdd" "$prefix/var/lib/damagebdd"
+
+echo ">>> Cloning and building release"
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+git clone --depth 1 -b "$BRANCH" "$REPO" "$tmp/repo"
+( cd "$tmp/repo" && rebar3 as prod release )
+rsync -a "$tmp/repo/_build/prod/rel/damagebdd/" "$prefix/opt/damagebdd/"
+
+echo ">>> Writing config"
+cat > "$prefix/etc/damagebdd/sys.config" <<'EOF'
+[
+  {damagebdd, [
+    {port, 8080},
+    {bind_addr, "127.0.0.1"},
+    {log_dir, "/data/data/com.termux/files/usr/var/log/damagebdd"},
+    {data_dir, "/data/data/com.termux/files/usr/var/lib/damagebdd"},
+    {upstreams, ["http://127.0.0.1:8080"]},
+    {secrets_backend, encrypted_store}
+  ]}
+].
+EOF
+
+cat > "$prefix/etc/damagebdd/env" <<EOF
+PORT=${PORT}
+BIND_ADDR=127.0.0.1
+CONFIG=$prefix/etc/damagebdd/sys.config
+LOG_DIR=$prefix/var/log/damagebdd
+DATA_DIR=$prefix/var/lib/damagebdd
+EOF
+
+echo ">>> Creating termux-services runit unit"
+svcdir="$prefix/etc/service/damagebdd"
+mkdir -p "$svcdir/log"
+cat > "$svcdir/run" <<'EOF'
+#!/data/data/com.termux/files/usr/bin/sh
+. /data/data/com.termux/files/usr/etc/damagebdd/env
+exec 2>&1
+exec /data/data/com.termux/files/usr/opt/damagebdd/bin/damagebdd foreground -config /data/data/com.termux/files/usr/etc/damagebdd/sys.config
+EOF
+chmod +x "$svcdir/run"
+
+cat > "$svcdir/log/run" <<'EOF'
+#!/data/data/com.termux/files/usr/bin/sh
+exec svlogd -tt /data/data/com.termux/files/usr/var/log/damagebdd
+EOF
+chmod +x "$svcdir/log/run"
+
+sv-enable damagebdd
+sv up damagebdd || true
+sleep 2
+sv status damagebdd || true
+
+echo
+echo ">>> Done. Node is listening on 127.0.0.1:${PORT}"
+echo "Tip: expose via an external reverse proxy (nginx on a server) or a tunnel (e.g. cloudflared, tailscale), not directly from the phone."
+echo "     Recommended public endpoint: https://${DOMAIN}/ -> proxy -> 127.0.0.1:${PORT}"

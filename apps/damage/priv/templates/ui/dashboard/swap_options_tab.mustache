@@ -1,0 +1,48 @@
+<p data-wallet-only-note hidden></p>
+<!-- -*- mode: html -*- -->
+<section id="swap-options-panel" class="workspace-page" aria-labelledby="swap-options-heading">
+  <div class="workspace-heading">
+    <div>
+      <p class="workspace-eyebrow">LIGHTNING MARKET</p>
+      <h1 id="swap-options-heading">Swap options</h1>
+      <p>Options are read from Æternity middleware contract events; creation is submitted through the signed backend call.</p>
+    </div>
+    <div class="workspace-actions">
+      <button data-requires-capability="transfer" id="swap-refresh-btn" class="workspace-button" type="button">Refresh</button>
+      <button data-requires-capability="transfer" class="workspace-button workspace-primary" type="button" onclick="MicroModal.show('swap-create-modal')">Create option</button>
+    </div>
+  </div>
+
+  <div id="swap-options-alert" class="workspace-status workspace-error" hidden></div>
+  <div id="swap-options-list" class="workspace-card"></div>
+</section>
+
+<script id="swap-options-table-tpl" type="x-tmpl-mustache">
+  <div class="workspace-table-wrap">
+    <table class="workspace-table">
+      <thead>
+        <tr>
+          <th>Option</th><th>Issue</th><th>Buyer</th><th>Seller</th><th>State</th><th>Tx</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{#options}}
+        <tr>
+          <td><code>#{{id}}</code></td>
+          <td class="hash">
+            {{#issue_url}}<a href="{{issue_url}}" target="_blank" rel="noopener">{{issue_ref}}</a>{{/issue_url}}
+            {{^issue_url}}<span class="workspace-muted">(no issue link)</span>{{/issue_url}}
+          </td>
+          <td class="hash"><code>{{buyer}}</code></td>
+          <td class="hash"><code>{{seller}}</code></td>
+          <td><span class="tag">{{state}}</span></td>
+          <td class="hash">{{#call_tx_hash}}<code>{{call_tx_hash}}</code>{{/call_tx_hash}}</td>
+        </tr>
+        {{/options}}
+        {{^options}}
+        <tr><td colspan="6" class="workspace-empty">No swap option events found.</td></tr>
+        {{/options}}
+      </tbody>
+    </table>
+  </div>
+</script>

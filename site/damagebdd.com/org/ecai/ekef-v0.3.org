@@ -1,0 +1,89 @@
+#+INCLUDE: "../header.org"
+#+TITLE: ECAI Knowledge Encoding Format (EKEF v0.3)
+* ECAI Knowledge Encoding Format (EKEF v0.3)
+
+** Overview
+This version of the ECAI Knowledge Encoding Format uses **VRLP** (Verifiable Recursive Length Prefix) encoding for serialization of the knowledge tuple. VRLP is deterministic, compact, and binary-friendly, making it ideal for elliptic curve knowledge encoding.
+
+** 1. Knowledge Tuple (Raw Form)
+Each knowledge entry is a 5-element ordered list:
+
+#+begin_example
+["gravity", "is proportional to", "mass", "newtonian physics", 1712493296]
+#+end_example
+
+All fields are:
+- Strings (`utf-8`) except for timestamp (`uint64`)
+- Canonicalized (lowercased, stripped of extra whitespace)
+
+** 2. Canonical VRLP Encoding
+Serialize using a VRLP encoder:
+
+#+begin_src python
+from eth_rlp import encode as rlp_encode  # or pyrlp for standard RLP
+
+def encode_vrlp(subject, predicate, obj, context, timestamp):
+    items = [
+        subject.encode("utf-8"),
+        predicate.encode("utf-8"),
+        obj.encode("utf-8"),
+        context.encode("utf-8"),
+        timestamp.to_bytes(8, "big")
+    ]
+    return rlp_encode(items)
+#+end_src
+
+This produces a single `bytes` blob that is suitable for cryptographic hashing and elliptic curve mapping.
+
+** 3. Hashing the VRLP
+Hash the VRLP-encoded blob using SHA-256:
+
+#+begin_src python
+import hashlib
+
+def hash_knowledge_vrlp(vrlp_bytes):
+    return hashlib.sha256(vrlp_bytes).digest()
+#+end_src
+
+** 4. Mapping to Elliptic Curve Point
+
+#+begin_src python
+from ecdsa import SECP256k1, ellipticcurve
+
+curve = SECP256k1.curve
+
+def map_to_curve(hash_bytes):
+    x = int.from_bytes(hash_bytes, 'big') % curve.p()
+    while True:
+        try:
+            y = curve.y_values(x)[0]
+            return (x, y)
+        except Exception:
+            x = (x + 1) % curve.p()
+#+end_src
+
+** 5. Final Encoded Knowledge Point
+
+#+begin_example
+curve: secp256k1
+x: 0xabc123...
+y: 0xdef456...
+#+end_example
+
+- The original VRLP-encoded data can be included for verification.
+- Knowledge entries can be signed and published as NFTs or in Merkle trees.
+
+** 6. Benefits of VRLP
+
+- Fully deterministic
+- Compatible with Ethereum and smart contract standards
+- More compact and binary-aligned than JSON
+- Easy to hash and map onto elliptic curves
+- Enables future compatibility with zk-SNARKs and L2 chains
+
+** 7. Applications
+
+- Verifiable knowledge graphs
+- On-chain reasoning agents
+- Cross-subfield knowledge retrieval
+- Decentralized consensus on scientific facts

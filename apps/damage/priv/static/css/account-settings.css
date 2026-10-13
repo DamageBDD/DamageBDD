@@ -1,0 +1,405 @@
+/* Account settings is a dashboard workspace, not the legacy settings form. */
+.damage-dashboard #settings-tab {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.damage-dashboard #settings-tab .account-settings {
+  display: grid;
+  gap: 18px;
+  width: 100%;
+  max-width: 1480px;
+  margin: 0 auto;
+  color: var(--ws-text);
+}
+
+.damage-dashboard #settings-tab .account-settings-heading {
+  margin: 24px 0 2px;
+  align-items: flex-start;
+}
+.damage-dashboard #settings-tab .account-settings-heading > div { min-width: 0; }
+.damage-dashboard #settings-tab .account-settings-heading > div > p:last-child {
+  max-width: 680px;
+  margin-top: 5px;
+}
+.damage-dashboard #settings-tab .account-settings-heading > .workspace-button {
+  flex: 0 0 auto;
+  align-self: flex-start;
+}
+
+/* Beat the old #settings-tab button/input rules from main.css. */
+.damage-dashboard #settings-tab .account-settings button.workspace-button,
+.damage-dashboard #settings-tab .account-settings button.workspace-button[type="button"],
+.damage-dashboard #settings-tab .account-settings button.workspace-button[type="submit"] {
+  display: inline-flex;
+  width: auto;
+  min-width: 0;
+  max-width: max-content;
+  min-height: 38px;
+  margin: 0;
+  padding: 8px 13px;
+  border: 1px solid var(--ws-line);
+  border-radius: 7px;
+  background: var(--ws-raised);
+  background-image: none;
+  color: var(--ws-text);
+  box-shadow: none;
+  font: 600 12px/1.35 system-ui, sans-serif;
+  transform: none;
+  transition: background-color .14s ease, border-color .14s ease, color .14s ease;
+}
+.damage-dashboard #settings-tab .account-settings button.workspace-button:hover {
+  background: #28364a;
+  border-color: #697b90;
+  transform: none;
+}
+.damage-dashboard #settings-tab .account-settings button.workspace-primary {
+  background: var(--ws-accent);
+  border-color: var(--ws-accent);
+  color: var(--ws-accent-text);
+  font-weight: 700;
+}
+.damage-dashboard #settings-tab .account-settings button.workspace-primary:hover {
+  background: #c5ef95;
+  border-color: #c5ef95;
+}
+.damage-dashboard #settings-tab .account-settings button.workspace-danger {
+  background: transparent;
+  border-color: #74424b;
+  color: #f1b4bd;
+}
+.damage-dashboard #settings-tab .account-settings button.workspace-danger:hover {
+  background: #40232a;
+  border-color: #98535e;
+}
+.damage-dashboard #settings-tab .account-settings button.workspace-button:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.damage-dashboard #settings-tab .account-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr));
+  gap: 14px;
+  align-items: start;
+  min-width: 0;
+}
+.damage-dashboard #settings-tab .account-settings-card { min-width: 0; overflow: hidden; }
+.damage-dashboard #settings-tab .account-settings-card > .workspace-card-body {
+  display: grid;
+  gap: 14px;
+  padding: 17px 18px;
+}
+
+.damage-dashboard #settings-tab .account-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+.damage-dashboard #settings-tab .account-card-heading > div { min-width: 0; }
+.damage-dashboard #settings-tab .account-card-heading .workspace-eyebrow { margin-bottom: 4px; }
+.damage-dashboard #settings-tab .account-card-heading h2 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.25;
+}
+.damage-dashboard #settings-tab .account-card-heading p:not(.workspace-eyebrow),
+.damage-dashboard #settings-tab .account-card-copy,
+.damage-dashboard #settings-tab .workspace-helper {
+  margin: 5px 0 0;
+  color: var(--ws-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.damage-dashboard #settings-tab .account-card-copy { margin: 0; }
+
+.damage-dashboard #settings-tab .account-pill,
+.damage-dashboard #settings-tab .account-capability {
+  display: inline-flex;
+  align-items: center;
+  min-height: 25px;
+  padding: 4px 8px;
+  border: 1px solid var(--ws-line);
+  border-radius: 999px;
+  background: var(--ws-input);
+  color: #c8d5e6;
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.damage-dashboard #settings-tab .account-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+  margin: 0;
+}
+.damage-dashboard #settings-tab .account-facts > div { min-width: 0; }
+.damage-dashboard #settings-tab .account-facts > div:nth-child(2) { grid-column: 1 / -1; }
+.damage-dashboard #settings-tab .account-facts dt {
+  margin: 0 0 3px;
+  color: var(--ws-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .045em;
+  text-transform: uppercase;
+}
+.damage-dashboard #settings-tab .account-facts dd {
+  margin: 0;
+  color: var(--ws-text);
+  font-size: 12px;
+  line-height: 1.5;
+  min-width: 0;
+}
+.damage-dashboard #settings-tab .account-facts code,
+.damage-dashboard #settings-tab .account-context-meta code {
+  display: block;
+  max-width: 100%;
+  color: #d9e6f5;
+  font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.damage-dashboard #settings-tab .account-balance-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.damage-dashboard #settings-tab .account-balance-grid > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 10px 11px;
+  border: 1px solid var(--ws-line);
+  border-radius: 8px;
+  background: var(--ws-input);
+}
+.damage-dashboard #settings-tab .account-balance-grid span {
+  color: var(--ws-muted);
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: .055em;
+  text-transform: uppercase;
+}
+.damage-dashboard #settings-tab .account-balance-grid strong {
+  min-width: 0;
+  color: var(--ws-text);
+  font: 650 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.damage-dashboard #settings-tab .account-card-actions,
+.damage-dashboard #settings-tab .account-row-actions,
+.damage-dashboard #settings-tab .workspace-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.damage-dashboard #settings-tab .account-card-actions {
+  padding-top: 12px;
+  border-top: 1px solid var(--ws-line);
+}
+.damage-dashboard #settings-tab .account-capability-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-height: 25px;
+}
+
+.damage-dashboard #settings-tab .account-settings-section-heading {
+  margin: 8px 0 -2px;
+  padding-top: 6px;
+}
+.damage-dashboard #settings-tab .account-settings-section-heading h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.damage-dashboard #settings-tab .account-settings-section-heading p:last-child {
+  margin: 4px 0 0;
+  color: var(--ws-muted);
+  font-size: 12px;
+}
+
+/* Forms use the workspace controls rather than the legacy settings form rules. */
+.damage-dashboard #settings-tab .account-settings form.workspace-form {
+  display: grid;
+  gap: 11px;
+  margin: 0;
+}
+.damage-dashboard #settings-tab .account-settings .workspace-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.damage-dashboard #settings-tab .account-settings .workspace-field {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+.damage-dashboard #settings-tab .account-settings .workspace-field label,
+.damage-dashboard #settings-tab .account-settings label.workspace-check {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin: 0;
+  color: #c8d4e3;
+  font-size: 11px;
+  font-weight: 650;
+}
+.damage-dashboard #settings-tab .account-settings :is(input.workspace-input, input[type="text"], input[type="url"], select, textarea) {
+  width: 100%;
+  max-width: none;
+  min-height: 38px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--ws-line);
+  border-radius: 7px;
+  background: var(--ws-input);
+  background-image: none;
+  color: var(--ws-text);
+  box-shadow: none;
+  font: 12px/1.4 system-ui, sans-serif;
+  box-sizing: border-box;
+}
+.damage-dashboard #settings-tab .account-settings select {
+  appearance: auto;
+  cursor: pointer;
+}
+.damage-dashboard #settings-tab .account-settings textarea {
+  min-height: 78px;
+  resize: vertical;
+}
+.damage-dashboard #settings-tab .account-settings :is(input.workspace-input, input[type="text"], input[type="url"], select, textarea):focus {
+  border-color: #72865f;
+  outline: 3px solid rgb(176 226 116 / 20%);
+  outline-offset: 1px;
+  box-shadow: none;
+}
+.damage-dashboard #settings-tab .account-settings :is(input, textarea)::placeholder { color: #6f8196; }
+
+.damage-dashboard #settings-tab .account-inline-form {
+  grid-template-columns: minmax(180px, 1fr) auto;
+  align-items: end;
+}
+.damage-dashboard #settings-tab .account-webhook-form .workspace-form-actions { justify-content: flex-start; }
+.damage-dashboard #settings-tab .account-span-all { grid-column: 1 / -1; }
+.damage-dashboard #settings-tab .workspace-check.account-context-sensitive {
+  display: flex;
+  gap: 8px;
+  line-height: 1.45;
+}
+.damage-dashboard #settings-tab .workspace-check.account-context-sensitive input { margin: 0; }
+
+.damage-dashboard #settings-tab .account-settings-notice:empty,
+.damage-dashboard #settings-tab .workspace-status:empty { display: none; }
+.damage-dashboard #settings-tab .account-settings-notice,
+.damage-dashboard #settings-tab .workspace-status:not(:empty) {
+  min-height: 0;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--ws-line);
+  border-radius: 7px;
+  background: var(--ws-input);
+  color: var(--ws-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.damage-dashboard #settings-tab .workspace-status[data-tone="error"],
+.damage-dashboard #settings-tab .workspace-status.error { color: #efb0b9; border-color: #74424b; }
+.damage-dashboard #settings-tab .workspace-status[data-tone="success"],
+.damage-dashboard #settings-tab .workspace-status.success { color: #cce7af; border-color: #536c42; }
+
+.damage-dashboard #settings-tab .account-token-result,
+.damage-dashboard #settings-tab .account-list-row,
+.damage-dashboard #settings-tab .account-list-empty {
+  border: 1px solid var(--ws-line);
+  border-radius: 8px;
+  background: var(--ws-input);
+}
+.damage-dashboard #settings-tab .account-token-result {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px 10px;
+  align-items: center;
+  padding: 10px;
+}
+.damage-dashboard #settings-tab .account-token-result > span { grid-column: 1 / -1; color: var(--ws-muted); font-size: 10px; }
+.damage-dashboard #settings-tab .account-token-result code { overflow-wrap: anywhere; font-size: 10px; }
+.damage-dashboard #settings-tab .account-list { display: grid; gap: 7px; }
+.damage-dashboard #settings-tab .account-list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  padding: 9px 10px;
+}
+.damage-dashboard #settings-tab .account-list-copy { display: grid; gap: 2px; min-width: 0; }
+.damage-dashboard #settings-tab .account-list-copy strong { font-size: 11px; overflow-wrap: anywhere; }
+.damage-dashboard #settings-tab .account-list-copy span { color: var(--ws-muted); font-size: 10px; overflow-wrap: anywhere; }
+.damage-dashboard #settings-tab .account-list-empty { padding: 10px; color: var(--ws-muted); font-size: 11px; }
+
+.damage-dashboard #settings-tab .node-context-card { grid-column: 1 / -1; }
+.damage-dashboard #settings-tab .account-context-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  color: var(--ws-muted);
+  font-size: 11px;
+}
+.damage-dashboard #settings-tab .account-context-meta span { min-width: 0; }
+.damage-dashboard #settings-tab .node-context-table-wrap { margin: 0; }
+.damage-dashboard #settings-tab #node-context-table { font-size: 11px; }
+.damage-dashboard #settings-tab #node-context-table th { padding: 8px 10px; font-size: 9px; }
+.damage-dashboard #settings-tab #node-context-table td { padding: 9px 10px; }
+.damage-dashboard #settings-tab .account-context-editor-wrap {
+  border: 1px solid var(--ws-line);
+  border-radius: 8px;
+  background: var(--ws-input);
+  overflow: hidden;
+}
+.damage-dashboard #settings-tab .account-context-editor-wrap > summary {
+  padding: 10px 12px;
+  color: #d4dfed;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.damage-dashboard #settings-tab .account-context-editor-wrap[open] > summary { border-bottom: 1px solid var(--ws-line); }
+.damage-dashboard #settings-tab .node-context-editor { padding: 12px; }
+
+@media (max-width: 820px) {
+  .damage-dashboard #settings-tab .account-settings { gap: 14px; }
+  .damage-dashboard #settings-tab .account-settings-grid { grid-template-columns: minmax(0, 1fr); }
+  .damage-dashboard #settings-tab .account-settings-heading { gap: 12px; }
+  .damage-dashboard #settings-tab .account-settings-card > .workspace-card-body { padding: 15px; }
+}
+
+@media (max-width: 620px) {
+  .damage-dashboard #settings-tab .account-settings-heading { flex-direction: column; }
+  .damage-dashboard #settings-tab .account-settings-heading > .workspace-button { align-self: flex-start; }
+  .damage-dashboard #settings-tab .account-facts,
+  .damage-dashboard #settings-tab .account-settings .workspace-form-grid,
+  .damage-dashboard #settings-tab .account-balance-grid { grid-template-columns: minmax(0, 1fr); }
+  .damage-dashboard #settings-tab .account-facts > div:nth-child(2),
+  .damage-dashboard #settings-tab .account-span-all { grid-column: auto; }
+  .damage-dashboard #settings-tab .account-inline-form { grid-template-columns: minmax(0, 1fr); }
+  .damage-dashboard #settings-tab .account-card-actions,
+  .damage-dashboard #settings-tab .account-row-actions { align-items: stretch; }
+  .damage-dashboard #settings-tab .account-list-row { align-items: flex-start; flex-direction: column; }
+  .damage-dashboard #settings-tab .account-token-result { grid-template-columns: minmax(0, 1fr); }
+  .damage-dashboard #settings-tab .account-token-result > span { grid-column: auto; }
+  .damage-dashboard #settings-tab .account-settings button.workspace-button,
+  .damage-dashboard #settings-tab .account-settings button.workspace-button[type="button"],
+  .damage-dashboard #settings-tab .account-settings button.workspace-button[type="submit"] {
+    min-height: 40px;
+  }
+}

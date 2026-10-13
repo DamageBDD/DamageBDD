@@ -1,0 +1,51 @@
+<!-- -*- mode: html -*- -->
+<section class="admin-tab" aria-labelledby="node-channels-heading">
+  <div class="admin-heading workspace-heading">
+    <div>
+      <p class="workspace-eyebrow">NODE ADMINISTRATION</p>
+      <h1 id="node-channels-heading">CLN channel administration</h1>
+      <p>Peer discovery, peer connection and controlled channel opening from the node wallet.</p>
+    </div>
+  </div>
+
+  <section class="admin-card" aria-labelledby="cln-specific-peer-heading">
+    <h2 id="cln-specific-peer-heading">Open with a specific peer</h2>
+    <label for="cln-peer-id">Peer</label>
+    <input id="cln-peer-id" placeholder="nodeid@host:9735 or nodeid" autocomplete="off">
+
+    <label for="cln-open-amount">Amount (sats)</label>
+    <input id="cln-open-amount" type="number" min="1" value="200000">
+
+    <div class="workspace-actions">
+      <button id="cln-connect-peer-btn" class="workspace-button" type="button">Connect peer</button>
+      <button id="cln-open-peer-btn" class="workspace-button workspace-primary" type="button">Open channel</button>
+    </div>
+    <pre id="cln-open-peer-result" class="admin-pre" aria-live="polite"></pre>
+  </section>
+
+  <section class="admin-card" aria-labelledby="cln-best-peer-heading">
+    <h2 id="cln-best-peer-heading">Best-peer automation</h2>
+    <label for="cln-target-msat">Target per channel (msat)</label>
+    <input id="cln-target-msat" type="number" min="1" value="200000000">
+
+    <label for="cln-min-channel-msat">Minimum channel size (msat)</label>
+    <input id="cln-min-channel-msat" type="number" min="1" value="100000000">
+
+    <label for="cln-reserve-sats">Reserve (sats)</label>
+    <input id="cln-reserve-sats" type="number" min="0" value="50000">
+
+    <div class="workspace-actions">
+      <button id="cln-best-peer-btn" class="workspace-button" type="button">Suggest best peers</button>
+      <button id="cln-open-best-btn" class="workspace-button workspace-primary" type="button">Open best channels</button>
+    </div>
+    <pre id="cln-best-peer-result" class="admin-pre" aria-live="polite"></pre>
+  </section>
+
+  <section class="admin-card admin-span-all" aria-labelledby="cln-existing-heading">
+    <div class="admin-card-header">
+      <h2 id="cln-existing-heading">Existing channels</h2>
+      <button id="refresh-cln-channels" class="workspace-button" type="button">Refresh</button>
+    </div>
+    <div id="cln-channels-json" class="admin-data"><div class="admin-loading">Loading…</div></div>
+  </section>
+</section>

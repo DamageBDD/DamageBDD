@@ -1,0 +1,49 @@
+.ecai-jobs, .ecai-job-detail {
+  max-width: 900px;
+  margin: auto;
+  padding: 1rem;
+}
+
+.job-card {
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+  background: #0b0b0b;
+}
+
+.job-header {
+  display: flex;
+  justify-content: space-between;
+  font-weight: bold;
+}
+
+.job-status {
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+.mono {
+  font-family: monospace;
+  word-break: break-all;
+}
+
+.block {
+  display: block;
+  padding: 0.5rem;
+  background: #111;
+}
+
+.btn {
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  background: #f7931a; /* Bitcoin orange */
+  color: black;
+  border: none;
+  cursor: pointer;
+}
+
+.btn.danger {
+  background: #c0392b;
+  color: white;
+}

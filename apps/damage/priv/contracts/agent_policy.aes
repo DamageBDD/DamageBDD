@@ -1,0 +1,102 @@
+@compiler >= 6
+
+contract DamageAgentPolicy =
+
+  record limits =
+    { max_spend_per_tx     : int
+    , max_spend_per_day    : int
+    , max_concurrency      : int
+    , approval_threshold   : int
+    }
+
+  record state =
+    { owner              : address
+    , allowed_methods    : map(string, bool)
+    , allowed_domains    : map(string, bool)
+    , allowed_contracts  : map(address, bool)
+    , agent_limits       : map(string, limits)
+    , daily_spend        : map(string, int)
+    , approvals_required : map(string, bool)
+    }
+
+  datatype event =
+    LimitsSet(string)
+    | MethodSet(string, bool)
+    | DomainSet(string, bool)
+    | ContractSet(address, bool)
+    | SpendRecorded(string, int)
+
+  entrypoint init() =
+    { owner = Call.caller
+    , allowed_methods = {}
+    , allowed_domains = {}
+    , allowed_contracts = {}
+    , agent_limits = {}
+    , daily_spend = {}
+    , approvals_required = {} }
+
+  stateful entrypoint set_limits(
+    agent_id : string,
+    max_spend_per_tx : int,
+    max_spend_per_day : int,
+    max_concurrency : int,
+    approval_threshold : int) =
+    require_owner()
+    put(state{
+      agent_limits[agent_id] =
+        { max_spend_per_tx = max_spend_per_tx
+        , max_spend_per_day = max_spend_per_day
+        , max_concurrency = max_concurrency
+        , approval_threshold = approval_threshold }
+    })
+    Chain.event(LimitsSet(agent_id))
+
+  stateful entrypoint set_method(method : string, allowed : bool) =
+    require_owner()
+    put(state{ allowed_methods[method] = allowed })
+    Chain.event(MethodSet(method, allowed))
+
+  stateful entrypoint set_domain(domain : string, allowed : bool) =
+    require_owner()
+    put(state{ allowed_domains[domain] = allowed })
+    Chain.event(DomainSet(domain, allowed))
+
+  stateful entrypoint set_contract(contract_id : address, allowed : bool) =
+    require_owner()
+    put(state{ allowed_contracts[contract_id] = allowed })
+    Chain.event(ContractSet(contract_id, allowed))
+
+  entrypoint authorize_http(agent_id : string, domain : string, estimated_cost : int) : bool =
+    let l = require_limits(agent_id)
+    let spent = Map.lookup_default(agent_id, state.daily_spend, 0)
+    Map.lookup_default(domain, state.allowed_domains, false)
+    && estimated_cost =< l.max_spend_per_tx
+    && (spent + estimated_cost) =< l.max_spend_per_day
+
+  entrypoint authorize_method(agent_id : string, method : string, estimated_cost : int) : bool =
+    let l = require_limits(agent_id)
+    let spent = Map.lookup_default(agent_id, state.daily_spend, 0)
+    Map.lookup_default(method, state.allowed_methods, false)
+    && estimated_cost =< l.max_spend_per_tx
+    && (spent + estimated_cost) =< l.max_spend_per_day
+
+  entrypoint authorize_contract(agent_id : string, contract_id : address, estimated_cost : int) : bool =
+    let l = require_limits(agent_id)
+    let spent = Map.lookup_default(agent_id, state.daily_spend, 0)
+    Map.lookup_default(contract_id, state.allowed_contracts, false)
+    && estimated_cost =< l.max_spend_per_tx
+    && (spent + estimated_cost) =< l.max_spend_per_day
+
+  stateful entrypoint record_spend(agent_id : string, amount : int) =
+    require_owner()
+    let spent = Map.lookup_default(agent_id, state.daily_spend, 0)
+    put(state{ daily_spend[agent_id] = spent + amount })
+    Chain.event(SpendRecorded(agent_id, amount))
+
+  function require_limits(agent_id : string) : limits =
+    switch(Map.lookup(agent_id, state.agent_limits))
+      None => abort("NO_AGENT_LIMITS")
+      Some(l) => l
+
+  function require_owner() =
+    require(Call.caller == state.owner, "ONLY_OWNER")

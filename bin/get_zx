@@ -1,0 +1,25 @@
+#! /bin/bash
+
+# A convenience script that will download the ZX installer, unpack it, and clean up.
+# For maximum portability this script uses the gzipped package version.
+
+version=0.13.6
+zx="zx-$version"
+tarball="$zx.tar.gz"
+target="https://zxq9.com/projects/zomp/$tarball"
+
+if command -v wget &> /dev/null
+  then
+    wget -nv "$target"
+  else
+    curl -s "$target" --output "$tarball"
+fi
+
+tar -zxf "$tarball"
+cd "$zx"
+chmod +x install
+./install
+cd ..
+rm -rf "$zx"
+rm "$tarball"
+#rm -- "$0"

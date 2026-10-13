@@ -1,0 +1,58 @@
+#+Title: Use DamageBDD
+
+#+INCLUDE: "header.org"
+
+#+OPTIONS: toc:nil
+#+TOC: headlines 2
+#+BEGIN_EXPORT html
+
+<section id="wallet-connection" class="centered-controls">
+  <button id="connect-button" type="button" >
+    🔗 Connect Wallet
+  </button>
+    <div id="connect-status" class="meta">Disconnected.</div>
+</section>
+<section id="wallet-balance">
+</section>
+
+<section id="amount-selector">
+  <label for="damage-amount">🪙 Enter amount (sats)</label>
+
+  <div class="amount-controls">
+    <button id="btn-minus" type="button" aria-label="Decrease amount">➖</button>
+    <input id="damage-amount" type="number" min="1" step="1" value="1000">
+    <button id="btn-plus" type="button" aria-label="Increase amount">➕</button>
+  </div>
+
+  <div class="preset-buttons">
+    <button class="preset-amount" type="button" data-amount="500">💸 500</button>
+    <button class="preset-amount" type="button" data-amount="1000">💸 1000</button>
+    <button class="preset-amount" type="button" data-amount="2100">🧪 2100</button>
+  </div>
+
+  <div class="generate-invoice">
+    <button id="generate-invoice" type="button">
+      ⚡ Generate Invoice
+    </button>
+  </div>
+
+</section>
+
+<section id="invoice">
+</section>
+
+<section id="damage-wallet">
+</section>
+
+
+
+
+<section id="step-picker" class="centered-controls">
+<!-- Step buttons will be dynamically injected here -->
+</section>
+
+<section id="feature-steps" style="margin-top: 2em;">
+<!-- Composed feature steps will appear here -->
+<h2>📝 Your Feature:</h2>
+</section>
+#+END_EXPORT

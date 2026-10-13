@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
+  <title>Instant API verification · DamageBDD</title>
+  <link rel="stylesheet" href="/static/css/quickstart.css">
+  <script type="module" src="/static/js/quickstart.js"></script>
+</head>
+<body>
+  <main class="page">
+    <header class="top"><a href="/" class="brand">DamageBDD</a><a class="dashboard" href="/">Dashboard ↗</a></header>
+    <section class="hero">
+      <p class="eyebrow">INSTANT API VERIFICATION</p>
+      <h1>From URL to executable acceptance test.</h1>
+      <p class="lede">Generate a human-readable test without writing Gherkin. Try one approved HTTPS endpoint for free, share its evidence, then schedule the test with your DamageBDD account.</p>
+    </section>
+    <section class="panel" aria-labelledby="connect-title">
+      <h2 id="connect-title"><span class="number">01</span> Connect an endpoint</h2>
+      <form id="connect-form">
+        <label for="target">HTTPS URL</label>
+        <div class="input-row">
+          <input id="target" name="target" inputmode="url" autocomplete="url" required
+                 placeholder="https://example.com/" value="https://example.com/">
+          <button type="submit" id="generate">Generate test</button>
+        </div>
+      </form>
+      <p class="hint">Generation does not contact the target. MVP supports HTTPS on port 443 with a simple path; query strings and credential-bearing URLs are deliberately excluded.</p>
+    </section>
+    <section class="panel hidden" id="test-panel" aria-labelledby="test-title">
+      <div class="section-head"><h2 id="test-title"><span class="number">02</span> Review the scenario</h2><span class="pill">Editable after download</span></div>
+      <pre id="feature" aria-label="Generated Gherkin feature"></pre>
+      <div class="actions">
+        <button type="button" id="copy" class="secondary">Copy feature</button>
+        <button type="button" id="download" class="secondary">Download .feature</button>
+        <button type="button" id="run">Run first check</button>
+        <button type="button" id="schedule" class="secondary">Schedule daily (account)</button>
+      </div>
+      <p id="trial-note" class="hint"></p>
+      <p class="hint">Daily scheduling is available to signed-in accounts even if the target is not approved for a free trial, subject to normal domain and balance checks.</p>
+    </section>
+    <section class="panel hidden" id="result-panel" aria-labelledby="result-title">
+      <h2 id="result-title"><span class="number">03</span> Verification result</h2>
+      <p id="result" role="status"></p>
+      <div class="actions">
+        <a id="share" class="button secondary" target="_blank" rel="noopener noreferrer">Open shareable report ↗</a>
+      </div>
+      <p class="hint">Scheduling uses your existing DamageBDD account, domain policies and normal paid execution path. The free status check does not grant recurring execution credits.</p>
+    </section>
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+    <footer>Read-only status checks · No redirects · No response bodies stored · Trial links expire after 24 hours.</footer>
+  </main>
+</body>
+</html>

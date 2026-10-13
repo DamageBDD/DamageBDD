@@ -1,0 +1,222 @@
+#+TITLE: DAMAGE Token Tokenomics — Implemented Model
+#+DESCRIPTION: Implemented DAMAGE tokenomics for DamageBDD, including the 42 million supply policy, 80/20 founder and market custody split, 8 decimal base units, AEX9-style token behaviour, Lightning top-up flow, and step-metered verification economics.
+#+KEYWORDS: DamageBDD, DAMAGE Token, Damage Token, tokenomics, Aeternity, AEX9, Bitcoin Lightning, BDD, behaviour verification, verification economy
+#+OPTIONS: toc:2 num:nil
+#+LANGUAGE: en
+#+INCLUDE: "header.org"
+
+* DAMAGE Token Tokenomics — Implemented Model
+
+DAMAGE is the utility token used by DamageBDD to meter behaviour verification, account balances, and execution costs inside the DamageBDD platform.
+
+The implemented tokenomics model is simple: DAMAGE is an Aeternity AEX9-style fungible token with 8 decimals, a 42 million token supply policy, and an 80/20 founder custody to market allocation model.
+
+#+CAPTION: Implemented DAMAGE tokenomics summary
+| Parameter | Implemented value |
+|-----------+-------------------|
+| Token name | DAMAGE / Damage Token |
+| Token standard | Aeternity AEX9-style fungible token |
+| Decimals | 8 |
+| Base unit | 1 DAMAGE = 100,000,000 base units |
+| Total supply policy | 42,000,000 DAMAGE |
+| Founder / custody allocation | 80% = 33,600,000 DAMAGE |
+| Public / market allocation | 20% = 8,400,000 DAMAGE |
+| Primary utility | Paying for DamageBDD behaviour verification steps and recording verified execution reports |
+| Settlement / access rail | Aeternity token balance, with Bitcoin Lightning purchase/top-up paths |
+
+* Allocation
+
+The implemented custody split is:
+
+#+begin_example
+Total supply:       42,000,000 DAMAGE
+Founder custody:    33,600,000 DAMAGE   80%
+Market allocation:   8,400,000 DAMAGE   20%
+#+end_example
+
+The founder/custody allocation exists to maintain continuity of the DamageBDD network, fund ongoing development, provide operational reserves, and support verified execution infrastructure.
+
+The market allocation exists to place DAMAGE into circulation for users, testers, customers, node operators, contributors, and liquidity paths that support DamageBDD usage.
+
+* Contract implementation
+
+The DAMAGE token contract is implemented as a fungible token contract with AEX9-style behaviour. Its state stores:
+
+- contract owner
+- total supply
+- per-account balances
+- token metadata: name, symbol, decimals
+- allowances
+- swapped balances
+
+The contract initializer accepts the token name, decimals, symbol, and an optional initial owner balance. The initial owner balance becomes the initial total supply and is assigned to the deployer/owner account.
+
+For the implemented 42 million supply model, deployment should initialize the owner balance to:
+
+#+begin_example
+42,000,000 * 10^8
+#+end_example
+
+Where =DAMAGE_DECIMALS = 8=, so =1 DAMAGE = 100,000,000= base units.
+
+* Extensions enabled
+
+The contract exposes these extensions:
+
+#+begin_example
+allowances
+mintable
+burnable
+swappable
+#+end_example
+
+This means the contract supports:
+
+- direct token transfers
+- allowance-based transfers
+- minting by the contract owner
+- burning by token holders
+- swap marking through a burn-and-record mechanism
+
+* Supply policy versus contract capability
+
+The intended tokenomics policy is a fixed 42,000,000 DAMAGE supply split 80/20 between founder custody and market circulation.
+
+The contract includes a =mint= entrypoint controlled by the owner. That means the contract is technically mint-capable. Under this tokenomics document, minting is treated as a governance/admin capability, not as part of the circulating economic model.
+
+Operationally:
+
+- the canonical supply target is 42,000,000 DAMAGE;
+- any minting beyond the 42 million policy would change the supply and should be treated as an explicit governance event;
+- burns reduce total supply;
+- swaps burn the caller balance and record the swapped amount.
+
+* Runtime accounting model
+
+DamageBDD treats DAMAGE as execution credit for behaviour verification.
+
+At runtime, the Erlang system tracks balances through the DAMAGE token contract. User balances are fetched by calling the token contract =balance= entrypoint. Runtime balances are cached briefly for dashboard and API responsiveness.
+
+When a feature is executed, DamageBDD performs a dry run first. The dry run calculates the execution cost. The system then checks the user's DAMAGE balance before allowing the paid execution path.
+
+Each successful step consumes DAMAGE. The default step spend in the runtime is:
+
+#+begin_example
+1 DAMAGE per executed step
+#+end_example
+
+Internally this is represented as:
+
+#+begin_example
+1 * 10^8
+#+end_example
+
+Concurrency multiplies execution work. A behaviour run with higher concurrency should be understood as consuming multiple execution units because the platform is performing more verification work.
+
+* Verification spend flow
+
+The implemented spend path is:
+
+1. A user submits a BDD feature for execution.
+2. DamageBDD performs a dry run.
+3. The dry run calculates the DAMAGE cost.
+4. The runtime checks the user's DAMAGE balance.
+5. If the balance is sufficient, the real execution runs.
+6. The run produces a feature hash and report hash.
+7. The token contract =spend= entrypoint transfers the DAMAGE amount from the user origin to the node/operator address.
+8. The report hash and feature hash bind payment to the verified behaviour execution.
+
+The contract-level spend function is:
+
+#+begin_example
+spend(node_address, amount, feature_hash, report_hash)
+#+end_example
+
+Its implemented behaviour transfers the specified amount of DAMAGE from the caller origin to the node address.
+
+* Lightning top-up flow
+
+DamageBDD can use Bitcoin Lightning invoices as a purchase/top-up rail for DAMAGE.
+
+The implemented invoice listener watches paid Lightning invoices. When an invoice label matches this format:
+
+#+begin_example
+damage:<ae_account>:<amount_damage>:<timestamp>
+#+end_example
+
+The runtime transfers the requested amount of DAMAGE from the node/admin account to the target Aeternity account.
+
+The amount is scaled by 8 token decimals before transfer:
+
+#+begin_example
+amount_damage * 10^8
+#+end_example
+
+This makes Lightning a payment rail while DAMAGE remains the internal execution-credit token used by the DamageBDD platform.
+
+* Pricing hooks
+
+The implementation exposes a =/rate= endpoint backed by the configured =DAMAGE_PRICE= constant.
+
+There is also a helper for converting satoshis to DAMAGE using BTC/USD and DAMAGE/USD assumptions. In the current implementation this helper is implemented for live Coinstore or market pricing integration.
+
+The implemented model should therefore be described as:
+
+#+begin_quote
+DAMAGE is priced by platform configuration and/or external market reference. The runtime can convert sats into DAMAGE for top-up and credit flows.
+#+end_quote
+
+* Economic role
+
+DAMAGE is not implemented as a passive governance collectible. It is an execution fuel for verifiable behaviour.
+
+Its purpose is to coordinate:
+
+- users who need behaviour verification;
+- nodes/operators that execute DamageBDD workloads;
+- reports that prove what behaviour was verified;
+- costs attached to feature execution;
+- reusable verification history through report and feature hashes.
+
+The token is therefore best described as a metering, settlement, and coordination token for DamageBDD verification work.
+
+* Custody model
+
+The implemented custody policy is founder-led:
+
+#+begin_example
+80% founder / custody reserve
+20% market / user allocation
+#+end_example
+
+The founder custody reserve is not merely a treasury allocation. It is the operational reserve that allows the system to:
+
+- fund continued development;
+- supply execution credits;
+- support liquidity paths;
+- compensate node/operator work;
+- maintain platform continuity;
+- protect the DamageBDD verification economy from premature capture.
+
+The 20% market allocation is the circulating side of the model. It exists so customers, testers, contributors, and early users can access DAMAGE for real platform use.
+
+* Plain-language positioning
+
+DAMAGE tokenomics are intentionally constrained:
+
+#+begin_quote
+42 million total DAMAGE, with 80% retained in founder custody and 20% allocated to the market, powering paid behaviour verification across DamageBDD.
+#+end_quote
+
+The token exists to make software behaviour economically measurable. A passing or failing BDD execution is no longer just a log line; it becomes a paid, hash-linked, report-backed verification event.
+
+* Implementation notes
+
+The current implementation establishes:
+
+- a DamageToken contract with balances, total supply, metadata, allowances, mint, burn, swap, and spend behaviour;
+- an Erlang =damage_ae= runtime that transfers DAMAGE, checks balances, confirms spend, and listens for paid Lightning invoices;
+- an Erlang =damage= runner that charges per executed BDD step and records feature/report hashes;
+- an account API that exposes token balance and rate information.
+
+The tokenomics policy should be kept aligned with deployment configuration so that the deployed initial owner balance equals the intended 42,000,000 DAMAGE supply, scaled by 8 token decimals.

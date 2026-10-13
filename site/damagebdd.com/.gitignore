@@ -1,0 +1,14 @@
+*.log
+*.aux
+*.out
+*.toc
+*.nav
+*.snm
+*.fls
+*.fdb*
+public/
+/public/
+# Emacs
+*~
+\#*\#
+.\#*

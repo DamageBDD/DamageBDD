@@ -1,0 +1,15 @@
+<!doctype html><meta charset="utf-8">
+<h2>Signed Install Links</h2>
+<p>Valid until: {{expires_at}}</p>
+
+<h3>Linux/macOS</h3>
+<pre><code>curl -fsSL "{{signed_url_sh}}" | bash</code></pre>
+
+<h3>Windows (PowerShell, Admin)</h3>
+<pre><code>iwr "{{signed_url_ps1}}" | iex</code></pre>
+
+<p>Direct links:</p>
+<ul>
+  <li><a href="{{signed_url_sh}}">install.sh</a></li>
+  <li><a href="{{signed_url_ps1}}">install.ps1</a></li>
+</ul>

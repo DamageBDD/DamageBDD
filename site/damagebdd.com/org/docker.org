@@ -1,0 +1,879 @@
+#+TITLE: From 0 to Hero: Dealing DAMAGE with a Docker-Powered DamageBDD Node
+#+SUBTITLE: Install Docker, run the verified stack, publish your node, and start serving behaviour verification
+#+AUTHOR: DamageBDD
+#+OPTIONS: toc:2 num:t
+#+STARTUP: overview
+
+* From 0 to hero
+
+This guide takes you from a fresh machine to a running DamageBDD node.
+
+By the end, you should have:
+
+- Docker installed on Windows, macOS, or Linux
+- the DamageBDD Docker stack running
+- the web interface open locally
+- an optional Tor onion address for private public access
+- a node/account address copied from the web UI
+- a first smoke test executed
+- the basic operator path understood
+
+The verified DamageBDD stack is not just a web app. It is a behaviour verification node with supporting infrastructure:
+
+- DamageBDD web/API runner
+- IPFS report storage
+- Aeternity middleware/node for verification paths
+- Bitcoin Core
+- Core Lightning
+- optional Tor onion service for exposing the web UI without exposing your home IP
+
+DamageBDD exposes execution routes such as =/version/=, =/tx/=, and =/execute_feature/=, and the feature execution path writes reports that can be published through IPFS.  
+
+* What you are building
+
+A DamageBDD node gives users a place to submit behaviour tests.
+
+In plain English:
+
+1. A user opens your node.
+2. The user submits a Gherkin feature file.
+3. DamageBDD runs the behaviour test.
+4. A report is produced.
+5. The report is stored/published through the stack.
+6. Eligible verified execution can earn DAMAGE.
+
+Careful wording matters: running a node creates execution capacity. Rewards, payments, and token flows depend on configuration, demand, network state, pricing, eligibility, and review rules. This is not an investment promise and not a guarantee of profit.
+
+* Hardware expectations
+
+** Beginner / learning node
+
+Use this for learning Docker, opening the UI, and running small tests.
+
+| Part | Suggested minimum |
+|------+-------------------|
+| CPU  | 4 cores |
+| RAM  | 8 GB minimum, 16 GB better |
+| Disk | 100–250 GB free for app testing |
+| OS   | Windows, macOS, or Linux |
+| Net  | stable broadband |
+
+This is enough to learn the workflow, but it is not the serious sovereign configuration.
+
+** Full sovereign node
+
+Use this for a full-power operator node.
+
+| Part | Suggested serious spec |
+|------+-------------------------|
+| CPU  | 8 cores / 16 threads |
+| RAM  | 32 GB minimum, 64 GB recommended |
+| Disk | 4 TB NVMe minimum |
+| Better disk | 8 TB NVMe |
+| Network | always-on broadband |
+| Power | UPS strongly recommended |
+| OS | Linux server preferred |
+| Runtime | Docker Compose |
+| Exposure | Tor onion service or hardened reverse proxy |
+
+For Bitcoin Core, no pruning means real disk planning. Bitcoin.org lists 750 GB as the default-setting disk requirement and explains that pruning reduces disk usage from over 750 GB to around 7 GB; this guide assumes the full-power path, so do not design around pruned storage. ([Bitcoin][1])
+
+Aeternity middleware also needs persistent storage. The `ae_mdw` Docker setup mounts persistent =mnesia=, =mdw.db=, and log paths, and the middleware runs together with an Aeternity node in the same container/BEAM instance. ([GitHub][2])
+
+* Install Docker
+
+Docker Compose is the command that brings the whole stack up. Docker’s current recommendation is Docker Desktop for the easiest cross-platform Compose setup; Docker Desktop includes Docker Engine, Docker CLI, and Docker Compose. ([Docker Documentation][3])
+
+The modern command is:
+
+#+BEGIN_SRC bash
+docker compose version
+#+END_SRC
+
+Not:
+
+#+BEGIN_SRC bash
+docker-compose version
+#+END_SRC
+
+The old =docker-compose= binary may still exist on some machines, but the current Docker Compose plugin is used as =docker compose=.
+
+* Windows setup
+
+** 1. Install Docker Desktop
+
+On Windows, install Docker Desktop for Windows.
+
+Docker’s Windows documentation notes that Docker Desktop uses the WSL 2 backend for Linux containers and that Docker commands are available from Windows terminals when the WSL 2 engine is enabled. ([Docker Documentation][4])
+
+** 2. Enable WSL 2 integration
+
+Open Docker Desktop:
+
+#+BEGIN_EXAMPLE
+Settings → General → Use the WSL 2 based engine
+#+END_EXAMPLE
+
+Then enable your Linux distribution if you use one:
+
+#+BEGIN_EXAMPLE
+Settings → Resources → WSL Integration
+#+END_EXAMPLE
+
+Check WSL status from PowerShell:
+
+#+BEGIN_SRC powershell
+wsl.exe -l -v
+#+END_SRC
+
+Use WSL 2 for your Ubuntu distribution:
+
+#+BEGIN_SRC powershell
+wsl.exe --set-version Ubuntu 2
+wsl.exe --set-default-version 2
+#+END_SRC
+
+** 3. Give Docker enough resources
+
+For a learning node, start with:
+
+#+BEGIN_EXAMPLE
+CPU: 4
+RAM: 8–16 GB
+Disk: 100+ GB
+#+END_EXAMPLE
+
+For a full node, move Docker’s storage to a large SSD/NVMe drive. Docker Desktop stores WSL 2 engine data under the user profile by default, and Docker’s WSL documentation points operators to =Settings → Resources → Advanced= for changing the location. ([Docker Documentation][5])
+
+Avoid placing chain data under OneDrive, Dropbox, iCloud Drive, or network-synced folders.
+
+* macOS setup
+
+** 1. Install Docker Desktop
+
+Install Docker Desktop for Mac.
+
+Docker’s Mac documentation provides separate installers for Apple silicon and Intel Macs, notes that Docker Desktop requires a supported macOS version, and lists at least 4 GB RAM as a requirement. ([Docker Documentation][6])
+
+** 2. Start Docker Desktop
+
+Open:
+
+#+BEGIN_EXAMPLE
+Applications → Docker
+#+END_EXAMPLE
+
+Wait until Docker says it is running.
+
+Verify:
+
+#+BEGIN_SRC bash
+docker version
+docker compose version
+#+END_SRC
+
+** 3. Resource settings
+
+For a learning node:
+
+#+BEGIN_EXAMPLE
+CPU: 4
+RAM: 8–16 GB
+Disk: 100+ GB
+#+END_EXAMPLE
+
+For a full sovereign node, macOS can work, but Linux server hardware is cleaner for always-on operation, large disks, and long-running blockchain databases.
+
+* Linux setup
+
+Linux is the preferred full-time operator environment.
+
+The example below is for Ubuntu. Docker’s official Ubuntu install guide lists supported Ubuntu releases and recommends installing Docker from Docker’s apt repository. ([Docker Documentation][7])
+
+** 1. Remove conflicting packages
+
+#+BEGIN_SRC bash
+sudo apt remove docker.io docker-compose docker-compose-v2 docker-doc podman-docker containerd runc || true
+#+END_SRC
+
+** 2. Add Docker’s apt repository
+
+#+BEGIN_SRC bash
+sudo apt update
+sudo apt install -y ca-certificates curl
+
+sudo install -m 0755 -d /etc/apt/keyrings
+
+sudo curl -fsSL [https://download.docker.com/linux/ubuntu/gpg](https://download.docker.com/linux/ubuntu/gpg) 
+-o /etc/apt/keyrings/docker.asc
+
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+sudo tee /etc/apt/sources.list.d/docker.sources >/dev/null <<EOF
+Types: deb
+URIs: [https://download.docker.com/linux/ubuntu](https://download.docker.com/linux/ubuntu)
+Suites: $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+
+sudo apt update
+#+END_SRC
+
+** 3. Install Docker Engine and Compose plugin
+
+#+BEGIN_SRC bash
+sudo apt install -y 
+docker-ce 
+docker-ce-cli 
+containerd.io 
+docker-buildx-plugin 
+docker-compose-plugin
+#+END_SRC
+
+Docker’s Ubuntu docs list these packages for the latest Docker Engine install path. ([Docker Documentation][7])
+
+** 4. Verify Docker
+
+#+BEGIN_SRC bash
+sudo docker run hello-world
+docker compose version
+#+END_SRC
+
+** 5. Optional: run Docker without sudo
+
+#+BEGIN_SRC bash
+sudo usermod -aG docker "$USER"
+newgrp docker
+docker run hello-world
+#+END_SRC
+
+Log out and back in if the group change does not apply.
+
+** 6. Firewall note
+
+Docker warns that published container ports can bypass =ufw= or =firewalld= rules unless you account for Docker’s iptables behaviour. For a node operator, bind admin/RPC ports to localhost and expose only what you intend to expose. ([Docker Documentation][7])
+
+* Get the DamageBDD source
+
+Choose a working directory with enough disk space.
+
+#+BEGIN_SRC bash
+mkdir -p ~/damage
+cd ~/damage
+
+git clone <YOUR_DAMAGEBDD_REPO_URL> damagebdd
+cd damagebdd
+#+END_SRC
+
+Use the real project repository URL in place of =<YOUR_DAMAGEBDD_REPO_URL>=.
+
+Check the important files:
+
+#+BEGIN_SRC bash
+ls -la Dockerfile docker-compose.yml
+#+END_SRC
+
+You should have:
+
+#+BEGIN_EXAMPLE
+Dockerfile
+docker-compose.yml
+.env or .env.example
+features/
+contracts/
+#+END_EXAMPLE
+
+* Configure the node
+
+Copy the example environment file:
+
+#+BEGIN_SRC bash
+cp .env.example .env
+#+END_SRC
+
+Edit it:
+
+#+BEGIN_SRC bash
+nano .env
+#+END_SRC
+
+A starter =.env= should look like this:
+
+#+BEGIN_SRC bash
+DAMAGE_API_URL=[http://localhost:4888/api](http://localhost:4888/api)
+
+BITCOIN_CHAIN=main
+CLN_NETWORK=bitcoin
+
+BITCOIN_RPC_USER=damage
+BITCOIN_RPC_PASSWORD=change_me_with_a_real_random_password
+
+BITCOIN_PRUNE=0
+
+CLN_LOG_LEVEL=info
+CLN_RUNE=
+
+AE_FEE_MULTIPLIER=2
+AE_GAS_MULTIPLIER=2
+AE_GAS_PRICE_MULTIPLIER=3
+#+END_SRC
+
+Generate a real Bitcoin RPC password:
+
+#+BEGIN_SRC bash
+openssl rand -hex 32
+#+END_SRC
+
+Put the result into =BITCOIN_RPC_PASSWORD=.
+
+For a full-power node, keep:
+
+#+BEGIN_SRC bash
+BITCOIN_PRUNE=0
+#+END_SRC
+
+That means no pruning.
+
+* Add Tor onion service support
+
+Tor is optional, but it is the clean operator path when you want users to access your node without exposing your home IP directly.
+
+The Tor Project’s onion service guide uses =HiddenServiceDir= to store onion service keys and =HiddenServicePort= to map the onion service port to a local service; the onion hostname is written to a file named =hostname= in the hidden service directory. ([Tor Community][8])
+
+** 1. Create Tor files
+
+#+BEGIN_SRC bash
+mkdir -p tor
+#+END_SRC
+
+Create =tor/Dockerfile=:
+
+#+BEGIN_SRC dockerfile
+FROM debian:bookworm-slim
+
+RUN apt-get update 
+&& apt-get install -y --no-install-recommends tor ca-certificates 
+&& rm -rf /var/lib/apt/lists/*
+
+COPY torrc /etc/tor/torrc
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["tor", "-f", "/etc/tor/torrc"]
+#+END_SRC
+
+Create =tor/docker-entrypoint.sh=:
+
+#+BEGIN_SRC sh
+#!/bin/sh
+set -e
+
+mkdir -p /var/lib/tor
+chown -R debian-tor:debian-tor /var/lib/tor
+
+exec "$@"
+#+END_SRC
+
+Create =tor/torrc=:
+
+#+BEGIN_SRC conf
+SocksPort 0
+Log notice stdout
+DataDirectory /var/lib/tor
+
+HiddenServiceDir /var/lib/tor/damagebdd/
+HiddenServiceVersion 3
+
+# Tor-facing users visit port 80 on the onion address.
+
+# Inside the shared network namespace, Tor forwards to DamageBDD on localhost:4888.
+
+HiddenServicePort 80 127.0.0.1:4888
+
+User debian-tor
+#+END_SRC
+
+** 2. Add the Tor service to docker-compose.yml
+
+Add this service:
+
+#+BEGIN_SRC yaml
+tor:
+build:
+context: ./tor
+dockerfile: Dockerfile
+container_name: damagebdd-tor
+restart: unless-stopped
+depends_on:
+damagebdd:
+condition: service_started
+
+```
+# Share the DamageBDD container network namespace.
+# This makes 127.0.0.1:4888 point at the DamageBDD web interface.
+network_mode: "service:damagebdd"
+
+volumes:
+  - tor_data:/var/lib/tor
+```
+
+#+END_SRC
+
+Add this volume:
+
+#+BEGIN_SRC yaml
+volumes:
+tor_data:
+#+END_SRC
+
+Do not delete =tor_data=. It contains the onion service key. If you delete it, your onion address changes.
+
+* Bring the stack up
+
+From the DamageBDD repository:
+
+#+BEGIN_SRC bash
+docker compose up --build -d
+#+END_SRC
+
+Watch the services:
+
+#+BEGIN_SRC bash
+docker compose ps
+#+END_SRC
+
+Follow logs:
+
+#+BEGIN_SRC bash
+docker compose logs -f damagebdd
+#+END_SRC
+
+For the full stack:
+
+#+BEGIN_SRC bash
+docker compose logs -f bitcoin
+docker compose logs -f lightning
+docker compose logs -f ae_mdw
+docker compose logs -f ipfs
+docker compose logs -f tor
+#+END_SRC
+
+* Open the web interface
+
+On the machine running Docker:
+
+#+BEGIN_SRC text
+[http://localhost:4888](http://localhost:4888)
+#+END_SRC
+
+Health check:
+
+#+BEGIN_SRC bash
+curl -fsS [http://localhost:4888/version/](http://localhost:4888/version/)
+#+END_SRC
+
+A successful response means the DamageBDD HTTP service is reachable. The =/version/= route is part of the DamageBDD HTTP routes. 
+
+* Get your onion address
+
+Once Tor starts, read the onion hostname:
+
+#+BEGIN_SRC bash
+docker compose exec tor cat /var/lib/tor/damagebdd/hostname
+#+END_SRC
+
+You should see something like:
+
+#+BEGIN_SRC text
+exampleexampleexampleexampleexampleexampleexampleexampleexample.onion
+#+END_SRC
+
+Open Tor Browser and visit:
+
+#+BEGIN_SRC text
+[http://exampleexampleexampleexampleexampleexampleexampleexampleexample.onion](http://exampleexampleexampleexampleexampleexampleexampleexampleexample.onion)
+#+END_SRC
+
+Replace the example address with your real onion hostname.
+
+That onion address is the access point you can share with testers.
+
+* Get your node/account address
+
+Open the web interface locally or through Tor.
+
+Then copy the node/account address shown by the UI.
+
+That address is important because it identifies the node/operator side of the execution flow.
+
+Keep three things together in your operator notes:
+
+#+BEGIN_EXAMPLE
+Local UI:       [http://localhost:4888](http://localhost:4888)
+Onion UI:       http://<your-onion-hostname>.onion
+Node address:   ak_...
+#+END_EXAMPLE
+
+Do not publish private keys, seed material, token files, macaroon files, rune secrets, or raw wallet credentials.
+
+* Run your first smoke test
+
+Create a basic feature file:
+
+#+BEGIN_SRC bash
+mkdir -p features
+nano features/smoke.feature
+#+END_SRC
+
+Paste:
+
+#+BEGIN_SRC gherkin
+Feature: DamageBDD node smoke test
+
+Scenario: The local DamageBDD version endpoint responds
+Given I am using server "[http://127.0.0.1:4888](http://127.0.0.1:4888)"
+When I make a GET request to "/version/"
+Then the response status must be "200"
+#+END_SRC
+
+DamageBDD supports plain-language HTTP steps such as setting a server, making GET requests, and asserting response status through the HTTP step implementation. 
+
+Submit the feature through the web UI, or use the API flow supported by your node configuration.
+
+A simple API-style test shape is:
+
+#+BEGIN_SRC bash
+curl -X PUT [http://localhost:4888/execute_feature/](http://localhost:4888/execute_feature/) 
+-H 'content-type: application/json' 
+--data-binary @- <<'JSON'
+{
+"feature": "Feature: API smoke\n\n  Scenario: Version responds\n    Given I am using server "[http://127.0.0.1:4888\"\n](http://127.0.0.1:4888\%22\n)    When I make a GET request to "/version/"\n    Then the response status must be "200"\n"
+}
+JSON
+#+END_SRC
+
+Some nodes require authentication or a paid/signed execution flow. If the node returns an auth, balance, transaction, or payment error, that means the web server is up but the economic execution path still needs configuration.
+
+* Check IPFS report flow
+
+DamageBDD’s execution path adds the run directory to IPFS and formats a report URL using the configured Damage API URL. 
+
+Check IPFS:
+
+#+BEGIN_SRC bash
+docker compose logs -f ipfs
+#+END_SRC
+
+Check whether the IPFS API is reachable from the host:
+
+#+BEGIN_SRC bash
+curl -fsS [http://127.0.0.1:5001/api/v0/id](http://127.0.0.1:5001/api/v0/id) -X POST
+#+END_SRC
+
+The DamageBDD IPFS step module also supports explicit IPFS API and gateway testing patterns. 
+
+* Check Bitcoin and Lightning
+
+Bitcoin Core will take time to sync. On mainnet with no pruning, expect a long initial sync.
+
+Check Bitcoin:
+
+#+BEGIN_SRC bash
+docker compose exec bitcoin bitcoin-cli 
+-rpcuser="$BITCOIN_RPC_USER" 
+-rpcpassword="$BITCOIN_RPC_PASSWORD" 
+getblockchaininfo
+#+END_SRC
+
+Check Core Lightning:
+
+#+BEGIN_SRC bash
+docker compose exec lightning lightning-cli getinfo
+#+END_SRC
+
+DamageBDD includes Nostr Wallet Connect request handling for Bitcoin-network wallet actions such as =get_info=, =get_balance=, =pay_invoice=, =make_invoice=, =lookup_invoice=, and =list_transactions=. 
+
+DamageBDD also exposes NWC-related HTTP routes for minting/revoking sessions, checking ledger balance, creating top-up invoices, and checking top-up status. 
+
+* Check Aeternity middleware
+
+Check the middleware status:
+
+#+BEGIN_SRC bash
+curl -fsS [http://localhost:4000/status](http://localhost:4000/status)
+#+END_SRC
+
+Check logs:
+
+#+BEGIN_SRC bash
+docker compose logs -f ae_mdw
+#+END_SRC
+
+DamageBDD reads Aeternity middleware nodes from configuration and uses middleware contract logs for ledger/event-style reads in the NWC ledger path. 
+
+* How the node earns
+
+The operator path is:
+
+1. Run the verified stack.
+2. Keep the node online.
+3. Publish the web UI through Tor or another controlled public route.
+4. Share the onion address.
+5. Share the node/account address.
+6. Let users submit behaviour tests.
+7. Execute tests reliably.
+8. Produce reports.
+9. Keep the verification path healthy.
+10. Receive eligible rewards/payments according to the configured DamageBDD economy.
+
+The clean signal is not hype.
+
+The clean signal is:
+
+#+BEGIN_EXAMPLE
+working node
+working onion address
+working web UI
+working execution
+working reports
+working verification path
+#+END_EXAMPLE
+
+When those are true, the node has useful capacity.
+
+* Operator safety checklist
+
+** Keep private material private
+
+Never commit:
+
+#+BEGIN_EXAMPLE
+.env
+token.aes
+*.aes
+*.key
+*.pem
+secrets/
+wallet files
+macaroons
+CLN hsm_secret
+Tor onion private keys
+Aeternity private keys
+Bitcoin wallet files
+#+END_EXAMPLE
+
+** Back up persistent volumes
+
+Back up:
+
+#+BEGIN_EXAMPLE
+damage_data
+damage_logs
+ipfs_data
+ae_mdw_data
+bitcoin_data
+lightning_data
+tor_data
+#+END_EXAMPLE
+
+The most critical ones are:
+
+#+BEGIN_EXAMPLE
+lightning_data
+bitcoin_data
+tor_data
+secrets
+node identity files
+#+END_EXAMPLE
+
+If you lose =tor_data=, you lose the onion identity.
+
+If you lose =lightning_data=, you may lose funds or channel state.
+
+If you leak =tor_data=, someone can impersonate your onion service.
+
+** Avoid public RPC exposure
+
+Keep these local unless you know exactly why you are exposing them:
+
+#+BEGIN_EXAMPLE
+Bitcoin RPC
+IPFS API
+Aeternity internal API
+Core Lightning RPC
+Docker socket
+#+END_EXAMPLE
+
+Expose the DamageBDD web UI through Tor first.
+
+* Troubleshooting
+
+** Docker command not found
+
+Install Docker Desktop on Windows/macOS, or Docker Engine plus the Compose plugin on Linux. Docker’s Compose overview says Docker Desktop includes Compose, while Linux can use the Compose plugin. ([Docker Documentation][3])
+
+** docker compose command not found
+
+Try:
+
+#+BEGIN_SRC bash
+docker compose version
+docker-compose version
+#+END_SRC
+
+If only =docker-compose= works, you are using the legacy binary. Install the Compose plugin.
+
+** Port 4888 already in use
+
+Find the process:
+
+#+BEGIN_SRC bash
+lsof -i :4888
+#+END_SRC
+
+Or change the host port in =docker-compose.yml=:
+
+#+BEGIN_SRC yaml
+ports:
+
+* "0.0.0.0:4889:4888"
+  #+END_SRC
+
+Then open:
+
+#+BEGIN_SRC text
+[http://localhost:4889](http://localhost:4889)
+#+END_SRC
+
+** Tor onion address does not appear
+
+Check logs:
+
+#+BEGIN_SRC bash
+docker compose logs -f tor
+#+END_SRC
+
+Check the hostname file:
+
+#+BEGIN_SRC bash
+docker compose exec tor ls -la /var/lib/tor/damagebdd/
+docker compose exec tor cat /var/lib/tor/damagebdd/hostname
+#+END_SRC
+
+The Tor Project notes that Tor creates the hidden service directory when it starts and that the =hostname= file contains the onion address. ([Tor Community][8])
+
+** Bitcoin sync is slow
+
+That is normal for no-pruning mainnet operation. Use NVMe, enough RAM, and stable power.
+
+Do not delete the Bitcoin volume unless you want to sync again from scratch.
+
+** Aeternity middleware is slow
+
+Use persistent SSD/NVMe volumes. The `ae_mdw` Docker setup persists =mnesia= and =mdw.db=; losing those means rebuild/resync work. ([GitHub][9])
+
+** UI loads locally but not over Tor
+
+Check:
+
+#+BEGIN_SRC bash
+curl -fsS [http://localhost:4888/version/](http://localhost:4888/version/)
+docker compose logs -f tor
+docker compose exec tor cat /var/lib/tor/damagebdd/hostname
+#+END_SRC
+
+Then open the onion address in Tor Browser, not a normal browser.
+
+* Daily operator commands
+
+Start:
+
+#+BEGIN_SRC bash
+docker compose up -d
+#+END_SRC
+
+Stop:
+
+#+BEGIN_SRC bash
+docker compose down
+#+END_SRC
+
+Rebuild DamageBDD after code changes:
+
+#+BEGIN_SRC bash
+docker compose up --build -d damagebdd
+#+END_SRC
+
+Watch everything:
+
+#+BEGIN_SRC bash
+docker compose logs -f
+#+END_SRC
+
+Check service status:
+
+#+BEGIN_SRC bash
+docker compose ps
+#+END_SRC
+
+Show disk usage:
+
+#+BEGIN_SRC bash
+docker system df
+#+END_SRC
+
+Do not blindly run:
+
+#+BEGIN_SRC bash
+docker system prune --volumes
+#+END_SRC
+
+That can delete state you care about.
+
+* The hero path
+
+A beginner proves the node can run.
+
+An operator proves the node can stay up.
+
+A sovereign operator proves the whole verification stack can survive real use.
+
+The final state looks like this:
+
+#+BEGIN_EXAMPLE
+Docker stack: running
+DamageBDD UI: reachable
+Tor onion: published
+Node/account address: copied
+Bitcoin Core: syncing or synced
+Core Lightning: running
+Aeternity middleware: running
+IPFS: running
+Smoke test: passing
+Reports: produced
+Operator backups: done
+#+END_EXAMPLE
+
+That is the path from zero to hero.
+
+Run the node.
+
+Publish the onion.
+
+Serve execution.
+
+Deal DAMAGE through verified behaviour.
+
+[1]: https://bitcoin.org/en/bitcoin-core/features/requirements?utm_source=chatgpt.com "Bitcoin Core Requirements and Warnings"
+[2]: https://github.com/aeternity/ae_mdw?utm_source=chatgpt.com "GitHub - aeternity/ae_mdw: Aeternity Middleware in Elixir"
+[3]: https://docs.docker.com/compose/install/ "Overview of installing Docker Compose | Docker Docs"
+[4]: https://docs.docker.com/desktop/setup/install/windows-install/?utm_source=chatgpt.com "Install Docker Desktop on Windows"
+[5]: https://docs.docker.com/desktop/features/wsl/?utm_source=chatgpt.com "Docker Desktop WSL 2 backend on Windows"
+[6]: https://docs.docker.com/desktop/setup/install/mac-install/ "Install Docker Desktop on Mac | Docker Docs"
+[7]: https://docs.docker.com/engine/install/ubuntu/ "Install Docker Engine on Ubuntu | Docker Docs"
+[8]: https://community.torproject.org/onion-services/setup/ "Tor Project | Set up Your Onion Service"
+[9]: https://github.com/aeternity/ae_mdw/blob/master/docker-compose.yml?utm_source=chatgpt.com "docker-compose.yml - aeternity/ae_mdw"

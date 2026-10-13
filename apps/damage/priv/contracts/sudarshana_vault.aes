@@ -1,0 +1,150 @@
+contract interface AEX9 =
+  entrypoint balance(owner : address) : int
+  stateful entrypoint transfer(recipient : address, amount : int) : bool
+  stateful entrypoint transferFrom(sender : address, recipient : address, amount : int) : bool
+  stateful entrypoint approve(spender : address, amount : int) : bool
+  entrypoint decimals() : int
+
+contract SudarshanaVault =
+  record Object =
+    { owner        : address
+    , size         : int
+    , merkle_root  : hash
+    , endowment    : int         // remaining budget in token units
+    , replicas     : int
+    , active       : bool
+    }
+
+  // nested map: passes["cid"][node] and fails["cid"][node]
+  type PassMap = map(address, int)
+  type FailMap = map(address, int)
+
+  record State =
+    { token           : address
+    , min_stake       : int
+    , reward_per_pass : int
+    , fail_threshold  : int
+    , slash_bps       : int              // e.g. 1000 = 10%
+    , objects         : map(string, Object)
+    , stake           : map(address, int)
+    , rewards         : map(address, int)
+    , passes          : map(string, PassMap)
+    , fails           : map(string, FailMap)
+    }
+
+  event ObjectCreated(cid : string, owner : address, endowment : int)
+  event Reported(cid : string, node : address, passed : bool, balance_after : int)
+  event RewardAccrued(node : address, amount : int, total : int)
+  event Slashed(node : address, amount : int, remaining_stake : int)
+  event Claimed(node : address, to : address, amount : int)
+
+  entrypoint init(token : address, min_stake : int, reward_per_pass : int,
+                  fail_threshold : int, slash_bps : int) =
+    { token = token
+    , min_stake = min_stake
+    , reward_per_pass = reward_per_pass
+    , fail_threshold = fail_threshold
+    , slash_bps = slash_bps
+    , objects = {}
+    , stake = {}
+    , rewards = {}
+    , passes = {}
+    , fails = {}
+    }
+
+  // --- Adminless primitives (anyone can become a node by staking) ---
+
+  stateful entrypoint stake(amount : int) =
+    require(amount >= state.min_stake, "stake/amount-too-small")
+    require(AEX9(state.token).transferFrom(Call.caller, Contract.address, amount), "stake/transferFrom-failed")
+    put(state{ stake[Call.caller] = Map.lookup_default(Call.caller, 0, state.stake) + amount })
+
+  entrypoint my_stake(who : address) : int =
+    Map.lookup_default(who, 0, state.stake)
+
+  // --- Content funding (pay-once endowment) ---
+
+  stateful entrypoint register_object(cid : string, size : int, merkle_root : hash,
+                                      initial_endowment : int, replicas : int) =
+    require(!Map.member(cid, state.objects), "object/already-registered")
+    require(replicas > 0, "object/replicas>0")
+    // Move funds from uploader into vault
+    require(AEX9(state.token).transferFrom(Call.caller, Contract.address, initial_endowment), "funding/transferFrom-failed")
+    let obj : Object = { owner = Call.caller, size = size, merkle_root = merkle_root
+                       , endowment = initial_endowment, replicas = replicas, active = true }
+    put(state{ objects[cid] = obj })
+    emit ObjectCreated(cid, Call.caller, initial_endowment)
+
+  stateful entrypoint topup(cid : string, amount : int) =
+    require(Map.member(cid, state.objects), "object/not-found")
+    require(AEX9(state.token).transferFrom(Call.caller, Contract.address, amount), "topup/transferFrom-failed")
+    let o = state.objects[cid]
+    put(state{ objects[cid] = o{ endowment = o.endowment + amount } })
+
+  entrypoint object_info(cid : string) : option(Object) =
+    Map.lookup(cid, state.objects)
+
+  // --- Verification reporting (PoA / challenge results) ---
+
+  entrypoint can_verify(node : address) : bool =
+    Map.lookup_default(node, 0, state.stake) >= state.min_stake
+
+  stateful entrypoint report(cid : string, passed : bool) =
+    require(Map.member(cid, state.objects), "report/object-not-found")
+    require(can_verify(Call.caller), "report/not-staked")
+    require(state.objects[cid].active, "report/inactive")
+
+    // update passes/fails
+    let p0 = Map.lookup_default(cid, {}, state.passes)
+    let f0 = Map.lookup_default(cid, {}, state.fails)
+
+    let p1 = if(passed)
+               Map.insert(Call.caller, Map.lookup_default(Call.caller, 0, p0) + 1, p0)
+             else p0
+    let f1 = if(passed)
+               // reset consecutive fails on pass
+               Map.insert(Call.caller, 0, f0)
+             else
+               Map.insert(Call.caller, Map.lookup_default(Call.caller, 0, f0) + 1, f0)
+
+    // accrue reward on pass
+    let r0 = Map.lookup_default(Call.caller, 0, state.rewards)
+    let r1 = if(passed) r0 + state.reward_per_pass else r0
+
+    // spend endowment only when we accrue a reward
+    let o0 = state.objects[cid]
+    let new_endowment = if(passed) o0.endowment - state.reward_per_pass else o0.endowment
+    require(new_endowment >= 0, "report/endowment-depleted")
+
+    // slash on too many consecutive fails
+    let consecutive_fails = Map.lookup_default(Call.caller, 0, f1)
+    let (stake_after, slashed) =
+      if(!passed && consecutive_fails >= state.fail_threshold)
+        let st = Map.lookup_default(Call.caller, 0, state.stake)
+        let penalty = (st * state.slash_bps) / 10000
+        (st - penalty, penalty)
+      else (Map.lookup_default(Call.caller, 0, state.stake), 0)
+
+    // commit all state changes
+    put(state{
+      passes[cid] = p1,
+      fails[cid] = f1,
+      rewards[Call.caller] = r1,
+      stake[Call.caller] = stake_after,
+      objects[cid] = o0{ endowment = new_endowment }
+    })
+
+    if(slashed > 0)
+      emit Slashed(Call.caller, slashed, stake_after)
+    emit Reported(cid, Call.caller, passed, new_endowment)
+    if(passed)
+      emit RewardAccrued(Call.caller, state.reward_per_pass, r1)
+
+  // --- Claims ---
+
+  stateful entrypoint claim(to : address) =
+    let due = Map.lookup_default(Call.caller, 0, state.rewards)
+    require(due > 0, "claim/nothing-due")
+    put(state{ rewards[Call.caller] = 0 })
+    require(AEX9(state.token).transfer(to, due), "claim/transfer-failed")
+    emit Claimed(Call.caller, to, due)

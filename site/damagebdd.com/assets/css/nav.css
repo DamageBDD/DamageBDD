@@ -1,0 +1,134 @@
+/* Already defined for top level */
+.nav-icon {
+  margin-right: 0.4em;
+  transition: transform 0.3s ease, color 0.3s ease;
+  color: var(--meta);
+}
+.nav-menu {
+  list-style: none;
+  padding: 0;
+  margin: 2rem 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: center;
+}
+.nav-menu .submenu{
+  margin-top:  0;
+}
+
+.nav-menu li {
+  display: flex;
+  align-items: center;
+}
+
+.nav-menu li a {
+  display: inline-flex;
+  align-items: center;
+  font-weight: 500;
+  font-size: 1rem;
+  padding: 0.3em 0.6em;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg);
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.nav-menu li a:hover {
+  background: rgba(127,127,127,0.1);
+  color: var(--link);
+}
+
+.nav-menu li a:hover .nav-icon {
+  transform: scale(1.2) rotate(3deg);
+  color: var(--link);
+}
+
+.nav-menu li a.active .nav-icon {
+  color: var(--verified);
+}
+.has-submenu {
+  position: relative;
+}
+
+/* Show on hover (desktop) */
+.nav-menu li:hover > .submenu {
+  display: flex;
+}
+
+/* Submenu toggle button (mobile) */
+.submenu-toggle {
+  background: none;
+  border: none;
+  font-size: 0.8rem;
+  color: var(--fg-muted);
+  margin-left: 0.3em;
+  cursor: pointer;
+}
+
+/* Show submenu if toggled via JS */
+.has-submenu.open > .submenu {
+  display: flex;
+}
+
+
+
+
+
+.submenu {
+  background-color: var(--bg-alt); /* Add this to your theme variables if not defined */
+  position: absolute;
+  top: calc(100% + 0.0em); /* slight vertical gap */
+  left: 0;
+  display: none;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid rgba(127,127,127,0.15);
+  border-radius: 8px;
+  padding: 0.4rem 0;
+  z-index: 100;
+  box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+}
+
+.has-submenu {
+  position: relative; /* Needed to align submenu to the parent */
+}
+
+.submenu-toggle {
+  background: none;
+  border: none;
+  font-size: 0.7em;
+  margin-left: 0.3em;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+/* Animate icons in submenu too */
+.submenu li a:hover .nav-icon {
+  transform: scale(1.2) rotate(3deg);
+  color: var(--link);
+}
+
+.submenu li a.active .nav-icon {
+  color: var(--verified);
+}
+.submenu li a {
+  font-size: 0.95rem;
+  padding: 0.4em 1em;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  color: var(--fg);
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.submenu li a:hover {
+  background: rgba(255,255,255,0.05); /* or rgba(127,127,127,0.1) for light mode */
+  color: var(--link);
+}
+.has-submenu.open > .submenu {
+  display: flex;
+}
+
+.nav-menu li:hover > .submenu {
+  display: flex;
+}

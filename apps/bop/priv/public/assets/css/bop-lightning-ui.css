@@ -1,0 +1,101 @@
+/* bop-lightning-ui.css */
+
+#lnqr {
+  margin-top: 2em;
+  padding: 1em;
+  background: #111;
+  border-radius: 1em;
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.7);
+  text-align: center;
+  color: #eee;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+#lnqr h2 {
+  font-size: 1.5em;
+  margin-bottom: 0.5em;
+  color: #fff;
+}
+
+#lnqr p {
+  font-size: 1em;
+  margin: 0.5em 0;
+}
+
+#lnqr button {
+  font-size: 1em;
+  padding: 0.6em 1.2em;
+  background-color: #333;
+  border: none;
+  border-radius: 0.5em;
+  color: white;
+  cursor: pointer;
+  margin-top: 1em;
+  transition: background-color 0.3s;
+}
+
+#lnqr button:hover:not(:disabled) {
+  background-color: #555;
+}
+
+#lnqr button:disabled {
+  background-color: #777;
+  cursor: not-allowed;
+}
+
+#lnqr a {
+  color: #88f;
+  font-size: 0.9em;
+  display: block;
+  margin-top: 1em;
+  text-decoration: none;
+}
+
+#lnqr a:hover {
+  text-decoration: underline;
+}
+
+#lnqr div[aria-busy="true"] {
+  font-style: italic;
+}
+
+/* QR canvas should be spaced nicely */
+#lnqr div {
+  margin-top: 1em;
+}
+
+#lnqr bitcoin-qr {
+  margin-top: 1em;
+}
+bitcoin-qr {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+  max-width: 100%;
+}
+
+bitcoin-qr {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+  max-width: 100%;
+}
+#bitcoin-qr-container{
+  margin-left: auto;
+  margin-right: auto;
+}
+
+#green-tick {
+  animation: pop 0.6s ease-in-out;
+  font-size: 8rem;
+  color: green;
+  text-align: center;
+  margin-top: 2rem;
+}
+
+@keyframes pop {
+  0%   { transform: scale(0); opacity: 0; }
+  50%  { transform: scale(1.2); opacity: 1; }
+  100% { transform: scale(1); }
+}

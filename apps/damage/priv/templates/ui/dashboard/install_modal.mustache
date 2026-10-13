@@ -1,0 +1,100 @@
+<!-- -*- mode: html -*- -->
+<div class="modal micromodal-slide" id="install-modal" aria-hidden="true">
+  <div class="modal__overlay" tabindex="-1" data-micromodal-close>
+    <div class="modal__container dashboard-modal" role="dialog" aria-modal="true" aria-labelledby="install-modal-title">
+      <header class="modal__header">
+        <div>
+          <p class="workspace-eyebrow">NODE BOOTSTRAP</p>
+          <h2 class="modal__title" id="install-modal-title">Install a DamageBDD node</h2>
+        </div>
+        <button class="modal__close" aria-label="Close modal" data-micromodal-close></button>
+      </header>
+
+      <main class="modal__content" id="install-modal-content">
+        <form id="installRequestForm" class="workspace-form install-form" onsubmit="return false;">
+          <div class="install-status-row">
+            <div class="workspace-status" id="detected-os"></div>
+            <div class="workspace-status" id="installStatus" role="status" aria-live="polite"></div>
+          </div>
+
+          <section class="install-section workspace-card" aria-labelledby="install-download-heading">
+            <div class="workspace-card-body">
+              <div class="workspace-section-heading">
+                <div><h3 id="install-download-heading">Quick downloads</h3><p>Use the detected package when available, or generate an installer for another supported platform.</p></div>
+              </div>
+              <div class="install-downloads">
+                <div>
+                  <a id="dl-deb" target="_blank" rel="noopener" class="workspace-button workspace-primary" download>Download Debian / Ubuntu / Mint package</a>
+                  <p id="dl-deb-note" class="workspace-helper">Deb package for Debian Linux and compatible distributions.</p>
+                </div>
+                <div>
+                  <a id="dl-auto" class="workspace-button" download>Download for detected platform</a>
+                  <p id="dl-auto-note" class="workspace-helper">Change Advanced options to regenerate the command and platform download.</p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section class="install-section workspace-card" aria-labelledby="install-command-heading">
+            <div class="workspace-card-body">
+              <div class="workspace-section-heading"><div><h3 id="install-command-heading">Copy-paste install command</h3><p>Review the generated command before running it.</p></div></div>
+
+              <div id="preview-linux-macos" class="install-preview">
+                <pre class="install-command"><code id="cmd-bash"></code></pre>
+                <button class="workspace-button" type="button" data-copy="#cmd-bash">Copy</button>
+              </div>
+              <div id="preview-windows" class="install-preview">
+                <pre class="install-command"><code id="cmd-ps1"></code></pre>
+                <button class="workspace-button" type="button" data-copy="#cmd-ps1">Copy</button>
+              </div>
+              <div id="preview-android" class="install-preview">
+                <pre class="install-command"><code id="cmd-termux"></code></pre>
+                <button class="workspace-button" type="button" data-copy="#cmd-termux">Copy</button>
+              </div>
+            </div>
+          </section>
+
+          <details id="advanced-details" class="install-advanced workspace-card">
+            <summary>Advanced installation options</summary>
+            <div class="workspace-card-body workspace-stack">
+              <label class="workspace-check">
+                <input id="inst-localhost" type="checkbox" checked>
+                Run on <strong>localhost</strong> without a public domain
+              </label>
+              <p class="workspace-helper">Binds to <code>127.0.0.1</code> and serves <code>http://localhost:&lt;port&gt;</code>.</p>
+
+              <div id="inst-remote-fields" class="workspace-form-grid install-remote-fields">
+                <div class="workspace-field">
+                  <label for="inst-domain">Domain (TLS host)</label>
+                  <input id="inst-domain" name="domain" placeholder="run.example.com">
+                </div>
+                <div class="workspace-field">
+                  <label for="inst-email">Admin email (Let's Encrypt)</label>
+                  <input id="inst-email" name="email" type="email" placeholder="admin@example.com">
+                </div>
+              </div>
+
+              <div class="workspace-form-grid">
+                <div class="workspace-field"><label for="inst-port">Port</label><input id="inst-port" name="port" value="8080" inputmode="numeric"></div>
+                <div class="workspace-field"><label for="inst-branch">Branch</label><input id="inst-branch" name="branch" value="develop"></div>
+              </div>
+              <div class="workspace-field"><label for="inst-repo">Repository</label><input id="inst-repo" name="repo" value="https://github.com/DamageBDD/DamageBDD.git"></div>
+
+              <div class="workspace-form-grid">
+                <div class="workspace-field">
+                  <label for="inst-os">Platform override</label>
+                  <select id="inst-os"><option value="linux">Linux</option><option value="macos">macOS</option><option value="windows">Windows</option><option value="android">Android (Termux)</option></select>
+                </div>
+                <div class="workspace-field"><label for="inst-variant">Shell / distro</label><select id="inst-variant"></select></div>
+              </div>
+            </div>
+          </details>
+        </form>
+      </main>
+
+      <footer class="modal__footer">
+        <button class="workspace-button" type="button" data-micromodal-close>Close</button>
+      </footer>
+    </div>
+  </div>
+</div>

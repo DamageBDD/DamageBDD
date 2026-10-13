@@ -1,0 +1,4400 @@
+-module(damage_ae).
+
+%% Explicit test visibility; the production API is unchanged.
+-ifdef(TEST).
+-export([safe_node_keypair/0]).
+-endif.
+
+-author("Steven Joseph <steven@stevenjoseph.in>").
+
+-copyright("Steven Joseph <steven@stevenjoseph.in>").
+
+-license("Apache-2.0").
+
+-include_lib("kernel/include/logger.hrl").
+-include_lib("damage.hrl").
+
+-behaviour(gen_server).
+
+%% Mainnet microblocks and the restricted dry-run endpoint are capped at
+%% 6,000,000 gas.  Keeping our local ceiling at the same value prevents a
+%% perfectly valid estimator request from being rejected before execution.
+-define(PROTOCOL_GAS_MAX, 6000000).
+-define(DEFAULT_GAS_MAX, ?PROTOCOL_GAS_MAX).
+-define(DEFAULT_CONTRACT_GAS_HEADROOM, 100000).
+-define(DEFAULT_TX_POLL_INTERVAL_MS, 2000).
+-define(DEFAULT_TX_WAIT_TIMEOUT_MS, 180000).
+-define(DEFAULT_DRY_RUN_CAPABILITY_TTL_MS, 60000).
+-define(DEFAULT_TOP_HEADER_CACHE_TTL_MS, 1000).
+-define(DEFAULT_GAS_PRICE_CACHE_TTL_MS, 10000).
+-define(AE_TX_SESSION_KEY, {?MODULE, tx_session}).
+-define(MAX_FEE_ITERATIONS, 6).
+%% Match the official SDK dry-run funding model: this amount exists only
+%% in the temporary dry-run state and is never transferred on-chain.
+-define(DEFAULT_DRY_RUN_ACCOUNT_AMOUNT, 100000000000000000000000000000000000).
+% Time-to-live in seconds
+-define(CACHE_TTL_SECONDS, 30).
+
+-export([
+    init/1,
+    start_link/0,
+    start_link/2,
+    handle_call/3,
+    handle_cast/2,
+    handle_info/2,
+    handle_continue/2,
+    terminate/2,
+    code_change/3
+]).
+-export([
+    transfer_damage/2,
+    transfer_damage/3,
+    transfer_hits/2,
+    transfer_hits/3,
+    transfer_damage_tokens/2,
+    transfer_damage_tokens/3,
+    start_batch_spend_timer/0,
+    get_reports/1,
+    get_reports/2,
+    get_domain_token/2,
+    add_domain_token/3,
+    revoke_domain_token/2,
+    get_ae_node/0,
+    get_ae_mdw_node/0,
+    get_ae_mdw_ws_node/0,
+    node_ae_balance/0,
+    node_damage_balance/0,
+    wait_tx/1,
+    ae_to_aetto/1,
+    delete_account/1,
+    revoke_token/2,
+    get_block_height_since/2,
+    restart_wallet_proc/1,
+    get_wallet_proc/1,
+    get_events/3,
+    is_custodial/1,
+    set_private_key/2,
+    get_ae_balance/1,
+    next_nonce/1,
+    contract_path/1,
+    contract_path/2,
+    contract_call/4,
+    contract_call/5,
+    contract_call/6,
+    contract_call_dry/5,
+    contract_query/4,
+    contract_query/5,
+    dry_run_capability/0,
+    contract_deploy/3,
+    contract_deploy/2,
+    contract_balance/1,
+    contract_balance_chain/1,
+    contract_deploy_for/3,
+    contract_call_payfor_user/5,
+    contract_call_payfor_user_safe/5,
+    contract_call_payfor_tx/1,
+    make_transaction_signature_base58/2,
+    make_transaction_signature/2,
+    attach_signature_base58/2,
+    min_fee/0,
+    payfor_tx/1,
+    contract_call_prepare_tx/5,
+    contract_call_prepare_checked/5,
+    contract_call_tracked/5,
+    deploy_account_registry/1,
+    deploy_node_registry/0,
+    balance/1,
+    invalidate_cache/1,
+    spend/2,
+    get_spend/1,
+    confirm_spend_all/0,
+    confirm_spend/2,
+    post_tx/1,
+    export_node_wallet_for_superhero/0,
+    export_node_wallet_seedphrase/0
+]).
+-export([
+    test_get_block_height_since/0,
+    test_find_block/0,
+    test_verify_message/0,
+    test_contract_deploy/0,
+    test_contract_call/0,
+    test_paying_for_tx/0,
+    test_contract_deploy_for/0
+]).
+
+-export([gas_price/0, fee_multiplier/0, validate_ae_config/0]).
+
+-ifdef(TEST).
+-export([
+    checked_contract_tx/2,
+    tracked_dry_reply/1,
+    tracked_submit/4,
+    tracked_mined_reply/1,
+    tracked_tx_hash/1,
+    tracked_keypair/1,
+    tracked_locked/2,
+    with_account_nonce_locks/2,
+    safe_payfor_locked/2,
+    safe_payfor_attempt/2,
+    safe_payfor_submit/4,
+    safe_payfor_receipt/1,
+    tracked_submission/2
+]).
+-endif.
+
+start_link() -> gen_server:start_link(?MODULE, [], []).
+start_link(AeAccount, PrivateKey) -> gen_server:start_link(?MODULE, [AeAccount, PrivateKey], []).
+
+ae_to_aetto(Ae) -> Ae * 1000000000000000.
+
+%Ae * 100000000000000000.
+init([]) ->
+    case validate_ae_config() of
+        ok ->
+            process_flag(trap_exit, true),
+            ConfirmSpendTimer = erlang:send_after(10000, self(), confirm_spend_all),
+            {ok, #{heartbeat_timer => ConfirmSpendTimer}, {continue, init_external}};
+        {error, Errors} ->
+            ?LOG_ERROR("Invalid Aeternity configuration: ~p", [Errors]),
+            {stop, {invalid_ae_config, Errors}}
+    end;
+init([AeAccount, PrivateKey]) ->
+    process_flag(trap_exit, true),
+    {ok, #{public_key => AeAccount, private_key => PrivateKey}}.
+find_active_node([]) ->
+    {error, no_active_ae_node};
+find_active_node([{Host, Port, PathPrefix} | Rest]) ->
+    case damage_gun:open(Host, Port) of
+        {ok, ConnPid} ->
+            {ok, ConnPid, PathPrefix};
+        Err ->
+            ?LOG_WARNING("AE node failed ~p:~p ~p", [Host, Port, Err]),
+            find_active_node(Rest)
+    end.
+
+fee_multiplier() ->
+    env_pos_int(ae_fee_multiplier, 1).
+
+gas_price() ->
+    Base = vanillae:min_gas_price(),
+    Price0 =
+        case env_bool(ae_dynamic_gas_price, true) of
+            true ->
+                case recent_gas_price(Base) of
+                    {ok, Price} -> Price;
+                    _ -> Base
+                end;
+            false ->
+                Base
+        end,
+    erlang:max(Base, Price0) * env_pos_int(ae_gas_price_multiplier, 1).
+
+min_fee() ->
+    vanillae:min_fee() * fee_multiplier().
+
+gas_max() ->
+    Requested = env_pos_int(ae_gas_max, ?DEFAULT_GAS_MAX),
+    case Requested =< ?PROTOCOL_GAS_MAX of
+        true ->
+            Requested;
+        false ->
+            ?LOG_WARNING(
+                "Configured ae_gas_max=~p exceeds mainnet/protected-dry-run ceiling ~p; clamping",
+                [Requested, ?PROTOCOL_GAS_MAX]
+            ),
+            ?PROTOCOL_GAS_MAX
+    end.
+
+contract_gas_headroom() ->
+    MaxHeadroom = erlang:max(0, gas_max() - 1),
+    erlang:min(
+        env_nonneg_int(ae_contract_gas_headroom, ?DEFAULT_CONTRACT_GAS_HEADROOM),
+        MaxHeadroom
+    ).
+
+contract_call_gas_limit() ->
+    %% The estimator normally tightens this from dry-run gas_used; this value is
+    %% only a fallback and is clamped against static tx gas plus headroom.
+    env_pos_int(ae_contract_call_gas_limit, env_pos_int(ae_contract_default_call_gas, 500000)).
+
+contract_create_gas_limit() ->
+    env_pos_int(ae_contract_create_gas_limit, gas_max()).
+
+contract_gas_estimation() ->
+    env_bool(ae_contract_gas_estimation, true).
+
+contract_reject_dry_run_revert() ->
+    env_bool(ae_contract_reject_dry_run_revert, false).
+
+contract_gas_margin_percent() ->
+    env_pos_int(ae_contract_gas_margin_percent, 25).
+
+contract_gas_margin_min() ->
+    env_pos_int(ae_contract_gas_margin_min, 50000).
+
+tx_poll_interval_ms() ->
+    env_pos_int(ae_tx_poll_interval_ms, ?DEFAULT_TX_POLL_INTERVAL_MS).
+
+tx_wait_timeout_ms() ->
+    env_pos_int(ae_tx_wait_timeout_ms, ?DEFAULT_TX_WAIT_TIMEOUT_MS).
+
+env_int(Key, Default) ->
+    case application:get_env(damage, Key) of
+        {ok, V} when is_integer(V) -> V;
+        {ok, V} when is_binary(V) -> binary_to_integer(V);
+        {ok, V} when is_list(V) -> list_to_integer(V);
+        _ -> Default
+    end.
+
+env_pos_int(Key, Default) ->
+    try env_int(Key, Default) of
+        V when is_integer(V), V > 0 ->
+            V;
+        _ ->
+            Default
+    catch
+        _:_ ->
+            Default
+    end.
+
+env_nonneg_int(Key, Default) ->
+    try env_int(Key, Default) of
+        V when is_integer(V), V >= 0 ->
+            V;
+        _ ->
+            Default
+    catch
+        _:_ ->
+            Default
+    end.
+
+paying_for_gas_multiplier() ->
+    env_pos_int(ae_paying_for_gas_multiplier, 1).
+
+env_bool(Key, Default) ->
+    case application:get_env(damage, Key) of
+        {ok, true} -> true;
+        {ok, false} -> false;
+        {ok, <<"true">>} -> true;
+        {ok, <<"false">>} -> false;
+        {ok, "true"} -> true;
+        {ok, "false"} -> false;
+        _ -> Default
+    end.
+
+%% Validate AE transaction settings without silently accepting malformed values.
+%% This is intentionally conservative: protocol ceilings are errors, while
+%% unusually expensive fee multipliers are warnings because they are policy.
+validate_ae_config() ->
+    GasMaxConfigured = configured_int(ae_gas_max, ?DEFAULT_GAS_MAX),
+    GasMax = erlang:min(
+        validated_or_default(GasMaxConfigured, ?DEFAULT_GAS_MAX), ?PROTOCOL_GAS_MAX
+    ),
+    Headroom = configured_int(ae_contract_gas_headroom, ?DEFAULT_CONTRACT_GAS_HEADROOM),
+    PollInterval = configured_int(ae_tx_poll_interval_ms, ?DEFAULT_TX_POLL_INTERVAL_MS),
+    WaitTimeout = configured_int(ae_tx_wait_timeout_ms, ?DEFAULT_TX_WAIT_TIMEOUT_MS),
+    Checks = [
+        validate_pos_int(ae_gas_max, GasMaxConfigured),
+        validate_max(ae_gas_max, GasMaxConfigured, ?PROTOCOL_GAS_MAX),
+        validate_nonneg_int(ae_contract_gas_headroom, Headroom),
+        validate_lt(ae_contract_gas_headroom, Headroom, GasMax),
+        validate_optional_pos_max(ae_contract_call_gas_limit, ?PROTOCOL_GAS_MAX),
+        validate_optional_pos_max(ae_contract_create_gas_limit, ?PROTOCOL_GAS_MAX),
+        validate_optional_pos(ae_contract_default_call_gas),
+        validate_optional_pos(ae_contract_gas_margin_percent),
+        validate_optional_nonneg(ae_contract_gas_margin_min),
+        validate_optional_pos(ae_gas_price_multiplier),
+        validate_optional_pos(ae_fee_multiplier),
+        validate_optional_pos(ae_paying_for_gas_multiplier),
+        validate_pos_int(ae_tx_poll_interval_ms, PollInterval),
+        validate_pos_int(ae_tx_wait_timeout_ms, WaitTimeout),
+        validate_optional_pos(ae_tx_post_timeout_ms),
+        validate_bool_setting(ae_dynamic_gas_price),
+        validate_bool_setting(ae_contract_gas_estimation),
+        validate_bool_setting(ae_contract_reject_dry_run_revert),
+        validate_bool_setting(ae_dry_run_fund_caller),
+        validate_bool_setting(ae_dry_run_enabled),
+        validate_bool_setting(ae_contract_query_fallback_onchain),
+        validate_bool_setting(ae_serialize_until_mined),
+        validate_optional_pos(ae_dry_run_capability_ttl_ms),
+        validate_optional_pos(ae_node_pool_connect_timeout_ms),
+        validate_optional_pos(ae_node_pool_request_timeout_ms),
+        validate_optional_pos(ae_node_pool_reconnect_min_ms),
+        validate_optional_pos(ae_node_pool_reconnect_max_ms),
+        validate_optional_nonneg(ae_top_header_cache_ttl_ms),
+        validate_optional_nonneg(ae_gas_price_cache_ttl_ms),
+        validate_nonce_strategy_setting(),
+        validate_optional_nonneg(ae_nonce_retry_attempts),
+        validate_optional_nonneg(ae_nonce_retry_delay_ms),
+        validate_nonce_serialization()
+    ],
+    Errors0 = [E || E <- Checks, E =/= ok],
+    Errors =
+        case {validated_int(PollInterval), validated_int(WaitTimeout)} of
+            {{ok, I}, {ok, T}} when T < I ->
+                [{ae_tx_wait_timeout_ms, {must_be_at_least_poll_interval, T, I}} | Errors0];
+            _ ->
+                Errors0
+        end,
+    maybe_warn_legacy_gas_multiplier(),
+    maybe_warn_fee_amplification(),
+    case Errors of
+        [] -> ok;
+        _ -> {error, lists:reverse(Errors)}
+    end.
+
+configured_int(Key, Default) ->
+    case application:get_env(damage, Key) of
+        undefined -> Default;
+        {ok, Value} -> Value
+    end.
+
+validated_or_default(Value, Default) ->
+    case validated_int(Value) of
+        {ok, I} when I > 0 -> I;
+        _ -> Default
+    end.
+
+validated_int(V) when is_integer(V) -> {ok, V};
+validated_int(V) when is_binary(V) ->
+    try
+        {ok, binary_to_integer(V)}
+    catch
+        _:_ -> error
+    end;
+validated_int(V) when is_list(V) ->
+    try
+        {ok, list_to_integer(V)}
+    catch
+        _:_ -> error
+    end;
+validated_int(_) ->
+    error.
+
+validate_pos_int(Key, Value) ->
+    case validated_int(Value) of
+        {ok, I} when I > 0 -> ok;
+        _ -> {Key, {expected_positive_integer, Value}}
+    end.
+
+validate_nonneg_int(Key, Value) ->
+    case validated_int(Value) of
+        {ok, I} when I >= 0 -> ok;
+        _ -> {Key, {expected_nonnegative_integer, Value}}
+    end.
+
+validate_max(Key, Value, Max) ->
+    case validated_int(Value) of
+        {ok, I} when I =< Max -> ok;
+        {ok, I} -> {Key, {exceeds_protocol_max, I, Max}};
+        error -> ok
+    end.
+
+validate_lt(Key, Value, Max) ->
+    case validated_int(Value) of
+        {ok, I} when I < Max -> ok;
+        {ok, I} -> {Key, {must_be_less_than, I, Max}};
+        error -> ok
+    end.
+
+validate_optional_pos(Key) ->
+    case application:get_env(damage, Key) of
+        undefined -> ok;
+        {ok, Value} -> validate_pos_int(Key, Value)
+    end.
+
+validate_optional_nonneg(Key) ->
+    case application:get_env(damage, Key) of
+        undefined -> ok;
+        {ok, Value} -> validate_nonneg_int(Key, Value)
+    end.
+
+validate_optional_pos_max(Key, Max) ->
+    case application:get_env(damage, Key) of
+        undefined ->
+            ok;
+        {ok, Value} ->
+            case validate_pos_int(Key, Value) of
+                ok -> validate_max(Key, Value, Max);
+                Error -> Error
+            end
+    end.
+
+validate_bool_setting(Key) ->
+    case application:get_env(damage, Key) of
+        undefined -> ok;
+        {ok, true} -> ok;
+        {ok, false} -> ok;
+        {ok, <<"true">>} -> ok;
+        {ok, <<"false">>} -> ok;
+        {ok, "true"} -> ok;
+        {ok, "false"} -> ok;
+        {ok, Value} -> {Key, {expected_boolean, Value}}
+    end.
+
+%% Nonce allocation deliberately defaults to the confirmed on-chain account
+%% nonce, not the node mempool's continuity/max view.  Public/load-balanced AE
+%% endpoints can expose different mempool views between requests; using those
+%% views as an allocator can create an ever-growing nonce convoy.
+nonce_strategy() ->
+    case application:get_env(damage, ae_nonce_strategy) of
+        {ok, chain} -> chain;
+        {ok, continuity} -> continuity;
+        {ok, max} -> max;
+        {ok, <<"chain">>} -> chain;
+        {ok, <<"continuity">>} -> continuity;
+        {ok, <<"max">>} -> max;
+        {ok, "chain"} -> chain;
+        {ok, "continuity"} -> continuity;
+        {ok, "max"} -> max;
+        _ -> chain
+    end.
+
+validate_nonce_strategy_setting() ->
+    case application:get_env(damage, ae_nonce_strategy) of
+        undefined -> ok;
+        {ok, chain} -> ok;
+        {ok, continuity} -> ok;
+        {ok, max} -> ok;
+        {ok, <<"chain">>} -> ok;
+        {ok, <<"continuity">>} -> ok;
+        {ok, <<"max">>} -> ok;
+        {ok, "chain"} -> ok;
+        {ok, "continuity"} -> ok;
+        {ok, "max"} -> ok;
+        {ok, Value} -> {ae_nonce_strategy, {expected_one_of, [chain, continuity, max], Value}}
+    end.
+
+%% chain nonce allocation is intentionally conservative: one live transaction
+%% per account.  If callers want multiple locally reserved nonces in flight,
+%% they need a durable reservation/replacement manager first.
+validate_nonce_serialization() ->
+    case {nonce_strategy(), env_bool(ae_serialize_until_mined, true)} of
+        {chain, false} ->
+            {ae_serialize_until_mined, required_for_chain_nonce_strategy};
+        _ ->
+            ok
+    end.
+
+nonce_retry_attempts() ->
+    env_nonneg_int(ae_nonce_retry_attempts, 1).
+
+nonce_retry_delay_ms() ->
+    env_nonneg_int(ae_nonce_retry_delay_ms, 500).
+
+maybe_warn_legacy_gas_multiplier() ->
+    case application:get_env(damage, ae_gas_multiplier) of
+        undefined ->
+            ok;
+        {ok, Value} ->
+            ?LOG_WARNING(
+                "ae_gas_multiplier=~p is ignored; contract execution gas is estimated via dry-run",
+                [Value]
+            )
+    end.
+
+maybe_warn_fee_amplification() ->
+    GasPriceMultiplier = env_pos_int(ae_gas_price_multiplier, 1),
+    FeeMultiplier = env_pos_int(ae_fee_multiplier, 1),
+    Combined = GasPriceMultiplier * FeeMultiplier,
+    case Combined > 8 of
+        true ->
+            ?LOG_WARNING(
+                "AE fee amplification is high: gas_price_multiplier=~p fee_multiplier=~p combined=~px",
+                [GasPriceMultiplier, FeeMultiplier, Combined]
+            );
+        false ->
+            ok
+    end.
+
+with_ae_session(Fun) when is_function(Fun, 0) ->
+    case get(?AE_TX_SESSION_KEY) of
+        Existing when is_map(Existing) ->
+            Fun();
+        _ ->
+            case damage_ae_node_pool:checkout() of
+                {ok, Session} ->
+                    put(?AE_TX_SESSION_KEY, Session),
+                    try
+                        Fun()
+                    after
+                        erase(?AE_TX_SESSION_KEY)
+                    end;
+                Error ->
+                    Error
+            end
+    end.
+
+current_ae_session() ->
+    case get(?AE_TX_SESSION_KEY) of
+        Session when is_map(Session) ->
+            case maps:get(conn_pid, Session, undefined) of
+                Pid when is_pid(Pid) ->
+                    case is_process_alive(Pid) of
+                        true ->
+                            {ok, Session};
+                        false ->
+                            {error, {pinned_ae_node_down, maps:get(node_id, Session, undefined)}}
+                    end;
+                _ ->
+                    {error, invalid_pinned_ae_session}
+            end;
+        _ ->
+            damage_ae_node_pool:session()
+    end.
+
+session_node_id(Session) when is_map(Session) ->
+    maps:get(node_id, Session, undefined).
+
+top_header_cache_ttl_ms() ->
+    env_nonneg_int(ae_top_header_cache_ttl_ms, ?DEFAULT_TOP_HEADER_CACHE_TTL_MS).
+
+gas_price_cache_ttl_ms() ->
+    env_nonneg_int(ae_gas_price_cache_ttl_ms, ?DEFAULT_GAS_PRICE_CACHE_TTL_MS).
+
+recent_gas_price(Fallback) ->
+    Timeout = env_pos_int(ae_node_pool_request_timeout_ms, 30000),
+    case current_ae_session() of
+        {ok, Session} ->
+            case
+                damage_ae_node_pool:get_json_cached(
+                    Session,
+                    recent_gas_prices,
+                    "v3/recent-gas-prices",
+                    gas_price_cache_ttl_ms(),
+                    Timeout
+                )
+            of
+                {ok, #{status := Status, json := Json, node := Node}} when
+                    Status >= 200, Status < 300
+                ->
+                    case recent_gas_price_from_json(Json, Fallback) of
+                        {ok, Price} = Ok ->
+                            ?LOG_DEBUG(
+                                "Recent gas price node=~p price=~p",
+                                [maps:get(node_id, Node, undefined), Price]
+                            ),
+                            Ok;
+                        Error ->
+                            Error
+                    end;
+                {ok, #{status := Status, body := Body, node := Node}} ->
+                    {error,
+                        {recent_gas_price_http_error, #{
+                            status => Status,
+                            body => Body,
+                            node => Node
+                        }}};
+                Error ->
+                    {error, {recent_gas_price_unavailable, Error}}
+            end;
+        Error ->
+            {error, {recent_gas_price_session_unavailable, Error}}
+    end.
+
+recent_gas_price_from_json(#{data := Data}, Fallback) ->
+    recent_gas_price_from_json(Data, Fallback);
+recent_gas_price_from_json(#{<<"data">> := Data}, Fallback) ->
+    recent_gas_price_from_json(Data, Fallback);
+recent_gas_price_from_json(Prices, Fallback) when is_list(Prices) ->
+    %% The node returns newest/relevant buckets first; follow aepp-sdk-js and use
+    %% the first sample rather than maxing the whole window.
+    case Prices of
+        [First | _] -> recent_gas_price_from_json(First, Fallback);
+        [] -> {error, no_price}
+    end;
+recent_gas_price_from_json(Json, Fallback) when is_map(Json) ->
+    case
+        map_int(
+            [
+                min_gas_price,
+                <<"min_gas_price">>,
+                minGasPrice,
+                <<"minGasPrice">>,
+                gas_price,
+                <<"gas_price">>,
+                price,
+                <<"price">>
+            ],
+            Json
+        )
+    of
+        undefined ->
+            {error, no_price};
+        Price ->
+            Utilization = map_int(
+                [utilization, <<"utilization">>, utilization_pct, <<"utilization_pct">>], Json, 0
+            ),
+            Adjusted =
+                case Utilization >= 70 of
+                    true -> ceil_percent(Price, 101);
+                    false -> Fallback
+                end,
+            {ok, erlang:max(Fallback, Adjusted)}
+    end;
+recent_gas_price_from_json(_Other, _Fallback) ->
+    {error, bad_recent_gas_price}.
+
+map_int(Keys, Map) ->
+    map_int(Keys, Map, undefined).
+
+map_int([], _Map, Default) ->
+    Default;
+map_int([Key | Rest], Map, Default) ->
+    case maps:find(Key, Map) of
+        {ok, Value} -> int_value(Value, Default);
+        error -> map_int(Rest, Map, Default)
+    end.
+map_value([], _Map, Default) ->
+    Default;
+map_value([Key | Rest], Map, Default) ->
+    case maps:find(Key, Map) of
+        {ok, Value} -> Value;
+        error -> map_value(Rest, Map, Default)
+    end.
+
+int_value(V, _Default) when is_integer(V) ->
+    V;
+int_value(V, Default) when is_binary(V) ->
+    try binary_to_integer(V) of
+        I -> I
+    catch
+        _:_ -> Default
+    end;
+int_value(V, Default) when is_list(V) ->
+    try list_to_integer(V) of
+        I -> I
+    catch
+        _:_ -> Default
+    end;
+int_value(_V, Default) ->
+    Default.
+
+ceil_percent(Value, Percent) ->
+    (Value * Percent + 99) div 100.
+
+get_ae_node() ->
+    {ok, AENodes} = application:get_env(damage, ae_nodes),
+    find_active_node(AENodes).
+
+get_ae_mdw_node() ->
+    {ok, AENodes} = application:get_env(damage, ae_mdw_nodes),
+    find_active_node(AENodes).
+
+get_ae_mdw_ws_node() ->
+    {ok, AENodes} = application:get_env(damage, ae_mdw_ws_nodes),
+    find_active_node(AENodes).
+
+get_block_height_since(SinceHours, ConnPid) ->
+    SinceSeconds =
+        date_util:datetime_to_epoch(calendar:now_to_datetime(erlang:timestamp())) -
+            hours_to_seconds(SinceHours),
+    ?LOG_DEBUG("Since seconds ~p", [SinceSeconds]),
+    {ok, Result, _MicroBlocks} = find_block_at_timestamp(SinceSeconds, ConnPid),
+    Result.
+
+hours_to_seconds(Hours) -> 3600 * Hours.
+
+%% Function to extract the "feature_hash" and other arguments into a map
+
+extract_arguments(Arguments) ->
+    %% Iterate through each argument to build the result map
+    lists:foldl(fun process_argument/2, #{}, Arguments).
+
+%% Helper function to process each argument
+
+process_argument(#{type := <<"map">>, value := MapValues}, Acc) ->
+    %% Iterate through the key-value pairs in the "map" argument and add to the accumulator
+    lists:foldl(fun process_map_entry/2, Acc, MapValues);
+process_argument(#{type := Type, value := Value}, Acc) ->
+    %% Handle other argument types (e.g., "address", "int")
+    %% We can label each by its type in the resulting map for clarity
+    maps:put(Type, Value, Acc).
+
+process_field(<<"execution_time">>, Value) -> string:to_float(Value);
+process_field(<<"start_time">>, Value) -> string:to_float(Value);
+process_field(<<"end_time">>, Value) -> string:to_float(Value);
+process_field(_, Value) -> Value.
+
+%% Helper function to process each key-value pair inside the "map" argument
+
+process_map_entry(
+    #{
+        key := #{type := <<"string">>, value := Key},
+        val := #{type := <<"string">>, value := Val}
+    },
+    Acc
+) ->
+    %% Add the key-value pair to the accumulator map
+    maps:put(Key, process_field(Key, Val), Acc).
+
+%% Function to find the latest record with the given feature_hash
+
+find_latest_record_with_feature_hash(Records, FeatureHash) ->
+    ?LOG_DEBUG("call records ~p", [Records]),
+    %% Filter records with the given feature_hash
+    MatchingRecords =
+        [
+            Record
+         || Record <- Records,
+            Record =/= #{},
+            maps:get(<<"feature_hash">>, Record) =:= FeatureHash
+        ],
+    %% Check if there are matching records
+    case MatchingRecords of
+        [] ->
+            %% Return error if no matching records
+            {error, not_found};
+        _ ->
+            %% Find the record with the latest end_time
+            damage_utils:max_by(MatchingRecords, fun compare_records/2)
+    end.
+
+%% Helper function to compare two records based on their end_time
+
+compare_records(Record1, Record2) ->
+    EndTime1 = maps:get(<<"end_time">>, Record1),
+    EndTime2 = maps:get(<<"end_time">>, Record2),
+    if
+        EndTime1 >= EndTime2 -> true;
+        EndTime1 < EndTime2 -> false
+    end.
+
+extract_feature_hash(Data) ->
+    %% Navigate through the parsed JSON to find the "feature_hash"
+    Payload = maps:get(payload, Data),
+    Tx = maps:get(tx, Payload),
+    Arguments = maps:get(arguments, Tx),
+    %% Find the map in the "arguments" that contains the key "feature_hash"
+    extract_arguments(Arguments).
+
+handle_call(
+    {contract_call_payfor_user, Contract, ContractSource, Func, Args},
+    _From,
+    #{public_key := AeAccount} = State0
+) ->
+    case ensure_wallet_signing_key(AeAccount, State0) of
+        {ok, PrivateKey, State} ->
+            KeyPair = #{public_key => AeAccount, private_key => PrivateKey},
+            Result = contract_call_payfor_user(
+                KeyPair,
+                Contract,
+                ContractSource,
+                Func,
+                Args
+            ),
+            {reply, Result, State};
+        {error, Reason} ->
+            ?LOG_WARNING(
+                "PayingFor call requires account signature account=~p reason=~p",
+                [AeAccount, Reason]
+            ),
+            {reply, {error, {signature_required, AeAccount, Reason}}, State0}
+    end;
+handle_call(
+    {contract_call, Contract, ContractSource, Func, Args},
+    _From,
+    #{public_key := AeAccount} = State0
+) ->
+    case ensure_wallet_signing_key(AeAccount, State0) of
+        {ok, PrivateKey, State} ->
+            KeyPair = #{public_key => AeAccount, private_key => PrivateKey},
+            Result = contract_call(
+                KeyPair,
+                Contract,
+                ContractSource,
+                Func,
+                Args
+            ),
+            {reply, Result, State};
+        {error, Reason} ->
+            ?LOG_WARNING(
+                "Contract call requires account signature account=~p reason=~p",
+                [AeAccount, Reason]
+            ),
+            {reply, {error, {signature_required, AeAccount, Reason}}, State0}
+    end;
+handle_call({get_published, AeAccount}, _From, Cache) ->
+    case get_ae_mdw_node() of
+        {ok, ConnPid, PathPrefix} ->
+            Path =
+                PathPrefix ++ "v3/accounts/" ++ AeAccount ++ "activities?type=aex141",
+            StreamRef = gun:get(ConnPid, Path),
+            Balance =
+                case read_stream(ConnPid, StreamRef) of
+                    #{amount := null} -> 0;
+                    #{amount := Balance0} -> Balance0
+                end,
+            {reply, Balance, Cache};
+        Err ->
+            ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
+            {reply, {error, not_found}, Cache}
+    end;
+handle_call(
+    {get_last_test_status, AeAccount, FeatureHash, _Hours},
+    _From,
+    Cache
+) ->
+    case get_ae_mdw_node() of
+        {ok, ConnPid, PathPrefix} ->
+            %BlockHeight = get_block_height_since(Hours, ConnPid),
+            %?LOG_DEBUG("BlockHeight ~p", [BlockHeight]),
+            Path =
+                PathPrefix ++
+                    "v3/accounts/" ++
+                    binary_to_list(AeAccount) ++
+                    "/activities?owned_only=true&direction=backward&type=transactions&limit=100",
+            %++
+            %integer_to_list(BlockHeight),
+            ?LOG_DEBUG("Path ~p", [Path]),
+            StreamRef = gun:get(ConnPid, Path),
+            case read_stream(ConnPid, StreamRef) of
+                #{data := null} ->
+                    {reply, undefined, Cache};
+                #{data := Results} ->
+                    TxData = [extract_feature_hash(Result) || Result <- Results],
+                    case find_latest_record_with_feature_hash(TxData, FeatureHash) of
+                        #{
+                            <<"result_status">> :=
+                                <<?RESULT_STATUS_PREFIX_SUCCESS, _Timestamp/binary>>
+                        } ->
+                            {reply, "success", Cache};
+                        #{
+                            <<"result_status">> :=
+                                <<?RESULT_STATUS_PREFIX_FAIL, _Timestamp/binary>>
+                        } ->
+                            {reply, "failed", Cache};
+                        {error, not_found} ->
+                            {reply, "not_found", Cache};
+                        #{<<"result_status">> := <<Result:1/binary, _Timestamp/binary>>} ->
+                            {reply, Result, Cache}
+                    end
+            end;
+        Err ->
+            ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
+            {reply, {error, not_found}, Cache}
+    end;
+handle_call({events, ContractId, Limit}, _From, Cache) ->
+    case get_ae_mdw_node() of
+        {ok, ConnPid, PathPrefix} ->
+            Path =
+                PathPrefix ++
+                    "v3/contracts/logs?direction=forward&contract_id=" ++
+                    ContractId ++
+                    "&limit=" ++ integer_to_list(Limit),
+            StreamRef = gun:get(ConnPid, Path),
+
+            Events =
+                case read_stream(ConnPid, StreamRef) of
+                    #{data := Data} ->
+                        Data;
+                    Other ->
+                        ?LOG_ERROR("Invalid response from events endpoint ~p", [Other]),
+                        []
+                end,
+            {reply, Events, Cache};
+        Err ->
+            ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
+            {reply, {error, not_found}, Cache}
+    end;
+handle_call({reports, AeAccount}, _From, Cache) ->
+    case get_ae_mdw_node() of
+        {ok, ConnPid, PathPrefix} ->
+            %TODO use events
+            Path =
+                PathPrefix ++
+                    "v3/accounts/" ++
+                    binary_to_list(AeAccount) ++
+                    "/activities?" ++
+                    "direction=backward" ++
+                    "&type=aex9" ++
+                    "&limit=10",
+            %?DAMAGE_TOKEN_CONTRACT ++
+            ?LOG_DEBUG("Path ~p", [Path]),
+            StreamRef = gun:get(ConnPid, Path),
+            {reply, read_stream(ConnPid, StreamRef), Cache};
+        Err ->
+            ?LOG_DEBUG("Finding ae node failed ~p", [Err]),
+            {reply, {error, not_found}, Cache}
+    end;
+handle_call({balance, AeAccount}, _From, Cache) when is_binary(AeAccount) ->
+    {reply, damage_balance_cache:damage_balance(AeAccount), Cache};
+handle_call({confirm_spend_all}, _From, Cache) ->
+    ?LOG_DEBUG("handle_call confirm_spend_all/0 : ~p", [Cache]),
+    {reply, ok, Cache};
+handle_call(
+    {is_custodial, AeAccount},
+    _From,
+    #{public_key := AeAccount} = State0
+) ->
+    case ensure_wallet_signing_key(AeAccount, State0) of
+        {ok, _PrivateKey, State} ->
+            {reply, true, State};
+        {error, Reason} ->
+            ?LOG_DEBUG(
+                "Account is not custodial account=~p reason=~p",
+                [AeAccount, Reason]
+            ),
+            {reply, false, State0}
+    end;
+handle_call(
+    {set_private_key, AeAccount0, PrivateKey},
+    _From,
+    #{public_key := StateAccount} = State
+) ->
+    AeAccount = normalize_ae_account(AeAccount0),
+    case AeAccount of
+        StateAccount ->
+            case validate_account_signing_key(AeAccount, PrivateKey) of
+                ok ->
+                    {reply, ok, maps:put(private_key, PrivateKey, State)};
+                {error, Reason} ->
+                    {reply, {error, {invalid_private_key, Reason}}, State}
+            end;
+        _ ->
+            {reply, {error, {wrong_wallet_proc, AeAccount, StateAccount}}, State}
+    end;
+handle_call({transaction, Data}, _From, State) ->
+    ?LOG_DEBUG("handle_call transaction/1 : ~p", [Data]),
+    {reply, ok, State};
+handle_call(
+    {
+        get_spend,
+        AeAccount
+    },
+    _From,
+    Cache
+) ->
+    AccountCache = maps:get(AeAccount, Cache, #{}),
+    case maps:get(spent_balance, AccountCache, {0, 0}) of
+        {_, Amount} ->
+            {reply, Amount, Cache}
+    end;
+handle_call(
+    {
+        confirm_spend,
+        #{
+            public_key := AeAccount,
+            feature_hash := FeatureHash,
+            dry_run := true
+        } = Context
+    },
+    _From,
+    #{public_key := AeAccount} = Cache
+) ->
+    ?LOG_DEBUG("confirm spend on dryrun ~p ~p", [AeAccount, FeatureHash]),
+    AccountCache = maps:get(AeAccount, Cache, #{}),
+    case maps:get(spent_balance, AccountCache, {0, 0}) of
+        {_, Amount} when Amount > 0 ->
+            NewCache =
+                maps:put(
+                    AeAccount,
+                    maps:put(spent_balance, {Amount, 0}, AccountCache),
+                    Cache
+                ),
+            {reply, maps:put(cost, Amount, Context),
+                maps:put(cost, Amount, maps:put({balance, AeAccount}, none, NewCache))};
+        {_, Amount} ->
+            ?LOG_DEBUG("Amount 0: ~p", [Amount]),
+            {reply, Context, Cache}
+    end;
+handle_call(
+    {
+        confirm_spend,
+        #{
+            public_key := AeAccount,
+            feature_hash := _FeatureHash,
+            report_hash := _ReportHash,
+            node_public_key := _NodePublicKey
+        } = RunRecord
+    },
+    _From,
+    #{public_key := AeAccount} = Cache0
+) ->
+    case ensure_wallet_signing_key(AeAccount, Cache0) of
+        {ok, PrivateKey, Cache} ->
+            confirm_spend_with_key(RunRecord, PrivateKey, Cache);
+        {error, Reason} ->
+            AccountCache = maps:get(AeAccount, Cache0, #{}),
+            {_, Amount} = maps:get(spent_balance, AccountCache, {0, 0}),
+            ?LOG_WARNING(
+                "Spend settlement requires a matching account signing key account=~p amount=~p reason=~p",
+                [AeAccount, Amount, Reason]
+            ),
+            {reply,
+                {error, signature_required, Amount, #{
+                    account => AeAccount,
+                    reason => Reason
+                }},
+                maps:put(private_key, none, Cache0)}
+    end.
+
+confirm_spend_with_key(
+    #{
+        public_key := AeAccount,
+        feature_hash := FeatureHash,
+        report_hash := ReportHash,
+        node_public_key := NodePublicKey
+    },
+    PrivateKey,
+    Cache
+) ->
+    KeyPair = #{public_key => AeAccount, private_key => PrivateKey},
+    SpendRecord = #{"report_hash" => binary_to_list(ReportHash)},
+    AccountCache = maps:get(AeAccount, Cache, #{}),
+    case maps:get(spent_balance, AccountCache, {0, 0}) of
+        {_, Amount} when Amount > 0 ->
+            ?LOG_INFO("confirm spend ~p ~p ~p", [Amount, AeAccount, SpendRecord]),
+            SpendResult = contract_call_payfor_user(
+                KeyPair,
+                ?DAMAGE_TOKEN_CONTRACT,
+                contract_path(damage, "contracts/token.aes"),
+                "spend",
+                [
+                    binary_to_list(NodePublicKey),
+                    integer_to_list(float_to_full_integer(Amount)),
+                    FeatureHash,
+                    ReportHash
+                ]
+            ),
+            case SpendResult of
+                #{
+                    "caller_id" := _UserAeAccount,
+                    "caller_nonce" := _Nonce,
+                    "contract_id" := _ContractId,
+                    "gas_price" := _,
+                    "gas_used" := _GasUsed,
+                    "height" := _Height,
+                    "log" :=
+                        _Log,
+                    "return_type" := "ok",
+                    "tx_hash" := TxHash,
+                    "return_value" := {}
+                } ->
+                    NewCache =
+                        maps:put(
+                            AeAccount,
+                            maps:put(spent_balance, {Amount, 0}, AccountCache),
+                            Cache
+                        ),
+                    damage_balance_cache:debit_damage(AeAccount, Amount),
+                    ?LOG_DEBUG("confirm spend cached ~p", [NewCache]),
+                    {reply, {ok, Amount, TxHash}, maps:put({balance, AeAccount}, none, NewCache)};
+                #{"return_type" := ReturnType, "return_value" := ReturnValue} = Error when
+                    (ReturnType =:= "revert" orelse ReturnType =:= <<"revert">>),
+                    (ReturnValue =:= "ACCOUNT_INSUFFICIENT_BALANCE" orelse
+                        ReturnValue =:= <<"ACCOUNT_INSUFFICIENT_BALANCE">>)
+                ->
+                    ?LOG_WARNING(
+                        "confirm spend insufficient balance account=~p amount=~p error=~p",
+                        [AeAccount, Amount, Error]
+                    ),
+                    safe_invalidate_damage_balance(AeAccount),
+                    {reply, {error, insufficient_balance, Amount, Error},
+                        maps:put({balance, AeAccount}, none, Cache)};
+                #{"return_type" := ReturnType, "return_value" := ReturnValue} = Error when
+                    ReturnType =:= "revert" orelse ReturnType =:= <<"revert">>
+                ->
+                    ?LOG_WARNING(
+                        "confirm spend reverted account=~p amount=~p reason=~p error=~p",
+                        [AeAccount, Amount, ReturnValue, Error]
+                    ),
+                    {reply, {error, contract_revert, Amount, Error}, Cache};
+                #{status := <<"fail">>} = Error ->
+                    ?LOG_WARNING(
+                        "confirm spend failed account=~p amount=~p error=~p",
+                        [AeAccount, Amount, Error]
+                    ),
+                    {reply, {error, confirm_spend_failed, Amount, Error}, Cache};
+                Error ->
+                    ?LOG_WARNING(
+                        "confirm spend returned unexpected result account=~p amount=~p error=~p",
+                        [AeAccount, Amount, Error]
+                    ),
+                    {reply, {error, confirm_spend_failed, Amount, Error}, Cache}
+            end;
+        {_, Amount} ->
+            ?LOG_DEBUG("Amount 0: ~p", [Amount]),
+            {reply, Amount, Cache}
+    end.
+
+safe_invalidate_damage_balance(AeAccount) ->
+    try
+        case code:ensure_loaded(damage_balance_cache) of
+            {module, damage_balance_cache} ->
+                case erlang:function_exported(damage_balance_cache, invalidate, 1) of
+                    true ->
+                        damage_balance_cache:invalidate(AeAccount);
+                    false ->
+                        ok
+                end;
+            _ ->
+                ok
+        end
+    catch
+        Class:Reason:Stacktrace ->
+            ?LOG_WARNING(
+                "balance cache invalidate failed account=~p class=~p reason=~p stack=~p",
+                [AeAccount, Class, Reason, Stacktrace]
+            ),
+            ok
+    end.
+handle_cast(
+    {
+        confirm_spend,
+        #{
+            public_key := AeAccount,
+            feature_hash := FeatureHash,
+            report_hash := _ReportHash,
+            node_public_key := _NodePublicKey
+        } = _RunRecord
+    },
+    #{public_key := AeAccount, private_key := none, username := <<"wallet">>} = Cache
+) ->
+    ?LOG_DEBUG("confirm spend on wallet account ~p ~p", [AeAccount, FeatureHash]),
+    {noreply, Cache};
+handle_cast({spend, AeAccount, Amount}, Cache) when is_list(AeAccount) ->
+    handle_cast({spend, list_to_binary(AeAccount), Amount}, Cache);
+handle_cast({spend, AeAccount, Amount}, Cache) when is_binary(AeAccount) ->
+    AccountCache = maps:get(AeAccount, Cache, #{}),
+    {Balance, Spend} = maps:get(spent_balance, AccountCache, {0, 0}),
+    NewCache = maps:put(spent_balance, {Balance, Spend + Amount}, AccountCache),
+    {noreply, maps:put(AeAccount, NewCache, Cache)};
+handle_cast({invalidate_cache, AeAccount}, Cache0) ->
+    %% Preserve the per-account map because it contains unsettled spent_balance.
+    %% Only the derived balance cache entry is invalidated here.
+    {noreply, maps:remove({balance, AeAccount}, Cache0)};
+handle_cast(Event, State) ->
+    ?LOG_DEBUG("unhandled cast : ~p", [Event]),
+    {noreply, State}.
+
+damage_for_invoice(#{label := Label, amount_msat := _AmountMsat}) ->
+    case binary:split(Label, <<":">>, [global]) of
+        [<<"damage">>, AeAccount, AmountDamage, _Timestamp] ->
+            ?LOG_INFO("Transfering ~p damage to ~p", [AmountDamage, AeAccount]),
+            transfer_damage_tokens(
+                AeAccount, trunc(binary_to_integer(AmountDamage) * math:pow(10, ?DAMAGE_DECIMALS))
+            );
+        Err ->
+            ?LOG_DEBUG("damage_ae ignores label: ~p", [Err])
+    end.
+
+handle_continue(init_external, State) ->
+    _ =
+        try
+            damage_cln:register_listener(invoice_paid)
+        catch
+            _:Reason -> {error, Reason}
+        end,
+    %% Do not bind the damage_ae lifecycle to Aeternity middleware.
+    %% Middleware calls open their own connection when needed, so keeping an
+    %% unused connection here only creates an external startup dependency.
+    {noreply, State}.
+handle_info({cln_event, invoice_paid, Invoice}, State) ->
+    try
+        damage_for_invoice(Invoice)
+    catch
+        _:Reason ->
+            ?LOG_WARNING("Failed to send damage for invoice: ~p", [Reason])
+    end,
+    {noreply, State};
+handle_info(_Info, State) ->
+    {noreply, State}.
+
+terminate(Reason, _State) ->
+    ?LOG_INFO("Server ~p terminating with reason ~p~n", [self(), Reason]),
+    ok.
+
+code_change(_OldVsn, State, _Extra) -> {ok, State}.
+
+get_wallet_proc(AeAccount) when is_list(AeAccount) ->
+    get_wallet_proc(list_to_binary(AeAccount));
+get_wallet_proc(<<"ak_", _/binary>> = AeAccount) ->
+    get_wallet_proc(AeAccount, none);
+get_wallet_proc(admin) ->
+    #{public_key := NodePublicKey, private_key := PrivateKey} = secrets:node_keypair(),
+    get_wallet_proc(NodePublicKey, PrivateKey).
+get_wallet_proc(AeAccount, PrivateKey) when is_list(AeAccount) ->
+    get_wallet_proc(list_to_binary(AeAccount), PrivateKey);
+get_wallet_proc(<<"ak_", _/binary>> = AeAccount, PrivateKey) ->
+    case wallet_lookup(AeAccount) of
+        {ok, Pid} ->
+            Pid;
+        undefined ->
+            start_or_reuse_wallet_proc(AeAccount, PrivateKey)
+    end.
+
+wallet_key(AeAccount) ->
+    {?MODULE, AeAccount}.
+
+wallet_gproc_key(AeAccount) ->
+    {n, l, wallet_key(AeAccount)}.
+
+wallet_lookup(AeAccount) ->
+    try gproc:lookup_local_name(wallet_key(AeAccount)) of
+        Pid when is_pid(Pid) ->
+            case is_process_alive(Pid) of
+                true -> {ok, Pid};
+                false -> undefined
+            end;
+        _ ->
+            undefined
+    catch
+        Class:Reason:Stacktrace ->
+            ?LOG_DEBUG("wallet lookup failed for ~p: ~p", [
+                AeAccount, {Class, Reason, Stacktrace}
+            ]),
+            undefined
+    end.
+
+start_or_reuse_wallet_proc(AeAccount, PrivateKey) ->
+    ChildSpec = #{
+        id => wallet_key(AeAccount),
+        start => {damage_ae, start_link, [AeAccount, PrivateKey]},
+        restart => permanent,
+        shutdown => 60,
+        type => worker,
+        modules => [damage_ae]
+    },
+    case supervisor:start_child(damage_sup, ChildSpec) of
+        {ok, Pid} ->
+            claim_wallet_proc(AeAccount, Pid);
+        {ok, Pid, _Info} ->
+            claim_wallet_proc(AeAccount, Pid);
+        {error, {already_started, Pid}} ->
+            claim_wallet_proc(AeAccount, Pid);
+        {error, already_present} ->
+            restart_present_wallet_proc(AeAccount, PrivateKey);
+        {error, Reason} ->
+            error({wallet_start_failed, AeAccount, Reason})
+    end.
+
+restart_present_wallet_proc(AeAccount, PrivateKey) ->
+    case wallet_lookup(AeAccount) of
+        {ok, Pid} ->
+            Pid;
+        undefined ->
+            case supervisor:restart_child(damage_sup, wallet_key(AeAccount)) of
+                {ok, Pid} ->
+                    claim_wallet_proc(AeAccount, Pid);
+                {ok, Pid, _Info} ->
+                    claim_wallet_proc(AeAccount, Pid);
+                {error, {already_started, Pid}} ->
+                    claim_wallet_proc(AeAccount, Pid);
+                {error, not_found} ->
+                    _ = delete_wallet_child(AeAccount),
+                    start_or_reuse_wallet_proc(AeAccount, PrivateKey);
+                {error, Reason} ->
+                    error({wallet_restart_failed, AeAccount, Reason})
+            end
+    end.
+
+delete_wallet_child(AeAccount) ->
+    try supervisor:delete_child(damage_sup, wallet_key(AeAccount)) of
+        _ -> ok
+    catch
+        Class:Reason:Stacktrace ->
+            ?LOG_DEBUG("Ignoring wallet child delete failure for ~p: ~p", [
+                AeAccount, {Class, Reason, Stacktrace}
+            ]),
+            ok
+    end.
+
+claim_wallet_proc(AeAccount, Pid) when is_pid(Pid) ->
+    try gproc:reg_other(wallet_gproc_key(AeAccount), Pid) of
+        _ ->
+            Pid
+    catch
+        error:badarg:Stacktrace ->
+            case wallet_lookup(AeAccount) of
+                {ok, Pid} ->
+                    Pid;
+                {ok, ExistingPid} ->
+                    ?LOG_WARNING(
+                        "wallet proc race for ~p: started=~p existing=~p",
+                        [AeAccount, Pid, ExistingPid]
+                    ),
+                    ExistingPid;
+                undefined ->
+                    ?LOG_WARNING(
+                        "wallet gproc registration failed for ~p pid=~p: ~p",
+                        [AeAccount, Pid, Stacktrace]
+                    ),
+                    Pid
+            end;
+        Class:Reason:Stacktrace ->
+            ?LOG_WARNING(
+                "wallet gproc registration crashed for ~p pid=~p: ~p",
+                [AeAccount, Pid, {Class, Reason, Stacktrace}]
+            ),
+            case wallet_lookup(AeAccount) of
+                {ok, ExistingPid} -> ExistingPid;
+                undefined -> Pid
+            end
+    end.
+restart_wallet_proc(AeAccount) ->
+    case gproc:lookup_local_name({?MODULE, AeAccount}) of
+        undefined ->
+            get_wallet_proc(AeAccount);
+        Pid ->
+            supervisor:terminate_child(damage_sup, Pid),
+            get_wallet_proc(AeAccount)
+    end.
+
+balance(AeAccount) when is_list(AeAccount) ->
+    balance(list_to_binary(AeAccount));
+balance(AeAccount) when is_binary(AeAccount) ->
+    damage_balance_cache:damage_balance(AeAccount).
+
+get_reports(AeAccount) ->
+    DamageAEPid = get_wallet_proc(AeAccount),
+    gen_server:call(DamageAEPid, {reports, AeAccount}, ?AE_TIMEOUT).
+get_reports(AeAccount, Query) ->
+    DamageAEPid = get_wallet_proc(AeAccount),
+    gen_server:call(DamageAEPid, {reports, AeAccount, Query}, ?AE_TIMEOUT).
+
+get_events(#{public_key := PubKey}, ContractId, Limit) ->
+    DamageAEPid = get_wallet_proc(PubKey),
+    gen_server:call(DamageAEPid, {events, ContractId, Limit}, ?AE_TIMEOUT);
+get_events(AeAccount, ContractId, Limit) ->
+    DamageAEPid = get_wallet_proc(AeAccount),
+    gen_server:call(DamageAEPid, {events, ContractId, Limit}, ?AE_TIMEOUT).
+
+spend(AeAccount, Amount) ->
+    % temporary storage to commit after feature execution
+    DamageAEPid = get_wallet_proc(AeAccount),
+    gen_server:cast(DamageAEPid, {spend, AeAccount, Amount}).
+
+get_spend(AeAccount) ->
+    % temporary storage to commit after feature execution
+    DamageAEPid = get_wallet_proc(AeAccount),
+    gen_server:call(DamageAEPid, {get_spend, AeAccount}).
+confirm_spend_all() ->
+    DamageAEPid = get_wallet_proc(admin),
+    gen_server:cast(DamageAEPid, {confirm_spend_all}).
+
+start_batch_spend_timer() ->
+    ?LOG_INFO("Starting batch spend timer."),
+    erlcron:cron(
+        <<"batch_spend_timer">>,
+        {{daily, {every, {3600, sec}}}, {damage_ae, confirm_spend_all, []}}
+    ).
+
+confirm_spend(Config, #{public_key := AeAccount} = Context) ->
+    DamageAEPid = get_wallet_proc(AeAccount),
+    case proplists:get_value(dry_run, Config, none) of
+        true ->
+            gen_server:call(DamageAEPid, {confirm_spend, maps:put(dry_run, true, Context)});
+        _ ->
+            gen_server:call(DamageAEPid, {confirm_spend, Context}, ?AE_TIMEOUT)
+    end.
+
+delete_account(AeAccount) ->
+    % temporary storage to commit after feature execution
+    DamageAEPid = get_wallet_proc(AeAccount),
+    gen_server:call(DamageAEPid, {delete_account, AeAccount}, ?AE_TIMEOUT).
+is_custodial(AeAccount) ->
+    % temporary storage to commit after feature execution
+    DamageAEPid = get_wallet_proc(AeAccount),
+    gen_server:call(DamageAEPid, {is_custodial, AeAccount}, ?AE_TIMEOUT).
+
+set_private_key(AeAccount0, PrivateKey) ->
+    % temporary storage to commit after feature execution
+    AeAccount = normalize_ae_account(AeAccount0),
+    DamageAEPid = get_wallet_proc(AeAccount),
+    gen_server:call(DamageAEPid, {set_private_key, AeAccount, PrivateKey}, ?AE_TIMEOUT).
+
+%% Trusted operator APIs only. Never expose these via ordinary BDD or HTTP.
+-spec export_node_wallet_for_superhero() -> {ok, map()} | {error, term()}.
+export_node_wallet_for_superhero() ->
+    try secrets:node_keypair() of
+        #{public_key := _, private_key := _} = KeyPair ->
+            damage_ae_wallet:export_private_key(KeyPair);
+        _ ->
+            {error, node_wallet_unavailable}
+    catch
+        _:_ -> {error, node_wallet_unavailable}
+    end.
+
+%% Mnemonics are deliberately excluded from secrets:node_keypair/0 replies.
+-spec export_node_wallet_seedphrase() -> {ok, map()} | {error, term()}.
+export_node_wallet_seedphrase() ->
+    secrets:export_node_wallet_seedphrase().
+
+normalize_ae_account(AeAccount) when is_binary(AeAccount) ->
+    AeAccount;
+normalize_ae_account(AeAccount) when is_list(AeAccount) ->
+    list_to_binary(AeAccount).
+
+ensure_wallet_signing_key(AeAccount, State) ->
+    Existing = maps:get(private_key, State, none),
+    case validate_account_signing_key(AeAccount, Existing) of
+        ok ->
+            {ok, Existing, State};
+        {error, ExistingReason} ->
+            case load_custodial_private_key(AeAccount) of
+                {ok, PrivateKey} ->
+                    {ok, PrivateKey, maps:put(private_key, PrivateKey, State)};
+                {error, ReloadReason} ->
+                    {error,
+                        {
+                            signing_key_unavailable,
+                            #{cached => ExistingReason, reload => ReloadReason}
+                        }}
+            end
+    end.
+
+load_custodial_private_key(AeAccount) ->
+    try fresh_identity_account(AeAccount) of
+        #{public_key := PublicKey0, private_key := PrivateKey} ->
+            PublicKey = normalize_ae_account(PublicKey0),
+            case PublicKey =:= AeAccount of
+                false ->
+                    {error, {identity_account_mismatch, PublicKey}};
+                true ->
+                    case validate_account_signing_key(AeAccount, PrivateKey) of
+                        ok -> {ok, PrivateKey};
+                        {error, Reason} -> {error, {invalid_custodial_private_key, Reason}}
+                    end
+            end;
+        notfound ->
+            {error, no_custodial_key};
+        {error, notfound} ->
+            {error, no_custodial_key};
+        Other ->
+            {error, {unexpected_identity_result, identity_result_type(Other)}}
+    catch
+        Class:Reason:Stacktrace ->
+            ?LOG_WARNING(
+                "Custodial key reload failed account=~p class=~p reason=~p stack=~p",
+                [AeAccount, Class, Reason, Stacktrace]
+            ),
+            {error, {custodial_key_lookup_failed, Class, Reason}}
+    end.
+
+fresh_identity_account(AeAccount) ->
+    %% reload_account/1 is a refresh operation.  Its return shape is not the
+    %% canonical account API shape (some implementations return a tuple), so do
+    %% not feed that return value directly into signing-key validation.
+    _ =
+        case erlang:function_exported(identity_server, reload_account, 1) of
+            true ->
+                try identity_server:reload_account(AeAccount) of
+                    ReloadResult ->
+                        ?LOG_DEBUG(
+                            "Refreshed custodial identity account=~p result_type=~p",
+                            [AeAccount, identity_result_type(ReloadResult)]
+                        ),
+                        ReloadResult
+                catch
+                    Class:Reason:Stacktrace ->
+                        ?LOG_WARNING(
+                            "Custodial identity refresh failed account=~p class=~p reason=~p stack=~p; "
+                            "falling back to get_account/1",
+                            [AeAccount, Class, Reason, Stacktrace]
+                        ),
+                        {error, {Class, Reason}}
+                end;
+            false ->
+                ok
+        end,
+    %% get_account/1 is the canonical keypair API used elsewhere in DamageBDD.
+    case identity_server:get_account(AeAccount) of
+        {ok, Account} when is_map(Account) ->
+            Account;
+        Account ->
+            Account
+    end.
+
+validate_account_signing_key(AeAccount0, PrivateKey) ->
+    case validate_signing_private_key(PrivateKey) of
+        ok ->
+            AeAccount = normalize_ae_account(AeAccount0),
+            try aeser_api_encoder:decode(AeAccount) of
+                {account_pubkey, ExpectedPublicKey} when byte_size(ExpectedPublicKey) =:= 32 ->
+                    <<_Seed:32/binary, ActualPublicKey:32/binary>> = PrivateKey,
+                    case ActualPublicKey =:= ExpectedPublicKey of
+                        true -> ok;
+                        false -> {error, private_key_account_mismatch}
+                    end;
+                Other ->
+                    {error, {invalid_account_id, identity_result_type(Other)}}
+            catch
+                Class:Reason ->
+                    {error, {account_decode_failed, Class, Reason}}
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+validate_signing_private_key(PrivateKey) when
+    is_binary(PrivateKey), byte_size(PrivateKey) =:= 64
+->
+    ok;
+validate_signing_private_key(PrivateKey) ->
+    {error, private_key_status(PrivateKey)}.
+
+private_key_status(none) ->
+    none;
+private_key_status(undefined) ->
+    missing;
+private_key_status(PrivateKey) when is_binary(PrivateKey) ->
+    {invalid_size, byte_size(PrivateKey)};
+private_key_status(_PrivateKey) ->
+    invalid_type.
+
+identity_result_type(Result) when is_map(Result) -> map;
+identity_result_type(Result) when is_tuple(Result) -> tuple;
+identity_result_type(Result) when is_list(Result) -> list;
+identity_result_type(Result) when is_atom(Result) -> Result;
+identity_result_type(_Result) -> other.
+
+%% Serialize nonce allocation through post_tx for every account participating in
+%% a transaction.  Sorting prevents lock-order inversions for PayingForTx, where
+%% both the inner signer and payer consume independent nonces.
+with_account_nonce_locks(Accounts, Fun) when is_list(Accounts), is_function(Fun, 0) ->
+    UniqueAccounts = lists:usort([normalize_ae_account(Account) || Account <- Accounts]),
+    with_account_nonce_locks0(UniqueAccounts, Fun).
+
+with_account_nonce_locks0([], Fun) ->
+    Fun();
+with_account_nonce_locks0([Account | Rest], Fun) ->
+    LockId = {{?MODULE, tx_nonce, Account}, self()},
+    case
+        global:trans(
+            LockId,
+            fun() -> with_account_nonce_locks0(Rest, Fun) end
+        )
+    of
+        aborted -> {error, {nonce_lock_aborted, Account}};
+        Result -> Result
+    end.
+
+%% By default keep the account nonce lock until the transaction is mined (or the
+%% wait times out). The old scope ended immediately after POST, allowing callers
+%% to enqueue nonce N+1, N+2, ... behind a transaction that could remain
+%% semantically invalid in the node pool. That creates an account-wide nonce
+%% convoy where every later transaction is "not mined".
+%%
+%% This serialization is the safe default. High-throughput deployments can turn
+%% it off only when they have a separate durable nonce reservation/replacement
+%% manager.
+with_account_nonce_locks_and_wait(Accounts, IncludeHash, Fun) ->
+    Attempts = nonce_retry_attempts(),
+    case env_bool(ae_serialize_until_mined, true) of
+        true ->
+            with_account_nonce_locks(
+                Accounts,
+                fun() ->
+                    wait_posted_tx_with_nonce_retry(
+                        Accounts, Fun, IncludeHash, Attempts
+                    )
+                end
+            );
+        false ->
+            %% Kept for compatibility with continuity/max strategies.  Startup
+            %% validation rejects this combination for the default chain
+            %% strategy because chain+1 without reservation would race.
+            PostResult = with_account_nonce_locks(Accounts, Fun),
+            wait_posted_tx(PostResult, IncludeHash)
+    end.
+
+wait_posted_tx_with_nonce_retry(Accounts, Fun, IncludeHash, AttemptsLeft) ->
+    Result = wait_posted_tx(Fun(), IncludeHash),
+    case {nonce_rejection(Result), AttemptsLeft > 0} of
+        {{true, Code, Meta}, true} ->
+            Delay = nonce_retry_delay_ms(),
+            ?LOG_WARNING(
+                "AE transaction rejected for nonce account(s)=~p code=~p attempts_left=~p "
+                "retry_delay_ms=~p meta=~p",
+                [Accounts, Code, AttemptsLeft, Delay, Meta]
+            ),
+            log_nonce_diagnostics(Accounts),
+            case Delay > 0 of
+                true -> timer:sleep(Delay);
+                false -> ok
+            end,
+            %% Re-run the transaction builder. next_nonce/1 will fetch a fresh
+            %% confirmed account nonce from the pinned node session.
+            wait_posted_tx_with_nonce_retry(
+                Accounts, Fun, IncludeHash, AttemptsLeft - 1
+            );
+        _ ->
+            Result
+    end.
+
+nonce_rejection({error, {tx_rejected, Meta}}) when is_map(Meta) ->
+    Code = maps:get(error_code, Meta, undefined),
+    case is_nonce_error_code(Code) of
+        true -> {true, Code, Meta};
+        false -> false
+    end;
+nonce_rejection(_) ->
+    false.
+
+is_nonce_error_code(<<"nonce_too_high">>) -> true;
+is_nonce_error_code(<<"nonce_too_low">>) -> true;
+is_nonce_error_code(<<"nonce_already_used">>) -> true;
+is_nonce_error_code(<<"account_nonce_too_high">>) -> true;
+is_nonce_error_code(<<"account_nonce_too_low">>) -> true;
+is_nonce_error_code("nonce_too_high") -> true;
+is_nonce_error_code("nonce_too_low") -> true;
+is_nonce_error_code("nonce_already_used") -> true;
+is_nonce_error_code(nonce_too_high) -> true;
+is_nonce_error_code(nonce_too_low) -> true;
+is_nonce_error_code(nonce_already_used) -> true;
+is_nonce_error_code(_) -> false.
+
+log_nonce_diagnostics(Accounts) ->
+    lists:foreach(
+        fun(Account) ->
+            case nonce_diagnostics(Account) of
+                #{chain_next := ChainNext, continuity_next := Continuity, max_next := Max} ->
+                    ?LOG_WARNING(
+                        "AE nonce diagnostic account=~p chain_next=~p continuity_next=~p max_next=~p",
+                        [Account, ChainNext, Continuity, Max]
+                    );
+                Diagnostic ->
+                    ?LOG_WARNING(
+                        "AE nonce diagnostic account=~p result=~p",
+                        [Account, Diagnostic]
+                    )
+            end
+        end,
+        lists:usort([normalize_ae_account(A) || A <- Accounts])
+    ),
+    ok.
+
+invalidate_cache(AeAccount) ->
+    damage_balance_cache:invalidate(AeAccount),
+    DamageAEPid = get_wallet_proc(AeAccount),
+    gen_server:cast(DamageAEPid, {invalidate_cache, AeAccount}).
+
+revoke_token(AeAccount, Token) ->
+    DamageAEPid = get_wallet_proc(AeAccount),
+    gen_server:cast(DamageAEPid, {revoke_access_token, Token}).
+
+get_domain_token(AeAccount, Domain) ->
+    DamageAEPid = get_wallet_proc(AeAccount),
+    gen_server:cast(DamageAEPid, {get_domain_token, Domain}).
+
+add_domain_token(AeAccount, Domain, DomainContext) ->
+    DamageAEPid = get_wallet_proc(AeAccount),
+    gen_server:cast(DamageAEPid, {add_domain_token, Domain, DomainContext}).
+
+revoke_domain_token(AeAccount, Domain) ->
+    DamageAEPid = get_wallet_proc(AeAccount),
+    gen_server:cast(DamageAEPid, {add_domain_token, Domain}).
+
+read_stream(ConnPid, StreamRef) ->
+    case gun:await(ConnPid, StreamRef, 600000) of
+        {response, nofin, _Status, _Headers0} ->
+            {ok, Body} = gun:await_body(ConnPid, StreamRef),
+            jsx:decode(Body, [{labels, atom}, return_maps]);
+        Default ->
+            ?LOG_DEBUG("Got unexpected response ~p.", [Default]),
+            Default
+    end.
+
+%% Keep one nonce allocator for all live transactions.
+%%
+%% Default strategy is `chain`: use the confirmed account nonce + 1.  Do not
+%% derive a new transaction nonce from a public node's mempool continuity/max
+%% view.  The current transaction paths keep the account lock until mining, so
+%% only one local transaction per account is live and chain+1 is deterministic.
+%%
+%% `continuity` and `max` remain available as explicit compatibility settings.
+-spec next_nonce(binary() | list()) -> {ok, non_neg_integer()} | {error, term()}.
+next_nonce(AeAccount0) ->
+    AeAccount = normalize_ae_account(AeAccount0),
+    Timeout = env_pos_int(ae_tx_post_timeout_ms, 30000),
+    case current_ae_session() of
+        {ok, Session} ->
+            case nonce_strategy() of
+                chain ->
+                    chain_next_nonce(Session, AeAccount, Timeout);
+                continuity ->
+                    mempool_next_nonce(Session, AeAccount, continuity, Timeout);
+                max ->
+                    mempool_next_nonce(Session, AeAccount, max, Timeout)
+            end;
+        Error ->
+            {error, {next_nonce_session_unavailable, AeAccount, Error}}
+    end.
+
+chain_next_nonce(Session, AeAccount, Timeout) ->
+    Path = "v3/accounts/" ++ binary_to_list(AeAccount),
+    case damage_ae_node_pool:get(Session, Path, Timeout) of
+        {ok, #{status := Status, body := Body, node := Node}} when
+            Status >= 200, Status < 300
+        ->
+            Json = decode_next_nonce_json(Body),
+            case map_int([<<"nonce">>, nonce, "nonce"], Json, undefined) of
+                Nonce when is_integer(Nonce), Nonce >= 0 ->
+                    Next = Nonce + 1,
+                    ?LOG_DEBUG(
+                        "Next nonce account=~p source=chain node=~p confirmed_nonce=~p nonce=~p",
+                        [
+                            AeAccount,
+                            maps:get(node_id, Node, undefined),
+                            Nonce,
+                            Next
+                        ]
+                    ),
+                    {ok, Next};
+                Other ->
+                    {error, {invalid_chain_nonce, AeAccount, Other, Json}}
+            end;
+        {ok, #{status := 404, body := Body}} ->
+            Json = decode_next_nonce_json(Body),
+            case account_not_found_response(Json) of
+                true ->
+                    ?LOG_DEBUG(
+                        "Next nonce account=~p source=chain account_not_found nonce=1",
+                        [AeAccount]
+                    ),
+                    {ok, 1};
+                false ->
+                    {error, {chain_nonce_http_error, AeAccount, 404, Json}}
+            end;
+        {ok, #{status := Status, body := Body}} ->
+            {error, {chain_nonce_http_error, AeAccount, Status, decode_next_nonce_json(Body)}};
+        Error ->
+            {error, {chain_nonce_request_failed, AeAccount, Error}}
+    end.
+
+account_not_found_response(Json) when is_map(Json) ->
+    Reason = map_value(
+        [<<"reason">>, reason, "reason", <<"error">>, error, "error"],
+        Json,
+        undefined
+    ),
+    Lower = lower_reason_binary(Reason),
+    binary:match(Lower, <<"account not found">>) =/= nomatch orelse
+        binary:match(Lower, <<"not found">>) =/= nomatch;
+account_not_found_response(_) ->
+    false.
+
+mempool_next_nonce(Session, AeAccount, Strategy, Timeout) ->
+    StrategyString = atom_to_list(Strategy),
+    Path =
+        "v3/accounts/" ++ binary_to_list(AeAccount) ++
+            "/next-nonce?strategy=" ++ StrategyString,
+    case damage_ae_node_pool:get(Session, Path, Timeout) of
+        {ok, #{status := Status, body := Body, node := Node}} ->
+            next_nonce_body(Status, Body, AeAccount, Strategy, Node);
+        Error ->
+            {error, {next_nonce_node_unavailable, AeAccount, Strategy, Error}}
+    end.
+
+next_nonce_body(Status, Body, AeAccount, Strategy, Node) when Status >= 200, Status < 300 ->
+    Json = decode_next_nonce_json(Body),
+    case map_int([<<"next_nonce">>, next_nonce, "next_nonce"], Json, undefined) of
+        Nonce when is_integer(Nonce), Nonce > 0 ->
+            ?LOG_DEBUG(
+                "Next nonce account=~p source=mempool strategy=~p node=~p nonce=~p",
+                [AeAccount, Strategy, maps:get(node_id, Node, undefined), Nonce]
+            ),
+            {ok, Nonce};
+        Other ->
+            {error, {invalid_next_nonce, AeAccount, Strategy, Other, Json}}
+    end;
+next_nonce_body(Status, Body, AeAccount, Strategy, _Node) ->
+    {error, {next_nonce_http_error, AeAccount, Strategy, Status, decode_next_nonce_json(Body)}}.
+
+nonce_diagnostics(AeAccount0) ->
+    AeAccount = normalize_ae_account(AeAccount0),
+    Timeout = env_pos_int(ae_tx_post_timeout_ms, 30000),
+    case current_ae_session() of
+        {ok, Session} ->
+            #{
+                chain_next => diagnostic_nonce_value(
+                    chain_next_nonce(Session, AeAccount, Timeout)
+                ),
+                continuity_next => diagnostic_nonce_value(
+                    mempool_next_nonce(Session, AeAccount, continuity, Timeout)
+                ),
+                max_next => diagnostic_nonce_value(
+                    mempool_next_nonce(Session, AeAccount, max, Timeout)
+                ),
+                node => session_node_id(Session)
+            };
+        Error ->
+            #{error => Error}
+    end.
+
+diagnostic_nonce_value({ok, Nonce}) -> Nonce;
+diagnostic_nonce_value(Error) -> Error.
+
+decode_next_nonce_json(<<>>) ->
+    #{};
+decode_next_nonce_json(Body) when is_binary(Body) ->
+    try jsx:decode(Body, [return_maps]) of
+        Json when is_map(Json) -> Json;
+        Other -> #{<<"raw">> => Other}
+    catch
+        _:Reason -> #{<<"decode_error">> => Reason, <<"body">> => Body}
+    end.
+
+%% Public transaction submission entry point.  All application modules should
+%% use this rather than vanillae:post_tx/1 so nonce/node/retry behavior remains
+%% centralized in damage_ae.
+post_tx(SignedTx) ->
+    post_tx_detailed(SignedTx).
+
+post_tx_detailed(SignedTx0) ->
+    SignedTx = normalize_encoded_tx(SignedTx0),
+    Timeout = env_pos_int(ae_tx_post_timeout_ms, 30000),
+    case current_ae_session() of
+        {ok, Session} ->
+            case
+                damage_ae_node_pool:post_json(
+                    Session,
+                    "v3/transactions",
+                    #{tx => SignedTx},
+                    Timeout
+                )
+            of
+                {ok, #{
+                    status := Status,
+                    headers := Headers,
+                    body := Body,
+                    node := Node
+                }} ->
+                    ?LOG_DEBUG(
+                        "Transaction POST node=~p status=~p",
+                        [maps:get(node_id, Node, undefined), Status]
+                    ),
+                    normalize_tx_post_response(Status, Headers, Body, SignedTx);
+                Error ->
+                    {error, {tx_post_node_unavailable, Error}}
+            end;
+        Error ->
+            {error, {tx_post_session_unavailable, Error}}
+    end.
+
+normalize_encoded_tx(Tx) when is_binary(Tx) -> Tx;
+normalize_encoded_tx(Tx) when is_list(Tx) -> list_to_binary(Tx).
+
+normalize_tx_post_response(Status, _Headers, Body, _SignedTx) when Status >= 200, Status < 300 ->
+    Json = decode_next_nonce_json(Body),
+    case
+        map_value(
+            [<<"tx_hash">>, <<"txHash">>, tx_hash, txHash, "tx_hash", "txHash"], Json, undefined
+        )
+    of
+        undefined ->
+            {error, {tx_post_missing_hash, #{http_status => Status, response => Json}}};
+        TxHash ->
+            {ok, maps:put("tx_hash", TxHash, Json)}
+    end;
+normalize_tx_post_response(Status, Headers, Body, SignedTx) ->
+    Json = decode_next_nonce_json(Body),
+    Reason = map_value([<<"reason">>, reason, "reason"], Json, <<"Invalid tx">>),
+    ErrorCode = map_value(
+        [
+            <<"error_code">>,
+            <<"errorCode">>,
+            error_code,
+            errorCode,
+            "error_code",
+            "errorCode"
+        ],
+        Json,
+        undefined
+    ),
+    case ErrorCode of
+        <<"already_known">> ->
+            already_known_tx_result(SignedTx);
+        "already_known" ->
+            already_known_tx_result(SignedTx);
+        already_known ->
+            already_known_tx_result(SignedTx);
+        _ ->
+            {error,
+                {tx_rejected, #{
+                    http_status => Status,
+                    reason => Reason,
+                    error_code => ErrorCode,
+                    response => Json,
+                    headers => Headers
+                }}}
+    end.
+
+already_known_tx_result(SignedTx) ->
+    case signed_tx_hash(SignedTx) of
+        {ok, TxHash} ->
+            ?LOG_INFO(
+                "Transaction already known by node tx_hash=~p; continuing to wait",
+                [TxHash]
+            ),
+            {ok, #{"tx_hash" => TxHash, already_known => true}};
+        {error, Reason} ->
+            {error, {already_known_hash_failed, Reason}}
+    end.
+
+%% Calculate the same Blake2b-256 hash used for signed transaction hashes.
+%%
+%% Aeternity releases differ in the aec_hash API. Newer releases export
+%% aec_hash:hash/2 while older/pinned versions may only expose
+%% blake2b_256_hash/1. DamageBDD supports both so an idempotent
+%% "already_known" response cannot break all transaction submission.
+signed_tx_hash(SignedTx) ->
+    try
+        {transaction, SignedTxBin} = aeser_api_encoder:decode(SignedTx),
+        Hash = signed_tx_hash_bin(SignedTxBin),
+        {ok, aeser_api_encoder:encode(tx_hash, Hash)}
+    catch
+        Class:Reason:Stacktrace ->
+            {error, {signed_tx_hash_failed, Class, Reason, Stacktrace}}
+    end.
+
+signed_tx_hash_bin(SignedTxBin) when is_binary(SignedTxBin) ->
+    _ = code:ensure_loaded(aec_hash),
+    case erlang:function_exported(aec_hash, hash, 2) of
+        true ->
+            aec_hash:hash(signed_tx, SignedTxBin);
+        false ->
+            case erlang:function_exported(aec_hash, blake2b_256_hash, 1) of
+                true ->
+                    aec_hash:blake2b_256_hash(SignedTxBin);
+                false ->
+                    %% enacl is already a DamageBDD dependency for Ed25519
+                    %% signing and its generic hash is Blake2b.
+                    enacl:generichash(32, SignedTxBin)
+            end
+    end.
+
+get_ae_balance(AeAccount) when is_binary(AeAccount) ->
+    get_ae_balance(binary_to_list(AeAccount));
+get_ae_balance(AeAccount) ->
+    Timeout = env_pos_int(ae_node_pool_request_timeout_ms, 30000),
+    Path = "v3/accounts/" ++ AeAccount,
+    case current_ae_session() of
+        {ok, Session} ->
+            case damage_ae_node_pool:get_json(Session, Path, Timeout) of
+                {ok, #{json := Json}} when is_map(Json) ->
+                    Json;
+                {ok, Response} ->
+                    {error, {unexpected_ae_balance_response, Response}};
+                Error ->
+                    Error
+            end;
+        Error ->
+            Error
+    end.
+
+transfer_damage_tokens(AeAccount, Amount) ->
+    % transfer damage tokens from admin account to to account
+    Result =
+        contract_call(
+            secrets:node_keypair(),
+            ?DAMAGE_TOKEN_CONTRACT,
+            contract_path(damage, "contracts/token.aes"),
+            "transfer",
+            [AeAccount, Amount]
+        ),
+    ?LOG_DEBUG("Tokens transfered ~p", [Result]),
+    maybe_credit_damage(AeAccount, Amount, Result).
+
+transfer_damage_tokens(FromAccount, ToAeAccount, Amount) ->
+    Result =
+        contract_call(
+            identity_server:get_account(FromAccount),
+            ?DAMAGE_TOKEN_CONTRACT,
+            contract_path(damage, "contracts/token.aes"),
+            "transfer",
+            [ToAeAccount, Amount]
+        ),
+    ?LOG_DEBUG("Tokens transfered ~p", [Result]),
+    maybe_credit_damage(ToAeAccount, Amount, Result).
+%% Compatibility wrappers
+transfer_damage(AeAccount, Damage) when is_integer(Damage) ->
+    transfer_damage_tokens(AeAccount, trunc(Damage * math:pow(10, ?DAMAGE_DECIMALS))).
+
+transfer_damage(FromAccount, ToAeAccount, Damage) when is_integer(Damage) ->
+    transfer_damage_tokens(
+        FromAccount,
+        ToAeAccount,
+        trunc(Damage * math:pow(10, ?DAMAGE_DECIMALS))
+    ).
+
+transfer_hits(AeAccount, Hits) when is_integer(Hits) ->
+    transfer_damage_tokens(AeAccount, Hits).
+
+transfer_hits(FromAccount, ToAeAccount, Hits) when is_integer(Hits) ->
+    transfer_damage_tokens(FromAccount, ToAeAccount, Hits).
+maybe_credit_damage(AeAccount, Amount, #{"return_type" := "ok"} = Result) ->
+    damage_balance_cache:credit_damage(AeAccount, Amount),
+    Result;
+maybe_credit_damage(_AeAccount, _Amount, Result) ->
+    Result.
+
+%% Static transaction fee-gas helpers.  These operate on the serialized
+%% unsigned transaction.  They do not estimate contract VM execution cost.
+tx_bin(EncodedTx) ->
+    {transaction, TxBin} = aeser_api_encoder:decode(EncodedTx),
+    TxBin.
+
+-spec tx_fee_from_gas(non_neg_integer(), pos_integer()) -> non_neg_integer().
+tx_fee_from_gas(FeeGas, GasPrice) ->
+    damage_ae_gas:gas_to_fee(FeeGas, GasPrice) * fee_multiplier().
+
+clamp_contract_gas_limit(WantedGas, StaticFeeGas0) ->
+    GasMax = gas_max(),
+    StaticFeeGas = erlang:max(0, StaticFeeGas0),
+    ReservedGas = StaticFeeGas + contract_gas_headroom(),
+    AvailableExecutionGas = erlang:max(1, GasMax - ReservedGas),
+    erlang:min(erlang:max(1, WantedGas), AvailableExecutionGas).
+
+build_contract_tx(Tag, BuildFun, GasLimit0, GasPrice) ->
+    build_contract_tx(Tag, BuildFun, GasLimit0, min_fee(), GasPrice, 0).
+
+build_contract_tx(Tag, BuildFun, GasLimit0, Fee0, GasPrice, Iteration) ->
+    case BuildFun(GasLimit0, Fee0) of
+        {ok, Tx0} ->
+            TxBin0 = tx_bin(Tx0),
+            StaticFeeGas = damage_ae_gas:tx_fee_gas(Tag, TxBin0),
+            GasLimit = clamp_contract_gas_limit(GasLimit0, StaticFeeGas),
+            FeeGas = damage_ae_gas:contract_tx_fee_gas(Tag, TxBin0, GasLimit),
+            Fee = tx_fee_from_gas(FeeGas, GasPrice),
+            case GasLimit =:= GasLimit0 andalso Fee =:= Fee0 of
+                true ->
+                    {ok, #{
+                        tx => Tx0,
+                        fee => Fee,
+                        fee_gas => FeeGas,
+                        static_fee_gas => StaticFeeGas,
+                        gas_limit => GasLimit
+                    }};
+                false when Iteration < ?MAX_FEE_ITERATIONS ->
+                    build_contract_tx(Tag, BuildFun, GasLimit, Fee, GasPrice, Iteration + 1);
+                false ->
+                    case BuildFun(GasLimit, Fee) of
+                        {ok, Tx} ->
+                            {ok, #{
+                                tx => Tx,
+                                fee => Fee,
+                                fee_gas => FeeGas,
+                                static_fee_gas => StaticFeeGas,
+                                gas_limit => GasLimit
+                            }};
+                        Error ->
+                            Error
+                    end
+            end;
+        Error ->
+            Error
+    end.
+
+build_account_contract_tx(Tag, AeAccount, BuildNonceFun, DefaultGas, GasPrice) ->
+    case resolve_contract_gas_limit(Tag, AeAccount, BuildNonceFun, DefaultGas, GasPrice) of
+        {ok, GasLimitWanted} ->
+            case next_nonce(AeAccount) of
+                {ok, Nonce} ->
+                    BuildFun = fun(GasLimit, Fee) ->
+                        BuildNonceFun(Nonce, GasLimit, Fee)
+                    end,
+                    case build_contract_tx(Tag, BuildFun, GasLimitWanted, GasPrice) of
+                        {ok, TxInfo} -> {ok, maps:put(nonce, Nonce, TxInfo)};
+                        Error -> Error
+                    end;
+                Error ->
+                    {error, {next_nonce_failed, AeAccount, Error}}
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+build_paying_for_tx(Payer, Nonce, InnerTxBin, GasPrice) ->
+    build_paying_for_tx(Payer, Nonce, InnerTxBin, min_fee(), GasPrice, 0).
+
+build_paying_for_tx(Payer, Nonce, InnerTxBin, Fee0, GasPrice, Iteration) ->
+    case paying_for(Payer, Nonce, Fee0, InnerTxBin) of
+        {ok, Tx0} ->
+            TxBin0 = tx_bin(Tx0),
+            FeeGas = calculate_paying_for_gas(TxBin0, InnerTxBin),
+            Fee = tx_fee_from_gas(FeeGas, GasPrice),
+            case Fee =:= Fee0 of
+                true ->
+                    {ok, #{tx => Tx0, fee => Fee, fee_gas => FeeGas}};
+                false when Iteration < ?MAX_FEE_ITERATIONS ->
+                    build_paying_for_tx(Payer, Nonce, InnerTxBin, Fee, GasPrice, Iteration + 1);
+                false ->
+                    case paying_for(Payer, Nonce, Fee, InnerTxBin) of
+                        {ok, Tx} ->
+                            {ok, #{tx => Tx, fee => Fee, fee_gas => FeeGas}};
+                        Error ->
+                            Error
+                    end
+            end;
+        Error ->
+            Error
+    end.
+
+%paying_for(PayerId, Tx) ->
+%    {ok, Nonce} = vanillae:next_nonce(PayerId),
+%    Fee = vanillae:min_fee(),
+%    {account_pubkey, PayerID} = aeser_api_encoder:decode(list_to_binary(PayerId)),
+%    paying_for(PayerID, Nonce, Fee, Tx).
+
+%### PayingFor
+%The `PayingFor` transaction is available from version 5, Iris release. By using
+%it,  an account `P` can pay for the transaction (transaction fee + gas) of another
+%account `A`.
+%
+%#### PayingFor transaction
+%```
+%[ <payer_id> :: id()
+%, <nonce>    :: int()
+%, <fee>      :: int()
+%, <tx>       :: binary()
+%]
+%```
+
+paying_for(PK, Nonce, Fee, Tx) ->
+    CallVersion = 1,
+    Type = paying_for_tx,
+    {account_pubkey, PayerId} = aeser_api_encoder:decode(PK),
+    Fields =
+        [
+            {payer_id, aeser_id:create(account, PayerId)},
+            {nonce, Nonce},
+            {fee, Fee},
+            {tx, Tx}
+        ],
+    Template = [
+        {payer_id, id},
+        {nonce, int},
+        {fee, int},
+        {tx, binary}
+    ],
+    TXB = aeser_chain_objects:serialize(Type, CallVersion, Template, Fields),
+    try
+        TX = aeser_api_encoder:encode(transaction, TXB),
+        {ok, TX}
+    catch
+        error:Reason -> {error, Reason}
+    end.
+calculate_paying_for_gas(PayingForTxBin, InnerTxBin) ->
+    BaseGas = damage_ae_gas:calculate_paying_for_gas(PayingForTxBin, InnerTxBin),
+    Multiplier = paying_for_gas_multiplier(),
+    Gas = BaseGas * Multiplier,
+    ?LOG_INFO(
+        "PayingFor gas base=~p multiplier=~p gas=~p outer_bytes=~p inner_bytes=~p",
+        [BaseGas, Multiplier, Gas, byte_size(PayingForTxBin), byte_size(InnerTxBin)]
+    ),
+    Gas.
+
+resolve_contract_gas_limit(Tag, AeAccount, BuildNonceFun, DefaultGas, GasPrice) ->
+    case contract_gas_estimation() of
+        true ->
+            case dry_run_capability() of
+                disabled ->
+                    {ok, clamp_contract_gas_limit(DefaultGas, 0)};
+                unsupported ->
+                    {ok, clamp_contract_gas_limit(DefaultGas, 0)};
+                _ ->
+                    estimate_contract_gas_limit(
+                        Tag, AeAccount, BuildNonceFun, DefaultGas, GasPrice
+                    )
+            end;
+        false ->
+            {ok, clamp_contract_gas_limit(DefaultGas, 0)}
+    end.
+
+estimate_contract_gas_limit(Tag, AeAccount, BuildNonceFun, DefaultGas, GasPrice) ->
+    DefaultGas1 = clamp_contract_gas_limit(DefaultGas, 0),
+    case dry_run_contract_gas(Tag, AeAccount, BuildNonceFun, DefaultGas1, GasPrice) of
+        {ok, GasUsed} when is_integer(GasUsed), GasUsed > 0 ->
+            finalize_contract_gas_estimate(Tag, GasUsed, DefaultGas1);
+        {retry, Reason} ->
+            retry_contract_gas_estimation(
+                Tag,
+                AeAccount,
+                BuildNonceFun,
+                DefaultGas1,
+                GasPrice,
+                Reason
+            );
+        {fallback, Reason} ->
+            ?LOG_WARNING(
+                "Contract gas estimation soft-failed tag=~p reason=~p fallback_gas=~p",
+                [Tag, Reason, DefaultGas1]
+            ),
+            {ok, DefaultGas1};
+        {error, Reason} ->
+            ?LOG_WARNING(
+                "Contract gas estimation rejected tag=~p reason=~p",
+                [Tag, Reason]
+            ),
+            {error, {contract_gas_estimation_rejected, Tag, Reason}}
+    end.
+
+finalize_contract_gas_estimate(Tag, GasUsed, ProbeGas) ->
+    Estimated = clamp_contract_gas_limit(add_contract_gas_margin(GasUsed), 0),
+    ?LOG_INFO(
+        "Estimated contract gas tag=~p gas_used=~p gas_limit=~p probe_gas=~p",
+        [Tag, GasUsed, Estimated, ProbeGas]
+    ),
+    {ok, Estimated}.
+
+retry_contract_gas_estimation(
+    Tag,
+    AeAccount,
+    BuildNonceFun,
+    DefaultGas,
+    GasPrice,
+    InitialReason
+) ->
+    MaxProbeGas = clamp_contract_gas_limit(gas_max(), 0),
+    case MaxProbeGas > DefaultGas of
+        false ->
+            {error,
+                {contract_gas_estimation_rejected, Tag, {dry_run_contract_error, InitialReason}}};
+        true ->
+            ?LOG_WARNING(
+                "Contract dry-run errored at gas=~p; retrying estimation at gas=~p reason=~p",
+                [DefaultGas, MaxProbeGas, InitialReason]
+            ),
+            case
+                dry_run_contract_gas(
+                    Tag,
+                    AeAccount,
+                    BuildNonceFun,
+                    MaxProbeGas,
+                    GasPrice
+                )
+            of
+                {ok, GasUsed} when is_integer(GasUsed), GasUsed > 0 ->
+                    finalize_contract_gas_estimate(Tag, GasUsed, MaxProbeGas);
+                {retry, RetryReason} ->
+                    {error,
+                        {contract_gas_estimation_rejected, Tag,
+                            {dry_run_contract_error_at_max_gas, InitialReason, RetryReason}}};
+                {fallback, RetryReason} ->
+                    {error,
+                        {contract_gas_estimation_rejected, Tag,
+                            {dry_run_retry_failed, InitialReason, RetryReason}}};
+                {error, RetryReason} ->
+                    {error,
+                        {contract_gas_estimation_rejected, Tag,
+                            {dry_run_retry_rejected, InitialReason, RetryReason}}}
+            end
+    end.
+
+add_contract_gas_margin(GasUsed) ->
+    MarginByPercent = ceil_percent(GasUsed, contract_gas_margin_percent()) - GasUsed,
+    GasUsed + erlang:max(contract_gas_margin_min(), MarginByPercent).
+
+dry_run_contract_gas(Tag, AeAccount, BuildNonceFun, GasLimit, GasPrice) ->
+    case dry_run_nonce(AeAccount) of
+        {ok, TopHash, DryRunNonce} ->
+            DryRunBuildFun = fun(GasLimit0, Fee) ->
+                BuildNonceFun(DryRunNonce, GasLimit0, Fee)
+            end,
+            try build_contract_tx(Tag, DryRunBuildFun, GasLimit, GasPrice) of
+                {ok, #{tx := Tx}} ->
+                    dry_run_tx_gas(Tx, TopHash, AeAccount);
+                Error ->
+                    {fallback, {build_failed_for_estimation, Error}}
+            catch
+                Class:Reason ->
+                    {fallback, {build_failed_for_estimation, Class, Reason}}
+            end;
+        {error, Reason} ->
+            {fallback, Reason}
+    end.
+
+%% ------------------------------------------------------------------
+%% Dry-run capability detection
+%%
+%% Some public/node operators disable the protected dry-run endpoint.  We
+%% optimistically try it, remember explicit endpoint-disabled responses for a
+%% short TTL, and retry after the TTL so failover/configuration changes recover
+%% automatically.  Contract-level reverts still count as "supported".
+%% ------------------------------------------------------------------
+dry_run_capability() ->
+    case env_bool(ae_dry_run_enabled, true) of
+        false ->
+            disabled;
+        true ->
+            case current_ae_session() of
+                {ok, Session} -> dry_run_capability(Session);
+                _ -> unknown
+            end
+    end.
+
+dry_run_capability(Session) ->
+    case env_bool(ae_dry_run_enabled, true) of
+        false ->
+            disabled;
+        true ->
+            Key = {?MODULE, dry_run_capability, session_node_id(Session)},
+            Now = erlang:monotonic_time(millisecond),
+            case persistent_term:get(Key, unknown) of
+                {unsupported, _Reason, ExpiresAt} when ExpiresAt > Now ->
+                    unsupported;
+                {unsupported, _Reason, _Expired} ->
+                    persistent_term:erase(Key),
+                    unknown;
+                supported ->
+                    supported;
+                _ ->
+                    unknown
+            end
+    end.
+
+mark_dry_run_supported(Session) ->
+    persistent_term:put(
+        {?MODULE, dry_run_capability, session_node_id(Session)},
+        supported
+    ),
+    ok.
+
+mark_dry_run_unsupported(Session, Reason) ->
+    Ttl = env_pos_int(
+        ae_dry_run_capability_ttl_ms,
+        ?DEFAULT_DRY_RUN_CAPABILITY_TTL_MS
+    ),
+    ExpiresAt = erlang:monotonic_time(millisecond) + Ttl,
+    persistent_term:put(
+        {?MODULE, dry_run_capability, session_node_id(Session)},
+        {unsupported, Reason, ExpiresAt}
+    ),
+    ok.
+
+dry_run_call(Tx, Accounts, TopHash) ->
+    case current_ae_session() of
+        {ok, Session} ->
+            dry_run_call(Session, Tx, Accounts, TopHash);
+        Error ->
+            {error, {dry_run_transport_failed, session, Error, []}}
+    end.
+
+dry_run_call(Session, Tx, Accounts, TopHash) ->
+    case dry_run_capability(Session) of
+        disabled ->
+            {error, {dry_run_unsupported, disabled_by_config}};
+        unsupported ->
+            {error, {dry_run_unsupported, cached_endpoint_unavailable}};
+        _ ->
+            Timeout = env_pos_int(ae_node_pool_request_timeout_ms, 30000),
+            DryData = #{
+                top => TopHash,
+                accounts => Accounts,
+                txs => [#{tx => normalize_encoded_tx(Tx)}],
+                tx_events => true
+            },
+            case
+                damage_ae_node_pool:post_json(
+                    Session,
+                    "v3/dry-run",
+                    DryData,
+                    Timeout
+                )
+            of
+                {ok, #{
+                    status := Status,
+                    body := Body,
+                    node := Node
+                }} ->
+                    Json = decode_next_nonce_json(Body),
+                    case Status >= 200 andalso Status < 300 of
+                        true ->
+                            mark_dry_run_supported(Session),
+                            {ok, Json};
+                        false ->
+                            Error = #{
+                                http_status => Status,
+                                response => Json,
+                                node => Node
+                            },
+                            case dry_run_endpoint_unavailable(Error) of
+                                true ->
+                                    mark_dry_run_unsupported(Session, Error),
+                                    {error, {dry_run_unsupported, Error}};
+                                false ->
+                                    %% The endpoint exists; the transaction itself
+                                    %% was rejected by dry-run.
+                                    mark_dry_run_supported(Session),
+                                    {error, Error}
+                            end
+                    end;
+                Error ->
+                    {error, {dry_run_transport_failed, request, Error, []}}
+            end
+    end.
+
+dry_run_endpoint_unavailable(Reason) ->
+    case dry_run_http_status(Reason) of
+        403 ->
+            true;
+        404 ->
+            true;
+        405 ->
+            true;
+        501 ->
+            true;
+        _ ->
+            Text = lower_reason_binary(Reason),
+            HasDry =
+                binary:match(Text, <<"dry-run">>) =/= nomatch orelse
+                    binary:match(Text, <<"dry_run">>) =/= nomatch orelse
+                    binary:match(Text, <<"dry run">>) =/= nomatch,
+            HasUnavailable =
+                binary:match(Text, <<"disabled">>) =/= nomatch orelse
+                    binary:match(Text, <<"not enabled">>) =/= nomatch orelse
+                    binary:match(Text, <<"forbidden">>) =/= nomatch orelse
+                    binary:match(Text, <<"method not allowed">>) =/= nomatch orelse
+                    binary:match(Text, <<"endpoint not found">>) =/= nomatch,
+            HasDry andalso HasUnavailable
+    end.
+
+dry_run_http_status(Map) when is_map(Map) ->
+    Value = map_int(
+        [
+            status,
+            <<"status">>,
+            http_status,
+            <<"http_status">>,
+            status_code,
+            <<"status_code">>,
+            code,
+            <<"code">>
+        ],
+        Map,
+        undefined
+    ),
+    case Value of
+        I when is_integer(I) -> I;
+        _ -> dry_run_http_status(maps:values(Map))
+    end;
+dry_run_http_status([Head | Rest]) ->
+    case dry_run_http_status(Head) of
+        undefined -> dry_run_http_status(Rest);
+        Status -> Status
+    end;
+dry_run_http_status([]) ->
+    undefined;
+dry_run_http_status(Tuple) when is_tuple(Tuple) ->
+    dry_run_http_status(tuple_to_list(Tuple));
+dry_run_http_status(I) when is_integer(I), I >= 100, I =< 599 ->
+    I;
+dry_run_http_status(_) ->
+    undefined.
+
+lower_reason_binary(Reason) ->
+    Bin = reason_to_binary(Reason),
+    list_to_binary(string:lowercase(binary_to_list(Bin))).
+
+dry_run_tx_gas(Tx, TopHash, AeAccount) ->
+    Accounts = dry_run_accounts(AeAccount),
+    case dry_run_call(Tx, Accounts, TopHash) of
+        {ok, DryRunResult} ->
+            normalize_dry_run_gas_result(DryRunResult);
+        {error, {dry_run_unsupported, _} = Reason} ->
+            {fallback, Reason};
+        {error, {dry_run_transport_failed, _, _, _} = Reason} ->
+            {fallback, Reason};
+        {error, Reason} ->
+            dry_run_failure_action(Reason);
+        Other ->
+            normalize_dry_run_gas_result(Other)
+    end.
+
+%% Only dry-run capability/transport problems are soft fallbacks.  A contract
+%% runtime error must never be converted into a real transaction at the default
+%% gas limit: retry it once at the maximum safe execution gas, then fail closed.
+dry_run_failure_action(Reason0) ->
+    Classified = classify_dry_run_reason(Reason0),
+    case Classified of
+        dry_run_insufficient_funds ->
+            {fallback, {dry_run_error, dry_run_insufficient_funds, Reason0}};
+        dry_run_nonce_too_high ->
+            {fallback, {dry_run_error, dry_run_nonce_too_high, Reason0}};
+        dry_run_over_gas_limit ->
+            {retry, {dry_run_over_gas_limit, Reason0}};
+        {dry_run_contract_error, Reason} ->
+            {retry, {dry_run_contract_error, Reason}}
+    end.
+
+normalize_dry_run_gas_result(DryRunResult) ->
+    case extract_dry_run_gas_used(DryRunResult) of
+        {ok, _GasUsed} = Ok ->
+            Ok;
+        {retry, _Reason} = Retry ->
+            Retry;
+        {fallback, dry_run_over_gas_limit} ->
+            {error, dry_run_over_gas_limit};
+        {fallback, _Reason} = Fallback ->
+            Fallback;
+        {error, {dry_run_revert, _} = Reason} ->
+            {error, Reason};
+        {error, Reason} ->
+            {fallback, Reason}
+    end.
+
+extract_dry_run_gas_used(#{"results" := [Result | _]}) ->
+    extract_dry_run_gas_used(Result);
+extract_dry_run_gas_used(#{<<"results">> := [Result | _]}) ->
+    extract_dry_run_gas_used(Result);
+extract_dry_run_gas_used(#{results := [Result | _]}) ->
+    extract_dry_run_gas_used(Result);
+extract_dry_run_gas_used(#{"results" := []} = Other) ->
+    {error, {dry_run_results_empty, Other}};
+extract_dry_run_gas_used(#{<<"results">> := []} = Other) ->
+    {error, {dry_run_results_empty, Other}};
+extract_dry_run_gas_used(#{results := []} = Other) ->
+    {error, {dry_run_results_empty, Other}};
+extract_dry_run_gas_used(#{"result" := "error", "reason" := Reason}) ->
+    dry_run_failure_action(Reason);
+extract_dry_run_gas_used(#{<<"result">> := <<"error">>, <<"reason">> := Reason}) ->
+    dry_run_failure_action(Reason);
+extract_dry_run_gas_used(#{result := error, reason := Reason}) ->
+    dry_run_failure_action(Reason);
+extract_dry_run_gas_used(#{result := <<"error">>, reason := Reason}) ->
+    dry_run_failure_action(Reason);
+extract_dry_run_gas_used(Other) ->
+    extract_dry_run_gas_used_from_result(Other).
+
+classify_dry_run_reason(Reason0) ->
+    Reason = reason_to_binary(Reason0),
+    case
+        {
+            binary:match(Reason, <<"insufficient_funds">>),
+            binary:match(Reason, <<"tx_nonce_too_high_for_account">>),
+            binary:match(Reason, <<"Over the gas limit">>)
+        }
+    of
+        {{_, _}, _, _} -> dry_run_insufficient_funds;
+        {_, {_, _}, _} -> dry_run_nonce_too_high;
+        {_, _, {_, _}} -> dry_run_over_gas_limit;
+        _ -> {dry_run_contract_error, Reason}
+    end.
+
+reason_to_binary(Reason) when is_binary(Reason) ->
+    Reason;
+reason_to_binary(Reason) when is_list(Reason) ->
+    unicode:characters_to_binary(Reason);
+reason_to_binary(Reason) when is_atom(Reason) ->
+    atom_to_binary(Reason, utf8);
+reason_to_binary(Reason) ->
+    iolist_to_binary(io_lib:format("~p", [Reason])).
+
+extract_dry_run_gas_used_from_result(#{"call_obj" := CallObj}) when is_map(CallObj) ->
+    gas_used_from_call_obj(CallObj);
+extract_dry_run_gas_used_from_result(#{call_obj := CallObj}) when is_map(CallObj) ->
+    gas_used_from_call_obj(CallObj);
+extract_dry_run_gas_used_from_result(#{<<"call_obj">> := CallObj}) when is_map(CallObj) ->
+    gas_used_from_call_obj(CallObj);
+extract_dry_run_gas_used_from_result(CallObj) when is_map(CallObj) ->
+    gas_used_from_call_obj(CallObj);
+extract_dry_run_gas_used_from_result(Other) ->
+    {error, {gas_used_not_found, Other}}.
+
+gas_used_from_call_obj(CallObj) ->
+    case
+        map_int([gas_used, "gas_used", <<"gas_used">>, gasUsed, <<"gasUsed">>], CallObj, undefined)
+    of
+        GasUsed when is_integer(GasUsed), GasUsed > 0 ->
+            case dry_run_return_type(CallObj) of
+                error ->
+                    %% A FATE error is not a successful gas estimate. In
+                    %% particular, out-of-gas executions commonly report
+                    %% gas_used equal to the probe limit. Retry once with the
+                    %% maximum safe contract gas before deciding whether this
+                    %% is a real contract/runtime error.
+                    {retry, {fate_error, decode_dry_run_return_value(CallObj), GasUsed}};
+                revert ->
+                    RevertReason = decode_dry_run_return_value(CallObj),
+                    case contract_reject_dry_run_revert() of
+                        true ->
+                            {error, {dry_run_revert, RevertReason}};
+                        false ->
+                            ?LOG_WARNING(
+                                "Contract dry-run reverted reason=~p; using gas_used=~p because ae_contract_reject_dry_run_revert=false",
+                                [RevertReason, GasUsed]
+                            ),
+                            {ok, GasUsed}
+                    end;
+                _ ->
+                    {ok, GasUsed}
+            end;
+        _ ->
+            {error, {gas_used_not_found, CallObj}}
+    end.
+
+dry_run_return_type(CallObj) ->
+    ReturnType = map_value(
+        [return_type, "return_type", <<"return_type">>, returnType, <<"returnType">>],
+        CallObj,
+        undefined
+    ),
+    case ReturnType of
+        error -> error;
+        "error" -> error;
+        <<"error">> -> error;
+        revert -> revert;
+        "revert" -> revert;
+        <<"revert">> -> revert;
+        ok -> ok;
+        "ok" -> ok;
+        <<"ok">> -> ok;
+        _ -> unknown
+    end.
+
+decode_dry_run_return_value(CallObj) ->
+    Encoded = map_value(
+        [return_value, "return_value", <<"return_value">>, returnValue, <<"returnValue">>],
+        CallObj,
+        undefined
+    ),
+    case Encoded of
+        undefined ->
+            undefined;
+        _ ->
+            try vanillae:decode_bytearray_fate(Encoded) of
+                {ok, {tuple, ReturnValue}} -> ReturnValue;
+                {ok, ReturnValue} -> ReturnValue;
+                ReturnValue -> ReturnValue
+            catch
+                _:_ -> Encoded
+            end
+    end.
+
+%% ------------------------------------------------------------------
+%% Opt-in tracked calls for NFT transfers. Keep the legacy contract_call
+%% APIs unchanged. Reuse their nonce locks, node sessions, gas/fee builder,
+%% dry-run funding policy, signed-envelope hashing and receipt observer.
+%% ------------------------------------------------------------------
+
+-spec contract_call_tracked(map(), term(), term(), term(), list()) ->
+    {ok, map()} | {error, term()}.
+contract_call_tracked(KeyPair0, Contract, Source, Func, Args) ->
+    case tracked_keypair(KeyPair0) of
+        {ok, #{public_key := Public} = KeyPair} ->
+            try
+                tracked_locked(Public, fun() ->
+                    tracked_contract_call(KeyPair, Contract, Source, Func, Args)
+                end)
+            catch
+                %% Never leak a keypair/exception or claim that a write definitely
+                %% failed if its result was lost outside the submission boundary.
+                _:_ -> {error, transfer_outcome_unknown}
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+tracked_keypair(#{public_key := Public0, private_key := Private}) ->
+    try
+        Public = normalize_ae_account(Public0),
+        case validate_account_signing_key(Public, Private) of
+            ok -> {ok, #{public_key => Public, private_key => Private}};
+            _ -> {error, invalid_signing_keypair}
+        end
+    catch
+        _:_ -> {error, invalid_signing_keypair}
+    end;
+tracked_keypair(_) ->
+    {error, invalid_signing_keypair}.
+
+tracked_locked(Public, Execute) ->
+    %% Use the SAME lock as direct contract calls, deployments and the current
+    %% PayingFor path. A second wallet queue would not serialize those callers.
+    %% Acquire the node session inside the lock, after any lock contention.
+    %% Deliberately do not use wait_posted_tx_with_nonce_retry: this API never
+    %% rebuilds/rebroadcasts a transfer automatically after attempting the POST.
+    with_account_nonce_locks([Public], fun() -> with_ae_session(Execute) end).
+
+tracked_contract_call(KeyPair, Contract, Source, Func, Args) ->
+    Prepared =
+        try
+            case
+                contract_call_prepare_checked(
+                    maps:with([public_key], KeyPair),
+                    Contract,
+                    Source,
+                    Func,
+                    Args
+                )
+            of
+                {ok, Tx} ->
+                    Signed = sign_transaction_base58(maps:get(private_key, KeyPair), Tx),
+                    Hash = tracked_tx_hash(Signed),
+                    {ok, Signed, Hash};
+                {error, _} = Error ->
+                    Error
+            end
+        catch
+            _:_ -> {error, transaction_prepare_failed}
+        end,
+    case Prepared of
+        {ok, SignedTx, TxHash} ->
+            %% All preparation/signing/hash failures occurred BEFORE this boundary.
+            %% POST and observation stay in this process and the pinned session.
+            tracked_submit(
+                SignedTx,
+                TxHash,
+                fun post_tx_detailed/1,
+                #{wait => fun tracked_wait_tx/1, once => fun tracked_probe_tx/1}
+            );
+        {error, _} = PrepareError ->
+            PrepareError
+    end.
+
+%% The normal builder still estimates gas and converges the size-aware fee.
+%% After it has produced the final bytes, require a successful simulation of
+%% THOSE bytes. Never use contract_query/5: its on-chain fallback is unsuitable
+%% for a transfer preflight. No key is required or loaded by this API.
+-spec contract_call_prepare_checked(map(), term(), term(), term(), list()) ->
+    {ok, binary()} | {error, term()}.
+contract_call_prepare_checked(#{public_key := Public0}, Contract, Source, Func, Args) ->
+    try
+        Public = normalize_ae_account(Public0),
+        {account_pubkey, PublicBytes} = aeser_api_encoder:decode(Public),
+        true = byte_size(PublicBytes) =:= 32,
+        with_ae_session(fun() ->
+            checked_contract_tx(
+                fun() ->
+                    contract_call_prepare_tx(
+                        #{public_key => Public},
+                        Contract,
+                        Source,
+                        Func,
+                        Args
+                    )
+                end,
+                fun(Tx) -> tracked_preflight(Public, Tx) end
+            )
+        end)
+    catch
+        _:_ -> {error, transaction_prepare_failed}
+    end;
+contract_call_prepare_checked(_, _, _, _, _) ->
+    {error, transaction_prepare_failed}.
+
+tracked_preflight(Public, Tx) ->
+    case current_ae_session() of
+        {ok, Session} ->
+            %% Do not reuse the short-lived top-header cache here: estimation or
+            %% a preceding transfer may have advanced the nonce since that top.
+            %% The final nonce is NOT rewritten to match this snapshot.
+            Timeout = env_pos_int(ae_node_pool_request_timeout_ms, 30000),
+            case damage_ae_node_pool:get_json(Session, "v3/headers/top", Timeout) of
+                {ok, #{status := Status, json := Top}} when
+                    Status >= 200, Status < 300, is_map(Top)
+                ->
+                    case tracked_field(hash, Top) of
+                        undefined ->
+                            {error, transaction_preflight_unavailable};
+                        TopHash ->
+                            tracked_dry_reply(
+                                dry_run_call(
+                                    Session, Tx, dry_run_accounts(Public), TopHash
+                                )
+                            )
+                    end;
+                _ ->
+                    {error, transaction_preflight_unavailable}
+            end;
+        _ ->
+            {error, transaction_preflight_unavailable}
+    end.
+
+%% Private callback seam for deterministic tests; no callbacks are accepted
+%% from a request, signing context or application configuration.
+checked_contract_tx(Prepare, DryRun) ->
+    Prepared =
+        try
+            tracked_prepared_tx(Prepare())
+        catch
+            _:_ -> {error, transaction_prepare_failed}
+        end,
+    case Prepared of
+        {ok, Tx} ->
+            try DryRun(Tx) of
+                ok -> {ok, Tx};
+                {error, _} = Error -> Error;
+                _ -> {error, transaction_preflight_unavailable}
+            catch
+                _:_ -> {error, transaction_preflight_unavailable}
+            end;
+        {error, _} = PrepareError ->
+            PrepareError
+    end.
+
+tracked_prepared_tx(<<"tx_", Rest/binary>> = Tx) when byte_size(Rest) > 0 -> {ok, Tx};
+tracked_prepared_tx(Tx) when is_list(Tx) -> tracked_prepared_tx(list_to_binary(Tx));
+tracked_prepared_tx({error, {contract_gas_estimation_rejected, _, {dry_run_revert, _}}}) ->
+    tracked_rejection(preflight, contract_reverted);
+tracked_prepared_tx(_) ->
+    {error, transaction_prepare_failed}.
+
+tracked_dry_reply({ok, Envelope}) when is_map(Envelope) ->
+    case tracked_field(results, Envelope) of
+        [Result] when is_map(Result) ->
+            case tracked_type(tracked_field(result, Result)) of
+                error -> tracked_rejection(preflight, transaction_rejected);
+                ok -> tracked_dry_call(tracked_field(call_obj, Result));
+                undefined -> tracked_dry_call(tracked_field(call_obj, Result));
+                _ -> {error, transaction_preflight_unavailable}
+            end;
+        _ ->
+            {error, transaction_preflight_unavailable}
+    end;
+tracked_dry_reply(_) ->
+    {error, transaction_preflight_unavailable}.
+
+tracked_dry_call(Call) when is_map(Call) ->
+    case tracked_type(tracked_field(return_type, Call)) of
+        ok -> ok;
+        revert -> tracked_rejection(preflight, contract_reverted);
+        error -> tracked_rejection(preflight, contract_error);
+        _ -> {error, transaction_preflight_unavailable}
+    end;
+tracked_dry_call(_) ->
+    {error, transaction_preflight_unavailable}.
+
+tracked_rejection(Stage, Reason) ->
+    {error, #{status => rejected, stage => Stage, reason => Reason}}.
+
+tracked_tx_hash(SignedTx) ->
+    %% Reuse the current aec_hash/enacl compatibility path and hash the signed
+    %% serialized envelope, not the unsigned transaction or the tx_ text.
+    {ok, Hash} = signed_tx_hash(SignedTx),
+    normalize_encoded_tx(Hash).
+
+%% Submission diagnostics describe the submitting node, not global chain
+%% finality. A local validation rejection NEVER becomes 'not_submitted'.
+tracked_submit(SignedTx, Hash, Post, Observers) ->
+    {Outcome, Observation} = tracked_post_observe(SignedTx, Hash, Post, Observers),
+    case Observation of
+        {ok, confirmed} ->
+            {ok, Outcome#{status := confirmed}};
+        {ok, {rejected, Reason}} when Reason =:= contract_reverted; Reason =:= contract_error ->
+            {error, Outcome#{status := rejected, stage => execution, reason => Reason}};
+        _ ->
+            {ok, Outcome}
+    end.
+
+tracked_post_observe(SignedTx, Hash, Post, Observers) ->
+    %% Exactly one POST. Neither an error nor a missing receipt rebuilds a tx.
+    PostReply =
+        try
+            Post(SignedTx)
+        catch
+            _:_ -> post_exception
+        end,
+    {Outcome, Mode} = tracked_submission(Hash, PostReply),
+    Observation =
+        try
+            Observer =
+                case Observers of
+                    F when is_function(F, 1) -> F;
+                    M when is_map(M) -> maps:get(Mode, M)
+                end,
+            Observer(Hash)
+        catch
+            _:_ -> unknown
+        end,
+    {Outcome, Observation}.
+
+tracked_submission(Hash, {ok, Ack}) when is_map(Ack) ->
+    case tracked_field(tx_hash, Ack) of
+        undefined ->
+            tracked_submission_unknown(Hash, invalid_ack, <<"missing_hash">>, undefined, wait);
+        AckHash ->
+            case tracked_hash_equal(Hash, AckHash) of
+                true ->
+                    {#{status => submitted, tx_hash => Hash}, wait};
+                false ->
+                    tracked_submission_unknown(
+                        Hash, invalid_ack, <<"hash_mismatch">>, undefined, wait
+                    )
+            end
+    end;
+tracked_submission(Hash, {error, {tx_rejected, Meta}}) when is_map(Meta) ->
+    Status = tracked_field(http_status, Meta),
+    Code = tracked_submission_code(tracked_field(error_code, Meta)),
+    case Status =:= 400 andalso is_nonce_error_code(Code) of
+        true ->
+            %% An explicit nonce validation response warrants a single receipt
+            %% lookup, not the full mining wait while holding both account locks.
+            %% A receipt can still override it (e.g. a previous identical POST).
+            tracked_submission_unknown(Hash, node_rejected, Code, Status, once);
+        false ->
+            %% Proxies and public nodes also use tx_rejected for 401/403/429/5xx.
+            %% Unknown codes/statuses are not evidence of a terminal rejection.
+            tracked_submission_unknown(Hash, http_error, Code, Status, wait)
+    end;
+tracked_submission(Hash, {error, {tx_post_missing_hash, Meta}}) when is_map(Meta) ->
+    tracked_submission_unknown(
+        Hash,
+        invalid_ack,
+        <<"missing_hash">>,
+        tracked_field(http_status, Meta),
+        wait
+    );
+tracked_submission(Hash, {error, {tx_post_node_unavailable, _}}) ->
+    tracked_submission_unknown(Hash, unavailable, <<"transport_unavailable">>, undefined, wait);
+tracked_submission(Hash, {error, {tx_post_session_unavailable, _}}) ->
+    tracked_submission_unknown(Hash, unavailable, <<"session_unavailable">>, undefined, wait);
+tracked_submission(Hash, post_exception) ->
+    tracked_submission_unknown(Hash, unavailable, <<"post_exception">>, undefined, wait);
+tracked_submission(Hash, _) ->
+    tracked_submission_unknown(Hash, unknown, <<"unexpected_response">>, undefined, wait).
+
+tracked_submission_unknown(Hash, Status, Code, HttpStatus, Mode) ->
+    Details0 = #{stage => submission, status => Status, error_code => Code},
+    Details =
+        case HttpStatus of
+            N when is_integer(N), N >= 100, N =< 599 -> Details0#{http_status => N};
+            _ -> Details0
+        end,
+    {#{status => submission_unknown, tx_hash => Hash, submission => Details}, Mode}.
+
+tracked_submission_code(Code) when is_atom(Code) ->
+    tracked_submission_code(atom_to_binary(Code, utf8));
+tracked_submission_code(Code) when is_list(Code), length(Code) =< 64 ->
+    try
+        tracked_submission_code(list_to_binary(Code))
+    catch
+        _:_ -> <<"unknown_error">>
+    end;
+tracked_submission_code(Code) when is_binary(Code) ->
+    %% Only machine codes already recognized by the shared nonce classifier.
+    %% Never echo free-text reason/response/headers, even for a 400 response.
+    case is_nonce_error_code(Code) of
+        true -> Code;
+        false -> <<"unknown_error">>
+    end;
+tracked_submission_code(_) ->
+    <<"unknown_error">>.
+
+%% One read-only probe after an explicit submitting-node nonce rejection.
+%% No sleep, rebroadcast, gas rebuild, or nonce retry is performed here.
+tracked_probe_tx(Hash) ->
+    case safe_payfor_receipt(tracked_probe_call(Hash)) of
+        {ok, Call} -> {ok, tracked_mined_reply({ok, #{call_info => Call}})};
+        _ -> {error, transaction_confirmation_unavailable}
+    end.
+
+tracked_probe_call(Hash) ->
+    case current_ae_session() of
+        {ok, Session} ->
+            case tx_info(Session, Hash) of
+                {ok, Envelope} -> tx_info_convert_result(Envelope);
+                Error -> Error
+            end;
+        Error ->
+            Error
+    end.
+
+tracked_hash_equal(Hash, Hash) ->
+    true;
+tracked_hash_equal(Hash, Value) when is_list(Value) ->
+    try
+        list_to_binary(Value) =:= Hash
+    catch
+        _:_ -> false
+    end;
+tracked_hash_equal(_, _) ->
+    false.
+
+tracked_wait_tx(Hash) ->
+    %% Reuse configured polling/timeout and READ-ONLY observer failover. The
+    %% submission session is not changed and this path never resubmits a write.
+    case wait_tx(Hash) of
+        Call when is_map(Call) ->
+            {ok, tracked_mined_reply({ok, #{call_info => Call}})};
+        _ ->
+            {error, transaction_confirmation_unavailable}
+    end.
+
+tracked_mined_reply({ok, Envelope}) when is_map(Envelope) ->
+    case tracked_field(call_info, Envelope) of
+        Call when is_map(Call) ->
+            Height = tracked_field(height, Call),
+            case is_integer(Height) andalso Height > 0 of
+                true ->
+                    case tracked_type(tracked_field(return_type, Call)) of
+                        ok -> confirmed;
+                        revert -> {rejected, contract_reverted};
+                        error -> {rejected, contract_error};
+                        _ -> not_ready
+                    end;
+                false ->
+                    not_ready
+            end;
+        _ ->
+            not_ready
+    end;
+tracked_mined_reply(_) ->
+    not_ready.
+
+%% Prefer the decoded string-key view, matching the existing contract wrapper.
+tracked_field(Key, Map) ->
+    case maps:find(atom_to_list(Key), Map) of
+        {ok, Value} -> Value;
+        error -> maps:get(Key, Map, maps:get(atom_to_binary(Key, utf8), Map, undefined))
+    end.
+tracked_type("ok") -> ok;
+tracked_type(<<"ok">>) -> ok;
+tracked_type("revert") -> revert;
+tracked_type(<<"revert">>) -> revert;
+tracked_type("error") -> error;
+tracked_type(<<"error">>) -> error;
+tracked_type(Value) -> Value.
+
+contract_call_prepare_tx(
+    #{public_key := AeAccount}, ContractId, ContractSource, Func, Args
+) ->
+    with_ae_session(fun() ->
+        Amount = 0,
+        GasPrice = gas_price(),
+        {ok, AACI} = vanillae:prepare_contract(ContractSource),
+        BuildNonceFun = fun(Nonce, GasLimit, Fee) ->
+            vanillae:contract_call(
+                AeAccount, Nonce, GasLimit, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
+            )
+        end,
+        case
+            build_account_contract_tx(
+                contract_call_tx,
+                AeAccount,
+                BuildNonceFun,
+                contract_call_gas_limit(),
+                GasPrice
+            )
+        of
+            {ok, #{tx := ContractCall, fee := Fee, fee_gas := FeeGas, gas_limit := GasLimit}} ->
+                ?LOG_DEBUG(
+                    "Prepared contract call gas_limit=~p fee_gas=~p fee=~p gas_price=~p",
+                    [GasLimit, FeeGas, Fee, GasPrice]
+                ),
+                ContractCall;
+            Error ->
+                Error
+        end
+    end).
+payfor_tx(SignedTx) ->
+    contract_call_payfor_tx(SignedTx).
+contract_call_payfor_tx(
+    SignedTX
+) ->
+    with_ae_session(fun() ->
+        #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
+        GasPrice = gas_price(),
+        InnerTxBin = tx_bin(SignedTX),
+        with_account_nonce_locks_and_wait([NodeAeAccount], false, fun() ->
+            case next_nonce(NodeAeAccount) of
+                {ok, NodeNonce} ->
+                    case build_paying_for_tx(NodeAeAccount, NodeNonce, InnerTxBin, GasPrice) of
+                        {ok, #{tx := PayingForTxFinal, fee := Fee, fee_gas := FeeGas}} ->
+                            ?LOG_INFO("PayingFor fee_gas=~p fee=~p gas_price=~p", [
+                                FeeGas, Fee, GasPrice
+                            ]),
+                            PayingSignature = make_transaction_signature_base58(
+                                NodePrivateKey, PayingForTxFinal
+                            ),
+                            PayingSignedTX = attach_signature_base58(
+                                PayingForTxFinal, PayingSignature
+                            ),
+                            post_tx_detailed(PayingSignedTX);
+                        Error ->
+                            Error
+                    end;
+                Error ->
+                    {error, {next_nonce_failed, NodeAeAccount, Error}}
+            end
+        end)
+    end).
+
+%% @doc Staged PayingFor contract call. Retains the legacy tuple API:
+%%   {not_submitted, Reason} -- failure before the submission boundary;
+%%   {confirmed, TxHash, Call} -- a mined terminal receipt, INCLUDING reverts;
+%%   {uncertain, TxHash | undefined, Reason} -- reconcile before retrying.
+%% 'confirmed' means receipt observed, not that the contract returned 'ok'.
+%% No automatic submission/nonce retry is performed by this API.
+contract_call_payfor_user_safe(
+    #{public_key := _, private_key := _} = KeyPair0, ContractId, ContractSource, Func, Args
+) ->
+    case tracked_keypair(KeyPair0) of
+        {ok, #{public_key := Caller} = KeyPair} ->
+            case safe_node_keypair() of
+                {ok, #{public_key := Payer} = NodeKeyPair} when Caller =/= Payer ->
+                    safe_payfor_locked([Caller, Payer], fun() ->
+                        safe_payfor_attempt(
+                            fun() ->
+                                {ok, Signed} = prepare_payfor_user_signed_tx(
+                                    KeyPair, ContractId, ContractSource, Func, Args, NodeKeyPair
+                                ),
+                                {ok, Signed, tracked_tx_hash(Signed)}
+                            end,
+                            fun(Signed, Hash) ->
+                                safe_payfor_submit(
+                                    Signed,
+                                    Hash,
+                                    fun post_tx_detailed/1,
+                                    #{wait => fun wait_tx/1, once => fun tracked_probe_call/1}
+                                )
+                            end
+                        )
+                    end);
+                {ok, _} ->
+                    %% Two independent nonces are required by this wrapper. Use
+                    %% a direct account call when signer and payer are identical.
+                    {not_submitted, payfor_signer_is_payer};
+                {error, Reason} ->
+                    {not_submitted, Reason}
+            end;
+        {error, _} ->
+            {not_submitted, invalid_signing_keypair}
+    end;
+contract_call_payfor_user_safe(Account, _Contract, _Source, _Func, _Args) when
+    is_binary(Account); is_list(Account)
+->
+    {not_submitted, {keypair_required, Account}};
+contract_call_payfor_user_safe(_Account, _Contract, _Source, _Func, _Args) ->
+    %% Do not echo an arbitrary malformed map that may contain private material.
+    {not_submitted, keypair_required}.
+
+safe_node_keypair() ->
+    try tracked_keypair(secrets:node_keypair()) of
+        {ok, _} = Ok -> Ok;
+        _ -> {error, invalid_node_keypair}
+    catch
+        _:_ -> {error, node_keypair_unavailable}
+    end.
+
+safe_payfor_locked(Accounts, Execute) ->
+    %% Same sorted/deduplicated signer AND payer locks as the normal path.
+    %% Check out a node only after acquiring the locks; keep the session and
+    %% both locks through preparation, POST, and receipt observation.
+    try
+        with_account_nonce_locks(Accounts, fun() ->
+            with_ae_session(fun() -> {payfor_operation_result, Execute()} end)
+        end)
+    of
+        {payfor_operation_result, Result} -> Result;
+        {error, {nonce_lock_aborted, _}} -> {not_submitted, payfor_nonce_lock_aborted};
+        {error, _} -> {not_submitted, payfor_session_unavailable};
+        _ -> {uncertain, undefined, payfor_scope_failed}
+    catch
+        %% An exception outside the known prepare/submit boundaries may have
+        %% lost a result AFTER a write. Never invite a blind retry in this case.
+        _:_ -> {uncertain, undefined, payfor_scope_failed}
+    end.
+
+%% Private callback seam, exported only under TEST. It separates failures
+%% provably before the write from failures after the local hash is known.
+safe_payfor_attempt(Prepare, Submit) ->
+    Prepared =
+        try
+            Prepare()
+        catch
+            _:_ -> {error, payfor_prepare_failed}
+        end,
+    case Prepared of
+        {ok, Signed, Hash} when is_binary(Signed), is_binary(Hash) ->
+            try
+                Submit(Signed, Hash)
+            catch
+                _:_ -> {uncertain, Hash, payfor_submission_outcome_unknown}
+            end;
+        _ ->
+            {not_submitted, payfor_prepare_failed}
+    end.
+
+prepare_payfor_user_signed_tx(
+    #{public_key := Caller, private_key := Private},
+    ContractId,
+    Source,
+    Func,
+    Args,
+    #{public_key := Payer, private_key := PayerPrivate}
+) ->
+    GasPrice = gas_price(),
+    {ok, AACI} = vanillae:prepare_contract(Source),
+    BuildNonceFun = fun(Nonce, GasLimit, Fee) ->
+        vanillae:contract_call(
+            Caller,
+            Nonce,
+            GasLimit,
+            GasPrice,
+            Fee,
+            0,
+            AACI,
+            ContractId,
+            Func,
+            Args
+        )
+    end,
+    %% Centralized allocator and current gas/fee builder for the inner signer.
+    {ok, #{tx := Inner}} = build_account_contract_tx(
+        contract_call_tx, Caller, BuildNonceFun, contract_call_gas_limit(), GasPrice
+    ),
+    SignedInner = sign_transaction_base58(Private, {inner, Inner}),
+    {ok, PayerNonce} = next_nonce(Payer),
+    {ok, #{tx := Outer}} = build_paying_for_tx(Payer, PayerNonce, tx_bin(SignedInner), GasPrice),
+    {ok, sign_transaction_base58(PayerPrivate, Outer)}.
+
+safe_payfor_submit(Signed, Hash, Post, Observers) ->
+    {Outcome, Observation} = tracked_post_observe(Signed, Hash, Post, Observers),
+    case safe_payfor_receipt(Observation) of
+        {ok, Call} -> {confirmed, Hash, Call};
+        error -> {uncertain, Hash, Outcome#{reason => transaction_confirmation_unavailable}}
+    end.
+
+safe_payfor_receipt(Call) when is_map(Call) ->
+    %% wait_tx/1 can RETURN an error tuple; absence of an exception is not
+    %% confirmation. Require a positive mined height and terminal return type.
+    case tracked_mined_reply({ok, #{call_info => Call}}) of
+        confirmed -> {ok, Call};
+        {rejected, _} -> {ok, Call};
+        _ -> error
+    end;
+safe_payfor_receipt(_) ->
+    error.
+
+contract_call_payfor_user(
+    #{public_key := AeAccount, private_key := PrivateKey}, ContractId, ContractSource, Func, Args
+) when is_binary(PrivateKey), byte_size(PrivateKey) =:= 64 ->
+    with_ae_session(fun() ->
+        #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
+        Amount = 0,
+        GasPrice = gas_price(),
+        {ok, AACI} = vanillae:prepare_contract(ContractSource),
+        BuildNonceFun = fun(Nonce, GasLimit, Fee) ->
+            vanillae:contract_call(
+                AeAccount, Nonce, GasLimit, GasPrice, Fee, Amount, AACI, ContractId, Func, Args
+            )
+        end,
+        with_account_nonce_locks_and_wait([AeAccount, NodeAeAccount], true, fun() ->
+            case
+                build_account_contract_tx(
+                    contract_call_tx,
+                    AeAccount,
+                    BuildNonceFun,
+                    contract_call_gas_limit(),
+                    GasPrice
+                )
+            of
+                {ok, #{
+                    tx := ContractCall,
+                    fee := InnerFee,
+                    fee_gas := InnerFeeGas,
+                    gas_limit := GasLimit
+                }} ->
+                    ?LOG_INFO(
+                        "Inner contract call gas_limit=~p fee_gas=~p fee=~p gas_price=~p",
+                        [GasLimit, InnerFeeGas, InnerFee, GasPrice]
+                    ),
+                    Signature = make_transaction_signature_base58(
+                        PrivateKey, {inner, ContractCall}
+                    ),
+                    SignedTX = attach_signature_base58(ContractCall, Signature),
+                    InnerTxBin = tx_bin(SignedTX),
+                    case next_nonce(NodeAeAccount) of
+                        {ok, NodeNonce} ->
+                            case
+                                build_paying_for_tx(
+                                    NodeAeAccount, NodeNonce, InnerTxBin, GasPrice
+                                )
+                            of
+                                {ok, #{
+                                    tx := PayingForTxFinal,
+                                    fee := PayFee,
+                                    fee_gas := PayFeeGas
+                                }} ->
+                                    ?LOG_INFO(
+                                        "PayingFor wrapper fee_gas=~p fee=~p gas_price=~p",
+                                        [PayFeeGas, PayFee, GasPrice]
+                                    ),
+                                    PayingSignature = make_transaction_signature_base58(
+                                        NodePrivateKey, PayingForTxFinal
+                                    ),
+                                    PayingSignedTX = attach_signature_base58(
+                                        PayingForTxFinal, PayingSignature
+                                    ),
+                                    post_tx_detailed(PayingSignedTX);
+                                Error ->
+                                    ?LOG_ERROR(
+                                        "contract_call_payfor_user paying_for build failed ~p",
+                                        [Error]
+                                    ),
+                                    Error
+                            end;
+                        Error ->
+                            {error, {next_nonce_failed, NodeAeAccount, Error}}
+                    end;
+                Error ->
+                    ?LOG_ERROR("contract_call_payfor_user inner build failed ~p", [Error]),
+                    Error
+            end
+        end)
+    end);
+contract_call_payfor_user(
+    #{public_key := AeAccount, private_key := PrivateKey},
+    _ContractId,
+    _ContractSource,
+    _Func,
+    _Args
+) ->
+    {error, {signature_required, AeAccount, private_key_status(PrivateKey)}};
+contract_call_payfor_user(AeAccount, Contract, ContractSource, Func, Args) ->
+    DamageAEPid = get_wallet_proc(AeAccount),
+    gen_server:call(
+        DamageAEPid,
+        {contract_call_payfor_user, Contract, ContractSource, Func, Args},
+        ?AE_TIMEOUT
+    ).
+contract_path(Contract) ->
+    contract_path(damage, Contract).
+
+contract_path(App, Contract0) ->
+    ContractsDir = contracts_dir(App),
+    Contract = normalize_contract_path(Contract0),
+    filename:join([ContractsDir, Contract]).
+
+contracts_dir(App) ->
+    case application:get_env(App, contracts_dir) of
+        {ok, Dir} when is_list(Dir) ->
+            Dir;
+        {ok, Dir} when is_binary(Dir) ->
+            binary_to_list(Dir);
+        undefined ->
+            %% Fallback for old behaviour
+            PrivDir = priv_dir_source_first(App),
+            filename:join([PrivDir, "contracts"])
+    end.
+
+priv_dir_source_first(App) ->
+    %% 1. Running from source / rebar3 shell:
+    SourcePriv = filename:join(["apps", atom_to_list(App), "priv"]),
+
+    case filelib:is_dir(SourcePriv) of
+        true ->
+            SourcePriv;
+        false ->
+            priv_dir_fallback(App)
+    end.
+
+priv_dir_fallback(App) ->
+    case code:priv_dir(App) of
+        {error, bad_name} ->
+            beam_relative_priv();
+        {error, enoent} ->
+            beam_relative_priv();
+        Path ->
+            Path
+    end.
+
+normalize_contract_path(Contract) ->
+    Clean = filename:join(filename:split(Contract)),
+    case filename:split(Clean) of
+        ["contracts" | Rest] ->
+            filename:join(Rest);
+        _ ->
+            Clean
+    end.
+beam_relative_priv() ->
+    EbinDir = filename:dirname(code:which(?MODULE)),
+    filename:join(filename:dirname(EbinDir), "priv").
+contract_call(
+    ContractAddress,
+    Contract,
+    Func,
+    Args
+) ->
+    case secrets:node_keypair() of
+        #{public_key := _AeAccount, private_key := _PrivateKey} = Keypair ->
+            contract_call(Keypair, ContractAddress, Contract, Func, Args);
+        Error ->
+            Error
+    end.
+contract_call(
+    #{public_key := _AeAccount, private_key := _PrivateKey} = Keypair,
+    ContractAddress,
+    Contract,
+    Func,
+    Args
+) ->
+    contract_call(
+        Keypair, ContractAddress, Contract, 0, Func, Args
+    );
+contract_call(AeAccount, Contract, ContractSource, Func, Args) ->
+    DamageAEPid = get_wallet_proc(AeAccount),
+    gen_server:call(
+        DamageAEPid,
+        {contract_call, Contract, ContractSource, Func, Args},
+        ?AE_TIMEOUT
+    ).
+contract_call(
+    #{public_key := AeAccount, private_key := PrivateKey},
+    ContractAddress,
+    Contract,
+    Amount,
+    Func,
+    Args
+) ->
+    with_ae_session(fun() ->
+        ?LOG_DEBUG("Contract call ~p:~p ~p", [Contract, Func, Args]),
+
+        GasPrice = gas_price(),
+        {ok, AACI} = vanillae:prepare_contract(Contract),
+        BuildNonceFun = fun(Nonce, GasLimit, Fee) ->
+            vanillae:contract_call(
+                AeAccount, Nonce, GasLimit, GasPrice, Fee, Amount, AACI, ContractAddress, Func, Args
+            )
+        end,
+        with_account_nonce_locks_and_wait([AeAccount], false, fun() ->
+            case
+                build_account_contract_tx(
+                    contract_call_tx,
+                    AeAccount,
+                    BuildNonceFun,
+                    contract_call_gas_limit(),
+                    GasPrice
+                )
+            of
+                {ok, #{
+                    tx := ContractCall,
+                    fee := Fee,
+                    fee_gas := FeeGas,
+                    gas_limit := GasLimit
+                }} ->
+                    ?LOG_INFO(
+                        "Contract call gas_limit=~p fee_gas=~p fee=~p gas_price=~p",
+                        [GasLimit, FeeGas, Fee, GasPrice]
+                    ),
+                    Signature = make_transaction_signature_base58(PrivateKey, ContractCall),
+                    SignedTX = attach_signature_base58(ContractCall, Signature),
+                    post_tx_detailed(SignedTX);
+                Error ->
+                    Error
+            end
+        end)
+    end).
+
+%% Read-only contract call.  Prefer protected dry-run/static execution when
+%% available; only fall back to an on-chain call when the server explicitly
+%% reports that dry-run is unavailable and policy permits the fallback.
+contract_query(ContractAddress, Contract, Func, Args) ->
+    case secrets:node_keypair() of
+        #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair ->
+            contract_query(KeyPair, ContractAddress, Contract, Func, Args);
+        Error ->
+            Error
+    end.
+
+contract_query(
+    #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair,
+    ContractAddress,
+    Contract,
+    Func,
+    Args
+) ->
+    with_ae_session(fun() ->
+        case dry_run_capability() of
+            disabled ->
+                contract_query_fallback(
+                    disabled_by_config, KeyPair, ContractAddress, Contract, Func, Args
+                );
+            unsupported ->
+                contract_query_fallback(
+                    cached_endpoint_unavailable,
+                    KeyPair,
+                    ContractAddress,
+                    Contract,
+                    Func,
+                    Args
+                );
+            _ ->
+                case contract_call_dry(KeyPair, ContractAddress, Contract, Func, Args) of
+                    {error, {dry_run_unsupported, Reason}} ->
+                        contract_query_fallback(
+                            Reason, KeyPair, ContractAddress, Contract, Func, Args
+                        );
+                    Result ->
+                        Result
+                end
+        end
+    end).
+
+contract_query_fallback(Reason, KeyPair, ContractAddress, Contract, Func, Args) ->
+    case env_bool(ae_contract_query_fallback_onchain, true) of
+        true ->
+            ?LOG_WARNING(
+                "Dry-run unavailable for read-only contract query; falling back on-chain "
+                "contract=~p function=~p reason=~p",
+                [ContractAddress, Func, Reason]
+            ),
+            contract_call(KeyPair, ContractAddress, Contract, Func, Args);
+        false ->
+            {error, {dry_run_unsupported, Reason}}
+    end.
+
+contract_call_dry(
+    #{public_key := AeAccount, private_key := _PrivateKey},
+    ContractAddress,
+    Contract,
+    Func,
+    Args
+) ->
+    with_ae_session(fun() ->
+        ?LOG_DEBUG("Contract call ~p:~p ~p", [Contract, Func, Args]),
+        case dry_run_nonce(AeAccount) of
+            {ok, TopHash, Nonce} ->
+                case vanillae:prepare_contract(Contract) of
+                    {ok, AACI} ->
+                        GasPrice = gas_price(),
+                        BuildFun = fun(GasLimit, Fee) ->
+                            vanillae:contract_call(
+                                AeAccount,
+                                Nonce,
+                                GasLimit,
+                                GasPrice,
+                                Fee,
+                                0,
+                                AACI,
+                                ContractAddress,
+                                Func,
+                                Args
+                            )
+                        end,
+                        %% A protected dry-run still validates the encoded
+                        %% transaction.  Build the same size-aware fee used by an
+                        %% on-chain call instead of the old flat min_fee(), which can
+                        %% be below the required fee when gas_price is above its
+                        %% historical default.
+                        case
+                            build_contract_tx(
+                                contract_call_tx,
+                                BuildFun,
+                                contract_call_gas_limit(),
+                                GasPrice
+                            )
+                        of
+                            {ok, #{
+                                tx := ContractCall,
+                                fee := Fee,
+                                fee_gas := FeeGas,
+                                gas_limit := GasLimit
+                            }} ->
+                                ?LOG_DEBUG(
+                                    "Dry contract call gas_limit=~p fee_gas=~p fee=~p gas_price=~p top=~p",
+                                    [GasLimit, FeeGas, Fee, GasPrice, TopHash]
+                                ),
+                                dry_run_contract_result(ContractCall, TopHash, AeAccount);
+                            Error ->
+                                {error, {dry_run_tx_build_failed, Error}}
+                        end;
+                    Error ->
+                        {error, {prepare_contract_failed, Contract, Error}}
+                end;
+            {error, _} = Error ->
+                Error
+        end
+    end).
+
+dry_run_contract_result(ContractCall, TopHash, AeAccount) ->
+    Accounts = dry_run_accounts(AeAccount),
+    case dry_run_call(ContractCall, Accounts, TopHash) of
+        {ok, DryRunResult} ->
+            case first_dry_run_result(DryRunResult) of
+                {ok, Result} -> tx_info_convert_dry_run_result(Result);
+                {error, _} = Error -> Error
+            end;
+        {error, {dry_run_unsupported, _} = Reason} ->
+            {error, Reason};
+        {error, {dry_run_transport_failed, _, _, _} = Reason} ->
+            {error, Reason};
+        {error, Reason} ->
+            {error, {dry_run_failed, Reason}};
+        Other ->
+            {error, {unexpected_dry_run_reply, Other}}
+    end.
+
+first_dry_run_result(#{"results" := [Result | _]}) ->
+    {ok, Result};
+first_dry_run_result(#{<<"results">> := [Result | _]}) ->
+    {ok, Result};
+first_dry_run_result(#{results := [Result | _]}) ->
+    {ok, Result};
+first_dry_run_result(#{"results" := []} = Other) ->
+    {error, {dry_run_results_empty, Other}};
+first_dry_run_result(#{<<"results">> := []} = Other) ->
+    {error, {dry_run_results_empty, Other}};
+first_dry_run_result(#{results := []} = Other) ->
+    {error, {dry_run_results_empty, Other}};
+first_dry_run_result(Other) ->
+    {error, {unexpected_dry_run_result, Other}}.
+
+%% Protected dry-run validates the unsigned transaction against the caller's
+%% native AE balance.  This is incorrect for simulation and gas estimation of
+%% inner PayingForTx transactions: the real payer supplies the fee/gas, while
+%% the inner caller may intentionally hold no AE.  The node's `accounts` input
+%% temporarily credits an account in the isolated dry-run state while retaining
+%% its existing nonce and all other chain state.
+%%
+%% Disable this only when a caller deliberately wants dry-run to test the
+%% account's real native-AE affordability.
+dry_run_accounts(AeAccount) ->
+    case env_bool(ae_dry_run_fund_caller, true) of
+        true ->
+            Amount = env_pos_int(
+                ae_dry_run_account_amount,
+                ?DEFAULT_DRY_RUN_ACCOUNT_AMOUNT
+            ),
+            [
+                #{
+                    pub_key => normalize_ae_account(AeAccount),
+                    amount => Amount
+                }
+            ];
+        false ->
+            []
+    end.
+
+%% Execute dry-runs against the actual chain top, which may be either a key
+%% block or a microblock.  A contract created in the latest microblock does not
+%% exist in kb_current_hash() state yet, so post-deploy validation must derive
+%% both the contract state and caller nonce from this same top hash.
+dry_run_nonce(AeAccount) ->
+    case current_ae_session() of
+        {ok, Session} ->
+            case top_block(Session) of
+                {ok, Top} ->
+                    case map_value([hash, <<"hash">>, "hash"], Top, undefined) of
+                        undefined ->
+                            {error, {unexpected_dry_run_top, Top}};
+                        TopHash ->
+                            dry_run_nonce_at_top(Session, AeAccount, TopHash)
+                    end;
+                {error, Reason} ->
+                    {error, {dry_run_top_hash_failed, Reason}}
+            end;
+        Error ->
+            {error, {dry_run_session_unavailable, Error}}
+    end.
+
+top_block(Session) ->
+    Timeout = env_pos_int(ae_node_pool_request_timeout_ms, 30000),
+    case
+        damage_ae_node_pool:get_json_cached(
+            Session,
+            top_header,
+            "v3/headers/top",
+            top_header_cache_ttl_ms(),
+            Timeout
+        )
+    of
+        {ok, #{status := Status, json := Json}} when
+            Status >= 200, Status < 300, is_map(Json)
+        ->
+            {ok, Json};
+        {ok, Response} ->
+            {error, {top_header_http_error, Response}};
+        Error ->
+            Error
+    end.
+
+dry_run_nonce_at_top(Session, AeAccount, TopHash) ->
+    Timeout = env_pos_int(ae_node_pool_request_timeout_ms, 30000),
+    Path =
+        "v3/accounts/" ++ binary_to_list(normalize_ae_account(AeAccount)) ++
+            "/hash/" ++ to_s_path(TopHash),
+    case damage_ae_node_pool:get_json(Session, Path, Timeout) of
+        {ok, #{status := Status, json := Account}} when
+            Status >= 200, Status < 300, is_map(Account)
+        ->
+            dry_run_nonce_from_account(AeAccount, TopHash, Account);
+        {ok, #{json := Account}} when is_map(Account) ->
+            dry_run_nonce_from_account(AeAccount, TopHash, Account);
+        {ok, Response} ->
+            {error, {unexpected_dry_run_account, Response}};
+        Error ->
+            {error, {dry_run_account_lookup_failed, Error}}
+    end.
+
+dry_run_nonce_from_account(_AeAccount, TopHash, Account) ->
+    case map_int([nonce, <<"nonce">>, "nonce"], Account, undefined) of
+        Nonce when is_integer(Nonce), Nonce >= 0 ->
+            {ok, TopHash, Nonce + 1};
+        _ ->
+            Reason = map_value([reason, <<"reason">>, "reason"], Account, undefined),
+            case normalize_reason_text(Reason) of
+                <<"Account not found">> ->
+                    {ok, TopHash, 1};
+                _ ->
+                    {error, {dry_run_account_lookup_failed, Reason}}
+            end
+    end.
+
+to_s_path(Bin) when is_binary(Bin) -> binary_to_list(Bin);
+to_s_path(List) when is_list(List) -> List;
+to_s_path(Atom) when is_atom(Atom) -> atom_to_list(Atom);
+to_s_path(Value) -> lists:flatten(io_lib:format("~p", [Value])).
+
+normalize_reason_text(Bin) when is_binary(Bin) -> Bin;
+normalize_reason_text(List) when is_list(List) -> unicode:characters_to_binary(List);
+normalize_reason_text(Atom) when is_atom(Atom) -> atom_to_binary(Atom, utf8);
+normalize_reason_text(Value) -> iolist_to_binary(io_lib:format("~p", [Value])).
+
+contract_deploy(Contract, Args) ->
+    Keypair = secrets:node_keypair(),
+    contract_deploy(Keypair, Contract, Args).
+contract_deploy(#{public_key := AeAccount, private_key := PrivateKey}, Contract, Args) ->
+    with_ae_session(fun() ->
+        Amount = 0,
+        GasPrice = gas_price(),
+        BuildNonceFun = fun(Nonce, GasLimit, Fee) ->
+            vanillae:contract_create(
+                AeAccount, Nonce, Amount, GasLimit, GasPrice, Fee, Contract, Args
+            )
+        end,
+        with_account_nonce_locks_and_wait([AeAccount], false, fun() ->
+            case
+                build_account_contract_tx(
+                    contract_create_tx,
+                    AeAccount,
+                    BuildNonceFun,
+                    contract_create_gas_limit(),
+                    GasPrice
+                )
+            of
+                {ok, #{
+                    tx := ContractData,
+                    fee := Fee,
+                    fee_gas := FeeGas,
+                    gas_limit := GasLimit
+                }} ->
+                    ?LOG_INFO(
+                        "Contract deploy gas_limit=~p fee_gas=~p fee=~p gas_price=~p",
+                        [GasLimit, FeeGas, Fee, GasPrice]
+                    ),
+                    SignedContract = sign_transaction_base58(PrivateKey, ContractData),
+                    post_tx_detailed(SignedContract);
+                Error ->
+                    Error
+            end
+        end)
+    end).
+
+contract_deploy_for(
+    #{public_key := AeAccount, private_key := PrivateKey},
+    Contract,
+    Args
+) ->
+    with_ae_session(fun() ->
+        Amount = 0,
+        GasPrice = gas_price(),
+        #{public_key := NodeAeAccount, private_key := NodePrivateKey} = secrets:node_keypair(),
+        BuildNonceFun = fun(Nonce, GasLimit, Fee) ->
+            vanillae:contract_create(
+                AeAccount, Nonce, Amount, GasLimit, GasPrice, Fee, Contract, Args
+            )
+        end,
+        with_account_nonce_locks_and_wait([AeAccount, NodeAeAccount], true, fun() ->
+            case
+                build_account_contract_tx(
+                    contract_create_tx,
+                    AeAccount,
+                    BuildNonceFun,
+                    contract_create_gas_limit(),
+                    GasPrice
+                )
+            of
+                {ok, #{
+                    tx := ContractData,
+                    fee := InnerFee,
+                    fee_gas := InnerFeeGas,
+                    gas_limit := GasLimit
+                }} ->
+                    ?LOG_INFO(
+                        "Inner contract deploy gas_limit=~p fee_gas=~p fee=~p gas_price=~p",
+                        [GasLimit, InnerFeeGas, InnerFee, GasPrice]
+                    ),
+                    SignedContract = sign_transaction_base58(
+                        PrivateKey, {inner, ContractData}
+                    ),
+                    InnerTxBin = tx_bin(SignedContract),
+                    case next_nonce(NodeAeAccount) of
+                        {ok, NodeNonce} ->
+                            case
+                                build_paying_for_tx(
+                                    NodeAeAccount, NodeNonce, InnerTxBin, GasPrice
+                                )
+                            of
+                                {ok, #{
+                                    tx := PayingForTxFinal,
+                                    fee := PayFee,
+                                    fee_gas := PayFeeGas
+                                }} ->
+                                    ?LOG_INFO(
+                                        "PayingFor deploy wrapper fee_gas=~p fee=~p gas_price=~p",
+                                        [PayFeeGas, PayFee, GasPrice]
+                                    ),
+                                    PayingSignature = make_transaction_signature_base58(
+                                        NodePrivateKey, PayingForTxFinal
+                                    ),
+                                    PayingSignedTX = attach_signature_base58(
+                                        PayingForTxFinal, PayingSignature
+                                    ),
+                                    post_tx_detailed(PayingSignedTX);
+                                Error ->
+                                    Error
+                            end;
+                        Error ->
+                            {error, {next_nonce_failed, NodeAeAccount, Error}}
+                    end;
+                Error ->
+                    Error
+            end
+        end)
+    end).
+
+contract_balance(Account) ->
+    damage_balance_cache:damage_balance(Account).
+
+contract_balance_chain(Account) ->
+    KeyPair = secrets:node_keypair(),
+    #{
+        "caller_id" := _CallerId,
+        "contract_id" := ?DAMAGE_TOKEN_CONTRACT,
+        "return_type" := "ok",
+        "return_value" := ReturnValue
+    } = contract_query(
+        KeyPair,
+        ?DAMAGE_TOKEN_CONTRACT,
+        "contracts/token.aes",
+        "balance",
+        [Account]
+    ),
+    case ReturnValue of
+        {variant, [0, 1], 1, {Balance}} -> Balance;
+        {variant, [0, 1], 0, {}} -> 0
+    end.
+
+%% Main function to find the block height at or near the given timestamp.
+%% It initializes an empty cache (map) and passes it along the recursive calls.
+
+find_block_at_timestamp(Timestamp, ConnPid) ->
+    {ok, TopBlockHeight} = get_latest_block_height(ConnPid),
+    ?LOG_INFO("High ~p", [TopBlockHeight]),
+    % Initialize an empty cache
+    Cache = #{},
+    binary_search_block(Timestamp, 1015354, TopBlockHeight, ConnPid, Cache).
+
+%% Perform a binary search to find the closest block at or before the given timestamp.
+
+binary_search_block(TargetTimestamp, Low, High, ConnPid, Cache) when Low =< High ->
+    Mid = (Low + High) div 2,
+    ?LOG_INFO("Mid ~p", [Mid]),
+    case get_block_timestamp_with_cache(Mid, ConnPid, Cache) of
+        {ok, {BlockTimestamp, NewCache}} ->
+            case BlockTimestamp of
+                _ when BlockTimestamp =:= TargetTimestamp ->
+                    % Exact match
+                    {ok, Mid};
+                notfound ->
+                    binary_search_block(TargetTimestamp, Mid + 1, High, ConnPid, NewCache);
+                _ when BlockTimestamp < TargetTimestamp ->
+                    binary_search_block(TargetTimestamp, Mid + 1, High, ConnPid, NewCache);
+                _ when BlockTimestamp > TargetTimestamp ->
+                    binary_search_block(TargetTimestamp, Low, Mid - 1, ConnPid, NewCache)
+            end;
+        {error, _Error} ->
+            binary_search_block(TargetTimestamp, Mid + 1, High, ConnPid, Cache)
+    end;
+binary_search_block(_, Low, _, _, Cache) ->
+    ?LOG_INFO("Low ~p", [Low]),
+    {ok, maps:get(lastblock, Cache, no_block_found), Cache}.
+
+%% Get the latest block height from the Aeternity API.
+
+get_latest_block_height(ConnPid) ->
+    StreamRef = gun:get(ConnPid, "/v3/status"),
+    #{top_block_height := NodeHeight} = read_stream(ConnPid, StreamRef),
+    {ok, NodeHeight}.
+
+%% Caching mechanism using a map: check the cache first, if not found, fetch from API and update the cache.
+
+get_block_timestamp_with_cache(Height, ConnPid, Cache) ->
+    case maps:get(Height, Cache, undefined) of
+        Timestamp when Timestamp =/= undefined ->
+            % Return cached timestamp
+            {ok, {Timestamp, Cache}};
+        undefined ->
+            % Fetch from API if not cached
+            HeightBin = integer_to_binary(Height),
+            HeightBinLen = size(HeightBin),
+            case get_block_timestamp(Height, ConnPid) of
+                {ok, BlockTimestamp} ->
+                    % Update the cache
+                    NewCache = maps:put(Height, BlockTimestamp, Cache),
+                    {ok, {BlockTimestamp, maps:put(lastblock, Height, NewCache)}};
+                {error, #{error := <<"not found:", HeightBin:HeightBinLen/binary>>}} ->
+                    NewCache = maps:put(Height, notfound, Cache),
+                    {notfound, {Height, NewCache}};
+                Error ->
+                    {error, {Error, Cache}}
+            end
+    end.
+
+%% Get the block's timestamp at a specific height (without caching).
+
+get_block_timestamp(Height, ConnPid) ->
+    StreamRef = gun:get(ConnPid, "/v3/key-blocks/" ++ integer_to_list(Height)),
+    case read_stream(ConnPid, StreamRef) of
+        #{time := KeyBlockTime} ->
+            ?LOG_INFO("Block timestamp ~p", [KeyBlockTime]),
+            {ok, KeyBlockTime};
+        Error ->
+            Error
+    end.
+
+attach_signature(TX, Sig) ->
+    SignedTXTemplate = [{signatures, [binary]}, {transaction, binary}],
+    Fields = [{signatures, [Sig]}, {transaction, TX}],
+    aeser_chain_objects:serialize(signed_tx, 1, SignedTXTemplate, Fields).
+
+attach_signature_base58(EncodedTX, EncodedSig) ->
+    {transaction, TX} = aeser_api_encoder:decode(EncodedTX),
+    {signature, Sig} = aeser_api_encoder:decode(EncodedSig),
+    SignedTX = attach_signature(TX, Sig),
+    aeser_api_encoder:encode(transaction, SignedTX).
+% returns the signature by itself
+make_transaction_signature_base58(Priv, {inner, EncodedTX}) ->
+    {transaction, TX} = aeser_api_encoder:decode(EncodedTX),
+    Sig = make_transaction_signature(Priv, {inner, TX}),
+    aeser_api_encoder:encode(signature, Sig);
+make_transaction_signature_base58(Priv, EncodedTX) ->
+    {transaction, TX} = aeser_api_encoder:decode(EncodedTX),
+    Signature = make_transaction_signature(Priv, TX),
+    aeser_api_encoder:encode(signature, Signature).
+
+make_transaction_signature(Priv, _TX) when not is_binary(Priv) ->
+    error({invalid_signing_private_key, private_key_status(Priv)});
+make_transaction_signature(Priv, _TX) when byte_size(Priv) =/= 64 ->
+    error({invalid_signing_private_key, private_key_status(Priv)});
+make_transaction_signature(Priv, {inner, TX}) ->
+    Id = list_to_binary(vanillae:network_id() ++ "-inner_tx"),
+    Blob = <<Id/binary, TX/binary>>,
+    %?LOG_INFO("sig id ~p ~p", [Id, Blob]),
+    enacl:sign_detached(Blob, Priv);
+make_transaction_signature(Priv, TX) ->
+    Id = list_to_binary(vanillae:network_id()),
+    Blob = <<Id/binary, TX/binary>>,
+    enacl:sign_detached(Blob, Priv).
+
+sign_transaction(Priv, {inner, TX}) ->
+    Sig = make_transaction_signature(Priv, {inner, TX}),
+    SignedTXTemplate = [{signatures, [binary]}, {transaction, binary}],
+    Fields = [{signatures, [Sig]}, {transaction, TX}],
+    aeser_chain_objects:serialize(signed_tx, 1, SignedTXTemplate, Fields);
+sign_transaction(Priv, TX) ->
+    Sig = make_transaction_signature(Priv, TX),
+    SignedTXTemplate = [{signatures, [binary]}, {transaction, binary}],
+    Fields = [{signatures, [Sig]}, {transaction, TX}],
+    aeser_chain_objects:serialize(signed_tx, 1, SignedTXTemplate, Fields).
+sign_transaction_base58(Priv, {inner, EncodedTX}) ->
+    {transaction, TX} = aeser_api_encoder:decode(EncodedTX),
+    SignedTX = sign_transaction(Priv, {inner, TX}),
+    aeser_api_encoder:encode(transaction, SignedTX);
+sign_transaction_base58(Priv, EncodedTX) ->
+    {transaction, TX} = aeser_api_encoder:decode(EncodedTX),
+    SignedTX = sign_transaction(Priv, TX),
+    aeser_api_encoder:encode(transaction, SignedTX).
+
+tx_info_convert_dry_run_result(Result) when is_map(Result) ->
+    case map_value([result, "result", <<"result">>], Result, undefined) of
+        error ->
+            dry_run_result_error(Result);
+        "error" ->
+            dry_run_result_error(Result);
+        <<"error">> ->
+            dry_run_result_error(Result);
+        _ ->
+            case map_value([call_obj, "call_obj", <<"call_obj">>], Result, undefined) of
+                CallInfo when is_map(CallInfo) ->
+                    decode_dry_run_call_info(CallInfo);
+                _ ->
+                    {error, {dry_run_call_obj_missing, Result}}
+            end
+    end;
+tx_info_convert_dry_run_result({error, Reason}) ->
+    {error, Reason};
+tx_info_convert_dry_run_result(Other) ->
+    {error, {unexpected_dry_run_tx_result, Other}}.
+
+dry_run_result_error(Result) ->
+    Reason = map_value([reason, "reason", <<"reason">>], Result, unknown_dry_run_error),
+    {error, {dry_run_contract_error, Reason}}.
+
+decode_dry_run_call_info(CallInfo) ->
+    Encoded = map_value(
+        [return_value, "return_value", <<"return_value">>, returnValue, <<"returnValue">>],
+        CallInfo,
+        undefined
+    ),
+    ReturnType0 = map_value(
+        [return_type, "return_type", <<"return_type">>, returnType, <<"returnType">>],
+        CallInfo,
+        undefined
+    ),
+    case Encoded of
+        undefined ->
+            {error, {dry_run_return_value_missing, CallInfo}};
+        _ ->
+            ReturnValue = decode_dry_run_value(Encoded),
+            %% Add a stable string-key view while preserving all original keys.
+            %% Existing callers historically match the string-key form.
+            maps:put(
+                "return_value",
+                ReturnValue,
+                maps:put("return_type", normalize_return_type(ReturnType0), CallInfo)
+            )
+    end.
+
+decode_dry_run_value(Encoded) ->
+    try vanillae:decode_bytearray_fate(Encoded) of
+        {ok, {tuple, ReturnValue}} -> ReturnValue;
+        {ok, ReturnValue} -> ReturnValue;
+        ReturnValue -> ReturnValue
+    catch
+        _:_ -> Encoded
+    end.
+
+normalize_return_type(Value) when is_binary(Value) ->
+    binary_to_list(Value);
+normalize_return_type(Value) when is_atom(Value) ->
+    atom_to_list(Value);
+normalize_return_type(Value) ->
+    Value.
+
+tx_info_convert_result(Result) ->
+    case Result of
+        #{
+            "call_info" := #{
+                "caller_id" := _CallerId,
+                "caller_nonce" := _CallerNonce,
+                "contract_id" := _ContractId,
+                "gas_price" := _GasPrice,
+                "gas_used" := _GasUsed,
+                "height" := _Height,
+                "log" := _log,
+                "return_type" := _ReturnType,
+                "return_value" := Encoded
+            } = CallInfo
+        } ->
+            case vanillae:decode_bytearray_fate(Encoded) of
+                {ok, {tuple, ReturnValue}} -> maps:put("return_value", ReturnValue, CallInfo);
+                {ok, ReturnValue} -> maps:put("return_value", ReturnValue, CallInfo);
+                ReturnValue -> maps:put("return_value", ReturnValue, CallInfo)
+            end;
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+poll_tx(Session, TxHash, Interval, Timeout) ->
+    poll_tx(
+        Session,
+        TxHash,
+        Interval,
+        Timeout,
+        erlang:monotonic_time(millisecond),
+        session_node_id(Session),
+        false
+    ).
+
+poll_tx(Session, TxHash, Interval, Timeout, StartTime, SubmittedNode, FailedOver) ->
+    case tx_info(Session, TxHash) of
+        {ok, Result} ->
+            tx_info_convert_result(Result);
+        {error, Reason} = Error ->
+            case maybe_failover_tx_observer(Session, Reason, FailedOver) of
+                {ok, ObserverSession} ->
+                    ?LOG_WARNING(
+                        "Transaction confirmation observer failover tx=~p submitted_node=~p observer_node=~p reason=~p",
+                        [
+                            TxHash,
+                            SubmittedNode,
+                            session_node_id(ObserverSession),
+                            Reason
+                        ]
+                    ),
+                    poll_tx(
+                        ObserverSession,
+                        TxHash,
+                        Interval,
+                        Timeout,
+                        StartTime,
+                        SubmittedNode,
+                        true
+                    );
+                no_failover ->
+                    ?LOG_DEBUG(
+                        "poll tx error value ~p tx=~p node=~p",
+                        [Error, TxHash, session_node_id(Session)]
+                    ),
+                    Elapsed = erlang:monotonic_time(millisecond) - StartTime,
+                    if
+                        Elapsed >= Timeout ->
+                            ?LOG_WARNING(
+                                "Transaction polling timed out timeout_ms=~p tx=~p submitted_node=~p observer_node=~p last_result=~p",
+                                [
+                                    Timeout,
+                                    TxHash,
+                                    SubmittedNode,
+                                    session_node_id(Session),
+                                    Error
+                                ]
+                            ),
+                            {error,
+                                {tx_poll_timeout, #{
+                                    timeout_ms => Timeout,
+                                    last_result => Error,
+                                    tx_hash => TxHash,
+                                    submitted_node => SubmittedNode,
+                                    observer_node => session_node_id(Session),
+                                    observer_failover => FailedOver
+                                }}};
+                        true ->
+                            timer:sleep(Interval),
+                            poll_tx(
+                                Session,
+                                TxHash,
+                                Interval,
+                                Timeout,
+                                StartTime,
+                                SubmittedNode,
+                                FailedOver
+                            )
+                    end
+            end
+    end.
+
+tx_info(Session, TxHash0) ->
+    TxHash = to_s_path(TxHash0),
+    Timeout = env_pos_int(ae_node_pool_request_timeout_ms, 30000),
+    Path = "v3/transactions/" ++ TxHash ++ "/info",
+    case damage_ae_node_pool:get(Session, Path, Timeout) of
+        {ok, #{status := Status, body := Body}} ->
+            Json0 = decode_next_nonce_json(Body),
+            Reason = map_value([reason, <<"reason">>, "reason"], Json0, undefined),
+            case {Status >= 200 andalso Status < 300, Reason} of
+                {true, undefined} ->
+                    {ok, json_to_vanillae_term(Json0)};
+                {_, undefined} ->
+                    {error, {tx_info_http_error, Status, Json0}};
+                {_, Why} ->
+                    {error, normalize_reason_text(Why)}
+            end;
+        Error ->
+            {error, {tx_info_transport_failed, Error}}
+    end.
+
+json_to_vanillae_term(Map) when is_map(Map) ->
+    maps:from_list(
+        [
+            {json_key_to_string(Key), json_to_vanillae_term(Value)}
+         || {Key, Value} <- maps:to_list(Map)
+        ]
+    );
+json_to_vanillae_term(Bin) when is_binary(Bin) ->
+    binary_to_list(Bin);
+json_to_vanillae_term(List) when is_list(List) ->
+    [json_to_vanillae_term(Value) || Value <- List];
+json_to_vanillae_term(Value) ->
+    Value.
+
+json_key_to_string(Key) when is_binary(Key) -> binary_to_list(Key);
+json_key_to_string(Key) when is_atom(Key) -> atom_to_list(Key);
+json_key_to_string(Key) when is_list(Key) -> Key;
+json_key_to_string(Key) -> lists:flatten(io_lib:format("~p", [Key])).
+
+maybe_failover_tx_observer(_Session, _Reason, true) ->
+    no_failover;
+maybe_failover_tx_observer(Session, Reason, false) ->
+    case tx_observer_failover_reason(Reason) of
+        false ->
+            no_failover;
+        true ->
+            case damage_ae_node_pool:checkout() of
+                {ok, ObserverSession} ->
+                    case
+                        maps:get(conn_pid, ObserverSession, undefined) =/=
+                            maps:get(conn_pid, Session, undefined)
+                    of
+                        true -> {ok, ObserverSession};
+                        false -> no_failover
+                    end;
+                _ ->
+                    no_failover
+            end
+    end.
+
+tx_observer_failover_reason({tx_info_transport_failed, _}) ->
+    true;
+tx_observer_failover_reason({tx_info_http_error, Status, _}) when
+    is_integer(Status), Status >= 500, Status < 600
+->
+    true;
+tx_observer_failover_reason({pinned_ae_node_down, _}) ->
+    true;
+tx_observer_failover_reason(_) ->
+    false.
+
+wait_posted_tx({ok, #{"tx_hash" := TxHash}}, IncludeHash) ->
+    add_posted_tx_hash(wait_tx(TxHash), TxHash, IncludeHash);
+wait_posted_tx({ok, #{<<"tx_hash">> := TxHash}}, IncludeHash) ->
+    add_posted_tx_hash(wait_tx(TxHash), TxHash, IncludeHash);
+wait_posted_tx(Error, _IncludeHash) ->
+    Error.
+
+add_posted_tx_hash({error, {tx_poll_timeout, Meta}}, TxHash, _IncludeHash) when is_map(Meta) ->
+    {error, {tx_poll_timeout, maps:put(tx_hash, TxHash, Meta)}};
+add_posted_tx_hash(Result, TxHash, true) when is_map(Result) ->
+    maps:put("tx_hash", TxHash, Result);
+add_posted_tx_hash(Result, _TxHash, _IncludeHash) ->
+    Result.
+
+wait_tx(ConId) ->
+    case current_ae_session() of
+        {ok, Session} ->
+            poll_tx(
+                Session,
+                ConId,
+                tx_poll_interval_ms(),
+                tx_wait_timeout_ms()
+            );
+        Error ->
+            {error, {tx_poll_session_unavailable, Error}}
+    end.
+
+node_ae_balance() ->
+    case secrets:node_keypair() of
+        #{public_key := AeAccount, private_key := _PrivateKey} ->
+            #{
+                id :=
+                    _,
+                balance := Balance,
+                nonce := _,
+                kind := <<"basic">>,
+                payable := true
+            } =
+                get_ae_balance(AeAccount),
+            ?LOG_DEBUG("balance ~p", [Balance]),
+            Balance / math:pow(10, ?AE_DECIMALS);
+        {error, Error} ->
+            {error, Error}
+    end.
+
+node_damage_balance() ->
+    #{public_key := AeAccount, private_key := _PrivateKey} = secrets:node_keypair(),
+    Balance = balance(AeAccount),
+    Balance / math:pow(10, ?DAMAGE_DECIMALS).
+
+deploy_account_registry(AccountKeypair) ->
+    #{"contract_id" := ContractId} = contract_deploy_for(
+        AccountKeypair, contract_path(damage, "contracts/AccountRegistry.aes"), []
+    ),
+    ContractId.
+deploy_node_registry() ->
+    AccountKeypair = secrets:node_keypair(),
+    #{"contract_id" := ContractId} = contract_deploy_for(
+        AccountKeypair, contract_path(damage, "contracts/AccountRegistry.aes"), []
+    ),
+    ContractId.
+-spec float_to_full_integer(float() | integer()) -> integer().
+float_to_full_integer(I) when is_integer(I) ->
+    I;
+float_to_full_integer(F) when is_float(F) ->
+    round(F).
+test_contract_deploy() ->
+    KeyPair = secrets:node_keypair(),
+    #{"contract_id" := ContractId} = contract_deploy(
+        KeyPair, contract_path(damage, "contracts/test.aes"), []
+    ),
+    ContractId.
+test_contract_deploy_for() ->
+    {ok, TestUserEmail} = application:get_env(damage, test_user),
+    {PubKey, _Password, PrivateKey} = identity_server:get_account_by_email(
+        list_to_binary(TestUserEmail)
+    ),
+    #{"contract_id" := ContractId} = contract_deploy_for(
+        #{public_key => PubKey, private_key => PrivateKey},
+        contract_path(damage, "contracts/test.aes"),
+        []
+    ),
+    ContractId.
+
+test_contract_call() ->
+    #{public_key := _AeAccount, private_key := _PrivateKey} = KeyPair = secrets:node_keypair(),
+    ContractId = test_contract_deploy(),
+    ?LOG_DEBUG("contract account ~p", [ContractId]),
+    contract_call(KeyPair, ContractId, contract_path(damage, "contracts/test.aes"), "f", [2]).
+%contract_call_dry(KeyPair, ContractId, "contracts/test.aes", "f", [2]).
+
+test_paying_for_tx() ->
+    {ok, TestUserEmail} = application:get_env(damage, test_user),
+    {PubKey, _Password, PrivateKey} = identity_server:get_account_by_email(
+        list_to_binary(TestUserEmail)
+    ),
+    #{public_key := NodePublicKey, private_key := _NodePrivateKey} =
+        _KeyPair = secrets:node_keypair(),
+    Amount = 1 * math:pow(10, ?DAMAGE_DECIMALS),
+    %contract_call(
+    %  KeyPair,
+    %    ?DAMAGE_TOKEN_CONTRACT,
+    %    "contracts/token.aes",
+    %    "spend",
+    %    [NodePublicKey, float_to_full_integer(Amount), "testfeaturehash", "testreporthash"]
+    %).
+    contract_call_payfor_user(
+        #{public_key => PubKey, private_key => PrivateKey},
+        ?DAMAGE_TOKEN_CONTRACT,
+        contract_path(damage, "contracts/token.aes"),
+        %"balance",
+        %[PubKey]
+        "spend",
+        [NodePublicKey, float_to_full_integer(Amount), "testfeaturehash", "testreporthash"]
+    ).
+
+test_find_block() ->
+    {Today, _Now} = calendar:local_time(),
+    Yesterday = date_util:subtract(Today, {days, 1}),
+    ADayAgo = date_util:date_to_epoch(Yesterday),
+    case get_ae_mdw_node() of
+        {ok, ConnPid, _PathPrefix} ->
+            case find_block_at_timestamp(ADayAgo * 1000, ConnPid) of
+                {ok, Block, Mblocks} ->
+                    ?LOG_INFO("Found block ~p ~p", [Block, Mblocks]);
+                Error ->
+                    ?LOG_ERROR("block not found ~p", [Error])
+            end;
+        Error ->
+            ?LOG_ERROR("Failed to find block timestamp ~p", [Error])
+    end.
+
+test_get_block_height_since() ->
+    case get_ae_mdw_node() of
+        {ok, ConnPid, _PathPrefix} ->
+            Result = get_block_height_since(36, ConnPid),
+            ?LOG_INFO("block height ~p", [Result]),
+            Result;
+        Err ->
+            ?LOG_DEBUG("Finding ae node failed ~p", [Err])
+    end.
+
+test_verify_message() ->
+    #{public_key := PubKey, private_key := PrivateKey} = secret:node_keypair(),
+
+    Data = <<"test">>,
+    SigHex = sign_transaction_base58(PrivateKey, Data),
+    _SigResult = vanillae:verify_signature(SigHex, Data, PubKey).

@@ -1,0 +1,30 @@
+%% Merge these tuples into your existing {damage, [...]} application entry.
+%% This is not a replacement sys.config. No SMTP password belongs in this file.
+[
+ {damage, [
+   {invoice_admins, []},
+   {enterprise_invoices, [
+     {enabled, false},                 %% Explicit opt-in on ONE billing node.
+     {auto_send, false},               %% Global safety gate, in addition to each plan.
+     {data_dir, "/var/lib/damage/invoices"},
+     {number_prefix, <<"DBDD-ENT">>},   %% New namespace; do not reuse historic invoice numbers.
+     {clock, node_local},              %% node_local or utc; node_local requires correct OS TZ.
+     {send_hour, 9},                   %% Earliest local/UTC hour, not an exact-time guarantee.
+     {max_periods_per_tick, 20},        %% At most ONE missed period per plan per minute.
+     {job_timeout_ms, 120000},
+     {pdf_engine, "pdflatex"},
+     {temp_dir, "/tmp"},               %% Private 0700 subdirectories; use tmpfs in production.
+     {seller, [
+       {name, <<"DAMAGEBDD">>},
+       {abn, <<"39 865 763 306">>},     %% Copied from supplied documents; review before use.
+       {email, <<"billing@damagebdd.com">>},
+       {address, <<>>},
+       {gst_registered, false},        %% NOT inferred from zero-GST examples. Confirm this.
+       {payment_instructions, <<>>}    %% Default profile cannot issue until configured.
+     ]},
+     %% Add node-reviewed profiles: [{<<"customer-profile">>, <<"Verified instructions">>}].
+     %% Actual enterprise details are provided separately in the private onboarding bundle.
+     {payment_profiles, []}
+   ]}
+ ]}
+].

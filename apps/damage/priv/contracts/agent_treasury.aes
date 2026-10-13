@@ -1,0 +1,88 @@
+@compiler >= 6
+
+contract DamageAgentTreasury =
+
+  record reservation =
+    { agent_id   : string
+    , reserver   : address
+    , amount     : int
+    , settled    : bool
+    }
+
+  record state =
+    { owner           : address
+    , balances        : map(address, int)
+    , agent_budgets   : map(string, int)
+    , reservations    : map(string, reservation)
+    }
+
+  datatype event =
+    Deposited(address, int)
+    | BudgetAllocated(string, int)
+    | Reserved(string, string, int)
+    | Settled(string, int)
+    | Refunded(string, int)
+
+  payable stateful entrypoint deposit() =
+    let current = Map.lookup_default(Call.caller, state.balances, 0)
+    put(state{ balances[Call.caller] = current + Call.value })
+    Chain.event(Deposited(Call.caller, Call.value))
+
+  stateful entrypoint allocate_budget(agent_id : string, amount : int) =
+    require_owner()
+    let current = Map.lookup_default(agent_id, state.agent_budgets, 0)
+    put(state{ agent_budgets[agent_id] = current + amount })
+    Chain.event(BudgetAllocated(agent_id, amount))
+
+  stateful entrypoint reserve(job_id : string, agent_id : string, amount : int) =
+    require_owner()
+    require(!reservation_exists(job_id), "JOB_ALREADY_RESERVED")
+    let budget = Map.lookup_default(agent_id, state.agent_budgets, 0)
+    require(budget >= amount, "INSUFFICIENT_AGENT_BUDGET")
+    put(state{ agent_budgets[agent_id] = budget - amount })
+    put(state{ reservations[job_id] =
+      { agent_id = agent_id, reserver = Call.caller, amount = amount, settled = false } })
+    Chain.event(Reserved(job_id, agent_id, amount))
+
+  stateful entrypoint settle(job_id : string, actual_amount : int) =
+    require_owner()
+    let r = require_reservation(job_id)
+    require(!r.settled, "ALREADY_SETTLED")
+    require(actual_amount =< r.amount, "SETTLE_GT_RESERVED")
+    put(state{ reservations[job_id] = r{settled = true} })
+    let refund = r.amount - actual_amount
+    if(refund > 0)
+      let current = Map.lookup_default(r.agent_id, state.agent_budgets, 0)
+      put(state{ agent_budgets[r.agent_id] = current + refund })
+    Chain.event(Settled(job_id, actual_amount))
+
+  stateful entrypoint refund(job_id : string) =
+    require_owner()
+    let r = require_reservation(job_id)
+    require(!r.settled, "ALREADY_SETTLED")
+    let current = Map.lookup_default(r.agent_id, state.agent_budgets, 0)
+    put(state{ agent_budgets[r.agent_id] = current + r.amount })
+    put(state{ reservations[job_id] = r{settled = true} })
+    Chain.event(Refunded(job_id, r.amount))
+
+  entrypoint budget(agent_id : string) : int =
+    Map.lookup_default(agent_id, state.agent_budgets, 0)
+
+  function reservation_exists(job_id : string) : bool =
+    switch(Map.lookup(job_id, state.reservations))
+      None => false
+      Some(_) => true
+
+  function require_reservation(job_id : string) : reservation =
+    switch(Map.lookup(job_id, state.reservations))
+      None => abort("RESERVATION_NOT_FOUND")
+      Some(r) => r
+
+  entrypoint init() =
+    { owner = Call.caller
+    , balances = {}
+    , agent_budgets = {}
+    , reservations = {} }
+
+  function require_owner() =
+    require(Call.caller == state.owner, "ONLY_OWNER")

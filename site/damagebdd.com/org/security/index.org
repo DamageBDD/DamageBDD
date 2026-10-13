@@ -1,0 +1,178 @@
+#+TITLE: DamageBDD Security Policy
+#+AUTHOR: DamageBDD Team
+#+DESCRIPTION: DamageBDD Security Policy covering vulnerability reporting, coordinated disclosure, CVSS severity scoring, operator hardening guidance and Lightning-based deployment security.
+#+KEYWORDS: DamageBDD security policy, vulnerability disclosure, coordinated disclosure, CVSS scoring, Erlang security hardening, DevOps security, responsible disclosure, security.txt, software supply chain security
+
+#+OPTIONS: toc:2 num:t
+#+LANGUAGE: en
+#+PROPERTY: header-args :eval never
+
+This page describes how to report vulnerabilities in DamageBDD, how we
+handle disclosures, and how operators can harden their deployments.
+
+* TL;DR
+- Report security issues to: =security@damagebdd.com= (PGP preferred).
+- Do *not* file public GitHub issues for sensitive reports.
+- We aim to acknowledge within *72 hours* and provide regular updates.
+- Coordinated disclosure by default; see [[#timeline][Timeline & Process]].
+
+* Contact & Keys
+** Security Contact
+- Nostr : =npub14ekwjk8gqjlgdv29u6nnehx63fptkhj5yl2sf8lxykdkm58s937sjw99u8=
+- Telegram : =https://t.me/damagebdd=
+
+** GPG / PGP Public Keys (Placeholders)
+Please use the project keys below to encrypt sensitive reports.
+Replace these blocks with the current keys when publishing.
+
+#+BEGIN_SRC text
+-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+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
+=M1n4
+-----END PGP PUBLIC KEY BLOCK-----
+
+#+END_SRC
+
+
+* Scope
+Security issues in:
+- DamageBDD core (Erlang/OTP app, libraries, =rebar.config= toolchain).
+- Official Docker images, release artifacts, installers, example configs.
+- Public =*.damagebdd.com= services (e.g., =run.damagebdd.com=, API endpoints).
+- Example infrastructure artifacts (e.g., =damagebdd.conf= for Nginx).
+
+Out of scope (unless a vulnerability causes impact to the above):
+- 3rd‑party services (cloud providers, CDNs, OS packages we do not maintain).
+- Experimental branches, forks outside the =DamageBDD/*= org.
+- Misconfigurations outside documented guidance (“won’t fix” if not a defect).
+
+* Safe Harbor
+We support good‑faith security research. If you:
+- Access only to the extent necessary to prove an issue,
+- Avoid privacy violations, disruption, or data exfiltration,
+- Report promptly with details to =security@damagebdd.com=,
+we will not initiate legal action against you for the research activities
+described in your report.
+
+* Reporting Guide
+Please include where possible:
+- Affected component/version and environment (OS, Erlang/OTP version).
+- Reproduction steps, PoC or exploit details (safe & minimal).
+- Expected vs. actual behavior and *impact* (confidentiality/integrity/availability).
+- Network/port details (esp. Erlang/EPMD/4369, node distribution, HTTP ports).
+- Mitigations or workarounds if you know them.
+- Whether the issue is exploitable over default settings.
+
+Encrypt with the security team key (preferred).
+
+* Timeline & Process
+:PROPERTIES:
+:ID:       timeline
+:END:
+
+1. /Acknowledgement/ within *72 hours* (business days).
+2. /Triage/ and assign CVE/CVSS prelim score when applicable.
+3. /Remediation/ planning with target fix window based on severity.
+4. /Coordinated disclosure/ with you; we share prerelease patches/advisories.
+5. /Public advisory/ with credit (if desired), patches and mitigations.
+6. /Post‑mortem/ notes may be published for high‑impact incidents.
+
+* Severity & Scoring
+We use CVSS v3.1 as a reference for severity:
+- *Critical*: RCE, auth bypass, supply‑chain compromise, default‑on exposure.
+- *High*: Privilege escalation, SSRF to sensitive planes, key leakage.
+- *Medium*: Information disclosure, DoS requiring unusual conditions.
+- *Low*: Hardening gaps, best‑practice deviations.
+We may adjust based on real‑world exploitability in typical DamageBDD deployments.
+
+* Operator Hardening Checklist
+- *Network exposure*: bind verification node to =127.0.0.1= and proxy via Nginx.
+- *TLS*: Use Let’s Encrypt (or equivalent); monitor renewals.
+- *Erlang distribution*: Do *not* expose EPMD (=4369=) or Erlang distribution ports publicly.
+- *Users & permissions*: run as a dedicated =damagebdd= user; least privilege FS permissions.
+- *Secrets*: store via =secrets:encrypt_store/2=; never commit secrets to VCS.
+- *Nginx*: enable rate‑limits; consider =fail2ban=; separate static and API vhosts.
+- *Logging*: centralize and monitor (=journalctl -u damagebdd=, Nginx logs).
+- *Updates*: patch OS, Erlang/OTP, Nginx, IPFS, and DamageBDD regularly.
+- *Resource limits*: set =LimitNOFILE= and CPU/memory quotas in systemd.
+- *Backups*: back up =sys.config=, secrets vault, and operator keys securely.
+- *SBOM & supply chain*: pin dependency versions; verify release signatures.
+
+* Responsible Disclosure Policy
+- We request a reasonable period for remediation prior to public release.
+- By default we target: Critical ≤ 14 days, High ≤ 30 days, Medium ≤ 60 days, Low ≤ 90 days.
+- We will coordinate public advisories, patches, and credits with you.
+
+* Public Advisories & Changelog
+All public advisories will be indexed on this page and mirrored in the repository
+(=SECURITY.advisories/=). Each advisory includes affected versions, impact, fixes,
+mitigations, and acknowledgments.
+
+* Acknowledgments
+We thank independent researchers and community members who report responsibly.
+If you wish to be credited, include your preferred name/handle and link.
+
+* security.txt (well‑known)
+We also publish a machine‑readable =/.well-known/security.txt= aligned with RFC 9116.
+
+#+BEGIN_SRC text
+Contact: mailto:security@damagebdd.com
+Expires: 2026-12-31T23:59:59Z
+Encryption: https://damagebdd.com/security#gpg--pgp-public-keys-placeholders
+Policy: https://damagebdd.com/security
+Hiring: https://damagebdd.com/hiring
+#+END_SRC
+
+* Legal
+- /No warranties./ Use of DamageBDD is at your own risk.
+- /Safe harbor/ for good‑faith research as described above.
+- Export and compliance obligations remain your responsibility.
+

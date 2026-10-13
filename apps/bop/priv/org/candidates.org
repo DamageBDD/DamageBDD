@@ -1,0 +1,53 @@
+#+TITLE: Bitcoin Only Party – Founding Member List for AEC Registration
+#+AUTHOR: BoP Agent for Registration
+#+DATE: 2025-05-16
+
+* Declaration
+
+We, the undersigned, declare that we are eligible voters enrolled on the Commonwealth electoral roll and are bona fide members of the Bitcoin Only Party (BoP). We support the party’s application for registration under the Commonwealth Electoral Act 1918.
+
+* Agent for Registration
+
+- Name: Steven Joseph
+- Address: [Insert address here, as required by AEC]
+- Email: [Insert contact email]
+- Phone: [Insert contact number]
+- Role: Party Agent / Party Secretary (as applicable)
+
+* Candidate and Member List (Minimum: 1 MP or 1,500 members)
+
+#+BEGIN_EXPORT html
+ <h2>BOP Candidates</h2>
+  <table id="candidates">
+    <thead>
+      <tr>
+        <th>Display Name</th>
+        <th>Lightning Address</th>
+        <th>Fundraising Link</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+<script type="module" src="https://unpkg.com/nostr-tools/lib/nostr.bundle.js" defer></script>
+<script type="module" src="/assets/js/bop-candidates.js" defer></script>
+
+#+END_EXPORT
+
+#+BEGIN_NOTE
+*Addresses are optional for AEC lodgement but may be required for internal verification.
+#+END_NOTE
+
+* Party Values and Notes
+
+- The Bitcoin Only Party does not accept fiat donations — only satoshis.
+- All membership records are cryptographically verifiable through BDD (Behavior-Driven Development) evidence of participation.
+- All members listed have completed one or more verified tasks recorded on DamageBDD.
+- Multi-sig governance policies are enforced for all treasury activity.
+- Prime Directive: *Everything on the Bitcoin chain is final.*
+
+* Next Steps
+
+1. Submit this document (signed, PDF or printed) to the AEC with Form PP01 – Application for party registration.
+2. Include proof of member identity as per AEC requirements.
+3. Maintain a verifiable record of member participation via DamageBDD task logs.
+

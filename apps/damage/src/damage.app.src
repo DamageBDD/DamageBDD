@@ -1,0 +1,70 @@
+%%% -*- mode: erlang; erlang-indent-level: 2; -*-
+
+{
+    application,
+    damage,
+    [
+        {description, "An OTP application to run bdd tests."},
+        {maintainer, <<"steven@stevenjoseph.in">>},
+        {vsn, git},
+        {registered, []},
+        {mod, {damage_app, []}},
+        {
+            applications,
+            [
+                kernel,
+                stdlib,
+                ssl,
+                inets,
+                gun,
+                gproc,
+                erlexec,
+                jsx,
+                poolboy,
+                crypto,
+                cowlib,
+                cowboy,
+                trails,
+                cowboy_swagger,
+                bech32,
+                erlcron,
+                zx,
+                zj,
+                vanillae,
+                % ssh deps
+                public_key,
+                asn1,
+                ssh
+            ]
+        },
+        {env, [
+            {webdriver_runtime, [{enabled, false}]},
+            {ecai_log_learning_enabled, true},
+            {ecai_log_capture_level, warning},
+            {ecai_log_learning_level, error},
+            {ecai_log_learning_apps, [damage, ecai, erm]},
+            {ecai_log_learning_cooldown_ms, 300000},
+            {ecai_log_recent_limit, 64},
+            {ecai_log_pending_limit, 256},
+            {ecai_log_flush_interval_ms, 1000},
+            {ecai_log_flush_batch, 8},
+            {ecai_log_handler_max_queue, 1000},
+            {ecai_log_max_text_bytes, 4096}
+        ]},
+        {modules, []},
+        {licenses, ["Apache 2.0"]},
+        {
+            start_phases,
+            [
+                {start_vanillae, []},
+                {init_chain, []},
+                {start_trails_http, []},
+                {damage, []},
+                {register_node, []},
+                {start_sync, []},
+                {setup_essentials, []}
+            ]
+        },
+        {links, []}
+    ]
+}.

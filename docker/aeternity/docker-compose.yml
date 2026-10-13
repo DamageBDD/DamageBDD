@@ -1,0 +1,31 @@
+services:
+  ae_mdw:
+    image: aeternity/ae_mdw:latest
+
+    ports:
+      - "4000:4000"
+      - "4002:4001"
+      - "3113:3113"
+      - "3013:3013"
+      - "3014:3014"
+
+    volumes:
+      - aeternity_mnesia:/home/aeternity/node/local/rel/aeternity/data/mnesia
+      - aeternity_mdw:/home/aeternity/node/local/rel/aeternity/data/mdw.db
+
+      - ./aeternity.yaml:/home/aeternity/aeternity.yaml:ro
+
+    environment:
+      AETERNITY_CONFIG: /home/aeternity/aeternity.yaml
+      DISABLE_IPV6: "true"
+
+    restart: unless-stopped
+
+volumes:
+  aeternity_mnesia:
+    external: true
+    name: aeternity_mnesia
+
+  aeternity_mdw:
+    external: true
+    name: aeternity_mdw      

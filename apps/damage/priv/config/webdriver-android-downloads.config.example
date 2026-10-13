@@ -1,0 +1,25 @@
+%% These are REPLACEMENT nested values inside webdriver_runtime.appium.
+%% This is a documented recipe, NOT a directly loadable sys.config.
+%% Choose archives for your host architecture. Obtain their SHA-256 values from
+%% the publisher. Placeholder URLs/hashes deliberately fail validation.
+%% Accept licenses only after the operator has reviewed the Android SDK terms.
+{java, [
+  {source, archive},
+  {url, "https://YOUR_APPROVED_JDK_HOST/path/jdk.tar.gz"},
+  {sha256, "REPLACE_WITH_PUBLISHER_SHA256"},
+  {subdir, "REPLACE_WITH_JDK_HOME_WITHIN_ARCHIVE"}
+]}.
+{android, [
+  {enabled, true},
+  {source, download},
+  {command_tools_url, "https://dl.google.com/android/repository/REPLACE_WITH_COMMAND_TOOLS_ARCHIVE.zip"},
+  {sha256, "REPLACE_WITH_PUBLISHER_SHA256"},
+  {accept_licenses, false},
+  {packages, [<<"platform-tools">>]}
+]}.
+%% Optional SDK packages, after reviewing their disk/host requirements:
+%% {packages, [<<"platform-tools">>, <<"platforms;android-35">>,
+%%             <<"build-tools;35.0.0">>, <<"emulator">>,
+%%             <<"system-images;android-35;google_apis;x86_64">>]}.
+%% Installing an image does not create/boot an AVD. Select an existing AVD using
+%% the trusted profile's appium:avd capability, or connect an authorized device.

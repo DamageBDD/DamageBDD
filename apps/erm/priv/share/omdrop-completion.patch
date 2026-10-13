@@ -1,0 +1,28 @@
+diff --git a/bin/airdrop-serve.py b/bin/airdrop-serve.py
+index e1cfe39..f77af5b 100755
+--- a/bin/airdrop-serve.py
++++ b/bin/airdrop-serve.py
+@@ -15,6 +15,7 @@ import errno
+ import io
+ import ipaddress
+ import json
++import omdrop_ecai_hook
+ import logging
+ import socket
+ import os
+@@ -987,6 +988,7 @@ class Handler(BaseHTTPRequestHandler):
+                     continue
+                 stored = store_link(item, DEST)
+                 logging.info('link stored as %s -> %s', stored, item)
++                omdrop_ecai_hook.completed(DEST, [stored])
+         resp = plistlib.dumps({
+             'ReceiverModelName': MODEL,
+             'ReceiverComputerName': NAME,
+@@ -1050,6 +1052,7 @@ class Handler(BaseHTTPRequestHandler):
+                              tid, wire_bytes, self.headers.get('TotalBytes'))
+                 written = store_upload(raw, DEST, tid, receive_budget)
+             logging.info('upload %s: stored %s', tid, ', '.join(written))
++            omdrop_ecai_hook.completed(DEST, written)
+         except socket.timeout as e:
+             # Chunked framing announces no length, so there is none to name.
+             expected = plan[1] if plan else None

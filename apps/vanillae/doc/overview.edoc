@@ -1,0 +1,77 @@
+@author Craig Everett <ceverett@zxq9.com> [https://gitlab.com/zxq9/zj]
+@version 0.3.0
+@title Vanillae: Aeternity blockchain bindings for Erlang
+
+@doc
+This Erlang application provides bindings for the Erlang blockchain.
+The primary goal is for usage to be easy to understand and as simple as possible to use.
+The secondary goal is to enable real-world projects to more easily connect with the blockchain in an obvious way and provide a clear path for them to provide feedback regarding areas that are difficult to understand, functionality that is lacking, and explain their use cases to us so we can more easily provide needed features and usage examples to make adoption easier.
+
+== Basic operation ==
+All external interfaces expected to be used by authors of programs that use Vanillae are built into the `vanillae' module.
+
+When Vanillae is started as an application a named process called `vanillae_man' is spawned that manages interactions with and the state of the service, as well as a simple-one-for-one supervisor that manages the lifecycle of Vanillae workers (defined in `vanillae_fetcher').
+
+After startup `vanillae_man' must be given the address and port of a list of Aeternity nodes that are available to service requests. Note that the service nodes will need to have the "dry run" endpoint enabled and the internal service query port made available in order to provide "dry run" and mempool TX submission functionality.
+
+The `vanillae_man' will round-robin requests to however many Aeternity nodes are provided in its configuration. Note that this congiruation is dynamic and can be changed completely at runtime.
+
+== Functions ==
+The `vanillae' module exposes one function per blockchain feature provided. Most of these are actually wrappers for blockchain endpoint functions, others provide functionality specific to accomplishing a local processing task related to chain data.
+
+== Initialization ==
+When Vanillae is first started the vanillae_man is started but does not yet know what Aeternity nodes to use to service queries. You will need to provide it with at least one node and port where it can make Aeternity endpoint calls.
+
+Note that if you will need to make read-only calls to contracts that are deployed on chain (to queery their state or perform specific read-only operations provided by the contract) the backend nodes you configure will need to be configured with "dry-run" enabled.
+
+Example of a shell session where vanillae is started and initialized manually with an AE node in the local network at 192.168.10.10:3013:
+
+```
+1> vanillae:start().     
+Starting.
+ok
+2> vanillae:status().
+{error,no_nodes}
+3> vanillae:ae_nodes([{"192.168.7.7", 3013}]).
+ok
+4> vanillae:status().                         
+{ok,#{"difficulty" => 59729882,
+      "genesis_key_block_hash" =>
+          "kh_wUCideEB8aDtUaiHCtKcfywU6oHZW6gnyci8Mw6S1RSTCnCRu",
+      "listening" => true,"network_id" => "ae_uat",
+      "node_revision" =>
+          "3a08153c635c53d92029a617f2e784731ba367c6",
+      "node_version" => "6.7.0",
+      "peer_connections" => #{"inbound" => 25,"outbound" => 10},
+      "peer_count" => 50,
+      "peer_pubkey" =>
+          "pp_fCBqobeSwhdnrzC8DoSsmWbf2GzDK61CJujmsCEd3RUkmh9Ny",
+      "pending_transactions_count" => 2,
+      "protocols" =>
+          [#{"effective_at_height" => 425900,"version" => 5},
+           #{"effective_at_height" => 154300,"version" => 4},
+           #{"effective_at_height" => 82900,"version" => 3},
+           #{"effective_at_height" => 40900,"version" => 2},
+           #{"effective_at_height" => 0,"version" => 1}],
+      "solutions" => 0,"sync_progress" => 100.0,
+      "syncing" => false,"top_block_height" => 802644,
+      "top_key_block_hash" =>
+          "kh_28LZSvHZPCGqeWsMsqtSjxQjQHKW1pHzoBex97oMT7U2HcLPgV"}}
+'''
+
+Alternatively, here is a start function for an application using Vanillae that initializes vanillae_man with a list of nodes provided by a configuration file:
+
+```
+start(normal, _Args) ->
+    ok = application:ensure_started(sasl),
+    {ok, Started} = application:ensure_all_started(cowboy),
+    ok = application:ensure_started(vanillae),
+    Nodes = proplists:get_value(ae_nodes, read_config(), []),
+    ok = vanillae:ae_nodes(Nodes),
+    ok = log(info, "Started: ~p~n", [[vanillae | Started]]),
+    Routes = [{'_', [{"/", count_top, []}]}],
+    Dispatch = cowboy_router:compile(Routes),
+    Env = #{env => #{dispatch => Dispatch}},
+    {ok, _} = cowboy:start_clear(count_listener, [{port, 8080}], Env),
+    count_sup:start_link().
+'''

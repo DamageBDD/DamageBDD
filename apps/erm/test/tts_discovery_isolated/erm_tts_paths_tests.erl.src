@@ -1,0 +1,44 @@
+-module(erm_tts_paths_tests).
+-include_lib("eunit/include/eunit.hrl").
+opts()->D=os:getenv("ERM_TTS_TEST_DIR"),#{model=>D++"/model",espeak_data=>D}.
+derived_defaults_test()->
+    #{paths:=P,errors:=E}=erm_tts_paths:resolve(opts()),
+    ?assertEqual(#{},E),
+    ?assertEqual(maps:get(model,opts())++".json",maps:get(config,P)),
+    ?assertEqual(filename:join(code:priv_dir(erm),"erm_tts_port"),maps:get(binary,P)),
+    ?assertEqual(os:find_executable("mpv"),maps:get(player,P)).
+explicit_invalid_test()->
+    #{errors:=E}=erm_tts_paths:resolve((opts())#{binary=>"/missing/erm_tts_port",player=>"mpv",config=>undefined}),
+    ?assertMatch(#{binary:=#{reason:=enoent},player:=#{reason:=absolute_path_required},config:=#{reason:=invalid_path}},E).
+missing_model_test()->
+    Old=os:getenv("PIPER_MODEL"),os:unsetenv("PIPER_MODEL"),
+    try #{errors:=E}=erm_tts_paths:resolve(maps:remove(model,opts())),
+        ?assertMatch(#{model:=#{reason:=missing_setting},config:=#{reason:=missing_setting}},E)
+    after restore("PIPER_MODEL",Old) end.
+environment_model_test()->
+    Old=os:getenv("PIPER_MODEL"),os:putenv("PIPER_MODEL",maps:get(model,opts())),
+    try #{errors:=E}=erm_tts_paths:resolve(maps:remove(model,opts())),?assertEqual(#{},E)
+    after restore("PIPER_MODEL",Old) end.
+permissions_and_type_test()->
+    D=os:getenv("ERM_TTS_TEST_DIR"),P=D++"/nonexec",ok=file:write_file(P,<<>>),ok=file:change_mode(P,8#600),
+    #{errors:=E}=erm_tts_paths:resolve((opts())#{binary=>P,config=>D}),
+    ?assertMatch(#{binary:=#{reason:=not_executable},config:=#{reason:=wrong_file_type}},E).
+prefix_test()->
+    D=os:getenv("ERM_TTS_TEST_DIR"),
+    #{errors:=E,paths:=P}=erm_tts_paths:resolve((maps:remove(espeak_data,opts()))#{piper_prefix=>D++"/sdk"}),
+    ?assertEqual(#{},E),?assertEqual(D++"/sdk/share/espeak-ng-data",maps:get(espeak_data,P)).
+recovery_test()->
+    D=os:getenv("ERM_TTS_TEST_DIR"),M=D++"/later.onnx",
+    {ok,Pid}=erm_tts:start_link((opts())#{model=>M}),
+    try
+        #{last_error:={backend_configuration,E}}=erm_tts:status(),
+        ?assertMatch(#{model:=#{reason:=enoent}},E),
+        ?assertEqual({error,not_ready},erm_tts:say("hello")),
+        #{errors:=E}=erm_tts:diagnostics(),
+        ok=file:write_file(M,<<>>),ok=file:write_file(M++".json",<<>>),Pid!connect,
+        wait(100),?assertEqual(undefined,maps:get(last_error,erm_tts:status()))
+    after gen_server:stop(Pid) end.
+wait(0)->error(not_ready);
+wait(N)->case maps:get(ready,erm_tts:status()) of true->ok;false->timer:sleep(10),wait(N-1) end.
+restore(K,false)->os:unsetenv(K);
+restore(K,V)->os:putenv(K,V).

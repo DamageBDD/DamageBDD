@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "customers": [
+    {
+      "id": "example-enterprise",
+      "name": "Example Enterprise",
+      "email": "",
+      "address": "",
+      "abn": "",
+      "enabled": false
+    }
+  ],
+  "plans": [
+    {
+      "id": "example-monthly",
+      "customer_id": "example-enterprise",
+      "name": "Monthly support - review price",
+      "cadence": "monthly",
+      "start_date": null,
+      "enabled": false,
+      "auto_send": false,
+      "currency": "AUD",
+      "payment_profile": "default",
+      "terms_days": 7,
+      "items": [
+        {
+          "description": "Agreed monthly support",
+          "quantity": 1,
+          "unit_price_minor": 10000,
+          "discount_minor": 0,
+          "tax_bps": 0
+        }
+      ],
+      "notes": "Example only. Replace with agreed scope and pricing before activating."
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Queue Wikimedia indexing jobs on this ECAI node">
+  <title>ECAI Wikimedia Indexer</title>
+  <link rel="icon" type="image/x-icon" href="/static/img/favicon.ico">
+  <link rel="stylesheet" href="/static/css/main.css">
+  <link rel="stylesheet" href="/static/css/ecai-indexer.css">
+</head>
+<body>
+  <div id="ecai-indexer-root" class="ecai-indexer-page" data-node-version="{{node_version}}">
+    {{{indexer_header}}}
+
+    <p id="indexerNotice" class="ecai-indexer-notice" role="status" aria-live="polite" hidden></p>
+
+    <main id="indexerWorkspace" hidden>
+      {{{presets}}}
+      {{{jobs}}}
+    </main>
+
+    <section id="indexerAuthRequired" class="ecai-indexer-auth-required">
+      <h2>Sign in to queue an index</h2>
+      <p class="ecai-indexer-muted">Existing DamageBDD users can use the same email and password.</p>
+      <button id="authRequiredLoginBtn" type="button">Sign in</button>
+    </section>
+
+    {{{login_dialog}}}
+  </div>
+
+  <script type="module" src="/static/js/sidekick.js"></script>
+  <script type="module" src="/static/js/ecai-indexer.js"></script>
+</body>
+</html>

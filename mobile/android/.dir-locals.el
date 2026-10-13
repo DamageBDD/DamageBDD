@@ -1,0 +1,5 @@
+((js-mode . ((js-indent-level . 2)))
+ (js-json-mode . ((js-indent-level . 2)))
+ (css-mode . ((css-indent-offset . 2)))
+ (html-mode . ((sgml-basic-offset . 2)))
+ (makefile-mode . ((indent-tabs-mode . t))))

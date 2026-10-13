@@ -1,0 +1,28 @@
+<!-- -*- mode: html -*- -->
+<section class="ecai-jobs">
+  <h2>Create ECAI NFTs</h2>
+
+{{#jobs}}
+<div class="job-card job-{{status}}">
+  <div class="job-header">
+    <span class="job-id">#{{id}}</span>
+    <span class="job-status">{{status}}</span>
+  </div>
+
+  <div class="job-actions">
+    <button class="btn"
+            data-micromodal-trigger="ecai-job-details-modal"
+            data-job-id="{{id}}">
+      View Job →
+    </button>
+  </div>
+</div>
+{{/jobs}}
+
+
+  {{^jobs}}
+  <div class="empty-state">
+    No ECAI jobs available.
+  </div>
+  {{/jobs}}
+</section>

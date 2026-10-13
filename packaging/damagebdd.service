@@ -1,0 +1,24 @@
+[Unit]
+Description=DamageBDD service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=damagebdd
+Group=damagebdd
+WorkingDirectory=/usr/libexec/damagebdd
+Environment=RELEASE_SYS_CONFIG=/etc/damagebdd/sys.config
+Environment=RELEASE_VM_ARGS=/etc/damagebdd/vm.args
+Environment=HOME=/var/lib/damagebdd
+RuntimeDirectory=damagebdd
+StateDirectory=damagebdd
+LogsDirectory=damagebdd
+ExecStart=/usr/libexec/damagebdd/bin/damagebdd foreground
+ExecStop=/usr/libexec/damagebdd/bin/damagebdd stop
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

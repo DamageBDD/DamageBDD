@@ -1,0 +1,181 @@
+/* Dark Mode Overrides */
+body.dark {
+  background-color: #121212;
+  color: #fefefe;
+}
+
+body.dark .site-header {
+    background-color: #FF9900;
+  color: #000;
+}
+
+body.dark .site-title,
+body.dark .tagline {
+  color: #000;
+}
+
+body.dark .nav-menu {
+  background-color: #1a1a1a;
+}
+
+body.dark .nav-menu a {
+  color: #fefefe;
+}
+
+body.dark .nav-icon {
+    color: #FF9900;
+}
+
+body.dark .content {
+  color: #fefefe;
+}
+
+body.dark h1.title,
+body.dark h2,
+body.dark h3 {
+  color: #fefefe;
+}
+
+body.dark code {
+  background-color: #1e1e1e;
+  color: #ffcc00;
+}
+
+body.dark blockquote {
+  background: #1c1c1c;
+  color: #aaa;
+  border-left: 4px solid #FF9900;
+}
+
+body.dark #table-of-contents {
+  background-color: #1c1c1c;
+}
+
+body.dark #text-table-of-contents a {
+  color: #ffcc00;
+}
+
+body.dark input,
+body.dark select,
+body.dark textarea {
+  background-color: #222;
+  color: #fefefe;
+  border: 1px solid #444;
+}
+
+body.dark .input-icon {
+  color: #FF9900;
+}
+
+body.dark #login-btn,
+body.dark #stack-btn {
+  background: linear-gradient(135deg, #FF9900, #ffcc00);
+  color: #111;
+}
+
+body.dark .footer {
+  background: #1a1a1a;
+  color: #888;
+  border-top: 1px solid #333;
+}
+
+body.dark .footer-message h2 {
+  color: #f7931a;
+}
+
+body.dark .footer .meta a {
+  color: #ffcc00;
+}
+/* Dark mode: Registration Stack Recents */
+body.dark #registration-stack-recents {
+  background: #1b1b1b;
+  border-radius: 0.5em;
+  border: 1px solid #333;
+  color: #fefefe;
+}
+
+/* Dark mode: Recent Table */
+body.dark .recent-table {
+  background-color: #1b1b1b;
+}
+
+body.dark .recent-table thead {
+  background-color: #333;
+  color: #fefefe;
+}
+
+body.dark .recent-table th,
+body.dark .recent-table td {
+  border: 1px solid #333;
+}
+
+body.dark .recent-table tbody tr:nth-child(even) {
+  background-color: #222;
+}
+
+body.dark .recent-table tbody tr:hover {
+  background-color: #0f2e33; /* matches light-mode cyan accent */
+}
+
+body.dark .qr-btn:hover {
+  color: #FF9900;
+}
+/* --- Dark Mode: registration stack --- */
+body.dark #registration-stack {
+  background: transparent;
+  border: 1px solid #2a2a2a;
+  border-radius: 12px;
+}
+
+body.dark #registration-stack input,
+body.dark .input-icon-container input {
+  background-color: #1b1b1b;
+  color: #fefefe;
+  border: 1px solid #333;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.5);
+}
+
+body.dark #stack-btn {
+  /* keep existing gradient; just deepen the shadow for dark */
+  box-shadow: 0 4px 12px rgba(0,0,0,0.45);
+}
+
+body.dark #registration-stack-recents {
+  background: #151515;
+  border: 1px solid #2a2a2a;
+  color: #ddd;
+}
+
+/* --- Dark Mode: recent table --- */
+body.dark .recent-table {
+  background-color: #161616;
+  border-collapse: collapse; /* ensure crisp borders */
+}
+
+body.dark .recent-table thead {
+  background-color: #222;
+  color: #fefefe;
+  border-bottom: 1px solid #333;
+}
+
+body.dark .recent-table th,
+body.dark .recent-table td {
+  border: 1px solid #2a2a2a;
+}
+
+body.dark .recent-table tbody tr:nth-child(even) {
+  background-color: #1a1a1a;
+}
+
+body.dark .recent-table tbody tr:hover {
+  background-color: #0f2e33; /* dark cyan hint to match light-mode accent */
+}
+
+body.dark .qr-btn:hover {
+  color: #FF9900; /* align hover accent with Bitcoin orange */
+}
+
+/* Optional: tighter icon contrast */
+body.dark .input-icon {
+  color: #FF9900;
+}

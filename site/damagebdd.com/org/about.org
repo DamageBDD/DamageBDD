@@ -1,0 +1,42 @@
+#+TITLE: About - DamageBDD
+#+DESCRIPTION: Learn how Steven founded DamageBDD to simplify Behavior-Driven Development, delivering deterministic, CI/CD-ready test verification without complex infrastructure.
+#+KEYWORDS: DamageBDD, Steven Joseph, Behavior-Driven Development, BDD, CI/CD integration, deterministic testing, server-side verification, software quality, solopreneur, test automation
+
+#+INCLUDE: "header.org"
+* About DamageBDD
+
+Welcome to DamageBDD! We are a cutting-edge technology company founded
+by Steven, an experienced developer and a passionate
+solopreneur. Steven's expertise lies in using Behavior-Driven
+Development (BDD) to ensure the performance and quality of server-side
+applications.
+
+At the beginning of his journey, Steven started using Behave BDD to
+verify the behavior of his applications. However, he soon encountered
+limitations and complexities in managing the entire infrastructure
+required to support a BDD workflow. This led him on a quest to find a
+better solution in the market. However, most available options were
+subscription-based or required additional software installations to
+manage tests or was just clunky.
+
+Steven envisioned a tool that would integrate seamlessly with CI/CD
+workflow, making it exceptionally user-friendly for him and his
+team. This is when DamageBDD was born. With DamageBDD, managing your
+tests is as simple as running a curl command. No special software
+installations required.
+
+After successfully completing his own startup journey, Steven was
+determined to productize DamageBDD and share the efficiency gains he
+experienced with the wider industry. He firmly believes that DamageBDD
+can effectively maintain high-quality, highly available software. Its
+simplicity and versatility make it applicable to a wide range of use
+cases.
+
+Join us on this exciting journey as we revolutionize the way software
+is developed and maintained. With DamageBDD, you can ensure the
+highest standards of performance, quality, and availability for your
+applications. Experience the power of BDD without the complexity
+it's just a command away!
+
+Welcome to DamageBDD - where simplicity meets power!
+

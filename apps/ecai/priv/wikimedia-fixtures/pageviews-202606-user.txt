@@ -1,0 +1,6 @@
+en.wikipedia Quantum_mechanics 1 1000
+en.wikipedia Classical_mechanics 2 700
+en.wikipedia Physique_quantique 3 500
+en.wikipedia Noise 4 10
+fr.wikipedia Mecanique_quantique 5 9999
+broken

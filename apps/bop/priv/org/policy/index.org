@@ -1,0 +1,19 @@
+#+TITLE: Index of BoP Governance Policies
+#+OPTIONS: toc:t
+#+AUTHOR: Bitcoin Only Party of Australia
+
+* Index of Active Policies
+
+| Policy ID | Title                                        | Hash             | Last Updated |
+|-----------+----------------------------------------------+----------------------------+--------------|
+| BOP-P001  | Domestic Payment Attestation Policy          | sha256:deadbeef...         | 2025-05-01   |
+| BOP-P002  | Multisig Governance Rules                    | 404    | 2025-05-03   |
+| BOP-P003  | Bitcoin Treasury Transparency and Audit      | 404    | 2025-05-05   |
+| BOP-P004  | Membership and Voting Eligibility Policy     | 404    | 2025-05-07   |
+| BOP-P005  | Damage Node Operational Ethics               | 404    | 2025-05-10   |
+
+* Instructions
+Each policy is maintained as a separate `.org` file, signed or hashed for public audit.
+- To propose amendments: fork, propose, and sign.
+- To verify compliance: run BDD assertions from the `BoP Governance Test Suite`.
+

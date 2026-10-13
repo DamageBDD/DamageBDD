@@ -1,0 +1,245 @@
+@compiler >= 6
+
+contract NodeRegistry =
+
+  ///
+  /// NodeRegistry v2
+  ///
+  /// Goal:
+  /// - Hold *node-level users* (node operators / accounts)
+  /// - Bind nodes -> user account
+  /// - Store node metadata + node config
+  ///
+  /// Notes (compiler 6 safe):
+  /// - We avoid list/map iteration-heavy patterns.
+  /// - We keep per-user node indexing via a list in `user_info`.
+  /// - All writes are owner-gated by default (matches your original registry style).
+  ///   If you later want “self-service registration”, you can add a non-owner entrypoint.
+  ///
+
+  record node_meta = {
+    // human label, e.g. "Sydney Runner #1"
+    name        : string,
+    // optional: any endpoint you want to expose (http, ws, onion, etc)
+    endpoint    : string,
+    // optional: freeform location / region / az
+    location    : string,
+    // optional: node software version
+    version     : string,
+    // optional: operator notes / role
+    notes       : string
+    }
+
+  record node_cfg = {
+    // whether the node is enabled for scheduling / selection
+    enabled       : bool,
+    // max concurrency permitted (your runner uses concurrency a lot)
+    max_conc      : int,
+    // pricing/cost policy identifier (e.g. "flat", "costed", "market")
+    pricing_tier  : string,
+    // freeform JSON (or yaml-as-string) for future compatibility
+    cfg_json      : string
+    }
+
+  record node_info = {
+    // the owning user account (operator)
+    owner_account : address,
+    // when registered
+    registered_at : int,
+    // mutable metadata
+    meta          : node_meta,
+    // mutable config
+    cfg           : node_cfg
+    }
+
+  record user_info = {
+    // user’s registry contract (as you had originally)
+    registry   : address,
+    joined     : int,
+    tier       : string,
+
+    // node ownership index
+    node_ids   : list(address),
+
+    // optional: aggregate counters (cheap, avoids iterating)
+    node_count : int
+    }
+
+  record state = {
+    owner : address,
+
+    // account -> user_info
+    users : map(address, user_info),
+
+    // node_id (address) -> node_info
+    nodes : map(address, node_info)
+    }
+
+  stateful entrypoint init() : state =
+    { owner = Call.caller
+      , users = {}
+      , nodes = {}
+        }
+
+  function require_owner() =
+    require(Call.caller == state.owner, "Only owner can call this")
+
+  function require_registered(account: address) =
+    require(Map.member(account, state.users), "Account not registered")
+
+  function require_node(node_id: address) =
+    require(Map.member(node_id, state.nodes), "Node not registered")
+
+  ///
+  /// Account registration (unchanged shape, but now initializes node index)
+  ///
+  stateful entrypoint register_account(account: address, registry: address, tier: string) : bool =
+    require_owner()
+    require(!Map.member(account, state.users), "Already registered")
+    let info : user_info =
+      { registry   = registry
+        , joined     = Chain.timestamp
+        , tier       = tier
+        , node_ids   = []
+        , node_count = 0
+        }
+    put(state{ users[account] = info })
+    true
+
+  entrypoint get_user_info(account: address) : user_info =
+    require_registered(account)
+    state.users[account]
+
+  entrypoint is_registered(account: address) : bool =
+    Map.member(account, state.users)
+
+  entrypoint get_registry(account: address) : address =
+    require_registered(account)
+    state.users[account].registry
+
+  stateful entrypoint update_tier(account: address, tier: string) : bool =
+    require_owner()
+    require_registered(account)
+    let user = state.users[account]
+    put(state{ users[account] = user{ tier = tier } })
+    true
+
+  ///
+  /// Node registration
+  ///
+  /// node_id is an address you choose as the node identity.
+  /// Typically:
+  /// - the node’s AE account address, OR
+  /// - an on-chain contract address representing a node operator agent.
+  ///
+  stateful entrypoint register_node(
+    owner_account: address,
+    node_id      : address,
+    meta         : node_meta,
+    cfg          : node_cfg
+    ) : bool =
+    require_owner()
+    require_registered(owner_account)
+    require(!Map.member(node_id, state.nodes), "Node already registered")
+
+    let ninfo : node_info =
+      { owner_account = owner_account
+        , registered_at = Chain.timestamp
+        , meta          = meta
+        , cfg           = cfg
+        }
+
+    // update per-user index
+    let u0   = state.users[owner_account]
+    let u1   = u0{ node_ids = node_id :: u0.node_ids, node_count = u0.node_count + 1 }
+
+    put(state{
+      nodes[node_id] = ninfo,
+      users[owner_account] = u1
+      })
+    true
+
+  ///
+  /// Read node info
+  ///
+  entrypoint get_node(node_id: address) : node_info =
+    require_node(node_id)
+    state.nodes[node_id]
+
+  entrypoint get_node_owner(node_id: address) : address =
+    require_node(node_id)
+    state.nodes[node_id].owner_account
+
+  entrypoint is_node_registered(node_id: address) : bool =
+    Map.member(node_id, state.nodes)
+
+  ///
+  /// List node ids for an account (in reverse insertion order)
+  /// (matches your AccountRegistry "names" behaviour)
+  ///
+  entrypoint get_nodes_for(account: address) : list(address) =
+    require_registered(account)
+    state.users[account].node_ids
+
+  ///
+  /// Update node metadata (owner-gated; can be relaxed later)
+  ///
+  stateful entrypoint update_node_meta(node_id: address, meta: node_meta) : bool =
+    require_owner()
+    require_node(node_id)
+    let n0 = state.nodes[node_id]
+    put(state{ nodes[node_id] = n0{ meta = meta } })
+    true
+
+  ///
+  /// Update node config (owner-gated; can be relaxed later)
+  ///
+  stateful entrypoint update_node_cfg(node_id: address, cfg: node_cfg) : bool =
+    require_owner()
+    require_node(node_id)
+    let n0 = state.nodes[node_id]
+    put(state{ nodes[node_id] = n0{ cfg = cfg } })
+    true
+
+  ///
+  /// Transfer a node to a different account (owner-gated)
+  /// Keeps the node entry stable, updates ownership.
+  /// NOTE: We do NOT remove from old owner's `node_ids` list (would require list filtering).
+  /// Instead we:
+  /// - change authoritative owner in nodes[node_id].owner_account
+  /// - append to new owner's list
+  /// This is cheap + compiler-safe, and you can treat per-user list as "history/index".
+  ///
+  stateful entrypoint reassign_node(node_id: address, new_owner_account: address) : bool =
+    require_owner()
+    require_node(node_id)
+    require_registered(new_owner_account)
+
+    let n0 = state.nodes[node_id]
+    let n1 = n0{ owner_account = new_owner_account }
+
+    let u0 = state.users[new_owner_account]
+    let u1 = u0{ node_ids = node_id :: u0.node_ids, node_count = u0.node_count + 1 }
+
+    put(state{
+      nodes[node_id] = n1,
+      users[new_owner_account] = u1
+      })
+    true
+
+  ///
+  /// Disable a node quickly (soft revoke)
+  ///
+  stateful entrypoint set_node_enabled(node_id: address, enabled: bool) : bool =
+    require_owner()
+    require_node(node_id)
+    let n0 = state.nodes[node_id]
+    let c0 = n0.cfg
+    put(state{ nodes[node_id] = n0{ cfg = c0{ enabled = enabled } } })
+    true
+  stateful entrypoint update_registry(account: address, registry: address) : bool =
+    require_owner()
+    require(Map.member(account, state.users), "Account not registered")
+    let u = state.users[account]
+    put(state{ users[account] = u{ registry = registry } })
+    true

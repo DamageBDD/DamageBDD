@@ -1,0 +1,64 @@
+<!-- -*- mode: html -*- -->
+<header class="topbar dashboard-topbar">
+  <div class="dashboard-topbar-heading">
+    <button type="button" id="dashboard-nav-toggle" class="dashboard-icon-button" aria-controls="dashboard-sidebar" aria-expanded="true" aria-label="Collapse navigation" title="Collapse navigation"><svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16M13 9h4M13 13h4"/></svg></button>
+    <div class="dashboard-location">
+      <p class="dashboard-breadcrumb"><span id="dashboard-section-group">Verification</span><svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m9 5 7 7-7 7"/></svg><strong id="dashboard-section-title">Workspace</strong></p>
+      <p id="dashboard-section-description" class="dashboard-section-description">Describe, review and run behaviours</p>
+    </div>
+  </div>
+
+  <div class="toolbar-items">
+    <div class="wallet-toolbar-card" aria-label="Wallet summary">
+      <div class="wallet-toolbar-main">
+        <div class="wallet-toolbar-address-row">
+          <span class="wallet-toolbar-kicker" data-session-kind>Session</span>
+          <span id="balanceAddress" class="wallet-toolbar-address" title="Wallet Address">
+            ak_...
+          </span>
+        </div>
+
+        <div class="wallet-toolbar-balances" id="balanceDiv">
+          <div class="wallet-balance-chip">
+            <span class="wallet-balance-label">DAMAGE</span>
+            <span id="balanceAmount" class="wallet-balance-value damage-amount">—</span>
+          </div>
+
+          <div class="wallet-balance-chip wallet-balance-chip-subtle">
+            <span class="wallet-balance-label">AE</span>
+            <span id="aeBalance" class="wallet-balance-value ae-balance">—</span>
+          </div>
+
+          <div class="wallet-balance-chip wallet-balance-chip-subtle">
+            <span class="wallet-balance-label">SATS</span>
+            <span id="satsBalance" class="wallet-balance-value sats-balance">—</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="wallet-toolbar-actions">
+        <button
+          id="open-wallet-modal-btn"
+          type="button"
+          class="styled-btn wallet-open-btn"
+          aria-label="Open wallet workspace"
+          title="Open wallet"
+        >
+          Wallet
+        </button>
+
+        <button
+          id="balanceRefreshBtn"
+          type="button"
+          class="icon-btn wallet-refresh-btn"
+          aria-label="Refresh balances"
+          title="Refresh balances"
+        >
+          ⟳
+        </button>
+      </div>
+    </div>
+
+
+  </div>
+</header>

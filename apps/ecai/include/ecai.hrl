@@ -1,0 +1,3 @@
+-define(KNOWLEDGE_NFT_CONTRACT,
+    "ct_q2MChbfBCtR18uRhuXcQy6WQsvVW94bW3R9Z5BuMN7kwWE3nB"
+).

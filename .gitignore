@@ -1,21 +1,271 @@
+# --------------------------------------------------------------------
+# Erlang / Rebar3
+# --------------------------------------------------------------------
 .rebar3
+.rebar
 _*
 .eunit
-*.o
+_build
+ebin
+
 *.beam
+*.o
+*.so
 *.plt
+
+rebar3.crashdump
+erl_crash.dump
+.erlang.cookie
+
+ct_run.*
+ct_log_cache/
+
+# --------------------------------------------------------------------
+# Editor / IDE
+# --------------------------------------------------------------------
+.idea/
+*.iml
 *.swp
 *.swo
-.erlang.cookie
-ebin
-log
-erl_crash.dump
-.rebar
-logs
-_build
-.idea
-*.iml
-rebar3.crashdump
 *~
+
+# Emacs autosave / lock / desktop state
+\#*\#
+.\#*
+.emacs.desktop
+
+# Local editor configuration
+.dir-locals.el
+
+# --------------------------------------------------------------------
+# Logs / temporary output
+# --------------------------------------------------------------------
+log
+logs/
+LOG
+*.log
+nohup.out
+recompile.log
+suite.log.latest.html
+
+# Screenshots / temporary media
+*_scrot.png
+out*.ogv
+
+# Generic scratch files seen during development
+chunk.tmp
+headers.txt
+testfile
+patch
+
+# --------------------------------------------------------------------
+# Local configuration
+# --------------------------------------------------------------------
 config/sys.config
+config/sys.config.bak
+config/sys.config.dev
+#config/sys.*.config
+
+.gitconfig
+
+# --------------------------------------------------------------------
+# Generated contract/deployment output
+# --------------------------------------------------------------------
 contracts/*.aes.deploy.*
+
+# --------------------------------------------------------------------
+# Generated build metadata
+# --------------------------------------------------------------------
+apps/damage/src/damage_build_info.erl
+commit_hash.txt
+
+# --------------------------------------------------------------------
+# Generated website
+# --------------------------------------------------------------------
+site/damagebdd.com/public/
+
+# --------------------------------------------------------------------
+# Packaging/build caches and packages
+# --------------------------------------------------------------------
+packaging/arch/.cache/*
+packaging/arch/zst/*
+packaging/mint/22/deb/*
+packaging/ubuntu/*/deb/*.deb
+
+*.deb
+*.pkg.tar.zst
+*.tar.gz
+*.tgz
+
+# --------------------------------------------------------------------
+# ECAI generated data
+# --------------------------------------------------------------------
+apps/ecai/priv/wikipedia/*
+ecai_index/
+knowledge_store.dets
+*.ctx
+
+# --------------------------------------------------------------------
+# Runtime databases / node state
+# --------------------------------------------------------------------
+Mnesia.*/
+damage.dets
+damage.prod.dets
+damage.staging.dets
+
+data/*.dets
+data/**/*.dets
+data/**/*.log
+!apps/damage/test/fixtures/public-test.key
+
+variables-*
+
+# --------------------------------------------------------------------
+# DamageBDD wallets / private runtime material
+# --------------------------------------------------------------------
+wallets/
+
+*.key
+*.pem
+
+# Do NOT accidentally commit locally generated certificates/keys.
+priv/certs/privkey.pem
+# Secrets / private key material
+
+*.key
+*.private
+*.pem
+*.vault
+
+# Erlang runtime/state databases
+*.dets
+
+# Mnesia runtime state
+Mnesia.*/
+
+# --------------------------------------------------------------------
+# NsecBunker vaults
+# --------------------------------------------------------------------
+.damage-nsecbunker/*.vault
+
+# --------------------------------------------------------------------
+# Tor hidden-service runtime identity
+# --------------------------------------------------------------------
+*.onion/hostname
+*.onion/hs_ed25519_public_key
+*.onion/hs_ed25519_secret_key
+*.onion/authorized_clients/
+
+# --------------------------------------------------------------------
+# Local Vagrant state
+# --------------------------------------------------------------------
+.vagrant/
+
+# --------------------------------------------------------------------
+# Generated test / report artifacts
+# --------------------------------------------------------------------
+artifacts/
+all_runs.html
+
+# Generated documentation, if rebuilt from source
+priv/docs/
+
+# --------------------------------------------------------------------
+# Misc runtime state observed in the repository
+# --------------------------------------------------------------------
+nwc_listener.log
+desopycli.log
+zomp.meta
+
+# --------------------------------------------------------------------
+# Existing project-specific rule
+# --------------------------------------------------------------------
+Q*
+
+# ----------------------------------------------------------------------
+# Local build/runtime state
+# ----------------------------------------------------------------------
+_build/
+_checkouts/
+_checkouts.bak*/
+ct_log_cache/
+logs/
+artifacts/
+Mnesia.*/
+variables-*/
+data/
+ecai_index/
+
+# Erlang build products
+*.beam
+*.so
+erl_crash.dump
+rebar3.crashdump
+
+# Runtime databases/state
+*.dets
+*.ctx
+*.tmp
+
+# Logs/reports
+*.log
+nohup.out
+all_runs.html
+suite.log.latest.html
+recompile.log
+
+# Local secrets / credentials
+*.key
+*.private
+privkey.pem
+key.pem
+tls.pem
+*.onion/
+wallets/
+
+# Python / JS generated dependencies
+__pycache__/
+*.py[cod]
+node_modules/
+
+# Editor backups
+*~
+*.swp
+*.swo
+*.bak
+*.bak[0-9]*
+*.orig
+*.rej
+
+# Generated package output
+packaging/arch/zst/
+packaging/mint/*/deb/
+packaging/mint/*/logs/
+packaging/slackware/out/
+packaging/ubuntu/*/deb/
+# Generated native compiler dependency files
+/apps/ecai/c_src/*.d
+/apps/erm/c_src/*.d
+/apps/erm/c_src/gtknode4/*.d
+/priv/crypto/damage-nsecbunker-crypto-c/src/*.d
+
+# Executables built from repository sources
+/apps/erm/c_src/gtknode4/gtknode4
+/apps/erm/priv/bin/gtknode4
+/priv/crypto/damage-nsecbunker-crypto-c/damage-nsecbunker-crypto-c
+
+# Blender automatic backup; retain the .blend source asset
+/apps/ecai/priv/blendomatic/*.blend1
+
+# Runtime/generated local state
+/damage
+/meta.json
+/nmapout.xml
+*.ledger
+
+# Common Test generated top-level assets
+/index.html
+/jquery-latest.js
+/jquery.tablesorter.min.js
+
+*.env

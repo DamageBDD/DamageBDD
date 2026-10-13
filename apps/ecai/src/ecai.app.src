@@ -1,0 +1,94 @@
+%%% -*- mode: erlang; erlang-indent-level: 2; -*-
+
+{
+    application,
+    ecai,
+    [
+        {description, "ECAI - Elliptic Curve Artificial Intelligence."},
+        {vsn, "0.1.0"},
+        {registered, []},
+        {mod, {ecai_app, []}},
+        {applications, [
+            kernel,
+            stdlib,
+            crypto,
+            public_key,
+            ssl,
+            ranch,
+            cowlib,
+            cowboy,
+            gun,
+            poolboy,
+            jsx,
+            trails,
+            os_mon,
+            cowboy_swagger,
+            vanillae,
+            damage
+        ]},
+        {env, [
+            {marketplace_enabled, false},
+            %% Safe default: account settings enabled, but remote spending and mint
+            %% requests are both disabled until each account explicitly opts in.
+            {compute_settings_enabled, true},
+            %% Native Ollama-compatible inference gateway. Authentication stays
+            %% enabled by default even though the ECAI listener defaults to loopback.
+            {ollama_api_enabled, true},
+            {ollama_api_auth_required, true},
+            %% Per-account Ollama bearer keys are hashed at rest and independently revocable.
+            {ollama_api_keys_enabled, true},
+            {ollama_api_key_limit_per_account, 20},
+            {ollama_api_quick_model, <<"ecai/chat:latest">>},
+            {ollama_api_max_body, 8388608},
+            {ollama_api_rag_top_k, 8},
+            {ollama_api_context_max_bytes, 32768},
+            {index_rewards_enabled, false},
+            {index_pool_enabled, false},
+            {index_pool_participant_enabled, false},
+            %% DamageBDD node_admins is authoritative; default is disabled.
+            {code_admin_enabled, false},
+            %% [] permits all DamageBDD node admins; nonempty is an intersection.
+            {code_admin_accounts, []},
+            {code_review_push_enabled, false},
+            {code_review_required_approvals, 1},
+            {code_review_run_eunit, true},
+            {code_review_run_ct, false},
+            %% Slow scan/preflight cycles run outside the manager request loop.
+            {code_patch_cycle_timeout_ms, 300000},
+            {code_health_monitor_enabled, true},
+            {code_health_interval_ms, 300000},
+            {code_health_initial_delay_ms, 15000},
+            {code_health_recent_log_limit, 12},
+            {code_health_queue_timeout_ms, 15000},
+            {code_health_request_timeout_ms, 30000},
+            {code_health_connect_timeout_ms, 5000},
+            {code_health_cluster_attempts, 2},
+            {code_health_max_prompt_bytes, 65536},
+            {code_health_model_statuses, [degraded, fail]},
+            {code_health_provider, ollama},
+            {code_log_learning_enabled, true},
+            {code_log_learning_max_queue, 256},
+            {code_log_learning_retry_limit, 5},
+            {code_log_learning_retry_delay_ms, 30000},
+            {code_log_learning_queue_timeout_ms, 30000},
+            {code_log_learning_request_timeout_ms, 60000},
+            {code_log_learning_connect_timeout_ms, 5000},
+            {code_log_learning_cluster_attempts, 2},
+            {code_log_learning_max_prompt_bytes, 65536},
+            {code_log_learning_provider, ollama},
+            {code_repair_feedback_enabled, true},
+            {code_repair_feedback_min_confidence, medium},
+            {code_repair_feedback_replay_limit, 100},
+            {code_health_repair_feedback_enabled, true}
+        ]},
+        {modules, []},
+        {licenses, ["Apache 2.0"]},
+        {
+            start_phases,
+            [
+                {start_trails_http, []}
+            ]
+        },
+        {links, []}
+    ]
+}.

@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>DAMAGE token activity</title>
+  <style>
+    :root{color-scheme:light dark;--bg:#0b1020;--card:#11182a;--muted:#6b7280;--text:#f8fafc;--line:#273244;--accent:#fbbf24;--link:#60a5fa;--ok:#34d399;--bad:#fb7185}
+    @media (prefers-color-scheme:light){:root{--bg:#f8fafc;--card:#fff;--muted:#64748b;--text:#0f172a;--line:#e2e8f0;--accent:#b45309;--link:#2563eb}}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:1120px;margin:0 auto;padding:28px 16px 56px}.hero{display:grid;gap:8px;margin:0 0 22px}.eyebrow{color:var(--accent);font-weight:700;letter-spacing:.08em;text-transform:uppercase;font-size:.78rem}h1{font-size:clamp(2rem,6vw,4.5rem);line-height:.95;margin:0}.lede{max-width:760px;color:var(--muted);font-size:1.05rem}.panel,.card{border:1px solid var(--line);background:var(--card);border-radius:18px;box-shadow:0 10px 30px rgba(0,0,0,.12)}.panel{padding:16px;margin-bottom:16px}.grid{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px}@media(max-width:760px){.grid{grid-template-columns:1fr}.card{grid-template-columns:1fr!important}}label{display:grid;gap:6px;font-weight:700;font-size:.88rem}input,select,button{font:inherit;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:transparent;color:var(--text)}button{cursor:pointer;background:rgba(148,163,184,.12);font-weight:700}button:hover{border-color:var(--link)}button:disabled{opacity:.45;cursor:not-allowed}.actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px}.hint{color:var(--muted);font-size:.9rem}.status{margin:12px 0;color:var(--muted)}.status strong{color:var(--text)}.cards{display:grid;gap:12px}.card{display:grid;grid-template-columns:148px 1fr;gap:16px;padding:16px}.time{color:var(--muted);font-size:.9rem}.badge{display:inline-block;margin-top:8px;padding:3px 9px;border:1px solid var(--line);border-radius:999px;color:var(--accent);font-size:.82rem;font-weight:800}.title{font-size:1.05rem;font-weight:800;margin:0 0 8px}.links{display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 12px}a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}.kv{display:grid;grid-template-columns:130px 1fr;gap:6px 12px}.k{color:var(--muted)}.v{overflow-wrap:anywhere}.empty{padding:24px;border:1px dashed var(--line);border-radius:18px;color:var(--muted)}.pill{display:inline-flex;gap:6px;align-items:center;border:1px solid var(--line);border-radius:999px;padding:4px 9px}.ok{color:var(--ok)}.bad{color:var(--bad)}details{margin-top:10px}summary{cursor:pointer;color:var(--muted)}
+  </style>
+</head>
+<body>
+<main>
+  <section class="hero">
+    <div class="eyebrow">DamageBDD</div>
+    <h1>DAMAGE token activity</h1>
+    <p class="lede">A simple standalone view of paid behaviour verification activity. It talks directly to public Aeternity middleware and public IPFS gateways; the DamageBDD node is only needed to serve this static page.</p>
+  </section>
+
+  <section class="panel" aria-label="Activity filters">
+    <div class="grid">
+      <label>Wallet address, optional
+        <input id="wallet" autocomplete="off" spellcheck="false" placeholder="ak_... or ct_...">
+      </label>
+      <label>Rows to scan
+        <select id="limit"><option>10</option><option selected>20</option><option>50</option><option>100</option></select>
+      </label>
+      <label>DAMAGE token contract
+        <input id="contract" autocomplete="off" spellcheck="false" placeholder="ct_...">
+      </label>
+    </div>
+    <details>
+      <summary>Public data sources</summary>
+      <div class="grid" style="margin-top:12px">
+        <label>Aeternity middleware base
+          <input id="mdw" autocomplete="off" spellcheck="false" value="https://mainnet.aeternity.io/mdw">
+        </label>
+        <label>Preferred IPFS gateway
+          <select id="ipfs"></select>
+        </label>
+      </div>
+    </details>
+    <div class="actions">
+      <button id="refresh" type="button">Refresh</button>
+      <button id="copy" type="button">Copy link</button>
+      <span class="hint">Leave wallet blank for global stream. Add a wallet to filter by account activity.</span>
+    </div>
+  </section>
+
+  <div id="status" class="status">Ready.</div>
+  <section id="cards" class="cards" aria-live="polite"></section>
+  <div class="actions" style="margin-top:16px">
+    <button id="prev" type="button">Previous</button>
+    <button id="next" type="button">Next</button>
+    <span id="pageInfo" class="hint"></span>
+  </div>
+</main>
+
+<script>
+(() => {
+  "use strict";
+
+  const DEFAULT_DAMAGE_TOKEN_CONTRACT = "";
+  const DEFAULT_MDW_BASE = "https://mainnet.aeternity.io/mdw";
+  const IPFS_GATEWAYS = [
+    "https://ipfs.io/ipfs/",
+    "https://dweb.link/ipfs/",
+    "https://cloudflare-ipfs.com/ipfs/",
+    "https://gateway.pinata.cloud/ipfs/"
+  ];
+  const AESCAN = "https://aescan.io";
+  const TOKEN_DECIMALS = 8;
+  const FEATURE_TITLE_CACHE_MS = 7 * 24 * 60 * 60 * 1000;
+
+  const $ = (id) => document.getElementById(id);
+  const state = { pagePath: null, nextPath: null, prevPath: null, lastMode: "global" };
+
+  function initControls() {
+    for (const gw of IPFS_GATEWAYS) {
+      const option = document.createElement("option");
+      option.value = gw;
+      option.textContent = gw;
+      $("ipfs").appendChild(option);
+    }
+    const params = new URLSearchParams(location.search);
+    $("wallet").value = params.get("wallet") || params.get("address") || params.get("account") || "";
+    $("limit").value = params.get("limit") || "20";
+    $("contract").value = params.get("contract") || DEFAULT_DAMAGE_TOKEN_CONTRACT;
+    $("mdw").value = params.get("mdw") || DEFAULT_MDW_BASE;
+    $("ipfs").value = params.get("ipfs") || IPFS_GATEWAYS[0];
+  }
+
+  function setStatus(message, cls = "") {
+    const node = $("status");
+    node.className = `status ${cls}`.trim();
+    node.textContent = message;
+  }
+
+  function readConfig() {
+    const mdwBase = stripTrailingSlash($("mdw").value.trim() || DEFAULT_MDW_BASE);
+    const wallet = $("wallet").value.trim();
+    const contract = $("contract").value.trim() || DEFAULT_DAMAGE_TOKEN_CONTRACT;
+    const limit = Math.min(100, Math.max(1, Number($("limit").value || 20)));
+    const preferredIpfs = $("ipfs").value || IPFS_GATEWAYS[0];
+    return { mdwBase, wallet, contract, limit, preferredIpfs };
+  }
+
+  function updateUrl() {
+    const { mdwBase, wallet, contract, limit, preferredIpfs } = readConfig();
+    const params = new URLSearchParams();
+    if (wallet) params.set("wallet", wallet);
+    if (limit !== 20) params.set("limit", String(limit));
+    if (contract && contract !== DEFAULT_DAMAGE_TOKEN_CONTRACT) params.set("contract", contract);
+    if (mdwBase !== DEFAULT_MDW_BASE) params.set("mdw", mdwBase);
+    if (preferredIpfs !== IPFS_GATEWAYS[0]) params.set("ipfs", preferredIpfs);
+    history.replaceState(null, "", `${location.pathname}${params.toString() ? "?" + params : ""}`);
+  }
+
+  function stripTrailingSlash(value) { return value.replace(/\/+$/, ""); }
+
+  function mdwUrl(pathOrUrl) {
+    const { mdwBase } = readConfig();
+    if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+    if (pathOrUrl.startsWith("/mdw/")) return new URL(pathOrUrl, new URL(mdwBase).origin).toString();
+    if (pathOrUrl.startsWith("/v3/")) return `${mdwBase}${pathOrUrl}`;
+    if (pathOrUrl.startsWith("v3/")) return `${mdwBase}/${pathOrUrl}`;
+    return `${mdwBase}/${pathOrUrl.replace(/^\/+/, "")}`;
+  }
+
+  function firstPageUrl() {
+    const { wallet, contract, limit } = readConfig();
+    const params = new URLSearchParams();
+    params.set("direction", "backward");
+    params.set("type", "contract_call");
+    params.set("contract", contract);
+    params.set("limit", String(limit));
+    if (wallet) params.set("account", wallet);
+    state.lastMode = wallet ? "wallet" : "global";
+    return mdwUrl(`/v3/transactions/?${params.toString()}`);
+  }
+
+  async function fetchJson(url) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 25000);
+    try {
+      const response = await fetch(url, { signal: controller.signal, headers: { "accept": "application/json" } });
+      if (!response.ok) throw new Error(`HTTP ${response.status} from ${url}`);
+      return await response.json();
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function fetchTxFull(txHash) {
+    return fetchJson(mdwUrl(`/v3/transactions/${encodeURIComponent(txHash)}`));
+  }
+
+  function pageItems(page) { return Array.isArray(page?.data) ? page.data : []; }
+  function pageNext(page) { return page?.next || null; }
+  function pagePrev(page) { return page?.prev || null; }
+
+  function txHashOf(row) {
+    return text(row?.hash || row?.tx_hash || row?.payload?.tx_hash || row?.payload?.hash || row?.tx?.hash || row?.tx?.tx_hash || "");
+  }
+
+  function txCandidates(row) {
+    return [
+      row,
+      row?.payload,
+      row?.payload?.tx,
+      row?.payload?.tx?.tx,
+      row?.payload?.tx?.tx?.tx,
+      row?.tx,
+      row?.tx?.tx,
+      row?.tx?.tx?.tx
+    ].filter(Boolean);
+  }
+
+  function txInner(row) {
+    return txCandidates(row).find((x) => x && (x.function || x.arguments || x.args || x.contract_id || x.caller_id)) || null;
+  }
+
+  function extractTxArguments(row) {
+    for (const c of txCandidates(row)) {
+      const args = c?.arguments || c?.args;
+      if (Array.isArray(args)) return args;
+    }
+    return [];
+  }
+
+  function argValue(arg) {
+    if (arg && typeof arg === "object" && "value" in arg) return arg.value;
+    if (Array.isArray(arg) && arg.length >= 2) return arg[1];
+    return arg;
+  }
+
+  function toMs(timeValue) {
+    const n = Number(timeValue);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    if (n > 1e14) return Math.floor(n / 1000); // microseconds
+    if (n > 1e12) return n;                    // milliseconds
+    if (n > 1e9) return n * 1000;               // seconds
+    return null;
+  }
+
+  function normalizeSpend(row, knownHash = "") {
+    const { contract } = readConfig();
+    const inner = txInner(row);
+    if (!inner || text(inner.function) !== "spend") return null;
+
+    const seenContract = text(inner.contract_id || inner.contract || row?.contract_id || row?.contract || "");
+    if (seenContract && contract && seenContract !== contract) return null;
+
+    const args = extractTxArguments(row);
+    const nodePublicKey = text(argValue(args[0]));
+    const amountRaw = Number(argValue(args[1]));
+    const featureCid = text(argValue(args[2]));
+    const reportCid = text(argValue(args[3]));
+    if (!featureCid || !reportCid) return null;
+
+    const microTime = row?.micro_time || row?.payload?.micro_time || inner?.micro_time || row?.time || row?.block_time;
+    return {
+      txHash: knownHash || txHashOf(row),
+      createdMs: toMs(microTime),
+      callerId: text(inner.caller_id || row?.caller_id || row?.account_id || row?.payload?.account_id || ""),
+      nodePublicKey,
+      amountRaw: Number.isFinite(amountRaw) ? amountRaw : 0,
+      featureCid,
+      reportCid
+    };
+  }
+
+  async function normalizeRow(row) {
+    const h = txHashOf(row);
+    const direct = normalizeSpend(row, h);
+    if (direct) return direct;
+    if (!h) return null;
+    try {
+      const full = await fetchTxFull(h);
+      return normalizeSpend({ ...full, hash: h }, h);
+    } catch (err) {
+      console.debug("Cannot fetch transaction", h, err);
+      return null;
+    }
+  }
+
+  function text(value) { return String(value ?? "").trim(); }
+  function short(value, n = 10) {
+    const v = text(value);
+    return v.length > n * 2 + 3 ? `${v.slice(0, n)}...${v.slice(-n)}` : v;
+  }
+  function formatDate(ms) { return ms ? new Date(ms).toLocaleString() : "time unavailable"; }
+  function formatAmount(raw) {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return "-";
+    return (n / Math.pow(10, TOKEN_DECIMALS)).toLocaleString(undefined, { maximumFractionDigits: TOKEN_DECIMALS });
+  }
+  function isLikelyCid(value) { return /^Qm[1-9A-HJ-NP-Za-km-z]{44,}$/.test(value) || /^bafy[a-z2-7]+$/i.test(value); }
+
+  function gatewaysFor(cid) {
+    const { preferredIpfs } = readConfig();
+    return [preferredIpfs, ...IPFS_GATEWAYS.filter((g) => g !== preferredIpfs)].map((g) => `${g}${encodeURIComponent(cid)}`);
+  }
+
+  async function firstLineFromIpfs(cid) {
+    if (!isLikelyCid(cid)) return short(cid, 16);
+    const cacheKey = `damage-activity:firstline:${cid}`;
+    try {
+      const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
+      if (cached && Date.now() - cached.t < FEATURE_TITLE_CACHE_MS) return cached.v;
+    } catch {}
+    for (const url of gatewaysFor(cid)) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10000);
+      try {
+        const response = await fetch(url, { signal: controller.signal, headers: { "range": "bytes=0-2048" } });
+        if (!response.ok) continue;
+        const body = await response.text();
+        const line = body.split(/\r?\n/).map((x) => x.trim()).find(Boolean) || short(cid, 16);
+        localStorage.setItem(cacheKey, JSON.stringify({ t: Date.now(), v: line }));
+        return line;
+      } catch (err) {
+        console.debug("IPFS gateway failed", url, err);
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    return short(cid, 16);
+  }
+
+  function linkToIpfs(cid) { return `${readConfig().preferredIpfs}${encodeURIComponent(cid)}`; }
+  function txLink(txHash) { return `${AESCAN}/transactions/${encodeURIComponent(txHash)}`; }
+  function accountLink(account) { return `${AESCAN}/accounts/${encodeURIComponent(account)}`; }
+
+  function el(tag, attrs = {}, children = []) {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (v === false || v == null) continue;
+      if (k === "class") node.className = v;
+      else if (k === "text") node.textContent = v;
+      else node.setAttribute(k, v);
+    }
+    for (const child of [].concat(children)) node.append(child);
+    return node;
+  }
+
+  async function renderCard(row) {
+    const title = await firstLineFromIpfs(row.featureCid);
+    const left = el("div", {}, [
+      el("div", { class: "time", text: formatDate(row.createdMs) }),
+      el("div", { class: "badge", text: "spend" })
+    ]);
+    const links = el("div", { class: "links" }, [
+      el("a", { href: linkToIpfs(row.featureCid), target: "_blank", rel: "noopener", text: "feature" }),
+      el("a", { href: linkToIpfs(row.reportCid), target: "_blank", rel: "noopener", text: "report" }),
+      row.txHash ? el("a", { href: txLink(row.txHash), target: "_blank", rel: "noopener", text: "transaction" }) : document.createTextNode("")
+    ]);
+    const kv = el("div", { class: "kv" });
+    addKv(kv, "Amount", `${formatAmount(row.amountRaw)} DAMAGE`);
+    addKv(kv, "Caller", row.callerId ? accountAnchor(row.callerId) : "-");
+    addKv(kv, "Node", row.nodePublicKey ? accountAnchor(row.nodePublicKey) : "-");
+    addKv(kv, "Feature CID", row.featureCid);
+    addKv(kv, "Report CID", row.reportCid);
+    if (row.txHash) addKv(kv, "Tx hash", row.txHash);
+    const main = el("div", {}, [el("h2", { class: "title", text: title }), links, kv]);
+    return el("article", { class: "card" }, [left, main]);
+  }
+
+  function accountAnchor(account) {
+    const a = el("a", { href: accountLink(account), target: "_blank", rel: "noopener", text: short(account, 12) });
+    a.title = account;
+    return a;
+  }
+
+  function addKv(parent, key, value) {
+    parent.append(el("div", { class: "k", text: key }));
+    const v = el("div", { class: "v" });
+    if (value instanceof Node) v.append(value);
+    else v.textContent = text(value);
+    parent.append(v);
+  }
+
+  async function renderPage(pagePath = null) {
+    updateUrl();
+    state.pagePath = pagePath;
+    const { wallet, limit, contract } = readConfig();
+    if (!contract || contract.includes("REPLACE_WITH")) {
+      setStatus("Set the DAMAGE token contract address before loading activity.", "bad");
+      $("cards").innerHTML = "";
+      $("cards").append(el("div", { class: "empty", text: "Pass ?contract=ct_... in the page URL or paste the DAMAGE token contract address above." }));
+      $("prev").disabled = true;
+      $("next").disabled = true;
+      return;
+    }
+    const mode = wallet ? `wallet ${short(wallet, 12)}` : `global contract ${short(contract, 12)}`;
+    setStatus(`Loading ${mode} activity from public middleware...`);
+    $("cards").innerHTML = "";
+    $("prev").disabled = true;
+    $("next").disabled = true;
+
+    try {
+      const url = pagePath ? mdwUrl(pagePath) : firstPageUrl();
+      const page = await fetchJson(url);
+      const raw = pageItems(page);
+      state.nextPath = pageNext(page);
+      state.prevPath = pagePrev(page);
+
+      const rows = [];
+      for (const item of raw) {
+        const normalized = await normalizeRow(item);
+        if (normalized) rows.push(normalized);
+      }
+
+      $("cards").innerHTML = "";
+      if (!rows.length) {
+        $("cards").append(el("div", { class: "empty", text: `No DAMAGE spend calls found in ${raw.length} middleware rows. Use Next to scan older activity.` }));
+      } else {
+        for (const row of rows) $("cards").append(await renderCard(row));
+      }
+
+      $("prev").disabled = !state.prevPath;
+      $("next").disabled = !state.nextPath;
+      $("pageInfo").textContent = `Scanned ${raw.length} rows, rendered ${rows.length}. Limit ${limit}.`;
+      setStatus(`Loaded ${rows.length} DAMAGE spend entr${rows.length === 1 ? "y" : "ies"} from public middleware.`);
+    } catch (err) {
+      console.error(err);
+      setStatus(`Failed to load activity: ${err.message}`, "bad");
+      $("cards").append(el("div", { class: "empty", text: "Check the wallet address, token contract, middleware URL, or browser CORS/network access." }));
+    }
+  }
+
+  $("refresh").addEventListener("click", () => renderPage(null));
+  $("prev").addEventListener("click", () => state.prevPath && renderPage(state.prevPath));
+  $("next").addEventListener("click", () => state.nextPath && renderPage(state.nextPath));
+  $("copy").addEventListener("click", async () => {
+    updateUrl();
+    await navigator.clipboard.writeText(location.href).catch(() => {});
+    setStatus("Shareable link copied.", "ok");
+  });
+  for (const id of ["wallet", "limit", "contract", "mdw", "ipfs"]) {
+    $(id).addEventListener("change", () => renderPage(null));
+  }
+
+  initControls();
+  renderPage(null);
+})();
+</script>
+</body>
+</html>

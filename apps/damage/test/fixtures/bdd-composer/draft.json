@@ -1,0 +1,21 @@
+{
+  "status":"ok",
+  "feature":"Feature: API health\n\n  Scenario: Service reports healthy\n    Given I am using server \"https://api.example.com\"\n    When I make a GET request to \"/health\"\n    Then the response status must be \"200\"\n    Then the json at path \"$.status\" must be \"ok\"\n",
+  "assumptions":["This is fixture data for UI testing, not an ECAI inference result."],
+  "missing_steps":[],
+  "complete":true,
+  "grounding":{"knowledge_cards":1,"catalog_revision":"preview-fixture-not-a-deployed-catalog"},
+  "validation":{
+    "valid":true,
+    "scope":"gherkin_syntax_and_step_signatures",
+    "step_count":4,
+    "diagnostics":[],
+    "required_variables":[],
+    "matched_steps":[
+      {"line":4,"module":"steps_http","step_id":"server","source_line":1},
+      {"line":5,"module":"steps_http","step_id":"get","source_line":2},
+      {"line":6,"module":"steps_http","step_id":"status","source_line":3},
+      {"line":7,"module":"steps_http","step_id":"json","source_line":4}
+    ]
+  }
+}

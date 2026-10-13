@@ -1,0 +1,163 @@
+/*
+ * Integration skeleton for the existing crypto backend. Replace the callback
+ * declarations with the backend's real vault and JSON-operation functions.
+ */
+#include "damage_secure_port_protocol.h"
+
+#include <stdint.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+#define MAX_FRAME_BYTES (4u * 1024u * 1024u)
+
+struct damage_vault_state;
+
+/* Return 0 on success. These functions must never log secret input. */
+int damage_vault_unlock(struct damage_vault_state *state,
+                        const uint8_t *passphrase, uint32_t passphrase_len);
+int damage_handle_json_operation(struct damage_vault_state *state,
+                                 const uint8_t *json, uint32_t json_len,
+                                 uint8_t **response, uint32_t *response_len);
+void damage_vault_close(struct damage_vault_state *state);
+
+static int write_status(uint8_t response_type, uint8_t status) {
+    const uint8_t response[2] = {response_type, status};
+    return damage_write_packet4(STDOUT_FILENO, response, sizeof(response));
+}
+
+int damage_secure_backend_loop(struct damage_vault_state *state) {
+    uint8_t *frame = NULL;
+    uint32_t frame_len = 0;
+    int unlocked = 0;
+
+    for (;;) {
+        if (damage_read_packet4(STDIN_FILENO, &frame, &frame_len,
+                                MAX_FRAME_BYTES) != 0) {
+            break;
+        }
+
+        if (frame_len < 1) {
+            damage_secure_zero(frame, frame_len);
+            free(frame);
+            break;
+        }
+
+        if (frame[0] == DAMAGE_FRAME_UNLOCK_REQUEST) {
+            int result;
+
+            if (unlocked || frame_len == 1) {
+                damage_secure_zero(frame, frame_len);
+                free(frame);
+                frame = NULL;
+                if (write_status(DAMAGE_FRAME_UNLOCK_RESPONSE,
+                                 DAMAGE_FRAME_STATUS_ERROR) != 0) {
+                    break;
+                }
+                continue;
+            }
+
+            result = damage_vault_unlock(state, frame + 1, frame_len - 1);
+
+            /* Clear the frame before any response or branch leaves scope. */
+            damage_secure_zero(frame, frame_len);
+            free(frame);
+            frame = NULL;
+            frame_len = 0;
+
+            if (result != 0) {
+                (void)write_status(DAMAGE_FRAME_UNLOCK_RESPONSE,
+                                   DAMAGE_FRAME_STATUS_ERROR);
+                break;
+            }
+
+            unlocked = 1;
+            if (write_status(DAMAGE_FRAME_UNLOCK_RESPONSE,
+                             DAMAGE_FRAME_STATUS_OK) != 0) {
+                break;
+            }
+            continue;
+        }
+
+        if (frame[0] == DAMAGE_FRAME_OPERATION_REQUEST && unlocked) {
+            uint8_t *json_response = NULL;
+            uint32_t json_response_len = 0;
+            uint8_t *wire_response;
+            uint32_t wire_response_len;
+            int result = damage_handle_json_operation(
+                state,
+                frame + 1,
+                frame_len - 1,
+                &json_response,
+                &json_response_len
+            );
+
+            damage_secure_zero(frame, frame_len);
+            free(frame);
+            frame = NULL;
+            frame_len = 0;
+
+            if (result != 0 || json_response == NULL) {
+                if (json_response != NULL) {
+                    damage_secure_zero(json_response, json_response_len);
+                    free(json_response);
+                }
+                if (write_status(DAMAGE_FRAME_OPERATION_RESPONSE,
+                                 DAMAGE_FRAME_STATUS_ERROR) != 0) {
+                    break;
+                }
+                continue;
+            }
+
+            if (json_response_len > MAX_FRAME_BYTES - 2u) {
+                damage_secure_zero(json_response, json_response_len);
+                free(json_response);
+                break;
+            }
+
+            wire_response_len = json_response_len + 2u;
+            wire_response = malloc(wire_response_len);
+            if (wire_response == NULL) {
+                damage_secure_zero(json_response, json_response_len);
+                free(json_response);
+                break;
+            }
+
+            wire_response[0] = DAMAGE_FRAME_OPERATION_RESPONSE;
+            wire_response[1] = DAMAGE_FRAME_STATUS_OK;
+            for (uint32_t i = 0; i < json_response_len; ++i) {
+                wire_response[i + 2u] = json_response[i];
+            }
+
+            damage_secure_zero(json_response, json_response_len);
+            free(json_response);
+
+            result = damage_write_packet4(
+                STDOUT_FILENO, wire_response, wire_response_len
+            );
+            damage_secure_zero(wire_response, wire_response_len);
+            free(wire_response);
+
+            if (result != 0) {
+                break;
+            }
+            continue;
+        }
+
+        damage_secure_zero(frame, frame_len);
+        free(frame);
+        frame = NULL;
+        frame_len = 0;
+
+        if (write_status(DAMAGE_FRAME_OPERATION_RESPONSE,
+                         DAMAGE_FRAME_STATUS_ERROR) != 0) {
+            break;
+        }
+    }
+
+    if (frame != NULL) {
+        damage_secure_zero(frame, frame_len);
+        free(frame);
+    }
+    damage_vault_close(state);
+    return 0;
+}

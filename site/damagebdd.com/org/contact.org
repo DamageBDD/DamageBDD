@@ -1,0 +1,31 @@
+#+TITLE: DamageBDD - Contact
+
+Have a question about Behaviour-Driven Development, CI/CD integration, Bitcoin-native verification, or enterprise use cases?
+
+We’re happy to help.
+
+Whether you're:
+- Exploring a pilot project
+- Integrating DamageBDD into your workflow
+- Interested in DAMAGE Token utility
+- Running infrastructure or smart contract verification
+- Looking for consultation or collaboration
+
+Just reach out.
+
+** 📅 Schedule a Call
+
+The fastest way to get started:
+
+[[https://calendly.com/damagebdd/15min][Schedule a 15-minute call with DamageBDD]]
+
+** 💬 Community & Direct Channels
+
+- Telegram: [[https://t.me/damagebdd][Join the DamageBDD Telegram]]
+- Discord: [[https://discord.gg/ZQHnDqAg][Join our Discord]]
+- Nostr: [[https://njump.me/npub14ekwjk8gqjlgdv29u6nnehx63fptkhj5yl2sf8lxykdkm58s937sjw99u8][Follow DamageBDD on Nostr]]
+- GitHub Issues: [[https://github.com/DamageBDD/DamageBDD/issues][Report bugs or request features]]
+
+If you're reporting a security issue, please follow the guidelines on the Security page and avoid posting sensitive details publicly.
+
+We look forward to verifying behaviour with you 🚀

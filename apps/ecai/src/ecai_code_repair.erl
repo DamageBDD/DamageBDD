@@ -1,0 +1,98 @@
+-module(ecai_code_repair).
+
+-export([
+    scan_now/0,
+    propose/3,
+    propose/4,
+    propose_finding/3,
+    propose_finding/4,
+    integrate/0,
+    integrate/1,
+    integration_status/0,
+    integration_jobs/0,
+    integration_job/1,
+    repairs/0,
+    repairs/1,
+    feedback_repairs/0,
+    replay_feedback/0
+]).
+
+scan_now() ->
+    ecai_patch_manager:scan_now().
+
+propose(App, Module, Fingerprint) ->
+    propose(App, Module, Fingerprint, #{}).
+
+propose(App, Module, Fingerprint0, Opts) when is_atom(App), is_atom(Module), is_map(Opts) ->
+    Fingerprint = to_binary(Fingerprint0),
+    case ecai_vuln_monitor:findings(App, Module) of
+        Report when is_map(Report) ->
+            Findings = mget(<<"findings">>, Report, []),
+            case find_finding(Fingerprint, Findings) of
+                {ok, Finding} -> ecai_patch_sup:propose(App, Module, Finding, Opts);
+                not_found -> {error, {finding_not_found, Fingerprint}}
+            end;
+        Other ->
+            {error, {cannot_load_findings, Other}}
+    end.
+
+propose_finding(App, Module, Finding) ->
+    propose_finding(App, Module, Finding, #{}).
+
+propose_finding(App, Module, Finding, Opts) when
+    is_atom(App), is_atom(Module), is_map(Finding), is_map(Opts)
+->
+    ecai_patch_sup:propose(App, Module, Finding, Opts).
+
+integrate() ->
+    ecai_patch_integration:run_now().
+
+integrate(Opts) when is_map(Opts) ->
+    ecai_patch_integration:run_now(Opts).
+
+integration_status() -> ecai_patch_integration:status().
+integration_jobs() -> ecai_patch_integration:jobs().
+integration_job(JobId) -> ecai_patch_integration:job(JobId).
+
+repairs() -> ecai_learning_store:repairs().
+repairs(Fingerprint) -> ecai_learning_store:repairs(Fingerprint).
+
+feedback_repairs() ->
+    [R || R <- ecai_learning_store:repairs(), is_feedback_repair(R)].
+
+replay_feedback() ->
+    ecai_repair_feedback:replay().
+
+is_feedback_repair(Repair) when is_map(Repair) ->
+    maps:is_key(repair_source, Repair) orelse maps:is_key(feedback, Repair);
+is_feedback_repair(_) ->
+    false.
+
+find_finding(_Fingerprint, []) ->
+    not_found;
+find_finding(Fingerprint, [Finding | Rest]) when is_map(Finding) ->
+    case mget(<<"fingerprint">>, Finding, <<>>) of
+        Fingerprint -> {ok, Finding};
+        _ -> find_finding(Fingerprint, Rest)
+    end;
+find_finding(Fingerprint, [_ | Rest]) ->
+    find_finding(Fingerprint, Rest).
+
+mget(Key, Map, Default) when is_map(Map), is_binary(Key) ->
+    case maps:find(Key, Map) of
+        {ok, V} ->
+            V;
+        error ->
+            try binary_to_existing_atom(Key, utf8) of
+                A -> maps:get(A, Map, Default)
+            catch
+                error:badarg -> Default
+            end
+    end;
+mget(_Key, _Map, Default) ->
+    Default.
+
+to_binary(B) when is_binary(B) -> B;
+to_binary(L) when is_list(L) -> unicode:characters_to_binary(L);
+to_binary(A) when is_atom(A) -> atom_to_binary(A, utf8);
+to_binary(V) -> iolist_to_binary(io_lib:format("~p", [V])).

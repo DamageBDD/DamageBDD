@@ -1,0 +1,252 @@
+#+TITLE: DamageBDD Australian Crypto Tax Evidence (prototype)
+#+DESCRIPTION: Read-only CLN/NWC/on-chain evidence, historic AUD values, audit pack and æternity hash anchoring
+
+* Status and compliance boundary
+
+This package is an ADDITIVE, REVIEW-REQUIRED PROTOTYPE for an Australian
+crypto record-keeping workflow. It is NOT ATO certified, cannot lodge a BAS or
+tax return, and is not an automatic assessment of taxable income, CGT or GST.
+A registered tax agent / qualified reviewer must confirm decisions, the
+entity's accounting method and the completeness of all asset inventories.
+
+The report is "attestable" only when every imported non-allocation event has
+an archived price witness, an archived source snapshot and an explicit approved
+classification. "Attestable" means internally complete for *the imported
+records*, not proof that all transactions were imported or that tax advice is
+correct. On-chain signatures certify publication of a digest, not ATO approval.
+
+* Source integration
+
+- =damage_cln:list_all_invoices(#{page_limit => 200, order => asc})=: complete
+  historic invoice listing, with pagination performed by the existing CLN helper.
+  Only invoices with =status=paid= and actual =paid_at= / =amount_received_msat=
+  become receipt evidence. Creation alone is NOT revenue.
+  =damage_tax:ingest_cln/1= fails closed unless application config
+  =tax_cln_owner= exactly matches the requested legal-entity/account identifier.
+  A shared node needs an additional per-business attribution adapter; do not
+  reuse the global CLN importer for arbitrary customer wallet accounts.
+- =damage_cln:list_pays/0=: only completed outgoing payments are imported;
+  principal and routing fee are separate events. Failed/pending attempts are
+  ignored. Outgoing does NOT automatically mean a tax deduction.
+- =damage_tax:import_chain/2=: caller-supplied *confirmed* Bitcoin/æternity
+  transaction evidence with explicit asset units/decimals, confirmed timestamp,
+  block hash, positive block height, positive confirmations, transaction ID
+  and direction. Importing a funding or closing transaction does not
+  automatically make it taxable.
+- =damage_tax:import_nwc/2=: a client-scoped ledger movement is an internal
+  allocation. It never creates a second receipt for the same Bitcoin payment.
+  A separately observed CLN payment is the payment source of record.
+
+=damage_tax_cln= does not currently ingest CLN =listforwards= routing-income
+history, on-chain =listtransactions=, node channel balance snapshots, mining or
+staking income, fiat exchange trades, or L402 business invoice receivables.
+Import independent confirmed records through =import_chain= or a future
+adapter before claiming year-wide completeness. The chain importer requires a
+transaction identifier, block hash, positive block height, confirmation count
+and confirmed timestamp but DOES NOT independently verify Bitcoin Merkle proofs
+or æternity inclusion. Supply them from a trusted node/indexer and reconcile.
+Inclusion, ownership and confirmation depth need separate verification.
+Incoming invoices paid to the node may belong to DIFFERENT customers; scope
+per legal entity rather than blindly allocating the entire node to every
+wallet owner.
+
+* Historical AUD pricing
+
+=damage_tax_prices:fetch(cryptocompare, Asset, UnixSeconds)= retrieves
+CryptoCompare =/data/v2/histohour= for BTC, ETH or AE to AUD. The applied rate
+is the =open= of the UTC hour containing the event. It cannot include later
+trades in that hour. This is a reasonable historical market proxy, not an
+exchange-specific executed price; for material amounts prefer transaction-
+specific exchange statements and retain them as separate evidence.
+
+=damage_tax_prices:fetch(coingecko, Asset, UnixSeconds)= is an optional daily
+historical fallback. It requires historical API access (Demo tier typically
+covers only the most recent 365 days). Its daily granularity triggers
+=coarse_price_requires_approval= until the reviewer explicitly approves it.
+Keys are optional headers from =tax_cryptocompare_key= and
+=tax_coingecko_demo_key= application settings; they are not included in
+canonical price evidence. Public endpoints, rate limits, access and historical
+availability can change and have NOT been live-tested in this release.
+
+Every price quote has a provider, method, UTC timestamp, AUD fixed-point rate,
+resolution, response SHA-256 and retrieval timestamp. Store the exact raw HTTP
+response in the PRIVATE evidence directory before approving a price. Never
+silently substitute an unsupported token price or today's exchange rate.
+
+* Accounting decisions
+
+Each source event begins unclassified. Decisions are provided independently in
+an event-ID keyed map. Permitted categories:
+
+- =ordinary_income=: candidate business receipt amount in AUD.
+- =business_expense=: candidate business expenditure; deductibility unassessed.
+- =cgt_disposal=: a disposal with reviewer-supplied acquisition timestamp,
+  cost base in AUD cents and independent lot reference. Only UNDISCOUNTED
+  gains and losses are computed; discounts, exemptions and loss-order rules are
+  NOT computed.
+- =cost_basis_acquisition=: acquisition record and candidate cost basis;
+  not automatically a deduction or gain.
+- =internal_transfer=: a documented move between accounts/wallets under the
+  same beneficial ownership (review and price witness still required).
+- =non_tax_event=: reviewed non-tax movement.
+- =review=: the mandatory default for unclassified events.
+
+NWC allocations are flagged =non_tax_event= by default because they are not
+independent blockchain/CLN asset receipts, but the underlying real payment
+must still be reconciled. Outgoing payments cannot silently be classified as income and incoming
+receipts cannot silently be classified as deductible business expenses; a
+conflicting classification blocks attestation pending an adjustment workflow.
+Fees are not automatically deductible. Account for
+business-as-trading-stock vs investor-on-capital-account distinctions and
+cash-basis vs accruals-basis recognition separately. If income is recognised
+on an invoice date under the accounting method, settled CLN receipt evidence
+alone is not enough to determine the tax period of assessable income.
+
+GST is not calculated. In a GST-registered enterprise, receiving qualifying
+digital currency as payment for a taxable supply generally follows the
+underlying supply's GST treatment; GST on a BAS must be expressed in AUD.
+Digital currency itself may have a different GST treatment to the supply.
+Keep GST tax invoices/credit notes with business source documents and review
+input tax credits separately.
+
+FY is 1 July to the following 30 June. =fy_bounds/2= accepts the financial
+YEAR OF END and a configured local standard UTC offset in minutes for the
+1 July boundaries: Sydney/Melbourne/Brisbane +600, Adelaide +570,
+Darwin +570, Perth +480. July boundaries occur during standard time.
+All transaction timestamps are UTC Unix seconds.
+
+* Files and setup
+
+Files under the monorepo root:
+
+: apps/damage/src/damage_tax*.erl
+: apps/damage/src/steps_tax.erl
+: apps/damage/test/damage_tax_tests.erl
+: contracts/tax_evidence_anchor.aes
+: features/tax/ato_cln_provenance.feature
+: docs/tax/README.org
+
+Start the store ONCE via =damage_sup= under an explicit opt-in configuration.
+For example, add a worker child after =damage_cln= is initialized:
+
+#+begin_src erlang
+#{id => damage_tax_store,
+  start => {damage_tax, start_link, ["/var/lib/damage/tax/journal.jsonl"]},
+  restart => permanent, shutdown => 5000, type => worker,
+  modules => [damage_tax_store]}
+#+end_src
+
+Register =steps_tax= with the configured DamageBDD step modules to execute
+=features/tax/ato_cln_provenance.feature=. The uploaded source does not include
+the currently deployed =damage_sup.erl= / =damage_config.erl=, so startup
+registration and BDD module registration must be applied against that version
+rather than guessed here. EUnit tests can run without enabling the BDD module.
+
+Choose a dedicated path owned by the daemon account. The journal is mode 0600,
+and =evidence/= is 0700 with per-file 0600, but this is *not encryption*.
+Protect the entire parent directory, backups and operator account. The journal
+is a single-writer store, intended for one DamageBDD instance per journal;
+DO NOT mount it as a concurrent multi-node append log. Replicate using trusted
+backups / authenticated event distribution and merge in a separate process.
+
+Optional application settings are simple tuples:
+
+#+begin_src erlang
+{damage, [
+  {tax_cln_owner, <<"ak_REPLACE_WITH_CLN_OPERATOR_ACCOUNT">>},
+  {tax_cryptocompare_key, <<"FROM_SECRETS_STORE">>},
+  {tax_coingecko_demo_key, <<"FROM_SECRETS_STORE">>}
+]}
+#+end_src
+
+Do not put real API keys into =sys.config= checked into Git. Inject them via a
+secret manager. Credentials used for tax sources MUST NOT be recorded in a
+report or written on chain.
+
+* Example Erlang shell workflow
+
+#+begin_src erlang
+Tenant = <<"ak_REPLACE_WITH_REAL_ACCOUNT">>.
+{ok, Imported} = damage_tax:ingest_cln(Tenant).
+{ok, Events} = damage_tax:records(Tenant).
+
+Needs = damage_tax_report:required_prices(Events, 2026, 600).
+Quotes = lists:foldl(fun({Asset, Hour}, Acc) ->
+    {ok, Quote} = damage_tax:fetch_and_archive_quote(cryptocompare, Asset, Hour),
+    Acc#{{Asset, Hour} => Quote}
+end, #{}, Needs).
+
+%% The reviewer must supply an explicit decision for each event.
+%% Example ONLY: ordinary_income is not valid for every incoming payment.
+Decisions = #{
+  %% <<"event-id-sha256">> => #{<<"category">> => <<"ordinary_income">>,
+  %%      <<"approved">> => true, <<"reviewer">> => <<"reviewer-id">>}
+}.
+
+{ok, Report} = damage_tax_report:build(2026, 600, Events, Quotes, Decisions).
+Review = maps:get(<<"review_required">>, maps:get(<<"manifest">>, Report)).
+ok = damage_tax_report:export_private(Report, "/var/lib/damage/tax/FY2026").
+
+%% Only if all classifications are approved and evidence is archived:
+{ok, Proof} = damage_tax_attest:prepare(Report).
+%% Submission signs with an explicit authorised æternity account keypair:
+%% {ok, Submitted} = damage_tax_attest:submit(OwnerKeyPair, ContractId, Report).
+#+end_src
+
+Evidence for a publicly fetched price is stored as raw HTTP JSON at
+=evidence/<lowercase_sha256>.json=, with the SHA in the report manifest.
+For native CLN responses the saved snapshot is a deliberate allowlisted view;
+preimages, secrets and BOLT11 data are excluded. Preserve a separate encrypted
+native CLN export through your normal regulated backup policy for source
+reconstruction; hash commitments alone do not reproduce missing records.
+
+* On-chain anchoring
+
+The small =TaxEvidenceAnchor= Sophia contract emits:
+
+: ReportCommitted(caller, "AU-FY-2026", manifest_sha256,
+:                 evidence_set_sha256, "damage_tax_au_review_v1")
+
+One transaction per approved report/version is sufficient. A replacement
+report MUST be a new on-chain revision/commitment, never a mutation to prior
+records. After submission, verify inclusion/finality independently through
+an æternity node or middleware; the library returns status
+=submitted_check_chain_confirmation=, not "finalised". An optional AEX-141
+NFT may reference the *confirmed* transaction and public manifest hash, but
+should NOT carry client names, payment hashes, tax returns, or source data.
+
+The caller is responsible for deploying/auditing the contract and explicitly
+authorising the signing account. Do not use node administrator keys for an
+unreviewed tax report. On-chain attestation proves commitment and signer,
+not correctness of financial records or tax assessment.
+
+* ATO record keeping and limitations
+
+Official Australian Taxation Office guidance (checked October 2026):
+
+- https://www.ato.gov.au/individuals-and-families/investments-and-assets/crypto-asset-investments/keeping-crypto-records
+- https://www.ato.gov.au/businesses-and-organisations/income-deductions-and-concessions/income-you-must-declare/crypto-asset-business
+- https://www.ato.gov.au/businesses-and-organisations/gst-excise-and-indirect-taxes/gst/in-detail/your-industry/financial-services-and-insurance/gst-and-digital-currency
+
+ATO asks to retain AUD values, transaction times, receipts, counterparties and
+wallet/exchange records. General crypto record retention is 5 years from the
+later relevant preparation/transaction/CGT event trigger; keep longer where
+necessary for cost base, amendment periods or other retention obligations.
+A blockchain digest does NOT replace the underlying paper or electronic files.
+
+Not implemented: source completeness auditing, balances and UTXO/channel
+reconciliation, independent tax-agent digital signatures, GST/BAS forms,
+capital account FIFO/specific lot matching, CGT discount rules, inventory /
+trading-stock adjustments, FX conversion for indirect quotes, historical
+provider outage fallback, auto-scheduled sync, or ATO lodgement. Integrate
+and validate these before describing the product as end-to-end ATO compliant.
+
+* Testing
+
+: rebar3 compile
+: rebar3 eunit --module=damage_tax_tests
+: rebar3 ct
+
+The offline tests use deterministic snapshots only and do not call ATO,
+CryptoCompare, CoinGecko, Core Lightning or æternity mainnet. The provided
+files are not accompanied by a live end-to-end execution certificate.

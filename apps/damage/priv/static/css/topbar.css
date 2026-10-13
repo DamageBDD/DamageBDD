@@ -1,0 +1,110 @@
+/* =========================
+   Brand: Logo + Name + Tagline
+   ========================= */
+
+.site-header{
+  display: flex;
+  align-items: center;
+  gap: .85rem;
+}
+
+/* Logo */
+.logo{
+  width: 98px;
+  height: 98px;
+  object-fit: contain;
+  filter:
+    drop-shadow(0 2px 6px rgba(0,0,0,.45))
+    drop-shadow(0 0 12px rgba(0,140,255,.15));
+}
+
+/* Text stack */
+.brand-text{
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  line-height: 1.1;
+}
+
+/* Product name */
+.brand-text .title{
+  font-family: 'Rubik', system-ui, sans-serif;
+  font-size: 1.65rem;
+  font-weight: 800;
+  letter-spacing: .3px;
+  color: #eaf4ff;
+  text-align: left;
+
+  /* subtle brand glow */
+  text-shadow:
+    0 1px 0 rgba(255,255,255,.04),
+    0 6px 18px rgba(0,140,255,.18);
+}
+
+/* Tagline */
+.brand-text .subtitle{
+  margin-top: .2rem;
+  font-size: .9rem;
+  font-weight: 500;
+  letter-spacing: .25px;
+  color: rgba(200,220,255,.75);
+
+  /* visually separates from the title */
+  opacity: .9;
+}
+/* ===== Brand responsiveness ===== */
+
+@media (max-width: 900px){
+  .logo{
+    width: 48px;
+    height: 48px;
+  }
+
+  .brand-text .title{
+    font-size: 1.35rem;
+  }
+
+  .brand-text .subtitle{
+    font-size: .82rem;
+  }
+}
+
+@media (max-width: 360px){
+  .site-header{
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: .25rem;
+  }
+
+  .brand-text{
+    align-items: center;
+  }
+
+  .brand-text .title{
+    font-size: 1.15rem;
+  }
+
+  .brand-text .subtitle{
+    font-size: .75rem;
+  }
+}
+/* Subtle divider between brand and actions */
+.topbar{
+  position: relative;
+}
+
+.topbar::after{
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    rgba(0,140,255,.0),
+    rgba(0,140,255,.35),
+    rgba(0,140,255,.0)
+  );
+}

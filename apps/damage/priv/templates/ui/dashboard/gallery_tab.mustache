@@ -1,0 +1,39 @@
+<!-- -*- mode: html -*- -->
+<section id="nft-gallery" class="workspace-page" aria-labelledby="nft-gallery-heading">
+  <div class="workspace-heading">
+    <div>
+      <p class="workspace-eyebrow">AEX-141 ASSETS</p>
+      <h1 id="nft-gallery-heading">NFT Gallery</h1>
+      <p>Mainnet NFTs for selected addresses, including transferable DamageBDD settlement rewards.</p>
+    </div>
+  </div>
+
+  <section class="workspace-card nft-filter" aria-labelledby="nft-filter-heading">
+    <div class="workspace-card-body nft-filter__row">
+      <div class="nft-filter__left">
+        <h2 id="nft-filter-heading">Address filters</h2>
+        <div id="addrTags" class="addr-tags" aria-label="Selected addresses"></div>
+
+        <div class="addr-add">
+          <label class="visually-hidden" for="addrInput">Add Aeternity account</label>
+          <input id="addrInput" type="text" placeholder="Add address (ak_...)"
+                 spellcheck="false" autocomplete="off" inputmode="text"
+                 class="addr-add__input workspace-input">
+          <button id="addrAddBtn" class="workspace-button" type="button">Add</button>
+        </div>
+
+        <p id="addrHint" class="workspace-helper">
+          Click a tag to toggle it. Add addresses to expand the filter set (ak_ only).
+        </p>
+      </div>
+
+      <div class="nft-filter__right workspace-actions">
+        <button id="loadNftsBtn" class="workspace-button workspace-primary" type="button">Load NFTs</button>
+        <button id="clearBtn" class="workspace-button" type="button">Clear selection</button>
+      </div>
+    </div>
+    <div id="nftStatus" class="workspace-status nft-status" role="status" aria-live="polite"></div>
+  </section>
+
+  <div id="nftGrid" class="nft-grid" aria-live="polite"></div>
+</section>

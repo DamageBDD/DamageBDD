@@ -1,0 +1,82 @@
+name: DamageMobile
+options:
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    SWIFT_VERSION: 5.0
+    IPHONEOS_DEPLOYMENT_TARGET: 16.0
+
+targets:
+  DamageBDD:
+    type: application
+    platform: iOS
+    sources:
+      - Shared
+      - DamageBDD
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.damagebdd.mobile
+        PRODUCT_NAME: DamageBDD
+        INFOPLIST_KEY_CFBundleDisplayName: DamageBDD
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+
+  ECAI:
+    type: application
+    platform: iOS
+    sources:
+      - Shared
+      - ECAI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ecai.mobile
+        PRODUCT_NAME: ECAI
+        INFOPLIST_KEY_CFBundleDisplayName: ECAI
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+
+  DamageBDDTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - DamageBDDTests
+    dependencies:
+      - target: DamageBDD
+
+  ECAITests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - ECAITests
+    dependencies:
+      - target: ECAI
+
+schemes:
+  DamageBDD:
+    build:
+      targets:
+        DamageBDD: all
+        DamageBDDTests: [test]
+    test:
+      targets:
+        - DamageBDDTests
+    run:
+      config: Debug
+    archive:
+      config: Release
+
+  ECAI:
+    build:
+      targets:
+        ECAI: all
+        ECAITests: [test]
+    test:
+      targets:
+        - ECAITests
+    run:
+      config: Debug
+    archive:
+      config: Release

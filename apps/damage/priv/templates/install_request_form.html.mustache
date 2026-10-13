@@ -1,0 +1,10 @@
+<!doctype html><meta charset="utf-8">
+<title>DamageBDD — Request Signed Installer</title>
+<form method="POST" action="/install/auth">
+  <label>Domain</label><input name="domain" value="{{domain}}" required>
+  <label>Email</label><input name="email" value="{{email}}" required>
+  <label>Port</label><input name="port" value="{{port}}">
+  <label>Repo</label><input name="repo" value="{{repo}}">
+  <label>Branch</label><input name="branch" value="{{branch}}">
+  <button type="submit">Generate signed installer</button>
+</form>

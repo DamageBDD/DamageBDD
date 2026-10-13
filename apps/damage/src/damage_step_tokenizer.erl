@@ -1,0 +1,112 @@
+-module(damage_step_tokenizer).
+
+-export([tokenize/1]).
+
+%% Tokenizer that:
+%% - Keeps quoted strings intact (as a single token, without quotes)
+%% - Splits numeric tokens: 390, 1, -2, 1.5, .5
+%% - Splits arg-words like center/left/right/top/bottom into their own tokens
+%% - Preserves everything else as larger phrase chunks to keep step matching stable
+
+tokenize(Step) when is_binary(Step) ->
+    tokenize(binary_to_list(Step));
+tokenize(Step) when is_list(Step) ->
+    Tokens0 = tokenize_scan(Step, outside, [], []),
+    [strip(T) || T <- Tokens0, strip(T) =/= ""].
+
+%% -------------------------------------------------------------------
+%% scanner
+%% -------------------------------------------------------------------
+
+%% State = outside | in_quote
+%% Acc   = current outside token buffer (reversed charlist)
+%% Out   = tokens (reversed list of strings)
+
+tokenize_scan([], _State, Acc, Out) ->
+    lists:reverse(flush_acc(Acc, Out));
+tokenize_scan([$" | Rest], outside, Acc, Out) ->
+    %% Enter quote: flush accumulated outside text first
+    tokenize_scan(Rest, in_quote, [], flush_acc(Acc, Out));
+tokenize_scan([$" | Rest], in_quote, Acc, Out) ->
+    %% Exit quote: push quoted token as-is (no strip inside quotes)
+    tokenize_scan(Rest, outside, [], [lists:reverse(Acc) | Out]);
+tokenize_scan([C | Rest], in_quote, Acc, Out) ->
+    tokenize_scan(Rest, in_quote, [C | Acc], Out);
+tokenize_scan([C | Rest], outside, Acc, Out) ->
+    case is_num_start(C, Rest, Acc) of
+        true ->
+            {NumTok, Rest1} = read_number([C | Rest]),
+            case is_number_boundary_after(Rest1) of
+                true ->
+                    Out1 = flush_acc(Acc, Out),
+                    tokenize_scan(Rest1, outside, [], [NumTok | Out1]);
+                false ->
+                    tokenize_scan(Rest, outside, [C | Acc], Out)
+            end;
+        false ->
+            tokenize_scan(Rest, outside, [C | Acc], Out)
+    end.
+
+%% -------------------------------------------------------------------
+%% helpers
+%% -------------------------------------------------------------------
+is_number_boundary_after([]) ->
+    true;
+is_number_boundary_after([Next | _]) ->
+    is_space(Next) orelse is_boundary(Next).
+
+flush_acc([], Out) ->
+    Out;
+flush_acc(Acc, Out) ->
+    Tok = strip(lists:reverse(Acc)),
+    case Tok of
+        "" -> Out;
+        _ -> [Tok | Out]
+    end.
+
+strip(S) ->
+    string:strip(S).
+
+is_num_start(C, Rest, Acc) ->
+    is_number_boundary_before(Acc) andalso is_num_start_char(C, Rest).
+
+is_num_start_char($-, [Nxt | _]) -> is_digit(Nxt);
+is_num_start_char($., [Nxt | _]) -> is_digit(Nxt);
+is_num_start_char(C, _) -> is_digit(C).
+
+is_number_boundary_before([]) ->
+    true;
+is_number_boundary_before([Prev | _]) ->
+    is_space(Prev) orelse is_open_boundary(Prev).
+
+is_space(C) ->
+    C =:= $\s orelse C =:= $\t orelse C =:= $\n orelse C =:= $\r.
+
+is_open_boundary(C) ->
+    C =:= $( orelse C =:= $[ orelse C =:= ${ orelse
+        C =:= $= orelse C =:= $: orelse C =:= $, orelse
+        C =:= $; orelse C =:= $+ orelse C =:= $< orelse C =:= $>.
+
+is_digit(C) -> C >= $0 andalso C =< $9.
+
+%% Reads a number like: 390, 1.0, -2, .5
+read_number(Cs) ->
+    read_number(Cs, []).
+
+read_number([], Acc) ->
+    {lists:reverse(Acc), []};
+read_number([C | Rest], Acc) ->
+    case ((C >= $0 andalso C =< $9) orelse C =:= $. orelse C =:= $-) of
+        true -> read_number(Rest, [C | Acc]);
+        false -> {lists:reverse(Acc), [C | Rest]}
+    end.
+
+is_boundary(C) ->
+    C =:= $\s orelse C =:= $\t orelse C =:= $\n orelse
+        C =:= $. orelse C =:= $, orelse C =:= $: orelse
+        C =:= $; orelse C =:= $( orelse C =:= $) orelse
+        C =:= $[ orelse C =:= $] orelse C =:= ${ orelse
+        C =:= $} orelse C =:= $/ orelse C =:= $\\ orelse
+        C =:= $= orelse C =:= $+ orelse C =:= $- orelse
+        C =:= $* orelse C =:= $? orelse C =:= $! orelse
+        C =:= $< orelse C =:= $>.

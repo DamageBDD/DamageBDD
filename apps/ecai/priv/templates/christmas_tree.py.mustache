@@ -1,0 +1,191 @@
+# -*- mode: python -*-
+import bpy, math, random
+from math import sin, cos
+random.seed({{seed}})
+
+scene = bpy.context.scene
+
+# ---------- helpers ----------
+def _mat_principled(name, base=(0.8,0.8,0.8,1), rough=0.4, metallic=0.0, spec=0.5):
+    m = bpy.data.materials.new(name=name)
+    m.use_nodes = True
+    nt = m.node_tree
+    bsdf = nt.nodes.get('Principled BSDF')
+    bsdf.inputs['Base Color'].default_value = base
+    bsdf.inputs['Roughness'].default_value = rough
+    bsdf.inputs['Metallic'].default_value = metallic
+    bsdf.inputs['Specular'].default_value = spec
+    return m
+
+def _mat_emission(name, color=(1,1,1,1), strength=20.0):
+    m = bpy.data.materials.new(name=name)
+    m.use_nodes = True
+    nt = m.node_tree
+    for n in list(nt.nodes):
+        nt.nodes.remove(n)
+    out = nt.nodes.new('ShaderNodeOutputMaterial')
+    em  = nt.nodes.new('ShaderNodeEmission')
+    em.inputs['Color'].default_value = color
+    em.inputs['Strength'].default_value = strength
+    nt.links.new(em.outputs['Emission'], out.inputs['Surface'])
+    return m
+
+def _assign(obj, mat):
+    if obj.data.materials:
+        obj.data.materials[0] = mat
+    else:
+        obj.data.materials.append(mat)
+
+# ---------- clean default objects ----------
+# (homefile may include cube/light/cam depending on your template; we ensure we start clean-ish)
+for o in list(bpy.data.objects):
+    if o.type in {'MESH','LIGHT','CAMERA'}:
+        o.select_set(True)
+    else:
+        o.select_set(False)
+bpy.ops.object.delete()
+
+# ---------- render / engine ----------
+scene.render.engine = 'CYCLES'
+scene.cycles.samples = 128
+scene.cycles.use_adaptive_sampling = True
+
+# Bloom via Eevee compositor-style glow is easiest in Eevee, but we can do a simple compositor glare.
+scene.use_nodes = True
+nt = scene.node_tree
+for n in list(nt.nodes):
+    nt.nodes.remove(n)
+rl = nt.nodes.new('CompositorNodeRLayers')
+comp = nt.nodes.new('CompositorNodeComposite')
+
+if {{bloom}}:
+    glare = nt.nodes.new('CompositorNodeGlare')
+    glare.glare_type = 'FOG_GLOW'
+    glare.quality = 'MEDIUM'
+    glare.threshold = 0.7
+    nt.links.new(rl.outputs['Image'], glare.inputs['Image'])
+    nt.links.new(glare.outputs['Image'], comp.inputs['Image'])
+else:
+    nt.links.new(rl.outputs['Image'], comp.inputs['Image'])
+
+# ---------- camera ----------
+bpy.ops.object.camera_add(location=(0, -6.2, 2.2))
+cam = bpy.context.object
+cam.data.lens = 45
+cam.rotation_euler = (math.radians(75), 0, 0)
+scene.camera = cam
+
+# ---------- lighting ----------
+bpy.ops.object.light_add(type='AREA', location=(3.6, -3.2, 5.0))
+key = bpy.context.object
+key.data.energy = 1200
+key.data.size = 2.5
+
+bpy.ops.object.light_add(type='AREA', location=(-3.2, -2.5, 3.6))
+fill = bpy.context.object
+fill.data.energy = 520
+fill.data.size = 2.5
+
+bpy.ops.object.light_add(type='POINT', location=(0.0, 0.0, 3.2))
+rim = bpy.context.object
+rim.data.energy = 160
+
+# ---------- ground ----------
+bpy.ops.mesh.primitive_plane_add(size=18, location=(0,0,0))
+ground = bpy.context.object
+ground_mat = _mat_principled('Ground', base=(0.05,0.05,0.07,1), rough=0.95, metallic=0.0, spec=0.1)
+_assign(ground, ground_mat)
+
+# ---------- materials ----------
+green = _mat_principled('TreeGreen', base=(0.02,0.16,0.05,1), rough=0.9, metallic=0.0, spec=0.15)
+bark  = _mat_principled('Bark', base=(0.16,0.09,0.05,1), rough=0.95, metallic=0.0, spec=0.1)
+gold  = _mat_principled('Gold', base=(0.95,0.75,0.18,1), rough=0.25, metallic=1.0, spec=0.5)
+silver= _mat_principled('Silver', base=(0.75,0.78,0.85,1), rough=0.18, metallic=1.0, spec=0.5)
+red   = _mat_principled('Red', base=(0.75,0.05,0.08,1), rough=0.35, metallic=0.1, spec=0.5)
+blue  = _mat_principled('Blue', base=(0.05,0.25,0.85,1), rough=0.35, metallic=0.1, spec=0.5)
+
+light_colors = [
+    (1.0, 0.2, 0.2, 1.0),
+    (0.2, 1.0, 0.2, 1.0),
+    (0.2, 0.4, 1.0, 1.0),
+    (1.0, 0.9, 0.2, 1.0),
+    (1.0, 0.35, 0.9, 1.0),
+]
+
+# ---------- tree parameters ----------
+TREE_H = float({{tree_h}})
+TREE_R = float({{tree_r}})
+
+# ---------- trunk ----------
+bpy.ops.mesh.primitive_cylinder_add(radius=0.14*TREE_R, depth=0.22*TREE_H, location=(0,0,0.11*TREE_H))
+trunk = bpy.context.object
+_assign(trunk, bark)
+
+# ---------- layered cones (stylized tree) ----------
+tiers = 6
+for i in range(tiers):
+    t = i/(tiers-1)
+    z = 0.28*TREE_H + t*(0.68*TREE_H)
+    r = (1.0 - 0.86*t) * TREE_R
+    h = 0.28*TREE_H * (1.0 - 0.55*t)
+    bpy.ops.mesh.primitive_cone_add(radius1=r, radius2=0.0, depth=h, location=(0,0,z))
+    c = bpy.context.object
+    _assign(c, green)
+
+# ---------- ornaments ----------
+orn_mats = [red, blue, gold, silver]
+orn_count = 48
+for k in range(orn_count):
+    # sample a spiral-ish position around the tree
+    t = random.random()
+    z = 0.32*TREE_H + t*0.64*TREE_H
+    ang = (k * 0.85) + random.uniform(-0.25, 0.25)
+    # radius tapers with z
+    taper = 1.0 - (z / (TREE_H*1.05))
+    rr = (0.85*TREE_R * max(0.12, taper)) + random.uniform(-0.05, 0.05)
+    x = rr * cos(ang)
+    y = rr * sin(ang)
+    s = random.uniform(0.055, 0.085) * TREE_R
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=s, location=(x,y,z))
+    o = bpy.context.object
+    _assign(o, random.choice(orn_mats))
+
+# ---------- garland lights (emissive beads) ----------
+# a helix wrapping the tree
+bulb_count = 140
+turns = 7.2
+for k in range(bulb_count):
+    u = k/(bulb_count-1)
+    z = 0.30*TREE_H + u*0.70*TREE_H
+    ang = u * turns * 2*math.pi
+    taper = 1.0 - (z / (TREE_H*1.07))
+    rr = 0.92*TREE_R * max(0.10, taper)
+    x = rr * cos(ang)
+    y = rr * sin(ang)
+    s = 0.022 * TREE_R
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=s, location=(x,y,z))
+    b = bpy.context.object
+    col = random.choice(light_colors)
+    em = _mat_emission(f'Light_{k}', color=col, strength=35.0)
+    _assign(b, em)
+
+# ---------- topper star ----------
+# quick star: two cones + small sphere, all emissive gold
+bpy.ops.mesh.primitive_cone_add(radius1=0.12*TREE_R, radius2=0.0, depth=0.22*TREE_R, location=(0,0,0.98*TREE_H))
+s1 = bpy.context.object
+s1.rotation_euler = (0,0,0)
+_assign(s1, gold)
+
+bpy.ops.mesh.primitive_cone_add(radius1=0.12*TREE_R, radius2=0.0, depth=0.22*TREE_R, location=(0,0,0.98*TREE_H))
+s2 = bpy.context.object
+s2.rotation_euler = (math.radians(90),0,0)
+_assign(s2, gold)
+
+bpy.ops.mesh.primitive_uv_sphere_add(radius=0.045*TREE_R, location=(0,0,0.98*TREE_H))
+s3 = bpy.context.object
+_assign(s3, _mat_emission('StarGlow', color=(1.0,0.9,0.35,1.0), strength=55.0))
+
+# ---------- slight DOF ----------
+cam.data.dof.use_dof = True
+cam.data.dof.focus_distance = 5.6
+cam.data.dof.aperture_fstop = 2.8

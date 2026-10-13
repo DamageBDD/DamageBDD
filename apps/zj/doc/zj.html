@@ -1,0 +1,149 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html>
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Module zj</title>
+<link rel="stylesheet" type="text/css" href="stylesheet.css" title="EDoc">
+</head>
+<body bgcolor="white">
+<div class="navbar"><a name="#navbar_top"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<hr>
+
+<h1>Module zj</h1>
+<ul class="index"><li><a href="#description">Description</a></li><li><a href="#types">Data Types</a></li><li><a href="#index">Function Index</a></li><li><a href="#functions">Function Details</a></li></ul>   
+ZJ: The tiny JSON parser.
+
+
+<h2><a name="description">Description</a></h2><p>   
+ZJ: The tiny JSON parser</p>
+  
+   This module exports four functions and accepts no options.
+<h2><a name="types">Data Types</a></h2>
+
+<h3 class="typedecl"><a name="type-bin_value">bin_value()</a></h3>
+<p><code>bin_value() = binary() | number() | true | false | undefined | [<a href="#type-bin_value" docgen-rel="seetype" docgen-href="#bin_value/0">bin_value()</a>] | #{binary() := <a href="#type-bin_value" docgen-rel="seetype" docgen-href="#bin_value/0">bin_value()</a>}</code></p>
+
+
+<h3 class="typedecl"><a name="type-value">value()</a></h3>
+<p><code>value() = string() | number() | true | false | undefined | [<a href="#type-value" docgen-rel="seetype" docgen-href="#value/0">value()</a>] | #{string() := <a href="#type-value" docgen-rel="seetype" docgen-href="#value/0">value()</a>}</code></p>
+
+
+<h2><a name="index">Function Index</a></h2>
+<table width="100%" border="1" cellspacing="0" cellpadding="2" summary="function index"><tr><td valign="top"><a href="#binary_decode-1">binary_decode/1</a></td><td>
+  Almost identical in behavior to <code>decode/1</code> except this returns strings as binaries  
+and arrays of integers as Erlang lists (which may also be valid strings if the  
+values are valid UTF-8 codepoints).</td></tr>
+<tr><td valign="top"><a href="#binary_encode-1">binary_encode/1</a></td><td>
+  A strict encoding routine that works very similarly to <code>encode/1</code> but with a few
+  differences:
+  <pre>   - Lists and Strings are firmly separated:
+      ALL lists are lists of discrete values, never strings.
+      ALL binaries are always UTF-8 strings.
+      An Erlang string or io_list will be encoded as JSON array.
+   - This function generates a UTF-8 binary, not a list.
+   - The burden is on the user to ensure that io_lists are collapsed to unicode
+     binaries via `unicode:characters_to_binary/1' before passing in string values.
+   - Erlang strings (lists) are still accepted as map/object keys.</pre>.</td></tr>
+<tr><td valign="top"><a href="#decode-1">decode/1</a></td><td>
+  Take any IO data acceptable to the unicode module and return a parsed data structure.</td></tr>
+<tr><td valign="top"><a href="#encode-1">encode/1</a></td><td>  
+Take any convertable Erlang term and convert it to a JSON string.</td></tr>
+</table>
+
+<h2><a name="functions">Function Details</a></h2>
+
+<h3 class="function"><a name="binary_decode-1">binary_decode/1</a></h3>
+<div class="spec">
+<p><code>binary_decode(Stream) -&gt; Result</code>
+<ul class="definitions"><li><code>Stream = <a href="http://www.erlang.org/edoc/doc/stdlib/doc/unicode.html#type-chardata" docgen-rel="seetype" docgen-href="stdlib:unicode#chardata/0">unicode:chardata()</a></code></li><li><code>Result = {ok, <a href="#type-bin_value" docgen-rel="seetype" docgen-href="#bin_value/0">bin_value()</a>} | {error, Parsed, Remainder} | {incomplete, Parsed, Remainder}</code></li><li><code>Parsed = <a href="#type-bin_value" docgen-rel="seetype" docgen-href="#bin_value/0">bin_value()</a></code></li><li><code>Remainder = binary()</code></li></ul></p>
+<p> </p>
+</div><p><p>
+  Almost identical in behavior to <code>decode/1</code> except this returns strings as binaries  
+and arrays of integers as Erlang lists (which may also be valid strings if the  
+values are valid UTF-8 codepoints).</p>
+ 
+  NOTE:
+  This function returns map keys as binaries</p>
+
+<h3 class="function"><a name="binary_encode-1">binary_encode/1</a></h3>
+<div class="spec">
+<p><code>binary_encode(T::term()) -&gt; binary()</code><br></p>
+<p> </p>
+</div><p>
+  A strict encoding routine that works very similarly to <code>encode/1</code> but with a few
+  differences:
+  <pre>   - Lists and Strings are firmly separated:
+      ALL lists are lists of discrete values, never strings.
+      ALL binaries are always UTF-8 strings.
+      An Erlang string or io_list will be encoded as JSON array.
+   - This function generates a UTF-8 binary, not a list.
+   - The burden is on the user to ensure that io_lists are collapsed to unicode
+     binaries via `unicode:characters_to_binary/1' before passing in string values.
+   - Erlang strings (lists) are still accepted as map/object keys.</pre>
+ 
+  <p>NOTE:
+  Most cases are better served by <code>encode/1</code>, as most code deals in strings and not  
+arrays of integer values.</p>
+ 
+  Using this function requires a little bit more work up front (because ununified
+  io_list() data will always be interpreted as a JSON array), but provides a way to
+  reliably generate lists or strings in an unambiguous way in the special case where
+  your code is generating both strings and lists of integer values that may overlap
+  with valid UTF-8 codepoint values.</p>
+
+<h3 class="function"><a name="decode-1">decode/1</a></h3>
+<div class="spec">
+<p><code>decode(Stream) -&gt; Result</code>
+<ul class="definitions"><li><code>Stream = <a href="http://www.erlang.org/edoc/doc/stdlib/doc/unicode.html#type-chardata" docgen-rel="seetype" docgen-href="stdlib:unicode#chardata/0">unicode:chardata()</a></code></li><li><code>Result = {ok, <a href="#type-value" docgen-rel="seetype" docgen-href="#value/0">value()</a>} | {error, Parsed, Remainder} | {incomplete, Parsed, Remainder}</code></li><li><code>Parsed = <a href="#type-value" docgen-rel="seetype" docgen-href="#value/0">value()</a></code></li><li><code>Remainder = <a href="http://www.erlang.org/edoc/doc/stdlib/doc/unicode.html#type-chardata" docgen-rel="seetype" docgen-href="stdlib:unicode#chardata/0">unicode:chardata()</a> | <a href="http://www.erlang.org/edoc/doc/stdlib/doc/unicode.html#type-external_chardata" docgen-rel="seetype" docgen-href="stdlib:unicode#external_chardata/0">unicode:external_chardata()</a> | binary()</code></li></ul></p>
+<p> </p>
+</div><p>
+  Take any IO data acceptable to the unicode module and return a parsed data structure.
+  In the event of a parsing error whatever part of the structure could be successfully
+  parsed will be returned along with the remainder of the string. Note that the string
+  remainder may have been changed to a different form by unicode:characters_to_list/1.
+  If the unicode library itself runs into a problem performing the initial conversion
+  its error return (<code>error</code> or <code>incomplete</code>) will be returned directly.</p>
+
+<h3 class="function"><a name="encode-1">encode/1</a></h3>
+<div class="spec">
+<p><code>encode(T::term()) -&gt; string()</code><br></p>
+<p> </p>
+</div><p><p>  
+Take any convertable Erlang term and convert it to a JSON string.</p>
+ 
+  <p>As JSON can only satirically be referred to as "a serialization format", it is
+  almost impossible to map any interesting data between Erlang (or any other language)
+  and JSON. For example, tuples do not exist in JSON, so converting an Erlang tuple
+  turns it into a list (a JSON array). Atoms also do not exist, so atoms other than
+  the ternay logic values <code>true</code>, <code>false</code> and <code>null</code> become strings (those three
+  remain as atoms, with the added detail that JSON <code>null</code> maps to Erlang
+  <code>undefined</code>).</p>
+ 
+  <p>Unless care is taken to pick types that JSON can accurately express (integers,
+  floats, strings, maps, lists, ternary logic atoms) it is not possible to guarantee
+  (or even reasonable to expect) that <code>Term == decode(encode(Term))</code> will be true.</p>
+ 
+  <p>This function crashes when it fails. Things that will cause a crash are trying to  
+convert non-UTF-8 binaries to strings, use non-string values as object keys,  
+encode an unaligned bitstring, etc.</p>
+ 
+  <p>Note that Erlang terms are converted as type primitives, meaning that compound  
+functional structures like GB-trees, dicts, sets, etc. will wind up having their  
+underlying structures converted as-is which is almost never what you want. It is  
+usually best to reduce compound values down to primitives (lists or maps) before  
+running encode.</p>
+ 
+  <p>The only unsupported Erlang pritmitive is bitstrings. Care has NOT been taken to  
+ensure separation between actual binary data and binaries that are supposed to be  
+interpreted as strings. The same is true of deep list data: it just comes out raw  
+unless you flatten or convert it to a utf8 string with the unicode module.</p>
+ 
+  NOTE: If you need a serialization format that is less ambiguous and expresses more
+  types consider using BERT (language-independent implementations of Erlang external
+  binary format) instead: http://bert-rpc.org</p>
+<hr>
+
+<div class="navbar"><a name="#navbar_bottom"></a><table width="100%" border="0" cellspacing="0" cellpadding="2" summary="navigation bar"><tr><td><a href="overview-summary.html" target="overviewFrame">Overview</a></td><td><a href="http://www.erlang.org/"><img src="erlang.png" align="right" border="0" alt="erlang logo"></a></td></tr></table></div>
+<p><i>Generated by EDoc</i></p>
+</body>
+</html>

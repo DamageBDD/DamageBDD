@@ -1,0 +1,25 @@
+{
+  "cirrus_release": "20260720",
+  "content_shards": [
+    {
+      "name": "enwiki_content-20260720-00000.json.bz2",
+      "ordinal": 1,
+      "url": "http://127.0.0.1:9876/enwiki_content-20260720-00000.json.bz2"
+    }
+  ],
+  "pageview_months": [
+    "2026-06"
+  ],
+  "pageview_project": "en.wikipedia",
+  "pageview_sources": [
+    {
+      "month": "2026-06",
+      "name": "pageviews-202606-user.bz2",
+      "ordinal": 1,
+      "project": "en.wikipedia",
+      "url": "http://127.0.0.1:9876/pageviews-202606-user.bz2"
+    }
+  ],
+  "project": "enwiki",
+  "schema": "ecai-wikimedia-catalog/v1"
+}

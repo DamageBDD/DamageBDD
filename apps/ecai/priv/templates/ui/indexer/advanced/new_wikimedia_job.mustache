@@ -1,0 +1,46 @@
+<section class="ecai-indexer-panel" data-component="new-job">
+  <h2>New Wikimedia visibility index</h2>
+  <div class="ecai-indexer-stack">
+    <div class="ecai-indexer-grid2">
+      <label>Project<input id="project" value="enwiki"></label>
+      <label>Pageview project<input id="pageviewProject" value="en.wikipedia"></label>
+    </div>
+
+    <div class="ecai-indexer-grid2">
+      <label>Content release<input id="release" value="latest"></label>
+      <label>Months, comma separated<input id="months"></label>
+    </div>
+
+    <div class="ecai-indexer-grid2">
+      <label>Index ID<input id="indexId" value="ecai-open-knowledge-genesis"></label>
+      <label>Namespace<input id="namespace" value="org.damagebdd.wikimedia.en"></label>
+    </div>
+
+    <label>Index base directory<input id="baseDir" value="/var/lib/damage/ecai/indexes/open-knowledge"></label>
+    <label>
+      Pinned catalog path or CID <span class="ecai-indexer-muted">(optional)</span>
+      <input id="catalogRef" placeholder="/path/catalog.json or bafy...">
+    </label>
+
+    <div class="ecai-indexer-grid3">
+      <label>Article limit<input id="limit" type="number" min="1" value="10000"></label>
+      <label>Min active months<input id="minMonths" type="number" min="1" value="6"></label>
+      <label>Priority<input id="priority" type="number" value="100"></label>
+    </div>
+
+    <div class="ecai-indexer-row">
+      <label class="ecai-indexer-checkbox"><input id="publishIpfs" type="checkbox"> Publish final artifact to IPFS</label>
+      <label class="ecai-indexer-checkbox"><input id="publishActivity" type="checkbox"> Stream activity blocks to IPFS</label>
+      <label class="ecai-indexer-checkbox"><input id="keepIntermediates" type="checkbox"> Keep intermediates</label>
+    </div>
+
+    <div class="ecai-indexer-row">
+      <button id="buildSpecBtn" type="button">Build JSON</button>
+      <button id="queueBtn" type="button">Queue job</button>
+      <button id="newKeyBtn" type="button">New idempotency key</button>
+    </div>
+
+    <label>Idempotency key<input id="idempotencyKey"></label>
+    <label>Normalized job request<textarea id="specEditor" spellcheck="false"></textarea></label>
+  </div>
+</section>

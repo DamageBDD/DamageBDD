@@ -1,0 +1,231 @@
+%% Copyright Steven Joseph. SPDX-License-Identifier: Apache-2.0
+-module(damage_ipfs_config).
+-export([load/0, normalize/1, call/3, text/1, cid/1, now_ms/0]).
+
+%% Keep Kubo's historical damage.ipfs configuration available to its existing
+%% consumers. Runtime settings have their own key; the previous atom-keyed
+%% runtime layout remains supported for a staged migration.
+load() ->
+    case application:get_env(damage, ipfs_runtime) of
+        {ok, Opts} -> normalize(Opts);
+        undefined -> load_previous(application:get_env(damage, ipfs, []))
+    end.
+
+load_previous(Opts) when is_map(Opts) -> normalize(Opts);
+load_previous(Opts) when is_list(Opts) ->
+    %% String/binary keys belong to Kubo and are neither applied nor rewritten
+    %% here. Mixed old configurations can retain their atom-keyed options.
+    Runtime = lists:filtermap(
+        fun
+            ({K, _} = Entry) when is_atom(K) -> {true, Entry};
+            ({K, _}) when is_list(K); is_binary(K) -> false;
+            (_) -> error({invalid_ipfs_config, expected_key_value_tuples})
+        end,
+        Opts
+    ),
+    normalize(Runtime);
+load_previous(_) ->
+    error({invalid_ipfs_config, expected_key_value_tuples}).
+
+%% Public configuration is a list of {Key, Value} tuples. Normalize once at
+%% the boundary; maps below are private runtime configuration/state.
+normalize(Opts) when is_list(Opts) ->
+    case
+        lists:all(
+            fun
+                ({K, _}) when is_atom(K) -> true;
+                (_) -> false
+            end,
+            Opts
+        )
+    of
+        true ->
+            %% Match proplists:get_value/3: the first occurrence wins.
+            normalize(maps:from_list(lists:reverse(Opts)));
+        false ->
+            error({invalid_ipfs_config, expected_key_value_tuples})
+    end;
+normalize(Opts) when is_map(Opts) ->
+    ManagedKubo = maps:get(
+        managed_kubo,
+        Opts,
+        application:get_env(damage, ipfs_managed, false)
+    ),
+    KuboApiPort = maps:get(
+        kubo_api_port,
+        Opts,
+        application:get_env(damage, ipfs_kubo_api_port, 5002)
+    ),
+    DefaultApi = default_ipfs_api(ManagedKubo, KuboApiPort),
+    Defaults = [
+        {managed_kubo, ManagedKubo},
+        {kubo_repo, filename:join(default_data_dir(), "kubo")},
+        {kubo_api_port, KuboApiPort},
+        {kubo_gateway_port, application:get_env(damage, ipfs_kubo_gateway_port, 8081)},
+        {kubo_swarm_port, application:get_env(damage, ipfs_kubo_swarm_port, 4002)},
+        {kubo_start_timeout_ms, 15000},
+        {kubo_retry_ms, 5000},
+        {kubo_gc, true},
+        {kubo_binary, application:get_env(damage, ipfs_kubo_binary, "ipfs")},
+        {ipfs_api, DefaultApi},
+        {ipfs_peers, application:get_env(damage, ipfs_peers, [])},
+        {peer_interval_ms, application:get_env(damage, ipfs_peer_retry_interval, 30000)},
+        {backend, damage_ipfs_backend},
+        {data_dir, default_data_dir()},
+        {request_timeout_ms, 50000},
+        {connect_timeout_ms, 5000},
+        {http_timeout_ms, 15000},
+        {client_concurrency, 8},
+        {client_queue_limit, 64},
+        {fetch_concurrency, 4},
+        {fetch_queue_limit, 32},
+        {max_request_bytes, 67108864},
+        {max_response_bytes, 67108864},
+        {max_intents, 100000},
+        {pin_poll_ms, 1000},
+        {retry_base_ms, 2000},
+        {retry_max_ms, 300000},
+        {health_interval_ms, 30000},
+        {reconcile_interval_ms, 60000},
+        {reconcile_batch, 32},
+        {max_peers, 128},
+        {loop_timeout_ms, 120000},
+        {headers, []}
+    ],
+    C = maps:merge(maps:from_list(Defaults), Opts),
+    lists:foreach(
+        fun(K) ->
+            V = maps:get(K, C),
+            case is_integer(V) andalso V > 0 andalso V =< 16#ffffffff of
+                true -> ok;
+                false -> error({invalid_ipfs_config, K})
+            end
+        end,
+        [
+            request_timeout_ms,
+            connect_timeout_ms,
+            http_timeout_ms,
+            client_concurrency,
+            fetch_concurrency,
+            max_request_bytes,
+            max_response_bytes,
+            max_intents,
+            pin_poll_ms,
+            retry_base_ms,
+            retry_max_ms,
+            health_interval_ms,
+            reconcile_interval_ms,
+            reconcile_batch,
+            max_peers,
+            loop_timeout_ms,
+            peer_interval_ms,
+            kubo_api_port,
+            kubo_gateway_port,
+            kubo_swarm_port,
+            kubo_start_timeout_ms,
+            kubo_retry_ms
+        ]
+    ),
+    lists:foreach(
+        fun(K) ->
+            V = maps:get(K, C),
+            case is_integer(V) andalso V >= 0 of
+                true -> ok;
+                false -> error({invalid_ipfs_config, K})
+            end
+        end,
+        [client_queue_limit, fetch_queue_limit]
+    ),
+    true = maps:get(retry_max_ms, C) >= maps:get(retry_base_ms, C),
+    case maps:get(reconcile_batch, C) =< 1000 of
+        true -> ok;
+        false -> error({invalid_ipfs_config, reconcile_batch})
+    end,
+    %% Background scans need room to complete at least one client call and
+    %% checkpoint before their own deadline expires.
+    true = maps:get(loop_timeout_ms, C) > maps:get(request_timeout_ms, C) + 2000,
+    Api = string:trim(text(maps:get(ipfs_api, C)), trailing, "/"),
+    #{scheme := Scheme, host := _} = Parsed = uri_string:parse(Api),
+    true = (Scheme =:= "http" orelse Scheme =:= "https"),
+    false = maps:is_key(query, Parsed),
+    false = maps:is_key(fragment, Parsed),
+    false = maps:is_key(userinfo, Parsed),
+    true = is_atom(maps:get(backend, C)),
+    true = is_boolean(maps:get(managed_kubo, C)),
+    true = is_boolean(maps:get(kubo_gc, C)),
+    true = maps:get(kubo_api_port, C) =< 65535,
+    true = maps:get(kubo_gateway_port, C) =< 65535,
+    true = maps:get(kubo_swarm_port, C) =< 65535,
+    DataDir = damage_config:normalize_path(maps:get(data_dir, C)),
+    ok = damage_config:ensure_directory(DataDir),
+    KuboRepo = damage_config:normalize_path(maps:get(kubo_repo, C)),
+    case maps:get(managed_kubo, C) of
+        true ->
+            ok = damage_config:ensure_directory(KuboRepo),
+            ok = validate_managed_api(Parsed, maps:get(kubo_api_port, C));
+        false ->
+            ok
+    end,
+    C#{
+        ipfs_api => Api,
+        data_dir => DataDir,
+        kubo_repo => KuboRepo,
+        kubo_binary => text(maps:get(kubo_binary, C))
+    };
+normalize(_) ->
+    error({invalid_ipfs_config, expected_key_value_tuples}).
+
+call(Name, Request, Timeout) ->
+    try gen_server:call(Name, Request, Timeout) of
+        Reply -> Reply
+    catch
+        exit:{noproc, _} -> {error, not_started};
+        exit:{timeout, _} -> {error, timeout};
+        exit:{normal, _} -> {error, unavailable};
+        exit:{shutdown, _} -> {error, unavailable};
+        exit:Reason -> {error, {service_exit, Reason}}
+    end.
+
+default_data_dir() ->
+    filename:join([damage_config:state_dir(), "runtime", "ipfs"]).
+
+default_ipfs_api(true, KuboApiPort) ->
+    case application:get_env(damage, ipfs_api) of
+        {ok, Value} -> Value;
+        undefined -> "http://127.0.0.1:" ++ integer_to_list(KuboApiPort)
+    end;
+default_ipfs_api(false, _KuboApiPort) ->
+    application:get_env(damage, ipfs_api, "http://127.0.0.1:5001").
+
+validate_managed_api(Parsed, KuboApiPort) ->
+    Host = maps:get(host, Parsed, undefined),
+    Port = maps:get(port, Parsed, 80),
+    Scheme = maps:get(scheme, Parsed, undefined),
+    Loopback =
+        Host =:= "127.0.0.1" orelse Host =:= <<"127.0.0.1">> orelse
+            Host =:= "localhost" orelse Host =:= <<"localhost">>,
+    case Scheme =:= "http" andalso Loopback andalso Port =:= KuboApiPort of
+        true -> ok;
+        false -> error({invalid_ipfs_config, managed_kubo_requires_loopback_api, KuboApiPort})
+    end.
+
+text(B) when is_binary(B) -> binary_to_list(B);
+text(L) when is_list(L) -> L.
+
+%% Guard pin APIs against paths/options and unbounded keys. Kubo performs
+%% cryptographic CID validation; this is deliberately NOT a CID decoder.
+cid(C) when is_list(C) ->
+    try
+        cid(iolist_to_binary(C))
+    catch
+        error:_ -> {error, invalid_cid}
+    end;
+cid(C) when is_binary(C), byte_size(C) > 0, byte_size(C) =< 512 ->
+    case re:run(C, "^[A-Za-z0-9]+$", [{capture, none}]) of
+        match -> {ok, C};
+        nomatch -> {error, invalid_cid}
+    end;
+cid(_) ->
+    {error, invalid_cid}.
+
+now_ms() -> erlang:system_time(millisecond).

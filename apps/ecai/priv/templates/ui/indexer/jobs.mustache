@@ -1,0 +1,25 @@
+<section class="ecai-indexer-section" data-component="jobs">
+  <div class="ecai-indexer-section-heading">
+    <div>
+      <h2>Your indexing jobs</h2>
+      <p class="ecai-indexer-muted">Jobs continue on the node if you leave this page.</p>
+    </div>
+    <button id="refreshJobsBtn" type="button">Refresh</button>
+  </div>
+
+  <p id="jobsEmpty" class="ecai-indexer-empty" hidden>No Wikimedia jobs queued yet.</p>
+
+  <div id="jobsTableWrap" class="ecai-indexer-table-wrap">
+    <table class="ecai-indexer-table">
+      <thead>
+        <tr>
+          <th>Source</th>
+          <th>Status</th>
+          <th>Progress</th>
+          <th class="ecai-indexer-actions-column">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="jobsBody"></tbody>
+    </table>
+  </div>
+</section>

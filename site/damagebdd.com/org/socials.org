@@ -1,0 +1,32 @@
+#+TITLE: Social Media - DamageBDD
+#+DESCRIPTION: Read live DamageBDD articles from the decentralized Nostr network and follow updates on ECAI, Bitcoin and verification engineering.
+#+KEYWORDS: DamageBDD Nostr, decentralized publishing, Nostr articles, ECAI updates, Bitcoin engineering, npub author, censorship resistant social media, open protocol publishing
+
+
+#+INCLUDE: "header.org"
+* Read more articles about DamageBDD on Nostr.
+
+These articles are fetched live from the *[[https://nostr.org][Nostr]]* network — an open protocol for decentralized publishing.
+
+You can follow or interact with the author using any Nostr-compatible client:
+
+- 🧠 Author: =npub14ekwjk8gqjlgdv29u6nnehx63fptkhj5yl2sf8lxykdkm58s937sjw99u8=
+- - 🏷️ Hashtags: =#ecai=, =#bitcoin=, =#damagebdd=
+- 🔗 Open in Nostr clients:
+  - [[https://njump.me/npub14ekwjk8gqjlgdv29u6nnehx63fptkhj5yl2sf8lxykdkm58s937sjw99u8][View on njump.me]]
+  - [[https://iris.to/npub14ekwjk8gqjlgdv29u6nnehx63fptkhj5yl2sf8lxykdkm58s937sjw99u8][View on iris.to]]
+
+#+BEGIN_EXPORT html
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<div id="nostr-feed"></div>
+
+<script type="module">
+    import { initNostrScroll } from '/assets/js/nostr-scroll.js';
+
+    initNostrScroll({
+      containerId: "nostr-feed",
+      pubkey: ["ae6ce958e804be86b145e6a73cdcda8a42bb5e5427d5049fe6259b6dd0f02c7d"], // your hex pubkey
+      limit: 30
+    });
+</script>
+#+END_EXPORT

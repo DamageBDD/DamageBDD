@@ -1,0 +1,17 @@
+{
+  "name": "nosternity-dashboard-assets",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/dashboard.js --bundle --format=esm --target=es2022 --outfile=../priv/static/dashboard/dashboard.js",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "nostr-tools": "2.25.2"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12",
+    "jsdom": "26.1.0"
+  }
+}

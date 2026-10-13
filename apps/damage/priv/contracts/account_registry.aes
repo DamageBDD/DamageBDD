@@ -1,0 +1,62 @@
+@compiler >= 6
+
+contract AccountRegistry =
+
+  record state = {
+    owner     : address,
+    contracts : map(string, address),
+    names     : list(string)}
+
+  stateful entrypoint init() : state =
+    { owner = Call.caller,
+      contracts = {},
+      names = [] }
+
+  function require_owner() =
+    require(Call.caller == state.owner, "Only the account owner can modify this registry")
+
+  // local reverse (compiler 6-safe)
+  function reverse(xs : list(string), acc : list(string)) : list(string) =
+    switch(xs)
+      []      => acc
+      x :: xs => reverse(xs, x :: acc)
+
+  ///
+  /// Register a named contract for this account.
+  ///
+  stateful entrypoint register_contract(name: string, contract_id: address) : bool =
+    require_owner()
+    require(!Map.member(name, state.contracts), "Contract name already exists")
+    put(state{
+      contracts[name] = contract_id,
+      names = name :: state.names})
+    true
+
+  ///
+  /// Update an existing contract entry
+  ///
+  stateful entrypoint update_contract(name: string, contract_id: address) : bool =
+    require_owner()
+    require(Map.member(name, state.contracts), "Contract name not found")
+    put(state{contracts[name] = contract_id})
+    true
+
+  ///
+  /// Get contract address by name
+  ///
+  entrypoint get_contract(name: string) : address =
+    require(Map.member(name, state.contracts), "Contract not found")
+    state.contracts[name]
+
+  ///
+  /// List all registered contract names (in insertion order)
+  ///
+  entrypoint get_registered_names() : list(string) =
+    reverse(state.names, [])
+
+  ///
+  /// Get the full contract mapping
+  ///
+  entrypoint get_all_contracts() : map(string, address) =
+    state.contracts
+

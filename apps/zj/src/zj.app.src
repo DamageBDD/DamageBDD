@@ -1,0 +1,7 @@
+{application, zj,
+ [{description, "Tiny JSON helpers"},
+  {vsn, "0.1.0"},
+  {modules, []},
+  {registered, []},
+  {applications, [kernel, stdlib]},
+  {env, []}]}.

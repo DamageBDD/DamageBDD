@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="{{description}}">
+<meta name="theme-color" content="{{accent_color}}">
+{{#has_favicon}}<link rel="icon" href="{{favicon_url}}">{{/has_favicon}}
+<title>{{title}}</title><link rel="stylesheet" href="/dashboard/assets/dashboard.css"></head>
+<body data-node-name="{{name}}" data-node-title="{{title}}" data-node-description="{{description}}" style="--green:{{accent_color}}">{{{sidebar}}}<div class="app">{{{header}}}<main>{{{hero}}}<div id="content">{{{feed}}}</div></main>{{{footer}}}</div>
+<dialog id="modal"><button class="close" data-action="close" aria-label="Close dialog">×</button><div id="modalBody"></div><p id="modalError" role="alert"></p></dialog>
+<template id="authTemplate">{{{auth}}}</template><div id="toast" role="status"></div>
+<noscript><p>This dashboard needs JavaScript for wallet signatures and interactive feeds. Public search is also available at /api/nostr/search.</p></noscript>
+<script src="/dashboard/assets/qrcode.min.js"></script><script type="module" src="/dashboard/assets/dashboard.js"></script></body></html>

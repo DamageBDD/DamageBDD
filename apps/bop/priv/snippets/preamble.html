@@ -1,0 +1,86 @@
+<div class='preamble'>
+
+  <!-- Site Header -->
+  <header class='site-header'>
+    <a href='/' class='logo-link'>
+      <img src='/assets/img/bop-logo-alpha.png' class='logo' alt='BoP Logo' />
+    </a>
+    <div class='identity-text'>
+      <h1 class='site-title'>Bitcoin Only Party</h1>
+      <p class='tagline'>Sovereignty, Sound Money, and Verified Governance for Australia.</p>
+    </div>
+    <button onclick="toggleTheme()" title="Toggle Light/Dark" id="theme-button">🌓</button>
+  </header>
+
+  <!-- Main Navigation -->
+  <nav class='main-nav'>
+    <ul class='nav-menu'>
+      <li><a href='/'><span class='nav-icon'>🏛️</span> Home</a></li>
+      <li><a href='/constitution'><span class='nav-icon'>📜</span> Constitution</a></li>
+      <li><a href="/socials"><span class="nav-icon">🌐</span> Socials</a></li>
+    </ul>
+
+    <!-- Lightning Login -->
+    <form id='login-form' onsubmit="startAuth(); return false;" class='login-form'>
+      <button type='submit' id='login-btn'>⚡Lightning Login ⚡</button>
+    </form>
+  </nav>
+
+  <div id='status'></div>
+  <section id="invoice">
+  </section>
+  <section id="bop-wallet">
+  </section>
+
+  <!-- JS -->
+  <script type='module' defer>
+    import { LightningAuth } from '/assets/js/bop.js';
+    import { showLightningQR, hideLightningQR, renderConfirmation } from './assets/js/bop-lightning-ui.js';
+
+    let auth;
+
+    function updateStatus(msg) {
+      console.log(msg);
+      //document.getElementById("status").innerText = `[Status] ${JSON.stringify(msg)}`;
+      if (typeof msg === "object" && msg.status === "unregistered") {
+        hideLightningQR("invoice");
+      
+        renderConfirmation({
+          message: "You're not registered. Would you like to register for the Bitcoin Only Party?",
+          onConfirm: () => {
+            window.location.href = "/register";
+          },
+          onCancel: () => {
+            updateStatus("User declined registration.");
+          }
+        });
+      }
+
+    }
+
+    function renderInvoiceQR(invoice) {
+      showLightningQR({containerId : "invoice",
+      paymentRequest:  invoice,
+      title: "Login With Lightning Wallet",
+      instructions:  `
+    🛡️ Scan the QR code with your Lightning wallet to login.<br>
+  `});
+    }
+
+    window.startAuth = function () {
+
+      const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+      const wsUrl = protocol + window.location.host + "/ws/auth";
+
+      auth = new LightningAuth(wsUrl, {
+        onInvoice: renderInvoiceQR,
+        onVerified: () => updateStatus("✅ Authenticated!"),
+        onError: (err) => updateStatus("❌ Error: " + err),
+        onStatusUpdate: updateStatus
+      });
+
+      auth.connect();
+    }
+  </script>
+
+</div>

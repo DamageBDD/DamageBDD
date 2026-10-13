@@ -1,0 +1,59 @@
+# docker/tor/torrc
+#
+# DamageBDD Tor sidecar.
+#
+# Provides:
+#   - SOCKS5 proxy on tor:9050 for container egress
+#   - optional onion services for Bitcoin Core, Core Lightning, and DamageBDD API
+#
+# Security:
+#   - Do not expose SOCKSPort publicly.
+#   - Do not expose ControlPort unless authentication is configured.
+#   - /var/lib/tor contains onion service identity keys.
+
+DataDirectory /var/lib/tor
+
+# SOCKS proxy used by DamageBDD, Bitcoin Core, and Core Lightning.
+SocksPort 0.0.0.0:9050
+SOCKSPolicy accept 172.16.0.0/12
+SOCKSPolicy accept 192.168.0.0/16
+SOCKSPolicy accept 10.0.0.0/8
+SOCKSPolicy reject *
+
+# Keep DNS leaks down for SOCKS-aware applications.
+SafeSocks 1
+TestSocks 1
+
+# Log to container stdout.
+Log notice stdout
+
+# ---------------------------------------------------------------------------
+# Optional Core Lightning onion service
+# ---------------------------------------------------------------------------
+# After first start, read the onion address with:
+#   docker compose exec tor cat /var/lib/tor/lightning/hostname
+# Then set CLN_ANNOUNCE_ADDR=<hostname>.onion:9735 in .env and uncomment
+# the --announce-addr line in the lightning command.
+HiddenServiceDir /var/lib/tor/lightning/
+HiddenServiceVersion 3
+HiddenServicePort 9735 lightning:9735
+
+# ---------------------------------------------------------------------------
+# Optional Bitcoin P2P onion service
+# ---------------------------------------------------------------------------
+# This publishes bitcoin:8333 as a v3 onion service.
+# Read the onion address with:
+#   docker compose exec tor cat /var/lib/tor/bitcoin/hostname
+HiddenServiceDir /var/lib/tor/bitcoin/
+HiddenServiceVersion 3
+HiddenServicePort 8333 bitcoin:8333
+
+# ---------------------------------------------------------------------------
+# Optional DamageBDD API onion service
+# ---------------------------------------------------------------------------
+# Uncomment if you want the DamageBDD HTTP API reachable over Tor.
+# Onion transport does not replace normal application auth/rate limits.
+#
+# HiddenServiceDir /var/lib/tor/damagebdd-api/
+# HiddenServiceVersion 3
+# HiddenServicePort 80 damagebdd:4888

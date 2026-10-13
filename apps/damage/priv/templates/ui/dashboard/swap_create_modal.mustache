@@ -1,0 +1,61 @@
+<!-- -*- mode: html -*- -->
+<div class="modal micromodal-slide" id="swap-create-modal" aria-hidden="true">
+  <div class="modal__overlay" tabindex="-1" data-micromodal-close>
+    <div class="modal__container" role="dialog" aria-modal="true" aria-labelledby="swap-modal-title">
+      <header class="modal__header">
+        <h2 class="modal__title" id="swap-modal-title">Create Swap Option</h2>
+        <button class="modal__close" aria-label="Close" data-micromodal-close></button>
+      </header>
+
+      <main class="modal__content">
+        <div class="form-group">
+          <label for="swap-issue-url">Issue URL</label>
+          <input id="swap-issue-url" type="url" placeholder="https://github.com/org/repo/issues/123" required>
+        </div>
+
+        <div class="form-group">
+          <label for="swap-buyer-ak">Buyer (AE account)</label>
+          <input id="swap-buyer-ak" type="text" placeholder="ak_..." required>
+        </div>
+
+        <div class="form-group">
+          <label for="swap-seller-ak">Seller (AE account)</label>
+          <input id="swap-seller-ak" type="text" placeholder="ak_..." required>
+        </div>
+
+        <div class="form-group">
+          <label for="swap-sats">Sats (locked)</label>
+          <input id="swap-sats" type="number" min="1" step="1" placeholder="20000" required>
+        </div>
+
+        <div class="form-group">
+          <label for="swap-damage">DAMAGE out</label>
+          <input id="swap-damage" type="number" min="1" step="1" placeholder="500" required>
+        </div>
+
+        <div class="form-group">
+          <label for="swap-ttl">Expiry (seconds)</label>
+          <input id="swap-ttl" type="number" min="60" step="1" value="86400" required>
+        </div>
+
+        <div id="swap-create-error" class="warning-box" style="display:none;"></div>
+
+        <button id="swap-create-submit" class="modal__btn modal__btn-primary" type="button">
+          Create
+        </button>
+
+        <div id="swap-create-result" style="display:none; margin-top:1rem;">
+          <h3>Lightning Invoice</h3>
+          <textarea id="swap-bolt11" readonly rows="4"></textarea>
+          <div style="margin-top:.5rem; font-size:.85rem; color:#aaa;">
+            payment_hash: <code id="swap-payment-hash"></code>
+          </div>
+        </div>
+      </main>
+
+      <footer class="modal__footer">
+        <button class="modal__btn" data-micromodal-close type="button">Close</button>
+      </footer>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,12 @@
+{
+  "appId": "com.damagebdd.app",
+  "appName": "DamageBDD",
+  "webDir": "www",
+  "appendUserAgent": " DamageBDD-Mobile/0.1",
+  "loggingBehavior": "debug",
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}

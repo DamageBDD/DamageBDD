@@ -1,0 +1,81 @@
+.damage-dashboard #nft-gallery { width: 100%; }
+.damage-dashboard #nft-gallery .nft-filter { margin-bottom: 18px; }
+.damage-dashboard #nft-gallery .nft-filter__row {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+.damage-dashboard #nft-gallery .nft-filter__left { flex: 1 1 540px; min-width: 260px; }
+.damage-dashboard #nft-gallery .nft-filter__right { flex: 0 0 auto; }
+.damage-dashboard #nft-gallery .addr-add { display: flex; gap: 8px; align-items: center; margin-top: 10px; }
+.damage-dashboard #nft-gallery .addr-add__input { flex: 1 1 auto; }
+.damage-dashboard #nft-gallery .workspace-helper { margin: 8px 0 0; }
+.damage-dashboard #nft-gallery .nft-status { padding: 0 20px 16px; }
+.damage-dashboard #nft-gallery .nft-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+}
+.damage-dashboard #nft-gallery .nft-card {
+  min-height: 260px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--ws-line);
+  border-radius: 12px;
+  background: var(--ws-panel);
+  box-shadow: none;
+}
+.damage-dashboard #nft-gallery .nft-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 1px solid var(--ws-line);
+  background: var(--ws-input);
+}
+.damage-dashboard #nft-gallery .nft-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.damage-dashboard #nft-gallery .nft-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 14px;
+}
+.damage-dashboard #nft-gallery .nft-title { color: var(--ws-text); font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
+.damage-dashboard #nft-gallery .nft-desc {
+  color: var(--ws-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+.damage-dashboard #nft-gallery .nft-meta {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--ws-muted);
+  font-size: 10px;
+}
+.damage-dashboard #nft-gallery .pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border: 1px solid var(--ws-line);
+  border-radius: 999px;
+  background: var(--ws-input);
+  color: #c7d3e1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (max-width: 600px) {
+  .damage-dashboard #nft-gallery .nft-filter__right { flex: 1 1 100%; }
+  .damage-dashboard #nft-gallery .nft-filter__right .workspace-button { flex: 1 1 auto; }
+  .damage-dashboard #nft-gallery .addr-add { align-items: stretch; }
+}

@@ -1,0 +1,270 @@
+include "List.aes"
+include "token-interface.aes"
+
+payable contract JobRegistry =
+
+  datatype step_state =
+    StepNone
+    | StepSubmitted
+    | StepApproved
+
+  record step =
+    { state       : step_state,
+      result_hash : hash,
+      runner      : address,
+      paid        : bool }
+
+  record job =
+    { client             : address,
+      token              : FungibleTokenFullInterface,
+      treasury           : address,
+      unit_price         : int,
+      fee_bps            : int,
+      max_steps          : int,
+      deadline           : int,
+      escrow_balance     : int,
+      paid_steps         : int,
+      steps              : map(int, step),
+      runner_claimable   : map(address, int),
+      treasury_claimable : int }
+
+  record state =
+    { jobs : map(hash, job) }
+
+  datatype event =
+    JobCreated(hash, address, address)
+    | JobFunded(hash, int, int)
+    | StepSubmittedEvent(hash, int, address)
+    | StepApprovedEvent(hash, int, address)
+    | StepRejectedEvent(hash, int, address)
+    | RunnerCredited(hash, address, int)
+    | PayoutClaimed(hash, address, int)
+    | FeeClaimed(hash, address, int)
+    | Finalized(hash, int, int)
+
+  entrypoint init() : state =
+    { jobs = {} }
+
+  function default_step() : step =
+    { state       = StepNone,
+      result_hash = Crypto.sha256("0"),
+      runner      = Contract.address,
+      paid        = false }
+
+
+
+  function job_exists(jid : hash, st : state) : bool =
+    Map.member(jid, st.jobs)
+
+  function get_job(jid : hash, st : state) : job =
+    switch (Map.lookup(jid, st.jobs))
+      None      => abort("NO_SUCH_JOB")
+      Some(job) => job
+
+  function job_id_of(client : address, token : FungibleTokenFullInterface, salt : hash) : hash =
+    Crypto.sha256((client, token.address, salt))
+
+  function map_get_int(m : map(address, int), k : address) : int =
+    Map.lookup_default(k, m, 0)
+
+  stateful entrypoint create_job(client_salt : hash,
+                                token       : FungibleTokenFullInterface,
+                                treasury    : address,
+                                unit_price  : int,
+                                fee_bps     : int,
+                                max_steps   : int,
+                                deadline    : int) : hash =
+    require(unit_price > 0, "BAD_PRICE")
+    require(fee_bps >= 0 && fee_bps =< 10_000, "BAD_FEE_BPS")
+    require(max_steps > 0, "BAD_STEPS")
+    require(deadline > Chain.timestamp, "BAD_DEADLINE")
+
+    let st  = state
+    let jid = job_id_of(Call.caller, token, client_salt)
+    require(!job_exists(jid, st), "JOB_EXISTS")
+
+    let j : job =
+      { client             = Call.caller,
+        token              = token,
+        treasury           = treasury,
+        unit_price         = unit_price,
+        fee_bps            = fee_bps,
+        max_steps          = max_steps,
+        deadline           = deadline,
+        escrow_balance     = 0,
+        paid_steps         = 0,
+        steps              = {},
+        runner_claimable   = {},
+        treasury_claimable = 0 }
+
+    put(state{ jobs[jid] = j })
+    Chain.event(JobCreated(jid, j.client, j.token.address))
+    jid
+
+  stateful entrypoint fund_job(jid : hash, amount : int) : int =
+    require(amount > 0, "BAD_AMOUNT")
+    let st = state
+    let j  = get_job(jid, st)
+    require(Call.caller == j.client, "ONLY_CLIENT")
+
+    let new_escrow_balance : int = j.escrow_balance + amount
+    put(state{ jobs[jid].escrow_balance = new_escrow_balance })
+    Chain.event(JobFunded(jid, amount, new_escrow_balance))
+    new_escrow_balance
+
+  stateful entrypoint submit_step(jid : hash,
+                                 idx : int,
+                                 result_hash : hash) : unit =
+    require(idx >= 0, "IDX_NEG")
+  
+    let st = state
+    let j  = get_job(jid, st)
+  
+    require(Chain.timestamp =< j.deadline, "DEADLINE_PASSED")
+    require(idx < j.max_steps, "IDX_OOB")
+  
+    let s0 : step = Map.lookup_default(idx, j.steps, default_step())
+    require(s0.state == StepNone, "ALREADY_SUBMITTED")
+  
+    let s1 : step =
+      { state       = StepSubmitted,
+        result_hash = result_hash,
+        runner      = Call.caller,
+        paid        = false }
+  
+    let steps1 : map(int, step) = j.steps{ [idx] = s1 }
+  
+    let j1 : job =
+      { client             = j.client,
+        token              = j.token,
+        treasury           = j.treasury,
+        unit_price         = j.unit_price,
+        fee_bps            = j.fee_bps,
+        max_steps          = j.max_steps,
+        deadline           = j.deadline,
+        escrow_balance     = j.escrow_balance,
+        paid_steps         = j.paid_steps,
+        steps              = steps1,
+        runner_claimable   = j.runner_claimable,
+        treasury_claimable = j.treasury_claimable }
+  
+    put(state{ jobs[jid] = j1 })
+    Chain.event(StepSubmittedEvent(jid, idx, s1.runner))
+
+
+  stateful entrypoint attest_step(jid : hash,
+                                 idx : int,
+                                 approve : bool) : unit =
+    let st = state
+    let j  = get_job(jid, st)
+
+    require(Call.caller == j.client, "ONLY_CLIENT")
+    require(idx >= 0 && idx < j.max_steps, "IDX_OOB")
+
+    let s : step = Map.lookup_default(idx, j.steps, default_step())
+    require(s.state == StepSubmitted, "NOT_SUBMITTED")
+
+    if (approve)
+      let s2 : step =
+        { state       = StepApproved,
+          result_hash = s.result_hash,
+          runner      = s.runner,
+          paid        = s.paid }
+      put(st{jobs[jid].steps[idx] = s2})
+      Chain.event(StepApprovedEvent(jid, idx, s.runner))
+    else
+      let s2 : step = default_step()
+      put(st{jobs[jid].steps[idx] = s2})
+      Chain.event(StepRejectedEvent(jid, idx, s.runner))
+
+  stateful entrypoint settle_step(jid : hash, idx : int) : unit =
+    let st = state
+    let j  = get_job(jid, st)
+
+    require(idx >= 0 && idx < j.max_steps, "IDX_OOB")
+
+    let s : step = Map.lookup_default(idx, j.steps, default_step())
+    require(s.state == StepApproved, "NOT_APPROVED")
+    require(!s.paid, "ALREADY_PAID")
+
+    let price      : int = j.unit_price
+    let fee        : int = (price * j.fee_bps) / 10_000
+    let to_runner  : int = price - fee
+
+    require(price =< j.escrow_balance, "INSUFFICIENT_ESCROW")
+
+    let new_escrow = j.escrow_balance - price
+    let runner_bal = map_get_int(j.runner_claimable, s.runner)
+    let tc1        = j.treasury_claimable + fee
+
+    let s2 : step =
+      { state       = s.state,
+        result_hash = s.result_hash,
+        runner      = s.runner,
+        paid        = true }
+
+
+    put(st{jobs[jid].steps[idx] = s2})
+    put(st{jobs[jid].escrow_balance = new_escrow})
+    put(st{jobs[jid].paid_steps = j.paid_steps + 1})
+    put(st{jobs[jid].treasury_claimable = tc1})
+    put(st{jobs[jid].runner_claimable[Call.caller] = runner_bal + to_runner})
+    Chain.event(RunnerCredited(jid, s.runner, to_runner))
+
+  stateful entrypoint claim_runner(jid : hash, amount : int) : int =
+    require(amount > 0, "BAD_AMOUNT")
+
+    let st = state
+    let j  = get_job(jid, st)
+
+    let bal = map_get_int(j.runner_claimable, Call.caller)
+
+    let pay : int =
+      if (amount < bal)
+        amount
+      else
+        bal
+
+    require(pay > 0, "NOTHING_TO_CLAIM")
+
+    j.token.transfer(Call.caller, pay)
+
+    put(st{jobs[jid].runner_claimable[Call.caller] = bal - pay})
+    Chain.event(PayoutClaimed(jid, Call.caller, pay))
+    pay
+
+  stateful entrypoint claim_treasury(jid : hash, amount : int) : int =
+    require(amount > 0, "BAD_AMOUNT")
+
+    let st = state
+    let j  = get_job(jid, st)
+
+    let pay : int =
+      if (amount < j.treasury_claimable)
+        amount
+      else
+        j.treasury_claimable
+
+    require(pay > 0, "NOTHING_TO_CLAIM")
+
+    j.token.transfer(j.treasury, pay)
+    put(st{jobs[jid].treasury_claimable = j.treasury_claimable - pay})
+    Chain.event(FeeClaimed(jid, j.treasury, pay))
+    pay
+
+  stateful entrypoint cancel_unstarted(jid : hash) : unit =
+    let st = state
+    let j  = get_job(jid, st)
+
+    require(Call.caller == j.client, "ONLY_CLIENT")
+    require(j.paid_steps == 0 && Map.size(j.steps) == 0, "ALREADY_STARTED")
+
+    let refundable = j.escrow_balance
+
+    if (refundable > 0)
+      j.token.transfer(j.client, refundable)
+
+
+    put(st{jobs[jid].escrow_balance = 0})
+    Chain.event(Finalized(jid, j.paid_steps, j.escrow_balance))
+

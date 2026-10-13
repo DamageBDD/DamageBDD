@@ -1,0 +1,2794 @@
+html, body {
+    margin: 0;
+}
+body {
+    font-family: 'Inter', system-ui, sans-serif;
+    font-weight: 400;
+    font-size: 16px;
+    line-height: 1.7;
+}
+h1, h2, h3 {
+    font-weight: 600;
+    font-family: 'Rubik', sans-serif;
+}
+
+
+h1, h2, h3, h4 { font-family: 'Rubik', sans-serif; }
+
+
+@media (max-width: 600px) {
+    body {
+        padding: .5rem;
+    }
+    
+    body h2 {
+        font-size: 1.5rem;
+    }
+}
+
+.dark-mode { background: linear-gradient(to bottom right, #2d2d2d, #1a1a1a); color: #e0e0e0; }
+.dark-mode table { background-color: #2b2b2b; }
+.circle-bg {
+    position: absolute; width: 400px; height: 400px; border-radius: 50%;
+    background: rgba(255, 255, 255, 0.2); animation: float 20s infinite alternate;
+}
+@keyframes float {
+    0% { transform: translate(0, 0); }
+    100% { transform: translate(100px, 50px); }
+}
+.title {
+    font-size: 24px;
+    font-weight: bold;
+    /*margin-bottom: 10px;*/
+}
+.header {
+    font-size: 16px;
+    margin-bottom: 20px;
+}
+.code-example {
+    text-align: left;
+}
+.input-box{
+    width: 100%;
+    max-width: 100%;
+    height: 30vh;
+    min-height: 200px;
+    padding: 10px;
+    margin-bottom: 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+    resize: vertical;
+    overflow-y: auto;
+    box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.2);
+    box-sizing: border-box;
+}
+select{
+    padding: 10px;
+    margin-bottom: 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+    resize: none;
+    overflow-y: auto;
+    box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.2);
+}
+#invoiceModal {
+    display: none;
+}
+#invoiceModal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    /*z-index: 9999;*/
+    background: white;
+    padding: 20px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.6);
+}
+body.modal-open {
+  overflow: hidden;
+}
+
+
+#editor {
+    float: left;
+    width: 80%;
+    max-width: 100%;
+    box-sizing: border-box;
+}
+
+
+#toolbar div {
+    cursor: pointer;
+    color: blue;
+    display: inline-block;
+}
+/*
+.modal-container {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+}*/
+
+#toolbar{
+    text-align: right;
+    float: right;
+}
+
+
+
+
+.buttonlink {
+    background: none!important;
+    border: none;
+    padding: 0!important;
+    /*optional*/
+    font-family: arial, sans-serif;
+    /*input has OS specific font-family*/
+    color: #069;
+    text-decoration: underline;
+    cursor: pointer;
+}
+code-input {
+    width: calc(100% - 40px); /* 100% - 2*margin */
+    --padding: 20px;
+}
+/*
+code-input{
+    height: 30em;
+}
+
+#container{
+    width: 30em;
+    height: 30em;
+    }
+pre{
+    width: 30em;
+    height: 30em;
+}
+*/
+#run-report{
+    font-size: xx-small;
+}
+table {
+    width: 100%;
+    table-layout: fixed;
+    font-size: xx-small;
+}
+td.hash{
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+}
+
+a{
+    text-decoration: none;
+}
+
+/*-----------collapsible section begin-------------*/
+/*https://jordanfinners.dev/blogs/creating-a-collapsible-section-with-nothing-but-html/*/
+details {
+    user-select: none;
+}
+
+details>summary span.icon {
+    width: 24px;
+    height: 24px;
+    transition: all 0.3s;
+    margin-left: auto;
+}
+
+details[open] summary span.icon {
+    transform: rotate(180deg);
+}
+
+summary {
+    display: flex;
+    cursor: pointer;
+}
+
+summary::-webkit-details-marker {
+    display: none;
+}
+
+/*-----------collapsible section end-------------*/
+html, body {
+    height: 100%;
+    margin: 0;
+}
+
+#content {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Instead of overriding Pure globally, do it only in that section */
+#execution-tab .pure-g { height: 100%; }
+#execution-tab .pure-u-1 {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+}
+
+.damage-editor {
+    display: flex;
+    width: 100%;
+    min-height: 320px;
+    border-radius: 6px;
+    background-color: #0f0f13;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow: inset 0 0 5px rgba(0, 0, 0, 0.4);
+}
+
+#damageLineNumbers {
+    width: 1.5rem;
+    padding: 1rem 0.5rem 1rem 1rem;
+    text-align: right;
+    font-family: monospace;
+    font-size: 0.95rem;
+    line-height: 1.5;
+    color: rgba(255, 255, 255, 0.5);
+    background-color: rgba(255, 255, 255, 0.02);
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+    user-select: none;
+}
+
+#damageLineNumbers span {
+    display: block;
+}
+
+.buttonlink {
+    display: inline-block;
+    margin-top: 8px;
+    margin-right: 12px;
+    padding: 6px 14px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #007BFF;
+    background-color: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    text-decoration: none;
+    transition: all 0.2s ease-in-out;
+}
+
+.buttonlink:hover,
+.buttonlink:focus {
+    color: #0056b3;
+    text-decoration: underline;
+    outline: none;
+}
+
+/*
+.modal__header img {
+  max-width: 120px;
+  height: auto;
+  display: block;
+  margin: 2rem auto 1rem auto;
+}
+.modal__header {
+  text-align: center;
+  padding: 2rem 1rem 0 1rem;
+}
+*/
+
+.styled-btn {
+    background: linear-gradient(to right, #0052cc, #007bff);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 0.75rem 1rem;
+    font-size: 1rem;
+    font-weight: 600;
+    text-align: center;
+    width: 100%;
+    box-shadow: 0 4px 10px rgba(0, 82, 204, 0.2);
+    cursor: pointer;
+    transition: all 0.25s ease-in-out;
+    /*margin-top: 1rem;*/
+
+}
+
+.styled-btn:hover {
+    background: linear-gradient(to right, #003fa6, #005ec4);
+    transform: scale(1.02);
+}
+
+/* === Updated wallet toolbar === */
+.wallet-toolbar-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 14px;
+    background: linear-gradient(180deg, rgba(31, 42, 58, 0.96), rgba(20, 30, 48, 0.96));
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+    min-width: 340px;
+    max-width: 100%;
+}
+
+.wallet-toolbar-main {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+    flex: 1;
+}
+
+.wallet-toolbar-address-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.wallet-toolbar-kicker {
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #9fc9ff;
+    opacity: 0.9;
+    white-space: nowrap;
+}
+
+.wallet-toolbar-address {
+    display: inline-block;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font: 600 0.85rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    color: #e6eefc;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(0, 123, 255, 0.22);
+    border-radius: 8px;
+    padding: 0.35rem 0.6rem;
+    vertical-align: middle;
+}
+
+.wallet-toolbar-balances {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.wallet-balance-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.wallet-balance-chip-subtle {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.wallet-balance-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #9fc9ff;
+    opacity: 0.9;
+}
+
+.wallet-balance-value {
+    font-weight: 700;
+    color: #fff;
+}
+
+.wallet-toolbar-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.wallet-open-btn {
+    width: auto;
+    min-width: 124px;
+    padding: 0.72rem 1rem;
+    white-space: nowrap;
+    margin: 0;
+}
+
+.wallet-refresh-btn {
+    appearance: none;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff;
+    width: 40px;
+    height: 40px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font: 600 16px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    cursor: pointer;
+    transition: transform 0.15s ease, opacity 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.wallet-refresh-btn:hover {
+    opacity: 1;
+    transform: translateY(-1px);
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(120, 200, 255, 0.35);
+}
+
+.wallet-refresh-btn[aria-busy="true"] {
+    animation: balance-spin 0.9s linear infinite;
+}
+
+@keyframes balance-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+
+/* legacy ids kept compatible with new wallet markup */
+#balanceDiv {
+    cursor: default;
+    border-radius: 0;
+    transition: none;
+    display: block;
+    max-width: 100%;
+    background: transparent;
+    transform: none;
+}
+
+#balanceDiv:hover {
+    border: 0;
+    transform: none;
+    will-change: auto;
+    background: transparent;
+}
+
+.balance-column,
+.balance-row {
+    display: contents;
+}
+
+#balanceAddress {
+    all: unset;
+    display: inline-block;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font: 600 0.85rem/1 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    color: #e6eefc;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(0, 123, 255, 0.22);
+    border-radius: 8px;
+    padding: 0.35rem 0.6rem;
+}
+
+#balanceLabel,
+#aeBalanceLabel,
+#satsBalanceLabel {
+    color: #9fc9ff;
+    font-weight: 600;
+    font-size: 0.72rem;
+    margin-right: 0;
+}
+
+#balanceAmount {
+    font-weight: 800;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 1rem;
+    letter-spacing: 0.2px;
+    color: #fff;
+}
+
+#aeBalance,
+#satsBalance {
+    font-size: 0.82rem;
+    line-height: 1.2;
+    color: #fff;
+    opacity: 0.95;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+#toolbar {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    align-items: center;
+}
+#damageTextArea {
+    padding: 1rem;
+    border-radius: 6px;
+    background-color: #1a1a1a;
+    color: #eee;
+    font-family: monospace;
+    line-height: 1.5;
+    box-shadow: inset 0 0 5px rgba(255,255,255,0.1);
+    flex: 1;
+    width: 100%;
+    resize: none;
+    box-sizing: border-box;
+    white-space: pre-wrap; 
+    word-wrap: break-word; 
+    overflow-wrap: break-word;
+}
+.styled-btn:hover {
+    background: linear-gradient(to right, #003fa6, #005ec4);
+    transform: scale(1.02);
+    box-shadow: 0 0 10px rgba(0, 123, 255, 0.4);
+}
+#runreports {
+    padding: 1rem;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    color: #ccc;
+    font-family: monospace;
+}
+/* === Modal Container Cleanup === */
+.modal__container {
+    background: #1e1e2f;
+    color: #eaeaea;
+    border-radius: 12px;
+    padding: 2rem;
+    max-width: 540px;
+    margin: auto;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+
+/* === Modal Header and Title === */
+.modal__header {
+    text-align: center;
+    margin-bottom: 1.5rem;
+}
+
+.modal__title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: #ffffff;
+}
+
+/* === Tab Links === */
+[data-token-tabs] {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    justify-content: center;
+    border-bottom: 1px solid #444;
+    padding-bottom: 0.5rem;
+}
+
+[data-token-tabs] a {
+    color: #00bfff;
+    text-decoration: none;
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    font-weight: 500;
+    background-color: #2a2a3d;
+}
+
+
+
+
+/* === Copy Icon === */
+#copyAddressIcon,
+#copyInvoiceIcon {
+    color: #ffcc00;
+    margin-left: 0rem;
+}
+
+#copyAddressIcon:hover,
+#copyInvoiceIcon:hover {
+    color: #ffffff;
+}
+
+
+
+/* Close (X) button styling */
+.modal__close {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    color: #aaa;
+    /*
+  position: absolute;
+  top: 1.25rem;
+  right: 1.25rem;
+   */
+    cursor: pointer;
+    transition: color 0.2s ease-in-out;
+}
+
+.modal__close:hover {
+    color: #fff;
+}
+
+/* Input field dark styling */
+.modal__content {
+    background-color: #1c1c2b;
+    color: #f5f5f5;
+    /*
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  width: 90%;
+  margin-top: 0.5rem;
+  margin-bottom: 0.75rem;
+  margin-left: 0.5rem;
+  margin-right: 0.5rem;
+  font-size: 0.95rem;
+   */
+}
+
+/* ===========================
+   Modern primary tabs (Tabby)
+   Targets: <ul data-tabs role="tablist"> ... <a role="tab">
+   =========================== */
+
+.tabsbar{
+  /* Optional: sticky modern feel */
+  position: sticky;
+  top: 0;
+  z-index: 50;
+
+  /* “glass” bar */
+  background: rgba(18, 18, 28, 0.72);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+
+ul[data-tabs][role="tablist"]{
+  /* kill Tabby defaults */
+  border-bottom: 0 !important;
+  margin: 0 !important;
+  list-style: none;
+  padding: .55rem .65rem !important;
+
+  display: flex !important;
+  align-items: center;
+  gap: .5rem;
+
+  /* mobile-friendly: scrollable chips */
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+
+  /* nice scroll behavior */
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;            /* Firefox */
+}
+ul[data-tabs][role="tablist"]::-webkit-scrollbar{
+  width: 0;
+  height: 0;                        /* Chrome/Safari */
+}
+
+ul[data-tabs][role="tablist"] > li{
+  margin: 0 !important;
+  padding: 0 !important;
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+}
+
+/* Pill tabs */
+ul[data-tabs] [role="tab"]{
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+
+  min-height: 44px;                 /* good touch target */
+  padding: .55rem .9rem !important;
+
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.10) !important;
+  background: rgba(255,255,255,0.06);
+
+  text-decoration: none;
+  color: rgba(255,255,255,0.82);
+  font-weight: 700;
+  letter-spacing: .2px;
+
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform .08s ease, background-color .15s ease, color .15s ease, box-shadow .15s ease, border-color .15s ease;
+}
+
+ul[data-tabs] [role="tab"]:hover{
+  background: rgba(255,255,255,0.09);
+  border-color: rgba(255,255,255,0.16) !important;
+  color: rgba(255,255,255,0.95);
+}
+
+ul[data-tabs] [role="tab"]:active{
+  transform: translateY(1px);
+}
+
+/* ACTIVE must follow aria-selected only */
+ul[data-tabs] [role="tab"][aria-selected="true"]{
+  background: rgba(0, 140, 255, 0.35);
+  border-color: rgba(0, 140, 255, 0.55) !important;
+  color: #fff;
+  box-shadow: 0 10px 26px rgba(0,0,0,0.35);
+}
+
+/* If Tabby marks a default tab, don't let it LOOK active unless selected */
+ul[data-tabs] [role="tab"][data-tabby-default]:not([aria-selected="true"]){
+  background: rgba(255,255,255,0.06) !important;
+  border-color: rgba(255,255,255,0.10) !important;
+  color: rgba(255,255,255,0.82) !important;
+  box-shadow: none !important;
+}
+
+ul[data-tabs] [role="tab"]:focus-visible{
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(0, 140, 255, 0.35);
+}
+
+/* Desktop: a bit more breathing room */
+@media (min-width: 48rem){
+  ul[data-tabs][role="tablist"]{
+    padding: .65rem 1rem !important;
+    gap: .6rem;
+  }
+  ul[data-tabs] [role="tab"]{
+    padding: .6rem 1rem !important;
+  }
+}
+
+
+/* Panel styling (like #execution-tab, #activity-tab) */
+.execute-container,
+#activity-tab,
+#analytics-tab,
+#schedules-tab,
+#settings-tab {
+    background-color: #252535;
+    border-radius: 0 0 10px 10px;
+    border: 1px solid #3a3a3a;
+    border-top: none;
+    padding: 1.5rem;
+    margin-bottom: 2rem;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+
+#schedules-tab button[type="button"] {
+    padding: 0.75rem 1.5rem;
+    background: linear-gradient(to right, #28a745, #218838);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+#schedules-tab button[type="button"]:hover {
+    background: linear-gradient(to right, #218838, #1e7e34);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(33, 136, 56, 0.3);
+}
+
+/* Form Styling */
+#settings-tab form {
+    margin-bottom: 2.5rem;
+}
+
+/* Fieldset Styling - Card-like appearance */
+#settings-tab fieldset {
+    background: #2a2a3d;
+    border: 1px solid #3a3a4d;
+    border-radius: 12px;
+    padding: 6rem 1.5rem 2rem;
+    margin-bottom: 1.5rem;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    transition: transform 0.2s, box-shadow 0.2s;
+    position: relative;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+/* Legend Styling - Modern card header */
+#settings-tab legend {
+    color: #fff;
+    font-size: 2rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    border-bottom: 1px solid #3a3a4d;
+    width: 100%;
+    display: block;
+    position: absolute;
+    top: 1.5rem;
+    left: 0;
+    margin: 0;
+    padding: 0 2rem 0.75rem;
+    box-sizing: border-box;
+}
+
+/* Label Styling */
+#settings-tab label {
+    display: inline-block;
+    color: #ccc;
+    font-weight: 500;
+    margin-bottom: 0.5rem;
+    margin-top: 1rem;
+    font-size: 0.95rem;
+    min-width: 120px;
+}
+
+/* Input Styling */
+#settings-tab input[type="text"],
+#settings-tab input[type="url"] {
+    padding: 0.75rem 1rem;
+    background-color: #1e1e2f;
+    border: 1px solid #3a3a4d;
+    border-radius: 6px;
+    color: #fff;
+    font-size: 1rem;
+    width: 100%;
+    max-width: 400px;
+    margin-left: 0.5rem;
+    transition: border-color 0.3s, box-shadow 0.3s;
+    box-sizing: border-box;
+}
+
+#settings-tab input[type="text"]:focus,
+#settings-tab input[type="url"]:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+}
+
+#settings-tab input[type="text"]::placeholder,
+#settings-tab input[type="url"]::placeholder {
+    color: #666;
+}
+
+/* Select Styling */
+#settings-tab select {
+    padding: 0.75rem 1rem;
+    background-color: #1e1e2f;
+    border: 1px solid #3a3a4d;
+    border-radius: 6px;
+    color: #fff;
+    font-size: 1rem;
+    width: 100%;
+    max-width: 400px;
+    margin-left: 0.5rem;
+    cursor: pointer;
+    transition: border-color 0.3s, box-shadow 0.3s;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23fff' d='M6 9L1 4h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    padding-right: 2.5rem;
+}
+
+#settings-tab select:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+}
+
+/* Button Styling */
+#settings-tab button[type="button"] {
+    padding: 0.75rem 1.5rem;
+    background: linear-gradient(to right, #0052cc, #007bff);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-weight: 500;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.3s;
+    margin-top: 1rem;
+    margin-right: 0.5rem;
+    transition: all 0.25s ease-in-out;
+}
+
+#settings-tab button[type="button"]:hover {
+    background: linear-gradient(to right, #003fa6, #005ec4);
+    transform: scale(1.02);
+}
+
+#settings-tab button[type="button"]:active {
+    transform: translateY(0);
+}
+
+/* Submit Button Styling */
+#settings-tab input[type="submit"] {
+    padding: 0.875rem 2rem;
+    background: linear-gradient(to right, #28a745, #218838);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.3s;
+    margin-top: 1.5rem;
+    width: 100%;
+    max-width: 200px;
+    transition: all 0.25s ease-in-out;
+}
+
+#settings-tab input[type="submit"]:hover {
+    background: linear-gradient(to right, #218838, #1e7e34);
+    transform: scale(1.02);
+}
+
+#settings-tab input[type="submit"]:active {
+    transform: translateY(0);
+}
+
+/* Generated Token Display */
+#settings-tab #generatedToken {
+    margin-top: 1rem;
+    padding: 1rem;
+    background: #1e1e2f;
+    border: 1px solid #3a3a4d;
+    border-radius: 6px;
+    color: #fff;
+    font-family: monospace;
+    word-break: break-all;
+    min-height: 3rem;
+    font-size: 0.9rem;
+}
+
+/* Context Variables Display */
+#settings-tab #contextVariables {
+    margin-top: 1.5rem;
+    padding: 1rem;
+    background: #1e1e2f;
+    border-radius: 6px;
+    min-height: 100px;
+    border: 1px dashed #3a3a4d;
+}
+
+#settings-tab #contextVariables:empty::before {
+    content: "No items added yet";
+    color: #666;
+    font-style: italic;
+    display: block;
+}
+
+/* Line Break Spacing */
+#settings-tab br {
+    margin-bottom: 0.5rem;
+}
+
+/* Form Group Layout - Better spacing */
+#settings-tab fieldset > * {
+    margin-bottom: 0.75rem;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    #settings-tab {
+        padding: 1rem;
+    }
+    
+    #settings-tab input[type="text"],
+    #settings-tab input[type="url"],
+    #settings-tab select {
+        max-width: 100%;
+        margin-left: 0;
+        margin-top: 0.5rem;
+        display: block;
+    }
+    
+    #settings-tab label {
+        display: block;
+        margin-bottom: 0.25rem;
+    }
+    
+    #settings-tab input[type="submit"] {
+        max-width: 100%;
+    }
+}
+
+#run-reports-panel {
+    margin-left:0.5rem;
+    padding: 1rem;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    color: #ccc;
+    font-family: monospace;
+}
+
+/* Generic wrapper for both input and textarea */
+/* === Click-copy container === */
+.click-copy {
+    display: inline-flex;
+    align-items: center;          /* vertical centering */
+    gap: 0.5rem;
+    position: relative;
+    max-width: 100%;
+}
+
+
+/* Shared styling for input and textarea */
+/* Copyable text (span, input, textarea) */
+.click-copy .copy-text,
+.click-copy input[type="text"],
+.click-copy textarea[readonly] {
+    flex: 1;
+    padding: 0.4rem 0.6rem;
+    border-radius: 6px;
+    background: #1c1c2b;
+    border: 1px solid #444;
+    color: #e0e0e0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+
+/* Adjust for taller textareas */
+.click-copy textarea {
+    min-height: 5rem;
+    line-height: 1.5;
+}
+
+/* The copy icon */
+.click-copy .copy-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.1rem;
+    color: #ffcc00;
+    cursor: pointer;
+    padding: 0.25rem;
+    line-height: 1;
+    border-radius: 6px;
+    transition: background 0.15s ease;
+}
+
+.click-copy .copy-icon:hover {
+    color: #ffffff;
+    background: rgba(255, 204, 0, 0.15);
+}
+
+/* Header container */
+.site-header {
+    display: flex;
+    align-items: center;
+}
+
+/* Logo image */
+.logo {
+    width: 58px;
+    object-fit: contain;
+    filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.4));
+}
+
+/* Text styling next to logo */
+.brand-text {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
+.brand-text .title {
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: #00bfff;
+}
+
+.brand-text .subtitle {
+    font-size: 0.95rem;
+    color: #aaa;
+    margin-top: 0.2rem;
+}
+.site-header {
+    border-radius: 8px;
+}
+
+/* Combine site-header and toolbar into a single topbar container */
+.topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: linear-gradient(to right, #1f2a3a, #141e30);
+    border-bottom: 1px solid #333;
+    border-radius: 0 0 8px 8px;
+}
+
+/* Move existing .site-header into left section */
+.topbar .site-header {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+/* Move existing #toolbar items into right section */
+.topbar .toolbar-items {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+}
+
+.topbar .toolbar-items #toolbar-btns {
+    display: flex;
+    flex-direction: row;
+    max-width: 500px;
+    min-height: 76px;
+}
+
+.toolbar-items div {
+    color: #ccc;
+    font-weight: 500;
+    cursor: pointer;
+}
+
+.toolbar-items div:hover {
+    color: #fff;
+}
+
+/* Make the topbar Install button look obviously clickable */
+.install-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(to right, #28a745, #218838);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all .2s ease-in-out;
+    user-select: none;
+    line-height: 1.7;
+    min-height: 44px;
+}
+.install-btn:hover { transform: scale(1.03); }
+
+
+/* Logout Button */
+.logout-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--modal-bg);
+    color: var(--error);
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.2s ease;
+    line-height: 1.7;
+    min-height: 44px;
+}
+
+.logout-btn:hover {
+    background-color: var(--error);
+    color: var(--bg);
+}
+
+
+@media(min-width: 901px) {
+    .site-header {
+        padding-left: 0;
+    }
+
+    .topbar {
+        padding: 1rem;
+    }
+
+    .topbar .toolbar-items #toolbar-btns {
+        flex-direction: column;
+        gap: .5rem;
+    }
+
+    .topbar .toolbar-items #toolbar-btns .install-btn {
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+
+    .topbar .toolbar-items #toolbar-btns .logout-btn {
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+
+}
+
+@media(max-width: 900px) {
+    .site-header {
+        padding-bottom: 1rem;
+    }
+
+    .topbar {
+        flex-direction: column;
+        align-items: initial;
+        padding: 1rem;
+    }
+
+    .topbar .toolbar-items {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 1rem;
+
+    }
+
+    .wallet-toolbar-card {
+        width: 100%;
+        min-width: 0;
+    }
+
+    .topbar .toolbar-items #toolbar-btns  {
+        gap: 1rem;
+    }
+
+
+    .topbar .toolbar-items #toolbar-btns .install-btn {
+        flex: 1;
+    }
+
+    .topbar .toolbar-items #toolbar-btns .logout-btn {
+        flex: 1;
+    }
+}
+
+@media(max-width: 640px) {
+    .wallet-toolbar-card {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .wallet-toolbar-actions {
+        width: 100%;
+    }
+
+    .wallet-open-btn {
+        flex: 1;
+        width: 100%;
+    }
+
+    .wallet-refresh-btn {
+        flex: 0 0 40px;
+    }
+
+    .wallet-toolbar-address-row,
+    .wallet-toolbar-balances {
+        flex-wrap: wrap;
+    }
+}
+
+@media(max-width: 450px) {
+    .topbar .toolbar-items {
+        gap: .5rem;
+    }
+
+    .topbar .toolbar-items #toolbar-btns {
+        flex-direction: column;
+        gap: .5rem;
+    }
+
+}
+
+
+/* Uniform inputs/selects inside the install wizard */
+#install-modal input, #install-modal select, #install-modal textarea {
+    width: 100%;
+    padding: 10px;
+    border-radius: 6px;
+    margin-top: 6px;
+    box-sizing: border-box;
+}
+#installRequestForm label {
+    display: block;
+    margin: .5rem 0 .25rem;
+    font-weight: 500;
+}
+
+/* Wallet selector: dark theme + hover/focus states */
+#walletSelectorWrap { display:inline-flex; align-items:center; gap:.5rem; }
+#walletSelector{
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid #2f2f2f;
+    background: #1e1e2f;
+    color: #e6eefc;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 0 0 rgba(0,0,0,0);
+    transition: box-shadow .15s ease, border-color .15s ease, background .15s ease;
+}
+.topbar #walletSelector:hover { background:#25253a; }
+.topbar #walletSelector:focus-visible{
+    outline: none;
+    border-color:#007bff;
+    box-shadow: 0 0 0 3px rgba(0,123,255,.25);
+}
+/* ===== Wallet selector: full width + neat ===== */
+
+#walletSelectorWrap {
+  width: 100%;
+  margin: 0 0 .75rem 0;
+}
+
+/* If the wrapper is flex, ensure it doesn't shrink */
+#walletSelectorWrap,
+#walletSelectorWrap * {
+  box-sizing: border-box;
+}
+
+#walletSelector {
+  width: 100%;
+  max-width: 100%;
+  display: block;
+
+  /* compact + consistent with your dark UI */
+  padding: .65rem .9rem;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(10, 12, 18, 0.55);
+
+  color: #e8eefc;
+  font-weight: 600;
+  line-height: 1.1;
+
+  /* remove default weirdness */
+  margin: 0;
+  outline: none;
+  box-shadow: none;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+
+  /* space for custom chevron */
+  padding-right: 2.2rem;
+}
+
+/* Custom dropdown chevron */
+#walletSelectorWrap {
+  position: relative;
+}
+
+#walletSelectorWrap::after {
+  content: "▾";
+  position: absolute;
+  right: .8rem;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  opacity: 0.75;
+  font-size: 0.95rem;
+}
+
+/* Hover/focus states */
+#walletSelector:hover {
+  border-color: rgba(255,255,255,0.16);
+  background: rgba(10, 12, 18, 0.65);
+}
+
+#walletSelector:focus {
+  border-color: rgba(60, 140, 255, 0.65);
+  box-shadow: 0 0 0 3px rgba(60, 140, 255, 0.18);
+}
+
+/* Options (limited styling support across browsers, but harmless) */
+#walletSelector option {
+  background: #0b0e15;
+  color: #e8eefc;
+}
+/* ===== Wallet selector dropdown items ===== */
+
+#walletSelector option {
+  background-color: #0b0f18;   /* dark dropdown */
+  color: #e8eefc;              /* readable text */
+  font-weight: 600;
+  padding: .5rem .75rem;       /* works in Firefox / some Chromium */
+}
+
+/* Selected item */
+#walletSelector option:checked {
+  background-color: #0a3cff;   /* Damage blue highlight */
+  color: #ffffff;
+}
+
+/* Hover (works in Firefox, partial elsewhere) */
+#walletSelector option:hover {
+  background-color: #16224d;
+  color: #ffffff;
+}
+
+/* Disabled (future-proof) */
+#walletSelector option:disabled {
+  color: rgba(255,255,255,0.4);
+}
+
+#walletSelector optgroup {
+  background: #070b12;
+  color: rgba(255,255,255,0.5);
+  font-weight: 500;
+}
+
+#balanceTopupBtn {
+    appearance: none;
+    border: 0;
+    background: none;
+    width: 22px;
+    height: 22px;
+    border-radius: 9999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font: 600 13px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    opacity: .8;
+    cursor: pointer;
+    margin-left: .25rem;
+}
+#balanceTopupBtn:hover { opacity: 1; }
+
+.damage-amount { font-weight:800; font-family:monospace; font-size:1.05rem; letter-spacing:.3px; }
+
+.ae-sub {
+    font-size: .78rem;
+    line-height: 1.2;
+    color: #9fc9ff;;
+    opacity: .9;
+}
+
+.ae-balance {
+    font-size: .78rem;
+    line-height: 1.2;
+    color: white;
+    opacity: .9;
+}
+
+/* Lightning sats credit balance */
+.sats-sub{
+  font-size: .78rem;
+  line-height: 1.2;
+  color: #9fc9ff;
+  opacity: .9;
+}
+
+.sats-balance{
+  font-size: .78rem;
+  line-height: 1.2;
+  color: #ffffff;
+  opacity: .9;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+/* Fix the invalid comment so the rest of CSS parses */
+/* === Form Buttons === */
+
+/* Restore Pure grid behavior inside the installer */
+#install-modal .pure-g { height: auto; }
+#install-modal .pure-u-1,
+#install-modal .pure-u-md-1-2,
+#install-modal .pure-u-md-1-3 {
+    display: inline-block;   /* Pure expects inline-block */
+    height: auto;
+    flex: none;
+    vertical-align: top;
+}
+
+/* Keep the fieldset neatly contained */
+#install-modal fieldset { box-sizing: border-box; margin: 0; min-width: 0; }
+
+/* Long commands shouldn’t push layout */
+#install-modal pre { white-space: pre-wrap; word-break: break-word; }
+#install-modal .styled-btn { box-sizing: border-box; width: 100%; }
+#install-modal .install-form pre {
+    box-sizing: border-box; margin:.75rem 0; padding:.75rem 1rem;
+    max-width:100%; max-height:40vh; overflow:auto;
+    white-space:pre-wrap; word-break:break-word; overflow-wrap:anywhere;
+    color:var(--fg,#eaeaea); background:var(--code-bg,rgba(8,12,20,.88));
+    border:1px solid rgba(255,255,255,.12); border-radius:10px;
+    font:.9rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+#install-modal pre code { display:block; color:inherit; background:transparent; user-select:text; }
+#install-modal pre + .styled-btn { margin-top:.5rem; width:100%; box-sizing:border-box; }
+#install-modal .install-form .pure-g.quick-dl {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: .5rem;
+}
+@media (min-width: 720px) {
+    #install-modal .install-form .pure-g.quick-dl {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+#install-modal .install-form .styled-btn[download] {
+    width: 100%;
+    text-align: center;
+}
+
+/* 1) Stop leaking z-index to everything */
+.modal.is-open {
+  position: fixed;
+  inset: 0;          /* top:0 right:0 bottom:0 left:0 */
+  z-index: 100000;
+}
+
+
+/* Manage Damage Tokens - Section Improvements */
+#damage-transfers-tab {
+    padding: 1rem 0;
+}
+
+#damage-transfers-tab .section-description {
+    color: #ccc;
+    font-size: 0.95rem;
+    line-height: 1.6;
+    margin-bottom: 2rem;
+    padding: 1rem;
+    background: rgba(30, 30, 47, 0.3);
+    border-radius: 6px;
+    border-left: 3px solid #007bff;
+}
+
+/* Token Section Styling */
+#damage-transfers-tab .token-section {
+    margin-bottom: 2.5rem;
+    padding: 1.5rem;
+    background: #2a2a3d;
+    border-radius: 8px;
+    border: 1px solid #3a3a4d;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+#damage-transfers-tab .token-section:last-child {
+    margin-bottom: 0;
+}
+
+/* Section Headings */
+#damage-transfers-tab .section-heading {
+    color: #fff;
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin: 0 0 1rem 0;
+    padding-bottom: 0.75rem;
+    border-bottom: 2px solid #007bff;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+#damage-transfers-tab .section-heading::before {
+    content: "▸";
+    color: #007bff;
+    font-size: 1rem;
+}
+
+/* Section Subtitle */
+#damage-transfers-tab .section-subtitle {
+    color: #aaa;
+    font-size: 0.9rem;
+    margin: -0.5rem 0 1rem 0;
+    font-style: italic;
+}
+
+
+/* QR Code Section */
+#damage-transfers-tab #qrcode-damage {
+    margin-top: 1rem;
+    text-align: center;
+    background-color: #1e1e2f;
+    padding: 1.5rem;
+    border-radius: 6px;
+    border: 1px dashed #3a3a4d;
+    min-height: 200px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+#damage-transfers-tab #qrcode-damage:empty::before {
+    content: "QR code will appear here";
+    color: #666;
+    font-style: italic;
+}
+
+#damage-transfers-tab #qrcode-damage img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 4px;
+}
+
+/* Transfer Form Styling */
+#damage-transfers-tab #transfer-out-form {
+    margin-top: 1rem;
+}
+
+#damage-transfers-tab #transfer-out-form .form-group {
+    margin-bottom: 1.25rem;
+}
+
+#damage-transfers-tab #transfer-out-form .form-group:last-of-type {
+    margin-bottom: 1.5rem;
+}
+
+#damage-transfers-tab #transfer-out-form label {
+    display: block;
+    color: #ccc;
+    font-weight: 500;
+    font-size: 0.95rem;
+    margin-bottom: 0.5rem;
+}
+
+#damage-transfers-tab #transfer-out-form input[type="text"],
+#damage-transfers-tab #transfer-out-form input[type="number"] {
+    width: 100%;
+    padding: 0.875rem 1rem;
+    margin-bottom: 0.5rem;
+    background-color: #1e1e2f;
+    border: 1px solid #3a3a4d;
+    border-radius: 6px;
+    color: #fff;
+    font-size: 1rem;
+    transition: border-color 0.3s, box-shadow 0.3s;
+    box-sizing: border-box;
+}
+
+#damage-transfers-tab #transfer-out-form input:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+}
+
+#damage-transfers-tab #transfer-out-form input::placeholder {
+    color: #666;
+}
+
+#damage-transfers-tab #damage-transfer-out-btn {
+    width: 100%;
+    padding: 0.875rem 2rem;
+    background: linear-gradient(to right, #0052cc, #007bff);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.3s;
+}
+
+#damage-transfers-tab #damage-transfer-out-btn:hover {
+    background: linear-gradient(to right, #003fa6, #005ec4);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 123, 255, 0.3);
+}
+
+#damage-transfers-tab #damage-transfer-out-btn:active {
+    transform: translateY(0);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    #damage-transfers-tab .token-section {
+        padding: 1rem;
+        margin-bottom: 1.5rem;
+    }
+    
+    #damage-transfers-tab .section-heading {
+        font-size: 1.1rem;
+    }
+}
+
+#logout-modal .modal__header {
+    position: relative;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    text-align: left;
+    padding-right: 2.5rem;
+}
+
+#logout-modal .modal__close {
+    position: absolute;
+    top: -20px;
+    right: -10px;
+    margin-left: 0;
+}
+
+#logout-modal .modal__footer .modal__btn:not(.modal__btn-primary) {
+    background: #3a3a4d;
+    color: #fff;
+    border: 1px solid #4a4a5d;
+}
+
+#logout-modal .modal__footer .modal__btn:not(.modal__btn-primary):hover {
+    background: #4a4a5d;
+    border-color: #5a5a6d;
+}
+#login_footer {
+  padding-top: 0;
+}
+
+
+/* Reset Password Page */
+body.reset-password-page {
+    background: linear-gradient(to bottom right, #1e1e2f, #2a2a3d);
+    color: #fff;
+    min-height: 100vh;
+    padding: 2rem;
+    font-family: 'Inter', system-ui, sans-serif;
+}
+
+body.reset-password-page h2 {
+    color: #fff;
+    font-size: 2rem;
+    font-weight: 600;
+    margin-bottom: 2rem;
+    text-align: center;
+    padding-bottom: 1rem;
+    border-bottom: 2px solid #007bff;
+}
+
+body.reset-password-page #resetPasswdForm {
+    max-width: 500px;
+    margin: 0 auto;
+    padding: 2rem;
+    background: #2a2a3d;
+    border-radius: 12px;
+    border: 1px solid #3a3a4d;
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+}
+
+body.reset-password-page #resetPasswdForm .password-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    margin-bottom: 1.5rem;
+    background: #1e1e2f;
+    border: 1px solid #3a3a4d;
+    border-radius: 6px;
+    padding: 0.5rem;
+    transition: border-color 0.3s, box-shadow 0.3s;
+}
+
+body.reset-password-page #resetPasswdForm .password-wrapper:focus-within {
+    border-color: #007bff;
+    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+}
+
+body.reset-password-page #resetPasswdForm .password-wrapper input {
+    flex: 1;
+    padding: 0.875rem 1rem;
+    background: transparent;
+    border: none;
+    color: #fff;
+    font-size: 1rem;
+    outline: none;
+}
+
+body.reset-password-page #resetPasswdForm .toggle-password {
+    position: absolute;
+    right: 1rem;
+    background: none;
+    border: none;
+    font-size: 1.2rem;
+    cursor: pointer;
+    color: #aaa;
+    padding: 0.5rem;
+    transition: color 0.2s;
+}
+
+body.reset-password-page #resetPasswdForm .toggle-password:hover {
+    color: #fff;
+}
+
+body.reset-password-page #resetPasswdForm .submit-button,
+body.reset-password-page #resetPasswdForm #resetPasswdBtn {
+    width: 100%;
+    padding: 0.875rem 2rem;
+    background: linear-gradient(to right, #0052cc, #007bff);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.3s;
+    margin-top: 1.5rem;
+}
+
+body.reset-password-page #resetPasswdForm .submit-button:hover,
+body.reset-password-page #resetPasswdForm #resetPasswdBtn:hover {
+    background: linear-gradient(to right, #003fa6, #005ec4);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 123, 255, 0.3);
+}
+
+body.reset-password-page #resetPasswdForm h3 {
+    color: #ccc;
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 2rem 0 1rem 0;
+    padding-top: 1.5rem;
+    border-top: 1px solid #3a3a4d;
+}
+
+body.reset-password-page #resetPasswdForm ul {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 1.5rem 0;
+}
+
+body.reset-password-page #resetPasswdForm ul li {
+    color: #aaa;
+    font-size: 0.95rem;
+    padding: 0.5rem 0 0.5rem 1.5rem;
+    position: relative;
+    line-height: 1.6;
+}
+
+body.reset-password-page #resetPasswdForm ul li::before {
+    content: "✓";
+    position: absolute;
+    left: 0;
+    color: #007bff;
+    font-weight: bold;
+}
+
+@media (max-width: 600px) {
+    body.reset-password-page {
+        padding: 1rem;
+    }
+    
+    body.reset-password-page #resetPasswdForm {
+        padding: 1.5rem;
+    }
+    
+    body.reset-password-page h2 {
+        font-size: 1.5rem;
+    }
+}
+
+@media (max-width: 900px) {
+
+    .brand-text .title {
+        font-size: 1.3rem;
+    }
+
+    .brand-text .subtitle {
+        font-size: 0.85rem;
+    }
+
+    .logo {
+        width: 48px;
+    }
+
+    /* Tabs - Make scrollable on mobile */
+    ul[data-tabs] {
+        overflow-x: auto;
+        overflow-y: hidden;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: thin;
+        padding-left: 0.5rem;
+        padding-right: 0.5rem;
+        white-space: nowrap;
+    }
+
+    ul[data-tabs] li {
+        display: inline-block;
+        white-space: nowrap;
+    }
+
+    ul[data-tabs] li a {
+        padding: 0.6rem 1rem;
+        font-size: 0.9rem;
+    }
+
+    /* Execution Tab - Stack columns on mobile */
+    #execution-tab .pure-g {
+        flex-direction: column;
+    }
+
+    #execution-tab .pure-u-1,
+    #execution-tab .pure-u-md-1-2 {
+        width: 100%;
+        margin-bottom: 1.5rem;
+    }
+
+    #execution-tab {
+        padding: 1rem;
+    }
+
+    /* Editor adjustments */
+    #editor {
+        float: none;
+        width: 100%;
+    }
+
+    .damage-editor {
+        min-height: 250px;
+        flex-direction: column;
+    }
+
+    #damageLineNumbers {
+        width: 100%;
+        padding: 0.5rem 1rem;
+        text-align: left;
+        border-right: none;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    #damageTextArea {
+        padding: 0.75rem;
+        font-size: 0.9rem;
+    }
+
+    /* Input box responsive */
+    .input-box {
+        width: 100%;
+        max-width: 100%;
+        height: 20vh;
+        min-height: 150px;
+    }
+
+    /* Modals - Full width on mobile */
+    .modal__container {
+        max-width: 95vw;
+        margin: 1rem auto;
+        padding: 1.5rem;
+    }
+
+    .modal__title {
+        font-size: 1.25rem;
+    }
+
+    /* Tab panels */
+    .execute-container,
+    #activity-tab,
+    #analytics-tab,
+    #schedules-tab,
+    #settings-tab {
+        padding: 1rem;
+        margin-bottom: 1rem;
+    }
+
+    /* Run reports panel */
+    #run-reports-panel {
+        margin-left: 0;
+        padding: 0.75rem;
+    }
+
+    /* Buttons */
+    .styled-btn {
+        /* padding: 0.65rem 0.85rem; */
+        font-size: 0.9rem;
+    }
+
+    /* Balance display */
+    #balanceDiv {
+        font-size: 0.85rem;
+    }
+
+    #balanceLabel {
+        font-size: 0.8rem;
+    }
+
+    .damage-amount {
+        font-size: 0.95rem;
+    }
+
+
+    /* Settings tab responsive (enhance existing) */
+    #settings-tab {
+        padding: 0.75rem !important;
+    }
+
+    #settings-tab h2 {
+        font-size: 1.5rem;
+        margin-bottom: 1rem;
+        padding-bottom: 0.5rem;
+    }
+
+    #settings-tab fieldset {
+        padding: 3rem 0.75rem 1rem !important;
+        margin-bottom: 1rem;
+        border-radius: 8px;
+    }
+
+    #settings-tab legend {
+        font-size: 1.25rem !important;
+        padding: 0 0.75rem 0.5rem !important;
+        position: absolute;
+        top: 0.75rem;
+        left: 0.75rem;
+        width: calc(100% - 1.5rem);
+    }
+
+    #settings-tab label {
+        display: block !important;
+        width: 100% !important;
+        margin-left: 0 !important;
+        margin-top: 1rem;
+        margin-bottom: 0.5rem;
+        min-width: auto !important;
+    }
+
+    #settings-tab input[type="text"],
+    #settings-tab input[type="url"],
+    #settings-tab select {
+        width: 100% !important;
+        max-width: 100% !important;
+        margin-left: 0 !important;
+        margin-top: 0.5rem;
+        padding: 0.875rem 1rem;
+        font-size: 1rem; /* Prevent zoom on iOS */
+        -webkit-appearance: none;
+        appearance: none;
+    }
+
+    #settings-tab button[type="button"],
+    #settings-tab input[type="submit"] {
+        width: 100%;
+        max-width: 100%;
+        padding: 1rem;
+        font-size: 1rem;
+        margin-top: 1rem;
+        min-height: 44px; /* Touch target size */
+    }
+
+    #settings-tab br {
+        display: none;
+    }
+
+    #settings-tab #generatedToken {
+        margin-top: 1rem;
+        padding: 0.75rem;
+        font-size: 0.85rem;
+        word-break: break-all;
+    }
+
+    #settings-tab #contextVariables {
+        margin-top: 1rem;
+        padding: 0.75rem;
+        min-height: 80px;
+    }
+
+    /* Token tabs in modal */
+    [data-token-tabs] {
+        flex-wrap: wrap;
+        gap: 0.25rem;
+    }
+
+    [data-token-tabs] a {
+        padding: 0.4rem 0.75rem;
+        font-size: 0.85rem;
+    }
+
+    /* QR code containers */
+    #qrcode-damage,
+    #qrcode-lightning {
+        max-width: 100%;
+        padding: 0.75rem;
+    }
+
+    #qrcode-damage img,
+    #qrcode-lightning img {
+        max-width: 200px;
+    }
+
+    /* Form inputs in modals */
+    .modal__content input[type="text"],
+    .modal__content input[type="number"],
+    .modal__content input[type="email"],
+    .modal__content input[type="password"],
+    .modal__content select,
+    .modal__content textarea {
+        /*width: 100%;*/
+        max-width: 100%;
+        font-size: 0.9rem;
+    }
+
+    /* Click copy wrapper */
+    .click-copy {
+        gap: 0.4rem;
+    }
+
+
+    /* Table responsive */
+    table {
+        font-size: 0.75rem;
+        display: block;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* Footer */
+    footer {
+        padding: 1rem;
+        font-size: 0.85rem;
+    }
+
+    /* Android/Mobile specific improvements */
+    body {
+        -webkit-text-size-adjust: 100%;
+        -webkit-font-smoothing: antialiased;
+    }
+
+    /* Better touch targets for mobile */
+    button, 
+    .buttonlink,
+    .styled-btn,
+    .toolbar-items div,
+    ul[data-tabs] li a {
+        min-height: 44px;
+        min-width: 44px;
+        touch-action: manipulation;
+    }
+
+    /* Prevent text selection on buttons */
+    button, .buttonlink {
+        -webkit-tap-highlight-color: rgba(0, 123, 255, 0.3);
+        user-select: none;
+    }
+
+    /* Better spacing for form elements */
+    form {
+        /*width: 100%;*/
+    }
+
+    /* Settings form specific mobile fixes */
+    #settings-tab form {
+        width: 100%;
+    }
+
+    #settings-tab form fieldset {
+        width: 100%;
+        box-sizing: border-box;
+    }
+}
+
+@media (min-width: 769px) and (max-width: 1024px) {
+
+
+
+    #execution-tab {
+        padding: 1.25rem;
+    }
+
+    .modal__container {
+        max-width: 85vw;
+    }
+
+    ul[data-tabs] li a {
+        padding: 0.7rem 1.1rem;
+    }
+}
+
+/* Small mobile: up to 480px */
+@media (max-width: 480px) {
+    .topbar {
+        padding: 0.5rem;
+    }
+
+    .brand-text .title {
+        font-size: 1.1rem;
+    }
+
+    .brand-text .subtitle {
+        font-size: 0.75rem;
+    }
+
+    .logo {
+        width: 3rem;
+    }
+
+    ul[data-tabs] li a {
+        padding: 0.5rem 0.75rem;
+        font-size: 0.8rem;
+        min-height: 40px;
+    }
+
+    .modal__container {
+        max-width: 98vw;
+        padding: 1rem;
+        margin: 0.5rem auto;
+    }
+
+    .modal__title {
+        font-size: 1.1rem;
+    }
+
+    #execution-tab {
+        padding: 0.75rem;
+    }
+
+    .damage-editor {
+        min-height: 200px;
+    }
+
+    #damageTextArea {
+        font-size: 0.85rem;
+        padding: 0.5rem;
+    }
+
+    .styled-btn {
+        padding: 0.75rem 1rem;
+        font-size: 0.9rem;
+        min-height: 44px;
+    }
+
+    h3 {
+        font-size: 1.1rem;
+    }
+
+    .input-box {
+        height: 15vh;
+        min-height: 120px;
+        font-size: 0.85rem;
+    }
+
+    /* Settings tab - extra small screens */
+    #settings-tab {
+        padding: 0.5rem !important;
+    }
+
+    #settings-tab fieldset {
+        padding: 2.5rem 0.5rem 1rem !important;
+    }
+
+    #settings-tab legend {
+        font-size: 1.1rem !important;
+        padding: 0 0.5rem 0.5rem !important;
+        top: 0.5rem;
+        left: 0.5rem;
+        width: calc(100% - 1rem);
+    }
+
+    #settings-tab input[type="text"],
+    #settings-tab input[type="url"],
+    #settings-tab select {
+        padding: 0.75rem;
+        font-size: 16px; /* Prevent zoom on iOS */
+    }
+
+    #settings-tab button[type="button"],
+    #settings-tab input[type="submit"] {
+        padding: 0.875rem;
+        font-size: 0.95rem;
+    }
+
+    /* Topbar buttons on small screens */
+    .toolbar-items {
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .toolbar-items div {
+        font-size: 0.8rem;
+    }
+
+    .install-btn {
+        font-size: 0.8rem;
+    }
+}
+
+/* Large screens: 1025px and up - ensure proper spacing */
+@media (min-width: 1025px) {
+    .modal__container {
+        max-width: 600px;
+    }
+
+    #execution-tab .pure-u-md-1-2 {
+        padding: 0 0rem;
+    }
+}
+
+/* Landscape mobile orientation */
+@media (max-width: 768px) and (orientation: landscape) {
+    .damage-editor {
+        min-height: 180px;
+    }
+
+    .input-box {
+        height: 25vh;
+    }
+
+    /* .topbar {
+    flex-direction: row;
+    justify-content: space-between;
+  } */
+
+    #settings-tab fieldset {
+        padding: 2.5rem 0.75rem 1rem !important;
+    }
+}
+
+/* Android specific fixes */
+@media screen and (-webkit-min-device-pixel-ratio: 0) {
+    /* Prevent iOS zoom on input focus */
+    input[type="text"],
+    input[type="email"],
+    input[type="password"],
+    input[type="number"],
+    input[type="url"],
+    select,
+    textarea {
+        font-size: 16px !important; /* Prevents zoom on iOS */
+    }
+}
+
+/* Touch device optimizations */
+@media (hover: none) and (pointer: coarse) {
+    /* Mobile touch devices */
+    button:hover,
+    .buttonlink:hover,
+    .styled-btn:hover {
+        transform: none; /* Disable hover effects on touch */
+    }
+
+    button:active,
+    .buttonlink:active,
+    .styled-btn:active {
+        transform: scale(0.98);
+        opacity: 0.8;
+    }
+
+    /* Better scroll behavior */
+    * {
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* Larger touch targets */
+    a, button, input, select, textarea {
+        min-height: 44px;
+    }
+
+    /* Settings form improvements for touch */
+    #settings-tab label {
+        margin-top: 1.25rem;
+        margin-bottom: 0.75rem;
+    }
+
+    #settings-tab input[type="text"],
+    #settings-tab input[type="url"],
+    #settings-tab select {
+        margin-top: 0.75rem;
+        padding: 1rem;
+    }
+}
+
+/* Very small screens (Android phones in portrait) */
+@media (max-width: 360px) {
+    .topbar .site-header {
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        gap: 0;
+    }
+
+    .brand-text {
+        align-items: center;
+    }
+
+    .brand-text .title {
+        font-size: 1rem;
+    }
+
+    .brand-text .subtitle {
+        font-size: 0.7rem;
+    }
+
+    ul[data-tabs] {
+        padding-left: 0.25rem;
+        padding-right: 0.25rem;
+    }
+
+    ul[data-tabs] li a {
+        padding: 0.4rem 0.6rem;
+        font-size: 0.75rem;
+    }
+
+    #settings-tab legend {
+        font-size: 1rem !important;
+    }
+
+    .modal__container {
+        padding: 0.75rem;
+    }
+}
+
+/* Wallet Address Section */
+#damage-transfers-tab .click-copy {
+    margin-top: 1rem;
+}
+/* === FIX overlap: wallet address click-copy row === */
+#invoice-modal .click-copy{
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) 40px; /* key: minmax(0,1fr) */
+  gap: .5rem;
+  align-items: center;
+  width: 100%;
+}
+
+/* input MUST be allowed to shrink inside grid */
+#invoice-modal .click-copy input#damage-address{
+  min-width: 0 !important;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* -------------------------------------------
+   Token modal: Purchase / Transfer tab selector
+   Targets: <ul data-token-tabs role="tablist"> ... <a role="tab">
+-------------------------------------------- */
+
+[data-token-tabs][role="tablist"] {
+  /* kill Tabby defaults */
+  border-bottom: 0 !important;
+  padding: 0 !important;
+  margin: 0 0 1rem 0 !important;
+  list-style: none;
+
+  /* segmented control */
+  display: flex !important;
+  gap: .5rem;
+  width: 100%;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 12px;
+  padding: .35rem;
+  box-sizing: border-box;
+}
+
+[data-token-tabs][role="tablist"] > li {
+  margin: 0 !important;
+  padding: 0 !important;
+  flex: 1 1 0%;
+  display: block;
+}
+
+[data-token-tabs] [role="tab"] {
+  /* make each tab a full-width button */
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+
+  width: 100%;
+  min-height: 40px;
+  padding: .55rem .75rem !important;
+
+  border: 0 !important;           /* override tabby borders */
+  border-radius: 10px;
+  margin: 0 !important;
+  text-decoration: none;
+
+  background: transparent;
+  color: rgba(255,255,255,0.78);
+  font-weight: 700;
+  letter-spacing: .2px;
+
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform .08s ease, background-color .15s ease, color .15s ease, box-shadow .15s ease;
+}
+
+[data-token-tabs] [role="tab"]:hover {
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.92);
+}
+
+[data-token-tabs] [role="tab"]:active {
+  transform: translateY(1px);
+}
+
+[data-token-tabs] [role="tab"][aria-selected="true"] {
+  background: rgba(0, 140, 255, 0.35);
+  color: #ffffff;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.25);
+}
+
+[data-token-tabs] [role="tab"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(0, 140, 255, 0.35);
+}
+.wallet-modal-shell {
+  max-width: 860px;
+  width: 100%;
+}
+
+.wallet-top-tabs {
+  margin-bottom: 1rem;
+}
+
+.wallet-section {
+  margin-bottom: 1.25rem;
+}
+
+.wallet-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.wallet-stat-card {
+  padding: 12px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 12px;
+  background: rgba(255,255,255,.03);
+}
+
+.wallet-stat-card--wide {
+  grid-column: 1 / -1;
+}
+
+.wallet-stat-label {
+  font-size: .9rem;
+  opacity: .8;
+  margin-bottom: 6px;
+}
+
+.wallet-stat-value {
+  font-size: 1.15rem;
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.wallet-meta-row {
+  margin-bottom: 12px;
+}
+
+.wallet-meta-label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+.wallet-meta-value {
+  word-break: break-word;
+}
+
+.wallet-meta-copy input {
+  width: 100%;
+}
+
+.wallet-inline-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.wallet-summary-box {
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.1);
+}
+
+.wallet-invoice-block {
+  margin-top: 14px;
+}
+
+.wallet-invoice-block textarea {
+  width: 100%;
+  min-height: 110px;
+}
+
+.wallet-raw-json {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(0,0,0,.2);
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.wallet-hint {
+  opacity: .8;
+}
+.node-wallet-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.55rem 0.9rem;
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(36,50,68,0.96), rgba(20,28,38,0.96));
+  color: #eef6ff;
+  font-size: 0.92rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.18);
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.node-wallet-trigger:hover {
+  transform: translateY(-1px);
+  border-color: rgba(120, 200, 255, 0.4);
+  box-shadow: 0 14px 34px rgba(0,0,0,0.24);
+  background: linear-gradient(180deg, rgba(42,58,80,0.98), rgba(24,34,46,0.98));
+}
+
+.node-wallet-trigger:active {
+  transform: translateY(0);
+}
+
+.node-wallet-trigger:focus-visible {
+  outline: none;
+  border-color: rgba(120, 200, 255, 0.7);
+  box-shadow: 0 0 0 3px rgba(120, 200, 255, 0.16), 0 12px 30px rgba(0,0,0,0.22);
+}
+
+.node-wallet-trigger__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  color: #7bdcff;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+
+.node-wallet-trigger__text {
+  white-space: nowrap;
+}
+
+.node-wallet-trigger--mini {
+  padding: 0.42rem 0.72rem;
+  font-size: 0.84rem;
+}
+
+.node-wallet-trigger--floating {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 1200;
+}
+
+.node-wallet-trigger.is-loading {
+  opacity: 0.82;
+  pointer-events: none;
+}
+
+.node-wallet-trigger.is-loading .node-wallet-trigger__icon {
+  animation: nodeWalletPulse 0.9s ease-in-out infinite;
+}
+
+@keyframes nodeWalletPulse {
+  0% { transform: scale(1); opacity: 0.85; }
+  50% { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(1); opacity: 0.85; }
+}
+.footer-node-wallet-entry {
+  display: flex;
+  justify-content: center;
+  padding: 10px 0 18px;
+}
+
+/* === Node wallet cog button === */
+.node-wallet-cog {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 34px;
+  height: 34px;
+  padding: 0;
+
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: linear-gradient(
+    180deg,
+    rgba(28, 40, 55, 0.9),
+    rgba(16, 22, 30, 0.9)
+  );
+
+  color: #9fdcff;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+  transition:
+    transform 120ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    box-shadow 120ms ease,
+    border-color 120ms ease,
+    background 120ms ease,
+    color 120ms ease;
+}
+
+/* hover pop */
+.node-wallet-cog:hover {
+  transform: scale(1.06);
+  transform-origin: center;
+  border-color: rgba(120, 200, 255, 0.5);
+  color: #c8f0ff;
+  background: linear-gradient(
+    180deg,
+    rgba(36, 52, 72, 0.95),
+    rgba(20, 28, 38, 0.95)
+  );
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+}
+
+/* press */
+.node-wallet-cog:active {
+  transform: scale(0.96);
+}
+
+/* keyboard focus */
+.node-wallet-cog:focus-visible {
+  outline: none;
+  border-color: rgba(120, 200, 255, 0.72);
+  box-shadow:
+    0 0 0 3px rgba(120, 200, 255, 0.14),
+    0 10px 28px rgba(0, 0, 0, 0.35);
+}
+
+/* optional SVG icon support */
+.node-wallet-cog svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+  transition: transform 120ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.node-wallet-cog:hover svg {
+  transform: scale(1.12);
+  transform-origin: center;
+}
+
+/* === Tooltip label === */
+.node-wallet-cog__label {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(12, 18, 24, 0.96);
+
+  color: #e6f6ff;
+  font-size: 0.8rem;
+  line-height: 1.2;
+  white-space: nowrap;
+
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(6px) scale(0.96);
+  pointer-events: none;
+
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease,
+    visibility 120ms ease;
+  z-index: 20;
+}
+
+/* show label on hover/focus */
+.node-wallet-cog:hover .node-wallet-cog__label,
+.node-wallet-cog:focus-visible .node-wallet-cog__label {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0) scale(1);
+}
+
+/* tooltip arrow */
+.node-wallet-cog__label::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  right: 10px;
+  border-width: 6px;
+  border-style: solid;
+  border-color: rgba(12, 18, 24, 0.96) transparent transparent transparent;
+}

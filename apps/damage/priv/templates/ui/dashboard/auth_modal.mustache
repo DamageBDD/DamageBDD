@@ -1,0 +1,46 @@
+<!-- Authentication is intentionally independent of dashboard data initialization. -->
+<div class="modal micromodal-slide" id="login-modal" aria-hidden="true" aria-busy="false" data-auth-auto-open="{{auth_auto_open}}" data-auth-callback-path="{{auth_callback_path}}">
+  <div class="modal__overlay" tabindex="-1">
+    <div class="modal__container auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" aria-describedby="auth-intro">
+      <main class="modal__content" id="login_modal_content">
+        {{#auth_allow_guest}}<button type="button" class="auth-link auth-dismiss" data-auth-dismiss data-auth-action>Continue browsing ×</button>{{/auth_allow_guest}}
+        <div class="auth-brand"><img src="{{logo_image}}" alt="{{auth_brand_alt}}" width="36" height="36"><span>{{#auth_brand_name}}{{auth_brand_name}}{{/auth_brand_name}}{{^auth_brand_name}}DamageBDD{{/auth_brand_name}}<span class="auth-brand-label">{{#auth_brand_label}}{{auth_brand_label}}{{/auth_brand_label}}{{^auth_brand_label}}VERIFY WHAT MATTERS{{/auth_brand_label}}</span></span></div>
+        <header class="auth-heading"><h1 id="auth-modal-title">Welcome back</h1><p id="auth-intro">One workspace. Two ways to sign in.<br>Managed account or wallet proof.</p></header>
+        <div class="auth-tabs" role="tablist" aria-label="Sign-in method">
+          <button type="button" id="auth-login-tab" role="tab" aria-selected="true" aria-controls="auth-email" data-auth-mode="login">Email</button>
+          <button type="button" id="auth-signup-tab" role="tab" aria-selected="false" aria-controls="auth-signup" data-auth-mode="signup" tabindex="-1">Create account</button>
+          <button type="button" id="auth-wallet-tab" role="tab" aria-selected="false" aria-controls="auth-wallet" data-auth-mode="wallet" tabindex="-1">Wallet</button>
+        </div>
+        <section id="auth-email" class="auth-panel" data-auth-panel="login" role="tabpanel" aria-labelledby="auth-login-tab">
+          <p class="auth-mode-note"><strong>Managed account</strong> · This node holds your account signing key for supported operations.</p>
+          <form id="loginSignupForm" autocomplete="on">
+            <label for="login-username">Email address</label><input type="email" id="login-username" name="username" autocomplete="username" required placeholder="you@example.com" spellcheck="false" autocapitalize="none">
+            <div class="auth-field-heading"><label for="password">Password</label><button type="button" id="loginResetPasswdBtn" class="auth-link" data-auth-jump="recovery">Forgot password?</button></div>
+            <div class="auth-password-field"><input type="password" id="password" name="password" autocomplete="current-password" required><button type="button" id="auth-show-password" aria-label="Show password" aria-pressed="false" aria-controls="password">Show</button></div>
+            <button type="submit" id="loginSubmitBtn" class="auth-primary" data-auth-action>Sign in with email <span aria-hidden="true">→</span></button>
+          </form>
+        </section>
+        <section id="auth-signup" class="auth-panel" data-auth-panel="signup" role="tabpanel" aria-labelledby="auth-signup-tab" hidden>
+          <p class="auth-mode-note"><strong>Start with your email.</strong> Confirm your address and set a password from the email link. Wallet sign-in does not need an email account.</p>
+          <form id="signupForm" autocomplete="on"><label for="signup-username">Email address</label><input type="email" id="signup-username" name="email" autocomplete="email" required placeholder="you@example.com" spellcheck="false" autocapitalize="none"><button type="submit" id="signupSubmitBtn" class="auth-primary" data-auth-action>Send confirmation link <span aria-hidden="true">→</span></button></form>
+          <div id="signup-confirmation" class="auth-confirmation" hidden><strong>Check your inbox</strong><p>Confirmation requested for <span id="signup-confirmation-email"></span>. Check spam too. Sending a link does not sign you in.</p></div>
+        </section>
+        <section id="auth-recovery" class="auth-panel" data-auth-panel="recovery" hidden>
+          <p class="auth-mode-note">Email recovery is for managed accounts only. A wallet account is recovered in its wallet app, never by sharing a seed phrase here.</p>
+          <form id="recoveryForm"><label for="recovery-email">Email address</label><input type="email" id="recovery-email" name="email" autocomplete="email" required><button type="submit" class="auth-primary" data-auth-action>Send reset link</button></form><button type="button" class="auth-link auth-back" data-auth-jump="login">← Back to sign in</button>
+        </section>
+        <section id="auth-wallet" class="auth-panel" data-auth-panel="wallet" role="tabpanel" aria-labelledby="auth-wallet-tab" hidden>
+          <p class="auth-mode-note"><strong>Your wallet. Your keys.</strong> No email or password needed. Connect, review a one-time message, then sign in.</p>
+          <div class="auth-wallet-choices"><button type="button" id="connect-button" class="auth-wallet-choice" data-auth-action><span>Browser wallet</span><small>Connect your Superhero extension</small><span aria-hidden="true">↗</span></button><button type="button" id="connect-mobile-wallet" class="auth-wallet-choice" data-auth-action><span>Open Superhero app</span><small>Return to this browser after approval</small><span aria-hidden="true">↗</span></button></div>
+          <div id="wallet-proof" class="auth-proof" hidden><span class="auth-step-label">CONNECTED · NOT SIGNED IN</span><code id="wallet-proof-address"></code><span id="wallet-proof-network"></span><details><summary>Review the exact message</summary><pre id="wallet-proof-message"></pre></details><button type="button" id="wallet-sign-in" class="auth-primary" data-auth-action disabled>Sign message &amp; sign in</button><button type="button" id="wallet-change-account" class="auth-link" data-auth-action>Use another account</button></div>
+          <p class="auth-safety">Sign-in does not move funds, open channels, or grant transaction permissions. Paid wallet-only operations are not yet available on this node.</p>
+          <p class="auth-install">Need a wallet? <a href="https://www.superherowallet.com" target="_blank" rel="noopener noreferrer">Get Superhero Wallet ↗</a></p>
+        </section>
+        <button type="button" id="auth-keep-session" class="auth-link" data-auth-action hidden>Keep my current account</button>
+        <div id="connect-status" class="auth-status" role="status" aria-live="polite" aria-atomic="true"></div>
+        <button type="button" id="auth-cancel" class="auth-link" hidden>Cancel wallet sign-in</button>
+        <footer class="auth-footer"><p>By continuing, you accept the <a href="/terms" target="_blank" rel="noopener noreferrer">Terms and Conditions</a>.</p><p>Never enter your wallet seed phrase or private key here.</p>{{^auth_hide_node_wallet}}<button id="open-node-wallet-btn-auth" type="button" class="auth-operator" data-auth-action>Node operator controls</button>{{/auth_hide_node_wallet}}</footer>
+      </main>
+    </div>
+  </div>
+</div>

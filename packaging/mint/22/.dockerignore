@@ -1,0 +1,31 @@
+# Ignore build artifacts
+_build
+.eunit
+.rebar3
+*.beam
+*.ez
+
+# Ignore logs and temp files
+logs
+tmp
+*.log
+
+# Ignore version control stuff
+.git
+.gitignore
+
+# Ignore local dev artifacts
+.env
+.idea
+.vscode
+.DS_Store
+node_modules
+
+# Ignore any docker junk
+docker-compose*.yml
+Dockerfile*
+
+# Ignore archives or large files
+*.tar
+*.tgz
+*.zip

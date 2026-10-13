@@ -1,0 +1,1165 @@
+-module(secrets).
+-author("Steven Joseph <steven@stevenjoseph.in>").
+
+-copyright("Steven Joseph <steven@stevenjoseph.in>").
+
+-license("Apache-2.0").
+-behaviour(gen_server).
+
+-include_lib("kernel/include/logger.hrl").
+-include_lib("damage.hrl").
+-export(
+    [
+        init/1,
+        start_link/0,
+        handle_call/3,
+        handle_cast/2,
+        handle_info/2,
+        terminate/2,
+        code_change/3,
+        format_status/1
+    ]
+).
+-export([
+    init_db/0,
+    store_secret/2,
+    retrieve_secret/1,
+    delete_secret/1,
+    delete_secret/2,
+    encrypt_secret/2,
+    decrypt_secret/2,
+    encrypt_store/2,
+    encrypt_store/3,
+    retrieve_decrypt/1,
+    retrieve_decrypt/2,
+    import/0,
+    node_keypair/0,
+    make_keypair/0,
+    keypair_from_mnemonic/1,
+    export_node_wallet_seedphrase/0,
+    salted_hash/1,
+    salted_hash/2,
+    test/0,
+    migrate/0,
+    import_secret_key/2,
+    list_secrets/0,
+    get_node_password/0,
+    interpolate_template/1
+]).
+-export([
+    encrypt/1, encrypt/2, decrypt/1, decrypt/2, encrypt_bound/2, decrypt_bound/2, change_password/3
+]).
+-export([encrypt/3, decrypt/3]).
+-export([
+    has_node_password/0,
+    set_node_password/1,
+    has_node_keypair/0,
+    ready/0,
+    keystore_path/0,
+    secrets_dets_path/0
+]).
+-import(damage_utils, [to_bin/1]).
+
+-ifdef(TEST).
+%% Explicit-path helpers for isolated keystore tests; not production exports.
+-export([keypair/2, read_keypair/2, ensure_keypair_valid/1, create_keypair/2]).
+-endif.
+
+-define(ASKPASS_TIMEOUT, 60000).
+-define(LEGACY_KEYSTORE_FILE, "/var/lib/damage/damage.key").
+-define(LEGACY_DETS_FILE, "/var/lib/damage/damage.dets").
+-define(LOCAL_KEYSTORE_FILE, "damage.key").
+-define(LOCAL_DETS_FILE, "damage.dets").
+-define(DETS_ARGS, [{auto_save, 5000}]).
+
+%% Storage path resolution order:
+%%   1. Exact sys.config file override (`keystore` / `secrets_dets_file`).
+%%   2. Explicit `secrets_state_dir` root from sys.config.
+%%   3. XDG state root: $XDG_STATE_HOME/damage, or
+%%      $HOME/.local/state/damage.
+%%   4. Existing legacy deployment/repository-local files.
+%%
+%% An explicit sys.config path is authoritative.  Without an explicit override,
+%% existing legacy files are reused rather than silently creating a new node
+%% identity or a second DETS database.  If no known file exists, new state is
+%% created in the XDG state tree.
+keystore_path() ->
+    case configured_path(keystore) of
+        {ok, Path} ->
+            Path;
+        undefined ->
+            state_file_path(
+                filename:join("keys", "damage.key"),
+                [?LEGACY_KEYSTORE_FILE, ?LOCAL_KEYSTORE_FILE]
+            )
+    end.
+
+secrets_dets_path() ->
+    case configured_path(secrets_dets_file) of
+        {ok, Path} ->
+            Path;
+        undefined ->
+            state_file_path(
+                filename:join("dets", "damage.dets"),
+                [?LEGACY_DETS_FILE, ?LOCAL_DETS_FILE]
+            )
+    end.
+
+state_file_path(RelativePath, LegacyPaths) ->
+    case configured_path(secrets_state_dir) of
+        {ok, StateDir} ->
+            filename:join(StateDir, RelativePath);
+        undefined ->
+            StateCandidates = [
+                filename:join(StateDir, RelativePath)
+             || StateDir <- default_secrets_state_dirs()
+            ],
+            case StateCandidates of
+                [Preferred | _] ->
+                    first_known_path(StateCandidates ++ LegacyPaths, Preferred);
+                [] ->
+                    [LegacyDefault | _] = LegacyPaths,
+                    first_known_path(LegacyPaths, LegacyDefault)
+            end
+    end.
+
+default_secrets_state_dirs() ->
+    HomeState = home_state_dir(),
+    Dirs0 =
+        case os:getenv("XDG_STATE_HOME") of
+            false -> [HomeState];
+            "" -> [HomeState];
+            XdgStateHome -> [filename:join(expand_user_path(XdgStateHome), "damage"), HomeState]
+        end,
+    unique_paths([Dir || Dir <- Dirs0, Dir =/= undefined]).
+
+home_state_dir() ->
+    case os:getenv("HOME") of
+        false -> undefined;
+        "" -> undefined;
+        Home -> filename:join([Home, ".local", "state", "damage"])
+    end.
+
+unique_paths(Paths) ->
+    lists:reverse(
+        lists:foldl(
+            fun(Path, Acc) ->
+                case lists:member(Path, Acc) of
+                    true -> Acc;
+                    false -> [Path | Acc]
+                end
+            end,
+            [],
+            Paths
+        )
+    ).
+
+configured_path(Key) ->
+    case application:get_env(damage, Key) of
+        {ok, Path} when is_binary(Path) ->
+            {ok, expand_user_path(binary_to_list(Path))};
+        {ok, Path} when is_list(Path), Path =/= [] ->
+            {ok, expand_user_path(Path)};
+        _ ->
+            undefined
+    end.
+
+%% Expand shell-style home paths from sys.config/environment before any
+%% filesystem operation.  Erlang does not expand "~/" automatically.
+%% Fail closed if HOME is unavailable rather than creating a literal "~"
+%% directory relative to the node's working directory.
+expand_user_path("~") ->
+    home_dir_or_error("~");
+expand_user_path([$~, $/ | Rest] = Path) ->
+    filename:join(home_dir_or_error(Path), Rest);
+expand_user_path(Path) ->
+    Path.
+
+home_dir_or_error(Path) ->
+    case os:getenv("HOME") of
+        false -> erlang:error({home_directory_unavailable, Path});
+        "" -> erlang:error({home_directory_unavailable, Path});
+        Home -> Home
+    end.
+
+first_known_path([Path | Rest], Default) ->
+    case path_definitely_missing(Path) of
+        true -> first_known_path(Rest, Default);
+        false -> Path
+    end;
+first_known_path([], Default) ->
+    Default.
+
+%% Permission and other I/O failures are deliberately treated as "known":
+%% use that path and surface the real error rather than falling through and
+%% accidentally creating a second node identity/database somewhere else.
+path_definitely_missing(Path) ->
+    case file:read_file_info(Path) of
+        {error, enoent} -> true;
+        {error, enotdir} -> true;
+        _ -> false
+    end.
+
+legacy_state_file(Name) ->
+    case configured_path(secrets_state_dir) of
+        {ok, StateDir} ->
+            Preferred = filename:join([StateDir, "keys", Name]),
+            first_known_path(
+                [Preferred, filename:join("/var/lib/damage", Name), Name],
+                Preferred
+            );
+        undefined ->
+            StateCandidates = [
+                filename:join([StateDir, "keys", Name])
+             || StateDir <- default_secrets_state_dirs()
+            ],
+            LegacyCandidates = [filename:join("/var/lib/damage", Name), Name],
+            case StateCandidates of
+                [Preferred | _] ->
+                    first_known_path(StateCandidates ++ LegacyCandidates, Preferred);
+                [] ->
+                    [LegacyDefault | _] = LegacyCandidates,
+                    first_known_path(LegacyCandidates, LegacyDefault)
+            end
+    end.
+
+open_secrets_dets() ->
+    Path = secrets_dets_path(),
+    case filelib:ensure_dir(Path) of
+        ok ->
+            case dets:open_file(Path, ?DETS_ARGS) of
+                {ok, _} = Ok -> Ok;
+                {error, _} = Error -> Error
+            end;
+        {error, Reason} ->
+            {error, {dets_directory_failed, Reason}}
+    end.
+
+%% Initialize dets database
+init_db() ->
+    ok.
+
+-define(ITERATIONS, 100000).
+-define(SALT_SIZE, 16).
+-define(KEY_SIZE, 32).
+-define(IV_SIZE, 12).
+
+start_link() -> gen_server:start_link(?MODULE, [], []).
+
+init([]) ->
+    gproc:reg_other({n, l, {?MODULE, secrets}}, self()),
+
+    case ensure_boot_ready() of
+        ok ->
+            {ok, #{}};
+        locked ->
+            ?LOG_WARNING("Secrets started locked; unlock via /secrets/unlock", []),
+            {ok, #{}};
+        {error, Reason} ->
+            ?LOG_ERROR("Secrets not initialized, refusing to boot: ~p", [Reason]),
+            {stop, Reason}
+    end.
+ensure_boot_ready() ->
+    case get_env_password() of
+        {error, no_env_password} -> locked;
+        {error, empty_env_password} -> locked;
+        {ok, Pw} -> ensure_keypair_valid(Pw)
+    end.
+get_env_password() ->
+    case os:getenv("DAMAGE_SECRET_KEY") of
+        false ->
+            {error, no_env_password};
+        "" ->
+            {error, empty_env_password};
+        Pw when is_list(Pw) ->
+            {ok, list_to_binary(Pw)};
+        Pw when is_binary(Pw) ->
+            {ok, Pw}
+    end.
+
+get_node_password() ->
+    Pid = gproc:lookup_local_name({?MODULE, secrets}),
+    gen_server:call(Pid, get_node_password, ?ASKPASS_TIMEOUT).
+
+get_node_password_cached(State) ->
+    case maps:get(node_password, State, undefined) of
+        undefined ->
+            case get_env_password() of
+                {ok, NodePassword} ->
+                    {binary_to_list(NodePassword), State};
+                {error, _} ->
+                    {error, node_locked}
+            end;
+        NodePassword ->
+            {NodePassword, State}
+    end.
+cache_node_password(undefined, State) ->
+    maps:remove(node_password, State);
+cache_node_password(Password, State) when is_binary(Password) ->
+    cache_node_password(binary_to_list(Password), State);
+cache_node_password(Password, State) ->
+    maps:put(node_password, Password, State).
+
+has_node_password() ->
+    case get_env_password() of
+        {ok, _} ->
+            true;
+        {error, _} ->
+            Pid = gproc:lookup_local_name({?MODULE, secrets}),
+            gen_server:call(Pid, has_node_password, ?ASKPASS_TIMEOUT)
+    end.
+
+set_node_password(Pw0) ->
+    Pid = gproc:lookup_local_name({?MODULE, secrets}),
+    gen_server:call(Pid, {set_node_password, Pw0}, ?ASKPASS_TIMEOUT).
+
+%% Readiness means the operational node signing identity is actually usable,
+%% not merely that a password happened to be cached.
+ready() ->
+    try node_keypair() of
+        #{public_key := _Pub, private_key := Priv} when is_binary(Priv) -> true;
+        _ -> false
+    catch
+        _:_ -> false
+    end.
+
+normalize_node_password(undefined) ->
+    {error, password_required};
+normalize_node_password(<<>>) ->
+    {error, password_required};
+normalize_node_password("") ->
+    {error, password_required};
+normalize_node_password(Pw) when is_binary(Pw) ->
+    {ok, Pw};
+normalize_node_password(Pw) when is_list(Pw) ->
+    {ok, list_to_binary(Pw)};
+normalize_node_password(_) ->
+    {error, invalid_password}.
+
+handle_call(has_node_password, _From, State) ->
+    Has = maps:get(node_password, State, undefined) =/= undefined,
+    {reply, Has, State};
+handle_call({set_node_password, Pw0}, _From, State0) ->
+    case normalize_node_password(Pw0) of
+        {error, _} = Error ->
+            {reply, Error, State0};
+        {ok, Pw} ->
+            %% Unlock is atomic: do not return success until the keystore has
+            %% been decrypted (or created on first install) and the usable
+            %% signing keypair is cached in this process.
+            case unlock_state(Pw, State0) of
+                {ok, State} ->
+                    notify_unlock_dependents(),
+                    {reply, ok, State};
+                {error, _} = Error ->
+                    {reply, Error, State0}
+            end
+    end;
+handle_call(clear_cache, _From, _State) ->
+    %% Drop stale signing keys, recovery metadata and any old plaintext cache.
+    %% An environment password can still unlock again on a later request.
+    {reply, ok, #{}};
+handle_call(get_node_password, _From, State0) ->
+    case get_node_password_cached(State0) of
+        {error, _} = Error ->
+            {reply, Error, State0};
+        {NodePassword, State} ->
+            {reply, NodePassword, State}
+    end;
+handle_call({encrypt, _Key, Data}, _From, State0) ->
+    %% Do not cache plaintext in the gen_server state.  The state also carries
+    %% the node keypair/password after unlock, so keeping arbitrary plaintext
+    %% here unnecessarily widens the blast radius of a process-state leak.
+    case get_node_password_cached(State0) of
+        {error, _} = Error ->
+            {reply, Error, State0};
+        {NodePassword, State} ->
+            EncData = secrets:encrypt(list_to_binary(NodePassword), term_to_binary(Data)),
+            {reply, {ok, term_to_binary(EncData)}, State}
+    end;
+handle_call({decrypt, _Key, EncData}, _From, State0) ->
+    case get_node_password_cached(State0) of
+        {error, _} = Error ->
+            {reply, Error, State0};
+        {NodePassword, State} ->
+            Reply = decrypt_cached_payload(list_to_binary(NodePassword), EncData),
+            {reply, Reply, State}
+    end;
+handle_call({encrypt, _Key, Password0, Data}, _From, State) ->
+    %% Compatibility for encrypt/3.  The previous implementation sent this
+    %% request shape but had no matching handle_call clause, causing plaintext
+    %% to fall into the catch-all logger.
+    case normalize_node_password(Password0) of
+        {ok, Password} ->
+            EncData = secrets:encrypt(Password, term_to_binary(Data)),
+            {reply, {ok, term_to_binary(EncData)}, State};
+        {error, _} = Error ->
+            {reply, Error, State}
+    end;
+handle_call({decrypt, _Key, Password0, EncData}, _From, State) ->
+    case normalize_node_password(Password0) of
+        {ok, Password} ->
+            {reply, decrypt_cached_payload(Password, EncData), State};
+        {error, _} = Error ->
+            {reply, Error, State}
+    end;
+handle_call(
+    node_keypair,
+    _From,
+    #{public_key := AeAccount, private_key := PrivateKey} = State
+) when is_binary(PrivateKey) ->
+    {reply, #{public_key => to_bin(AeAccount), private_key => PrivateKey}, State};
+handle_call(node_keypair, _From, State) ->
+    Path = keystore_path(),
+    case get_node_password_cached(State) of
+        {error, Other} ->
+            {reply, {error, Other}, State};
+        {NodePassword, State} ->
+            case keypair(Path, NodePassword) of
+                #{public_key := AeAccount, private_key := PrivateKey} ->
+                    %% The root mnemonic stays on disk, not in ordinary replies
+                    %% or the long-lived signing cache.
+                    SigningKey = #{public_key => to_bin(AeAccount), private_key => PrivateKey},
+                    {reply, SigningKey, maps:merge(State, SigningKey)};
+                {error, _} = Error ->
+                    {reply, Error, State}
+            end
+    end;
+%% Trusted operator API only; deliberately not a BDD step or HTTP route.
+%% Read an existing encrypted keystore on every export. Export never creates a
+%% replacement identity, and a swapped keystore must match any active cache.
+handle_call(export_node_wallet_seedphrase, _From, State) ->
+    Reply =
+        case get_node_password_cached(State) of
+            {error, _} = Error ->
+                Error;
+            {Password, _} ->
+                Path = keystore_path(),
+                case read_keypair(Path, Password) of
+                    #{public_key := Pub, private_key := Priv} = KeyPair ->
+                        case cached_identity_matches(State, Pub, Priv) of
+                            true -> damage_ae_wallet:export_seedphrase(KeyPair);
+                            false -> {error, keystore_identity_mismatch}
+                        end;
+                    {error, _} = Error ->
+                        Error
+                end
+        end,
+    {reply, Reply, State};
+handle_call(Request, _From, State) ->
+    %% Never log request payloads or State here: State may contain node_password
+    %% and private_key, while malformed requests may themselves contain secrets.
+    ?LOG_ERROR("secrets received unsupported call tag=~p", [request_tag(Request)]),
+    {reply, {error, unsupported_call}, State}.
+handle_cast(Msg, State) ->
+    ?LOG_DEBUG("secrets received unsupported cast tag=~p", [request_tag(Msg)]),
+    {noreply, State}.
+handle_info(Info, State) ->
+    ?LOG_DEBUG("secrets received unsupported info tag=~p", [request_tag(Info)]),
+    {noreply, State}.
+
+terminate(Reason, _State) ->
+    ?LOG_ERROR("Terminating secrets reason_type=~p", [request_tag(Reason)]),
+    ok.
+
+code_change(_OldVsn, State, _Extra) when is_map(State) ->
+    %% Also remove mnemonic/plaintext fields left by the reviewed implementation.
+    {ok, maps:with([node_password, public_key, private_key], State)};
+code_change(_OldVsn, _State, _Extra) ->
+    {ok, #{}}.
+
+unlock_state(Pw, State0) ->
+    Path = keystore_path(),
+    case keypair(Path, Pw) of
+        #{public_key := AeAccount, private_key := PrivateKey} when is_binary(PrivateKey) ->
+            %% Never retain mnemonic/recovery material in long-lived process state.
+            SigningKey = #{public_key => to_bin(AeAccount), private_key => PrivateKey},
+            State1 = maps:without([public_key, private_key], State0),
+            State2 = cache_node_password(Pw, State1),
+            {ok, maps:merge(State2, SigningKey)};
+        {error, decrypt_keypair} ->
+            {error, invalid_password};
+        {error, _} = Error ->
+            Error;
+        Other ->
+            {error, {invalid_keypair_result, Other}}
+    end.
+
+notify_unlock_dependents() ->
+    %% Backoff-driven workers should wake immediately after a successful unlock.
+    notify_process(damage_nsecbunker, {secrets, unlocked}),
+    ok.
+
+notify_process(Name, Message) ->
+    case whereis(Name) of
+        Pid when is_pid(Pid) ->
+            Pid ! Message,
+            ok;
+        _ ->
+            ok
+    end.
+%% Preserve the OTP status-map keys, but expose no sensitive values. This also
+%% covers exception arguments, last messages and debug log entries.
+format_status(Status) ->
+    maps:map(
+        fun
+            (log, _) -> [];
+            (_, _) -> redacted
+        end,
+        Status
+    ).
+
+cached_identity_matches(#{public_key := CachedPub, private_key := CachedPriv}, Pub, Priv) ->
+    to_bin(CachedPub) =:= to_bin(Pub) andalso CachedPriv =:= Priv;
+cached_identity_matches(State, _Pub, _Priv) ->
+    not maps:is_key(public_key, State) andalso not maps:is_key(private_key, State).
+
+request_tag(Term) when is_tuple(Term) ->
+    %% Return structure only, never a caller-supplied tuple element. The first
+    %% element may itself contain a credential or other sensitive value.
+    {tuple, tuple_size(Term)};
+request_tag(Term) when is_atom(Term) ->
+    atom;
+request_tag(Term) when is_binary(Term) ->
+    binary;
+request_tag(Term) when is_list(Term) ->
+    list;
+request_tag(Term) when is_map(Term) ->
+    map;
+request_tag(_Term) ->
+    other.
+
+decrypt_cached_payload(Password, EncData) ->
+    try binary_to_term(EncData, [safe]) of
+        CipherTuple ->
+            case secrets:decrypt(Password, CipherTuple) of
+                Data when is_binary(Data) ->
+                    try binary_to_term(Data, [safe]) of
+                        Decoded -> Decoded
+                    catch
+                        _:_ -> error
+                    end;
+                _ ->
+                    error
+            end
+    catch
+        _:_ -> error
+    end.
+
+%% BIP-39/AEX-10 applies to NEW wallets only. Import reconstructs a map;
+%% it does not replace a running node's identity or write a keystore.
+-spec make_keypair() -> map() | {error, atom()}.
+make_keypair() -> damage_ae_wallet:generate().
+
+-spec keypair_from_mnemonic(binary() | list()) -> map() | {error, atom()}.
+keypair_from_mnemonic(Mnemonic) ->
+    %% Preserve word-list boundaries and keep validation inside the wallet's
+    %% bounded, redacted error boundary. Do not flatten arbitrary chardata here.
+    damage_ae_wallet:from_mnemonic(Mnemonic).
+
+keypair(Path, NodePassword) ->
+    case read_keypair(Path, NodePassword) of
+        {error, missing_keypair} -> create_keypair(Path, NodePassword);
+        Result -> Result
+    end.
+
+read_keypair(Path, NodePassword) ->
+    case file:read_file(Path) of
+        {ok, Encoded} -> decode_node_keypair(Encoded, NodePassword);
+        {error, enoent} -> {error, missing_keypair};
+        {error, Reason} -> {error, {keypair_read_failed, Reason}}
+    end.
+
+decode_node_keypair(Encoded, NodePassword) ->
+    try
+        %% Load schema atoms before safe ETF decoding on a cold VM.
+        {module, damage_ae_wallet} = code:ensure_loaded(damage_ae_wallet),
+        case binary_to_term(Encoded, [safe]) of
+            {Salt, IV, Tag, CipherText} = Envelope when
+                is_binary(Salt),
+                byte_size(Salt) =:= ?SALT_SIZE,
+                is_binary(IV),
+                byte_size(IV) =:= ?IV_SIZE,
+                is_binary(Tag),
+                byte_size(Tag) =:= 16,
+                is_binary(CipherText)
+            ->
+                case secrets:decrypt(NodePassword, Envelope) of
+                    Plain when is_binary(Plain) ->
+                        validate_stored_keypair(binary_to_term(Plain, [safe]));
+                    _ ->
+                        {error, decrypt_keypair}
+                end;
+            _ ->
+                {error, corrupt_keypair}
+        end
+    catch
+        _:_ -> {error, corrupt_keypair}
+    end.
+
+validate_stored_keypair(KeyPair) ->
+    case damage_ae_wallet:validate_keypair(KeyPair) of
+        ok ->
+            case
+                lists:any(
+                    fun(K) -> maps:is_key(K, KeyPair) end,
+                    [mnemonic, seed_phrase, wallet_scheme]
+                )
+            of
+                %% Existing random-key wallets remain valid.
+                false ->
+                    KeyPair;
+                true ->
+                    case damage_ae_wallet:export_seedphrase(KeyPair) of
+                        {ok, _} -> KeyPair;
+                        {error, Why} -> {error, {invalid_wallet_backup, Why}}
+                    end
+            end;
+        {error, _} ->
+            {error, corrupt_keypair}
+    end.
+
+create_keypair(Path, NodePassword) ->
+    case filelib:ensure_dir(Path) of
+        ok ->
+            case make_keypair() of
+                #{public_key := _, private_key := _} = Data ->
+                    try secrets:encrypt(NodePassword, term_to_binary(Data)) of
+                        EncData -> write_new_keypair(Path, term_to_binary(EncData), Data)
+                    catch
+                        _:_ -> {error, keypair_encrypt_failed}
+                    end;
+                {error, _} = Error ->
+                    Error
+            end;
+        {error, Reason} ->
+            {error, {keypair_directory_failed, Reason}}
+    end.
+
+%% O_EXCL: never truncate a wallet created by another initializer. Set 0600
+%% before any content is written, and report success only after sync + close.
+%% The parent directory must be controlled by the node operator.
+write_new_keypair(Path, Encoded, Data) ->
+    case file:open(Path, [write, binary, raw, exclusive]) of
+        {ok, Io} ->
+            WriteResult =
+                try
+                    write_keypair_contents(Path, Io, Encoded)
+                catch
+                    _:_ -> {error, keypair_write_failed}
+                end,
+            CloseResult = file:close(Io),
+            case {WriteResult, CloseResult} of
+                {ok, ok} ->
+                    Data;
+                {{error, _} = Error, _} ->
+                    _ = file:delete(Path),
+                    Error;
+                {ok, {error, Reason}} ->
+                    _ = file:delete(Path),
+                    {error, {keypair_close_failed, Reason}}
+            end;
+        {error, eexist} ->
+            {error, keypair_already_exists};
+        {error, Reason} ->
+            {error, {keypair_write_failed, Reason}}
+    end.
+
+write_keypair_contents(Path, Io, Encoded) ->
+    case file:change_mode(Path, 8#600) of
+        ok ->
+            case file:write(Io, Encoded) of
+                ok ->
+                    case file:sync(Io) of
+                        ok -> ok;
+                        {error, Reason} -> {error, {keypair_sync_failed, Reason}}
+                    end;
+                {error, Reason} ->
+                    {error, {keypair_write_failed, Reason}}
+            end;
+        {error, Reason} ->
+            {error, {keypair_chmod_failed, Reason}}
+    end.
+
+%% This function returns root recovery material. Only trusted operator tooling
+%% may call it; arbitrary BEAM code is already inside the node trust boundary.
+-spec export_node_wallet_seedphrase() -> {ok, map()} | {error, term()}.
+export_node_wallet_seedphrase() ->
+    try
+        Pid = gproc:lookup_local_name({?MODULE, secrets}),
+        gen_server:call(Pid, export_node_wallet_seedphrase, ?ASKPASS_TIMEOUT)
+    catch
+        _:_ -> {error, node_wallet_export_unavailable}
+    end.
+
+node_keypair() ->
+    Pid = gproc:lookup_local_name({?MODULE, secrets}),
+    gen_server:call(Pid, node_keypair, ?ASKPASS_TIMEOUT).
+
+has_node_keypair() ->
+    Path = keystore_path(),
+    case file:read_file(Path) of
+        {error, enoent} ->
+            false;
+        {ok, _EncDataBin} ->
+            true
+    end.
+
+ensure_keypair_valid(NodePassword) ->
+    Path = keystore_path(),
+    case keypair(Path, NodePassword) of
+        #{public_key := _, private_key := _} -> ok;
+        {error, decrypt_keypair} -> {error, invalid_password};
+        {error, _} = Error -> Error
+    end.
+%% Generates a random salt
+random_bytes(N) -> crypto:strong_rand_bytes(N).
+
+%% Preserve the existing keystore HKDF envelope for backwards compatibility.
+%% BIP-39 PBKDF2 seed derivation is separate, in damage_ae_wallet.
+derive_key(Password, Salt) ->
+    hkdf(Salt, Password, <<"AES-KEY">>, 32).
+
+encrypt(PlainText) ->
+    #{public_key := _AeAccount, private_key := PrivateKey} = secrets:node_keypair(),
+    base64:encode(term_to_binary(encrypt_secret(PlainText, PrivateKey))).
+
+%% Encrypt externally persisted application data while cryptographically
+%% binding it to its owner/purpose. This is distinct from scoped DETS storage:
+%% callers keep the returned base64 envelope in their own store/contract.
+encrypt_bound(Context, PlainText0) ->
+    PlainText = bound_plaintext(PlainText0),
+    #{public_key := _AeAccount, private_key := PrivateKey} = secrets:node_keypair(),
+    AAD = bound_secret_aad(Context),
+    Key = derive_bound_aes_key(PrivateKey, AAD),
+    IV = crypto:strong_rand_bytes(?IV_SIZE),
+    {CipherText, Tag} =
+        crypto:crypto_one_time_aead(aes_256_gcm, Key, IV, PlainText, AAD, true),
+    base64:encode(term_to_binary({bound_v1, IV, CipherText, Tag}, [deterministic])).
+encrypt(Key, Password, PlainText) ->
+    Pid = gproc:lookup_local_name({?MODULE, secrets}),
+    gen_server:call(Pid, {encrypt, Key, Password, PlainText}, ?ASKPASS_TIMEOUT).
+
+encrypt(#{public_key := _AeAccount, private_key := PrivateKey}, PlainText) ->
+    base64:encode(term_to_binary(encrypt_secret(PlainText, PrivateKey)));
+%% Encrypts data with a password
+encrypt(Password, PlainText) when is_list(Password) ->
+    encrypt(list_to_binary(Password), PlainText);
+encrypt(Password, PlainText) ->
+    Salt = random_bytes(?SALT_SIZE),
+    IV = random_bytes(?IV_SIZE),
+    Key = derive_key(Password, Salt),
+    {CipherText, Tag} = crypto:crypto_one_time_aead(aes_256_gcm, Key, IV, PlainText, <<>>, true),
+    {Salt, IV, Tag, CipherText}.
+
+decrypt(null) ->
+    error;
+decrypt(Base64EncodedCipherTuple) ->
+    decrypt(secrets:node_keypair(), Base64EncodedCipherTuple).
+
+decrypt_bound(_Context, null) ->
+    error;
+decrypt_bound(Context, Base64Envelope0) ->
+    try
+        Base64Envelope = bound_plaintext(Base64Envelope0),
+        EncodedTerm = base64:decode(Base64Envelope),
+        case binary_to_term(EncodedTerm, [safe]) of
+            {bound_v1, IV, CipherText, Tag} when
+                is_binary(IV),
+                byte_size(IV) =:= ?IV_SIZE,
+                is_binary(CipherText),
+                is_binary(Tag),
+                byte_size(Tag) =:= 16
+            ->
+                #{private_key := PrivateKey} = secrets:node_keypair(),
+                AAD = bound_secret_aad(Context),
+                Key = derive_bound_aes_key(PrivateKey, AAD),
+                case
+                    crypto:crypto_one_time_aead(
+                        aes_256_gcm, Key, IV, CipherText, AAD, Tag, false
+                    )
+                of
+                    PlainText when is_binary(PlainText) -> PlainText;
+                    _ -> error
+                end;
+            _ ->
+                error
+        end
+    catch
+        _:_ -> error
+    end.
+
+decrypt(Key, Password, CipherText) ->
+    Pid = gproc:lookup_local_name({?MODULE, secrets}),
+    gen_server:call(Pid, {decrypt, Key, Password, CipherText}, ?ASKPASS_TIMEOUT).
+%% Decrypts data with a password
+decrypt(#{public_key := _AeAccount, private_key := PrivateKey}, Base64EncodedCipherTuple) ->
+    %% Account/reset tokens are externally supplied. Treat both base64 and ETF
+    %% decoding as untrusted input and accept only the expected legacy envelope
+    %% shape before attempting AES-GCM decryption.
+    %% Keep decoding AND decryption inside the protected try expressions.
+    %% Exceptions in a try-of clause body bypass that try's catch section.
+    try
+        Term = base64:decode(Base64EncodedCipherTuple),
+        case binary_to_term(Term, [safe]) of
+            {IV, CipherText, Tag} = Envelope when
+                is_binary(IV),
+                byte_size(IV) =:= 16,
+                is_binary(CipherText),
+                is_binary(Tag),
+                byte_size(Tag) =:= 16
+            ->
+                decrypt_secret(Envelope, PrivateKey);
+            _ ->
+                error
+        end
+    catch
+        _:_ -> error
+    end;
+decrypt(Password, {Salt, IV, Tag, CipherText}) ->
+    Key = derive_key(Password, Salt),
+    AAD = <<>>,
+    crypto:crypto_one_time_aead(
+        aes_256_gcm,
+        Key,
+        IV,
+        CipherText,
+        AAD,
+        Tag,
+        false
+    ).
+
+%% Changes the password by decrypting and re-encrypting with a new password
+change_password(OldPassword, NewPassword, EncryptedData) ->
+    PlainText = decrypt(OldPassword, EncryptedData),
+    encrypt(NewPassword, PlainText).
+
+%%% --- AES-GCM Encryption & Decryption ---
+% https://medium.com/@brucifi/how-to-encrypt-with-aes-256-gcm-with-erlang-2a2aec13598d
+%% Implement HKDF for AES-256 Key Derivation
+hkdf(Salt, InputKeyMaterial, Info, Length) ->
+    %% Extract step
+    PRK = crypto:mac(hmac, sha256, Salt, InputKeyMaterial),
+    %% Expand step
+    T1 = crypto:mac(hmac, sha256, PRK, <<Info/binary, 1>>),
+    <<DerivedKey:Length/binary, _/binary>> = T1,
+    DerivedKey.
+
+%% Derive AES-256 Key from Private Key
+derive_aes_key(PrivateKey) ->
+    Salt = <<"Aeternity_Secret_Storage">>,
+    %% Ensure 32-byte AES key
+    hkdf(Salt, PrivateKey, <<"AES-KEY">>, 32).
+
+%% Encrypt a secret using AES-256-GCM
+encrypt_secret(Secret, PrivateKey) ->
+    AESKey = derive_aes_key(PrivateKey),
+    %% Ensure IV is exactly 16 bytes
+    IV = crypto:strong_rand_bytes(16),
+
+    %% Verify AES Key and IV sizes
+    true = (byte_size(AESKey) == 32),
+    true = (byte_size(IV) == 16),
+
+    %% Encrypt using AES-256-GCM (Pass empty AAD `<<>>` and tag length of 16)
+    {CipherText, Tag} = crypto:crypto_one_time_aead(aes_256_gcm, AESKey, IV, Secret, <<>>, true),
+
+    {IV, CipherText, Tag}.
+
+%% Decrypt a secret using AES-256-GCM
+decrypt_secret({IV, CipherText, Tag}, PrivateKey) ->
+    AESKey = derive_aes_key(PrivateKey),
+
+    %% Verify AES Key and IV sizes before decryption
+    true = (byte_size(AESKey) == 32),
+    true = (byte_size(IV) == 16),
+    AAD = <<>>,
+
+    %% Decrypt using AES-256-GCM (NO Tag argument in decryption mode)
+    %crypto:crypto_one_time_aead(aes_256_gcm, AESKey, IV, CipherText, <<>>, 16, true).
+
+    crypto:crypto_one_time_aead(
+        aes_256_gcm,
+        AESKey,
+        IV,
+        CipherText,
+        AAD,
+        Tag,
+        false
+    ).
+%% Store encrypted secret in dets.  Keep the storage primitive generic so
+%% legacy v1 envelopes and scoped v2 envelopes can coexist during migration.
+store_secret(Name, Encrypted) ->
+    case open_secrets_dets() of
+        {ok, DetsFile} ->
+            dets:insert(DetsFile, {Name, Encrypted});
+        {error, _} = Error ->
+            Error
+    end.
+
+%% Retrieve encrypted secret from dets
+retrieve_secret(Name) ->
+    case open_secrets_dets() of
+        {ok, DetsFile} ->
+            dets:lookup(DetsFile, Name);
+        {error, _} = Error ->
+            Error
+    end.
+
+%% Delete encrypted secret from dets by key
+delete_secret(Name) ->
+    case open_secrets_dets() of
+        {ok, DetsFile} ->
+            case dets:delete(DetsFile, Name) of
+                ok -> dets:sync(DetsFile);
+                {error, _} = Error -> Error
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+%% Scoped deletion.  BDD/account-facing code should use this form.
+delete_secret(Scope, Name) ->
+    delete_secret(scoped_storage_key(Scope, Name)).
+
+encrypt_store({Name, Secret}) ->
+    encrypt_store(Name, Secret).
+
+%% Legacy node-global storage.  Retained for trusted node integrations only.
+encrypt_store(Name, Secret) ->
+    #{public_key := _AeAccount, private_key := PrivateKey} = secrets:node_keypair(),
+    store_secret(Name, encrypt_secret(Secret, PrivateKey)).
+
+%% Account/scope isolated storage.  New user-derived secrets must use this API.
+encrypt_store(Scope, Name, Secret) ->
+    #{public_key := _AeAccount, private_key := PrivateKey} = secrets:node_keypair(),
+    StorageKey = scoped_storage_key(Scope, Name),
+    AAD = scoped_secret_aad(StorageKey),
+    store_secret(StorageKey, encrypt_scoped_secret(Secret, PrivateKey, AAD)).
+
+retrieve_decrypt(Name) ->
+    try secrets:node_keypair() of
+        #{public_key := _AeAccount, private_key := PrivateKey} ->
+            try retrieve_secret(Name) of
+                [{Name, {IV, CipherText, Tag}}] ->
+                    {ok, decrypt_secret({IV, CipherText, Tag}, PrivateKey)};
+                _ ->
+                    error
+            catch
+                _Class:_Reason:_Stack ->
+                    error
+            end;
+        _ ->
+            error
+    catch
+        _Class:_Reason:_Stack ->
+            error
+    end.
+
+%% Scope + name are authenticated as AES-GCM AAD and also feed the derived key.
+%% Moving a DETS record to a different account/name therefore fails decryption.
+retrieve_decrypt(Scope, Name) ->
+    try secrets:node_keypair() of
+        #{public_key := _AeAccount, private_key := PrivateKey} ->
+            StorageKey = scoped_storage_key(Scope, Name),
+            AAD = scoped_secret_aad(StorageKey),
+            case retrieve_secret(StorageKey) of
+                [{StorageKey, {v2, IV, CipherText, Tag}}] ->
+                    case decrypt_scoped_secret({v2, IV, CipherText, Tag}, PrivateKey, AAD) of
+                        error -> error;
+                        Value -> {ok, Value}
+                    end;
+                _ ->
+                    error
+            end;
+        _ ->
+            error
+    catch
+        _Class:_Reason:_Stack ->
+            error
+    end.
+
+scoped_storage_key(Scope0, Name0) ->
+    {Kind, Owner, Id} = normalize_secret_scope(Scope0),
+    Name = normalize_secret_name(Name0),
+    {damage_secret, 2, Kind, Owner, Id, Name}.
+
+normalize_secret_scope(node) ->
+    {node, <<"node">>, <<"default">>};
+normalize_secret_scope({account, Owner}) ->
+    {account, to_bin(Owner), <<"default">>};
+normalize_secret_scope({wallet, Owner, Id}) ->
+    {wallet, to_bin(Owner), to_bin(Id)};
+normalize_secret_scope({agent, Owner, Id}) ->
+    {agent, to_bin(Owner), to_bin(Id)};
+normalize_secret_scope(#{kind := Kind, owner := Owner} = Scope) when
+    Kind =:= account; Kind =:= wallet; Kind =:= agent
+->
+    {Kind, to_bin(Owner), to_bin(maps:get(id, Scope, <<"default">>))};
+normalize_secret_scope(Other) ->
+    error({invalid_secret_scope, Other}).
+
+normalize_secret_name(Name) when is_binary(Name) -> Name;
+normalize_secret_name(Name) when is_list(Name) -> unicode:characters_to_binary(Name);
+normalize_secret_name(Name) when is_atom(Name) -> atom_to_binary(Name, utf8);
+normalize_secret_name(Name) -> to_bin(Name).
+
+scoped_secret_aad(StorageKey) ->
+    term_to_binary({damagebdd_secret_scope_v2, StorageKey}).
+
+encrypt_scoped_secret(Secret, PrivateKey, AAD) ->
+    AESKey = derive_scoped_aes_key(PrivateKey, AAD),
+    IV = crypto:strong_rand_bytes(?IV_SIZE),
+    PlainText = term_to_binary(Secret),
+    {CipherText, Tag} =
+        crypto:crypto_one_time_aead(aes_256_gcm, AESKey, IV, PlainText, AAD, true),
+    {v2, IV, CipherText, Tag}.
+
+decrypt_scoped_secret({v2, IV, CipherText, Tag}, PrivateKey, AAD) ->
+    AESKey = derive_scoped_aes_key(PrivateKey, AAD),
+    case crypto:crypto_one_time_aead(aes_256_gcm, AESKey, IV, CipherText, AAD, Tag, false) of
+        error ->
+            error;
+        PlainText when is_binary(PlainText) ->
+            try binary_to_term(PlainText, [safe]) of
+                Secret -> Secret
+            catch
+                _:_ -> error
+            end
+    end.
+
+derive_scoped_aes_key(PrivateKey, AAD) ->
+    ScopeSalt = crypto:hash(sha256, AAD),
+    hkdf(ScopeSalt, PrivateKey, <<"damagebdd:scoped-secret:v2">>, 32).
+
+bound_secret_aad(Context) ->
+    term_to_binary({damagebdd_bound_secret, 1, Context}, [deterministic]).
+
+derive_bound_aes_key(PrivateKey, AAD) ->
+    Salt = crypto:hash(sha256, AAD),
+    hkdf(Salt, PrivateKey, <<"damagebdd:bound-secret:v1">>, 32).
+
+bound_plaintext(Value) when is_binary(Value) -> Value;
+bound_plaintext(Value) when is_list(Value) -> unicode:characters_to_binary(Value);
+bound_plaintext(Value) -> to_bin(Value).
+
+salted_hash(BinaryData) when is_binary(BinaryData) ->
+    case secrets:node_keypair() of
+        #{public_key := _AeAccount, private_key := PrivateKey} ->
+            base64:encode(crypto:mac(hmac, sha256, PrivateKey, BinaryData));
+        _ ->
+            error
+    end.
+salted_hash(BinarySalt, BinaryData) when is_binary(BinaryData) and is_binary(BinarySalt) ->
+    base64:encode(crypto:mac(hmac, sha256, BinarySalt, BinaryData)).
+
+import() ->
+    case file:consult("damage.plain") of
+        {ok, Terms} ->
+            lists:map(fun encrypt_store/1, Terms);
+        {error, enoent} ->
+            ?LOG_ERROR("no damage.plain found ", []);
+        Error ->
+            ?LOG_ERROR("no damage.plain found ~p", [Error])
+    end.
+import_secret_key(PublicKey, PrivateKeyHex) ->
+    Path = filename:join(filename:dirname(keystore_path()), "damage.key.imported"),
+    PrivateKey = binary:decode_hex(PrivateKeyHex),
+    Keypair = #{private_key => PrivateKey, public_key => PublicKey},
+    Prompt = "Damage Node Password (used to encrypt keys stored on disk)",
+    try erm_askpass:ask_password(Prompt) of
+        Password when is_binary(Password) ->
+            EncData = secrets:encrypt(
+                Password,
+                term_to_binary(Keypair)
+            ),
+            ok = filelib:ensure_dir(Path),
+            ok = file:write_file(Path, term_to_binary(EncData)),
+            Keypair
+    catch
+        _:_ ->
+            ?LOG_WARNING("Node key operation failed", []),
+            error
+    end.
+
+test() ->
+    #{public_key := AeAccount, private_key := PrivateKey} = secrets:node_keypair(),
+    ?LOG_DEBUG("secrets test using public_key ~p", [AeAccount]),
+    Secret = "Secret something something",
+    {IV, CipherText, Tag} =
+        encrypt_secret(Secret, PrivateKey),
+    Secret = binary_to_list(decrypt_secret({IV, CipherText, Tag}, PrivateKey)),
+    StoredSecret = <<"store secre">>,
+    encrypt_store(test, StoredSecret),
+    {ok, StoredSecret} = retrieve_decrypt(test).
+
+migrate() ->
+    {ok, Data} = file:read_file(legacy_state_file("damage.prod.key")),
+    Path = keystore_path(),
+    Keypair = binary_to_term(Data),
+    Prompt = "Damage Node Password (used to encrypt keys stored on disk)",
+    try erm_askpass:ask_password(Prompt) of
+        Password when is_binary(Password) ->
+            EncData = secrets:encrypt(
+                Password,
+                term_to_binary(Keypair)
+            ),
+            ok = filelib:ensure_dir(Path),
+            ok = file:write_file(Path, term_to_binary(EncData)),
+            Keypair
+    catch
+        _:_ ->
+            ?LOG_WARNING("Node key operation failed", []),
+            error
+    end.
+
+list_secrets() ->
+    case open_secrets_dets() of
+        {ok, DetsFile} ->
+            Keys = dets:foldl(fun({Key, _}, Acc) -> [Key | Acc] end, [], DetsFile),
+            dets:close(DetsFile),
+            lists:reverse(Keys);
+        {error, Reason} ->
+            ?LOG_ERROR("Failed to open secrets DETS: ~p", [Reason]),
+            []
+    end.
+interpolate_template(Template) when is_binary(Template) ->
+    interpolate_template(binary_to_list(Template));
+interpolate_template(Template) when is_list(Template) ->
+    %% Match all {{key}} patterns
+    Pattern = "\\{\\{([^}]+)\\}\\}",
+    case re:run(Template, Pattern, [{capture, all_but_first, list}, global]) of
+        {match, Matches} ->
+            lists:flatten(
+                lists:foldl(
+                    fun([Key], Acc) ->
+                        Replacement =
+                            case retrieve_legacy_template_secret(Key) of
+                                {ok, Value} when is_binary(Value) -> binary_to_list(Value);
+                                {ok, Value} -> io_lib:format("~p", [Value]);
+                                error -> "<<missing:" ++ Key ++ ">>"
+                            end,
+                        string:replace(Acc, "{{" ++ Key ++ "}}", Replacement, all)
+                    end,
+                    Template,
+                    Matches
+                )
+            );
+        nomatch ->
+            Template
+    end.
+
+retrieve_legacy_template_secret(Key0) ->
+    KeyBin = unicode:characters_to_binary(Key0),
+    case retrieve_decrypt(KeyBin) of
+        {ok, _} = Ok ->
+            Ok;
+        error ->
+            %% Compatibility for old DETS rows keyed by existing atoms only.
+            %% Never create atoms from template-controlled strings.
+            try binary_to_existing_atom(KeyBin, utf8) of
+                KeyAtom -> retrieve_decrypt(KeyAtom)
+            catch
+                _:_ -> error
+            end
+    end.

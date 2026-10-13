@@ -1,0 +1,40 @@
+%%% -*- mode: erlang; erlang-indent-level: 2; -*-
+
+{
+    application,
+    nosternity,
+    [
+        {description, "Nosternity - Nostr client for eternal notes and stuff."},
+        {vsn, "0.2.0"},
+        {registered, []},
+        {mod, {nosternity_app, []}},
+        {
+            applications,
+            [
+                kernel,
+                stdlib,
+                crypto,
+                jsx,
+                bbmustache,
+                bech32,
+                cowboy,
+                trails,
+                cowboy_swagger,
+                gproc,
+                gun,
+                damage,
+                ecai
+            ]
+        },
+        {env, []},
+        {modules, [nosternity_app, nosternity_sup]},
+        {licenses, ["Apache 2.0"]},
+        {
+            start_phases,
+            [
+                {start_trails_http, []}
+            ]
+        },
+        {links, []}
+    ]
+}.

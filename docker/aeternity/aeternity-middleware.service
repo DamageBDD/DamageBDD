@@ -1,0 +1,32 @@
+[Unit]
+Description=Aeternity Middleware
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/damage
+Restart=always
+RestartSec=5
+
+ExecStart=/usr/bin/docker compose \
+    -p aeternity \
+    -f /opt/damage/docker/docker-compose.yml \
+    up
+
+ExecStop=/usr/bin/docker compose \
+    -p aeternity \
+    -f /opt/damage/docker/docker-compose.yml \
+    stop
+
+ExecReload=/usr/bin/docker compose \
+    -p aeternity \
+    -f /opt/damage/docker/docker-compose.yml \
+    up -d --remove-orphans
+
+TimeoutStartSec=0
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,123 @@
+#+TITLE: Constitution of the Bitcoin Only Party (BoP)
+#+AUTHOR: Founding Nodes
+#+DATE: 2025-04-30
+#+OPTIONS: toc:t num:t
+#+LANGUAGE: en
+
+* Preamble
+
+#+BEGIN_QUOTE
+The Bitcoin Only Party (BoP) exists to restore sovereignty, integrity, and accountability to the citizens of Australia through the adoption of Bitcoin — a decentralized, incorruptible monetary protocol.
+
+We reject fiat coercion, surveillance economics, and political intermediaries. We believe finality is freedom, multisig is democracy, and verification is trust.
+#+END_QUOTE
+
+* Name
+
+The name of the party is: =Bitcoin Only Party (BoP)=
+
+* Objectives
+
+- Promote public understanding and adoption of Bitcoin as sound money.
+- Replace fiat-dependent services and policies with verifiable, decentralized alternatives.
+- Field candidates at the local, state, and federal levels to advocate for Bitcoin-native governance.
+- Eliminate financial censorship and state-imposed intermediaries.
+- Uphold radical transparency and immutability in all operations.
+
+* Membership
+
+** Eligibility
+
+- Must be at least 16 years old.
+- Must be an Australian citizen or permanent resident.
+- Must support the core principles of the BoP as outlined in the Preamble.
+
+** Rights
+
+- One member, one verifiable vote.
+- Propose policies, vote on resolutions, and participate in local BoP nodes.
+
+** Revocation
+
+Membership may be revoked for:
+
+- Advocating fiat expansion, central banking, or surveillance finance.
+- Conduct that discredits the BoP or violates its verification-first principles.
+
+** Proof of Membership via Lightning Payment
+
+To validate membership, a member may submit one of the following:
+
+- A =bolt11= invoice string signed by a BoP node and matched by payment hash.
+- A =payment_preimage= proving successful payment to a BoP LNURL.
+- A PGP-signed message containing:
+  - the payment request,
+  - the preimage or payment hash,
+  - and the timestamp of the transaction.
+
+These proofs must be submitted via Nostr DM to a Council Node, uploaded to a verifiable endpoint, or committed to a public IPFS hash index.
+
+
+* Governance Structure
+
+** Council of Nodes
+
+The highest decision-making body is the *Council of Nodes*.
+
+- Each Node represents a local chapter and is authorized through verified multisig credentials.
+
+** Roles
+
+- *Coordinator*: Oversees operations and communications.
+- *Treasurer*: Manages the multisig treasury and Lightning channels.
+- *Policy Verifier*: Ensures proposals and activities are BDD-verified.
+- *Tech Steward*: Maintains infrastructure such as websites, relays, and nodes.
+
+** Elections and Terms
+
+- Elections held every 12 months using Bitcoin-signed ballots.
+- Term limits: 2 years maximum in any single role.
+- Resignations and removals must be recorded and timestamped publicly.
+
+* Decision-Making and Voting
+
+- All decisions require quorum: 51% of active Nodes.
+- Voting occurs via open cryptographic voting tools or public PGP-signed statements.
+- No anonymous or fiat-derived influence permitted.
+
+* Candidate Endorsement
+
+Candidates must:
+
+- Publicly commit to the BoP Preamble.
+- Publish all campaign finances in satoshis.
+- Agree to smart contract-based milestone verification for campaign promises.
+- Be endorsed by at least 3 Council Nodes.
+
+* Finances
+
+- All treasury funds held in a 2-of-3 or 3-of-5 multisig Bitcoin wallet.
+- No fiat accounts permitted.
+- All donations and expenditures published to a public ledger (e.g., Nostr/IPFS).
+- Lightning-based payouts must include proof-of-work receipts.
+
+* Amendments to the Constitution
+
+- Any Node may propose an amendment.
+- Requires 66% Node consensus and public hash-linking to ratify.
+- Changes must be immutably published and timestamped.
+
+* Dissolution
+
+- Requires 90% Council consensus.
+- Remaining satoshis either burned or donated to open-source Bitcoin projects, as pre-defined in a verifiable spend script.
+
+* Verification Appendix
+
+This Constitution must be:
+
+- Hosted via IPFS and verified by SHA-256 hash.
+- Referenced in all BoP node onboarding packages.
+- Updated only through signed commit histories.
+
+

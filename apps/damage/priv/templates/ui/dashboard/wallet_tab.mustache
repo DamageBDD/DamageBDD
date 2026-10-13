@@ -1,0 +1,185 @@
+<!-- -*- mode: html -*- -->
+<section class="wallet-workspace" aria-labelledby="wallet-workspace-title">
+  <header class="wallet-workspace-header wallet-reveal">
+    <div>
+      <p class="wallet-eyebrow">Assets</p>
+      <h1 id="wallet-workspace-title">Wallet</h1>
+      <p class="wallet-workspace-lead">Balances, money movement and wallet permissions in one place.</p>
+    </div>
+    <button id="wallet-page-refresh" type="button" class="wallet-icon-button wallet-refresh-button" aria-label="Refresh wallet data" title="Refresh wallet data">
+      <span aria-hidden="true">↻</span>
+    </button>
+  </header>
+
+  <section class="wallet-account-card wallet-reveal" aria-label="Signed-in account">
+    <div class="wallet-account-icon" aria-hidden="true">◎</div>
+    <div class="wallet-account-copy">
+      <div class="wallet-account-title-row">
+        <strong data-session-kind>Checking session…</strong>
+        <span class="wallet-status-dot" aria-hidden="true"></span>
+      </div>
+      <code data-session-address>—</code>
+      <p data-wallet-only-note class="wallet-account-note" hidden></p>
+    </div>
+    <div class="wallet-account-actions">
+      <button type="button" class="wallet-icon-button" data-copy-wallet-address aria-label="Copy account address" title="Copy account address">⧉</button>
+      <button type="button" class="wallet-quiet-button" data-switch-account>Switch account</button>
+    </div>
+    <p class="wallet-account-feedback" data-session-feedback role="status" aria-live="polite"></p>
+  </section>
+
+  <section class="wallet-portfolio wallet-reveal" aria-label="Portfolio balances">
+    <article class="wallet-balance-card wallet-balance-card--damage">
+      <div class="wallet-balance-card-head"><span class="wallet-asset-icon">D</span><span>DAMAGE</span></div>
+      <div class="wallet-balance-value"><strong data-wallet-balance="damage">—</strong></div>
+      <small>Execution credit</small>
+    </article>
+    <article class="wallet-balance-card wallet-balance-card--ae">
+      <div class="wallet-balance-card-head"><span class="wallet-asset-icon wallet-asset-icon--ae">Æ</span><span>AE</span></div>
+      <div class="wallet-balance-value"><strong data-wallet-balance="ae">—</strong></div>
+      <small>Network fees</small>
+    </article>
+    <article class="wallet-balance-card wallet-balance-card--lightning">
+      <div class="wallet-balance-card-head"><span class="wallet-asset-icon wallet-asset-icon--lightning">ϟ</span><span>Lightning</span></div>
+      <div class="wallet-balance-value"><strong data-wallet-balance="sats">—</strong><span>sats</span></div>
+      <small id="wallet-nwc-summary">Checking NWC…</small>
+    </article>
+  </section>
+
+  <section class="wallet-flow-card wallet-reveal" aria-labelledby="wallet-flow-title">
+    <div class="wallet-flow-copy">
+      <p class="wallet-eyebrow">Money movement</p>
+      <div class="wallet-flow-title-row">
+        <div>
+          <h2 id="wallet-flow-title">Funds in &amp; out</h2>
+          <p>Observed Lightning ledger activity from the connections loaded below.</p>
+        </div>
+        <span class="wallet-live-pill"><i aria-hidden="true"></i> Live ledger</span>
+      </div>
+      <div class="wallet-flow-stats">
+        <div class="wallet-flow-stat wallet-flow-stat--in">
+          <span class="wallet-flow-stat-icon" aria-hidden="true">↙</span>
+          <div><small>Funds in</small><strong><span data-flow-stat="in">0</span> sats</strong></div>
+        </div>
+        <div class="wallet-flow-stat wallet-flow-stat--out">
+          <span class="wallet-flow-stat-icon" aria-hidden="true">↗</span>
+          <div><small>Funds out</small><strong><span data-flow-stat="out">0</span> sats</strong></div>
+        </div>
+        <div class="wallet-flow-stat wallet-flow-stat--net">
+          <span class="wallet-flow-stat-icon" aria-hidden="true">≈</span>
+          <div><small>Net flow</small><strong><span data-flow-stat="net">0</span> sats</strong></div>
+        </div>
+        <div class="wallet-flow-stat">
+          <span class="wallet-flow-stat-icon" aria-hidden="true">≡</span>
+          <div><small>Movements</small><strong><span data-flow-stat="count">0</span></strong></div>
+        </div>
+      </div>
+    </div>
+    <div class="wallet-flow-viz" aria-hidden="true">
+      <div class="wallet-flow-orbit wallet-flow-orbit--one"></div>
+      <div class="wallet-flow-orbit wallet-flow-orbit--two"></div>
+      <div class="wallet-flow-core"><span>ϟ</span></div>
+      <div class="wallet-flow-line wallet-flow-line--in"><i data-flow-bar="in"></i></div>
+      <div class="wallet-flow-line wallet-flow-line--out"><i data-flow-bar="out"></i></div>
+    </div>
+  </section>
+
+  <nav class="wallet-command-bar wallet-reveal" aria-label="Wallet actions">
+    <a href="#wallet-buy" class="wallet-command"><span class="wallet-command-icon">ϟ</span><span><b>Buy DAMAGE</b><small>Lightning invoice</small></span></a>
+    <a href="#wallet-send" class="wallet-command"><span class="wallet-command-icon">↗</span><span><b>Send</b><small>Managed transfer</small></span></a>
+    <a href="#wallet-receive" class="wallet-command"><span class="wallet-command-icon">↙</span><span><b>Receive</b><small>AE address</small></span></a>
+    <button type="button" id="open-nwc-modal-btn" class="wallet-command" data-requires-capability="nwc"><span class="wallet-command-icon">⌁</span><span><b>Connect wallet</b><small>Nostr Wallet Connect</small></span></button>
+  </nav>
+
+  <div class="wallet-workspace-grid wallet-reveal">
+    <section id="wallet-buy" class="wallet-panel-card">
+      <div class="wallet-panel-heading">
+        <span class="wallet-panel-icon" aria-hidden="true">ϟ</span>
+        <div><h2>Buy DAMAGE</h2><p>Pay a Lightning invoice; DAMAGE arrives after settlement.</p></div>
+      </div>
+      <form id="invoice-form" class="wallet-form" data-requires-capability="nwc">
+        <label for="invoice-amount">Amount</label>
+        <div class="wallet-input-suffix"><input type="number" min="1" step="10" value="1000" id="invoice-amount" inputmode="numeric"><span>sats</span></div>
+        <p id="invoice-price-hint" class="wallet-form-hint" aria-live="polite">Live conversion appears here.</p>
+        <button class="wallet-primary-button" id="generate-invoice-btn" data-requires-capability="nwc"><span>Create invoice</span><span aria-hidden="true">↗</span></button>
+      </form>
+    </section>
+
+    <section id="wallet-send" class="wallet-panel-card">
+      <div class="wallet-panel-heading">
+        <span class="wallet-panel-icon" aria-hidden="true">↗</span>
+        <div><h2>Send DAMAGE</h2><p>Review the recipient and amount before the transfer is submitted.</p></div>
+      </div>
+      <form id="transfer-out-form" class="wallet-form" data-requires-capability="transfer">
+        <label for="damage-transfer-out-address">Recipient AE address</label>
+        <input type="text" id="damage-transfer-out-address" placeholder="ak_…" autocomplete="off" spellcheck="false" required>
+        <label for="damage-transfer-out-amount">Amount</label>
+        <div class="wallet-input-suffix"><input type="number" min="0" step="any" id="damage-transfer-out-amount" placeholder="0.00" required><span>DAMAGE</span></div>
+        <button class="wallet-primary-button" id="damage-transfer-out-btn" data-requires-capability="transfer"><span>Review transfer</span><span aria-hidden="true">↗</span></button>
+        <p id="wallet-transfer-status" class="wallet-form-hint" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+
+    <section id="wallet-receive" class="wallet-panel-card wallet-panel-card--address">
+      <div class="wallet-panel-heading">
+        <span class="wallet-panel-icon" aria-hidden="true">↙</span>
+        <div><h2>Receive DAMAGE or AE</h2><p>Share your Aeternity address and verify it before sending funds.</p></div>
+      </div>
+      <div class="wallet-address-box">
+        <code id="damage-address" data-session-address>—</code>
+        <button type="button" class="wallet-icon-button" data-copy-wallet-address aria-label="Copy receiving address">⧉</button>
+      </div>
+      <div id="qrcode-damage" class="wallet-qr" aria-label="Aeternity account QR code"></div>
+    </section>
+
+    <section class="wallet-panel-card wallet-panel-card--credit">
+      <div class="wallet-panel-heading">
+        <span class="wallet-panel-icon" aria-hidden="true">＋</span>
+        <div><h2>Deposit sats credit</h2><p>Add Lightning credit to your managed NWC ledger.</p></div>
+      </div>
+      <form id="ledger-invoice-form" class="wallet-form" data-requires-capability="nwc">
+        <label for="ledger-invoice-amount">Credit amount</label>
+        <div class="wallet-input-suffix"><input type="number" min="1" step="10" value="100" id="ledger-invoice-amount" inputmode="numeric"><span>sats</span></div>
+        <button class="wallet-secondary-button wallet-secondary-button--wide" id="generate-ledger-invoice-btn" data-requires-capability="nwc">Create credit invoice</button>
+      </form>
+    </section>
+  </div>
+
+  <div class="wallet-workspace-grid wallet-workspace-grid--lower wallet-reveal">
+    <section class="wallet-panel-card wallet-panel-card--wide">
+      <div class="wallet-panel-heading wallet-panel-heading--split">
+        <div class="wallet-panel-heading-copy"><span class="wallet-panel-icon" aria-hidden="true">◉</span><div><h2>Connected wallets</h2><p>Payment capabilities stay separate from your login identity.</p></div></div>
+        <button type="button" class="wallet-quiet-button" id="wallet-manage-nwc" data-requires-capability="nwc">Manage NWC</button>
+      </div>
+      <div id="wallet-connections" class="wallet-connection-list" aria-live="polite"><p class="wallet-empty-state">Loading connections…</p></div>
+    </section>
+
+    <section class="wallet-panel-card wallet-panel-card--wide">
+      <div class="wallet-panel-heading">
+        <span class="wallet-panel-icon" aria-hidden="true">↕</span>
+        <div><h2>Recent activity</h2><p>Latest Lightning ledger movements across your managed connections.</p></div>
+      </div>
+      <div id="wallet-recent-activity" class="wallet-activity-list" aria-live="polite"><p class="wallet-empty-state">Loading activity…</p></div>
+    </section>
+  </div>
+</section>
+
+<div class="modal micromodal-slide" id="wallet-transfer-review-modal" aria-hidden="true">
+  <div class="modal__overlay" tabindex="-1" data-micromodal-close>
+    <div class="modal__container modal__container--sm" role="dialog" aria-modal="true" aria-labelledby="wallet-transfer-review-title">
+      <header class="modal__header">
+        <div><p class="modal__eyebrow">Confirm transaction</p><h2 class="modal__title" id="wallet-transfer-review-title">Review DAMAGE transfer</h2></div>
+        <button class="modal__close" type="button" aria-label="Close dialog" data-micromodal-close></button>
+      </header>
+      <main class="modal__content">
+        <dl class="wallet-review-list"><div><dt>Recipient</dt><dd id="wallet-review-recipient">—</dd></div><div><dt>Amount</dt><dd id="wallet-review-amount">—</dd></div></dl>
+        <p class="modal__hint">Transfers are final once accepted by the Aeternity network. Verify the full recipient address.</p>
+        <p id="wallet-review-status" class="modal__status" role="status" aria-live="polite"></p>
+      </main>
+      <footer class="modal__footer">
+        <button type="button" class="modal__btn" data-micromodal-close>Cancel</button>
+        <button type="button" id="wallet-confirm-transfer" class="modal__btn modal__btn-primary">Send DAMAGE</button>
+      </footer>
+    </div>
+  </div>
+</div>

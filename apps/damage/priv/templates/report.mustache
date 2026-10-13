@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DamageBDD Reports - {{hash}}</title>
+  <link rel="icon" type="image/x-icon" href="/static/img/favicon.ico">
+
+  <!-- PureCSS + theme -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/pure-min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/purecss@3.0.0/build/grids-responsive-min.css">
+  <link rel="stylesheet" type="text/css" href="/static/css/main.css" />
+</head>
+<body>
+  <div id="content">
+    <!-- Topbar -->
+    <div class="topbar">
+      <div class="site-header">
+        <img class="logo" src="{{logo_image}}" alt="DamageBDD Logo" />
+        <div class="brand-text">
+          <div class="title">DamageBDD</div>
+          <div class="subtitle">BDD Run Reports and Artifacts</div>
+        </div>
+      </div>
+    </div>
+    <!-- Reports Panel -->
+    <div id="reports-tab">
+      <h3>Run Report {{hash}}</h3>
+      <p>Browse DamageBDD run reports for run {{hash}} below:</p>
+      <div id="run-reports-panel">
+        <ul id="reports-list">
+          {{{reports_list}}}
+        </ul>
+      </div>
+    </div>
+
+    <footer>
+      <p id="node-public-key"></p>
+      <p id="node-version"></p>
+    </footer>
+  </div>
+</body>
+</html>

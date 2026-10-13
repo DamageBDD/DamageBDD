@@ -1,0 +1,108 @@
+<section class="view" data-panel="video" data-ecai-managed aria-labelledby="videoTitle" hidden>
+  <div class="video-hero">
+    <div>
+      <div class="eyebrow eyebrow-light">VIDEO FASTPATH · BRING YOUR OWN MODEL</div>
+      <h1 id="videoTitle">Generate once. Reuse with proof.</h1>
+      <p>Connect a video backend, import an existing clip or generate a new one. Make local edits without paying for another model run, then verify every version.</p>
+      <div class="video-hero-actions">
+        <button class="button button-light" type="button" id="videoStartProject">New project ↗</button>
+        <button class="button button-glass" type="button" id="videoRefresh">Refresh studio</button>
+      </div>
+    </div>
+    <div class="video-hero-status"><span class="video-status-dot" id="videoStatusDot"></span><span id="videoServiceState">Checking video service…</span></div>
+  </div>
+  <p id="videoNotice" class="video-notice" role="status" aria-live="polite">Sign in with a managed account to use Video Studio.</p>
+  <div class="video-metrics" aria-label="Video Fastpath metrics">
+    <article class="surface video-metric"><span>Projects</span><strong id="videoMetricProjects">—</strong></article>
+    <article class="surface video-metric"><span>Versions</span><strong id="videoMetricVersions">—</strong></article>
+    <article class="surface video-metric"><span>Model calls avoided</span><strong id="videoMetricAvoided">—</strong></article>
+    <article class="surface video-metric"><span>External submissions</span><strong id="videoMetricSubmissions">—</strong></article>
+  </div>
+  <div class="video-layout">
+    <div class="video-column">
+      <section class="surface panel-pad" id="videoProjectSection">
+        <div class="panel-heading"><div><div class="eyebrow">01 · WORKSPACE</div><h2>Video projects</h2></div><span class="status-tag">Account-scoped</span></div>
+        <form id="videoProjectForm" class="stack-form">
+          <label for="videoProjectTitle">Project name<input id="videoProjectTitle" maxlength="160" required placeholder="Autumn product campaign"></label>
+          <div class="field-grid">
+            <label for="videoLicense">Asset licence<input id="videoLicense" maxlength="128" value="all-rights-reserved" required></label>
+            <label for="videoTags">Tags (comma-separated)<input id="videoTags" placeholder="campaign, australia"></label>
+          </div>
+          <button type="submit" class="button button-primary">Create project</button>
+        </form>
+        <div class="video-picker"><label for="videoProjectSelect">Active project</label><select id="videoProjectSelect" aria-label="Active video project"><option value="">Choose or create a project</option></select></div>
+      </section>
+      <section class="surface panel-pad">
+        <div class="panel-heading"><div><div class="eyebrow">02 · GENERATION</div><h2>Your video backend</h2></div><span class="status-tag">Bring your own API</span></div>
+        <p class="context-hint">Choose a configured backend or register a connector. Customer API keys go to the server and are not saved in the browser.</p>
+        <label for="videoBackendSelect" class="video-label">Generation backend</label>
+        <select id="videoBackendSelect"><option value="">No backend selected</option></select>
+        <details id="videoConnectorDetails" class="video-connector">
+          <summary>Connect an API provider <span aria-hidden="true">▾</span></summary>
+          <p id="videoConnectorPolicy" class="context-hint">Loading the operator-approved connection policy…</p>
+          <form id="videoBackendForm" class="stack-form">
+            <label for="videoBackendId">Connection ID<input id="videoBackendId" required maxlength="48" pattern="[A-Za-z0-9_-]+" placeholder="my-video-model"></label>
+            <label for="videoBackendKind">Protocol<select id="videoBackendKind"><option value="http_sync">HTTP JSON → video URL</option><option value="fal_queue">fal.ai queue</option></select></label>
+            <label for="videoBackendUrl">Generation API URL<input id="videoBackendUrl" required type="url" placeholder="https://approved-provider.example/generate"></label>
+            <label for="videoBackendKey">Provider API key<input id="videoBackendKey" type="password" required minlength="8" autocomplete="off" placeholder="Stored encrypted on Fastpath"></label>
+            <label for="videoBackendAuthScheme">Authorization scheme<select id="videoBackendAuthScheme"><option>Bearer</option><option>Key</option></select></label>
+            <label for="videoBackendHosts">Video download hosts (comma-separated)<input id="videoBackendHosts" placeholder="cdn.example.com"></label>
+            <label for="videoBackendResultPath">Response video field<input id="videoBackendResultPath" value="video_url" placeholder="video.url"></label>
+            <button type="submit" class="button button-outline">Save backend connection</button>
+          </form>
+        </details>
+        <form id="videoGenerateForm" class="stack-form video-generate-form">
+          <label for="videoPrompt">Describe the video<textarea id="videoPrompt" rows="4" required minlength="1" maxlength="3000" placeholder="A cinematic product reveal with slow camera movement…"></textarea></label>
+          <button type="submit" class="button button-primary" id="videoGenerateBtn">Generate video ↗</button>
+          <p class="context-hint">Third-party models can incur fees. The demo backend creates a synthetic test clip, not AI footage.</p>
+        </form>
+        <div id="videoJobArea" class="video-job" role="status" aria-live="polite">No active generation.</div>
+      </section>
+      <section class="surface panel-pad">
+        <div class="panel-heading"><div><div class="eyebrow">03 · IMPORT</div><h2>Have a video already?</h2></div></div>
+        <p class="context-hint">Skip generation entirely. Register an existing MP4 as a verifiable source asset (up to 25 MiB in the dashboard).</p>
+        <form id="videoImportForm" class="stack-form">
+          <label for="videoImportFile">Choose MP4<input id="videoImportFile" type="file" accept="video/mp4,.mp4" required></label>
+          <button class="button button-outline" type="submit">Import MP4</button>
+        </form>
+      </section>
+    </div>
+    <div class="video-column">
+      <section class="surface panel-pad">
+        <div class="panel-heading"><div><div class="eyebrow">04 · ASSET LIBRARY</div><h2>Version history</h2></div><button type="button" id="videoReloadVersions" class="text-button">Reload ↻</button></div>
+        <div id="videoVersions" class="video-versions"><div class="empty-state">Select a project to browse verified clips.</div></div>
+        <div class="video-selected" id="videoSelected" aria-live="polite">No video version selected.</div>
+        <div class="video-preview"><video id="videoPlayer" controls playsinline preload="none" hidden></video><div id="videoPreviewEmpty" class="video-preview-empty">Select a version, then load a preview.</div></div>
+        <div class="inline-actions video-actions">
+          <button type="button" id="videoPreviewBtn" class="button button-outline button-sm" disabled>Load preview</button>
+          <button type="button" id="videoDownloadBtn" class="button button-outline button-sm" disabled>Download MP4</button>
+          <button type="button" id="videoVerifyBtn" class="button button-primary button-sm" disabled>Verify integrity</button>
+        </div>
+        <div id="videoVerifyResult" role="status" aria-live="polite" class="video-proof">The signature, bytes and parent lineage can be verified independently of the generation backend.</div>
+      </section>
+      <section class="surface panel-pad">
+        <div class="panel-heading"><div><div class="eyebrow">05 · SHORT-CIRCUIT</div><h2>Revise without regenerating</h2></div><span class="status-tag">Local-first</span></div>
+        <p class="context-hint">Change metadata and reuse the exact MP4. Captions or trims invoke local FFmpeg, not an AI model.</p>
+        <form id="videoRevisionForm" class="stack-form">
+          <label for="videoOperation">Revision type<select id="videoOperation"><option value="metadata">Metadata · exact media reuse</option><option value="caption">Caption · local render</option><option value="trim">Trim · local render</option></select></label>
+          <label id="videoRevisionTextLabel" for="videoRevisionText">Revision note<input id="videoRevisionText" maxlength="1000" placeholder="Localized AUD offer"></label>
+          <div id="videoTrimFields" class="field-grid" hidden><label for="videoTrimStart">Start (seconds)<input id="videoTrimStart" type="number" min="0" step="0.1" value="0"></label><label for="videoTrimEnd">End (seconds)<input id="videoTrimEnd" type="number" min="0.1" step="0.1" value="5"></label></div>
+          <button type="submit" id="videoReviseBtn" class="button button-primary" disabled>Create version ↗</button>
+        </form>
+      </section>
+      <section class="surface panel-pad">
+        <div class="panel-heading"><div><div class="eyebrow">06 · PROVENANCE</div><h2>Verify &amp; prepare an NFT</h2></div><span class="status-tag">Mint not included</span></div>
+        <div class="inline-actions video-actions">
+          <button type="button" id="videoManifestBtn" class="button button-outline button-sm" disabled>View signed manifest</button>
+          <button type="button" id="videoGraphBtn" class="button button-outline button-sm" disabled>View dependency graph</button>
+        </div>
+        <pre id="videoProofOutput" class="code-display video-output">Select a version to inspect its provenance.</pre>
+        <form id="videoNftForm" class="stack-form">
+          <label for="videoCid">Already-published video IPFS CID<input id="videoCid" placeholder="bafy…" required></label>
+          <button type="submit" class="button button-outline" id="videoNftBtn" disabled>Prepare NFT metadata</button>
+          <p class="context-hint">Returns an unsigned metadata draft. It does not upload to IPFS, verify your CID or mint a token.</p>
+        </form>
+      </section>
+    </div>
+  </div>
+</section>

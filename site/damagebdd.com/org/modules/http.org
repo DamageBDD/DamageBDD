@@ -1,0 +1,326 @@
+#+TITLE: DamageBDD Step Reference
+#+SUBTITLE: A practical guide for writing Behaviour-Driven tests
+#+AUTHOR: DamageBDD
+#+OPTIONS: toc:3 num:nil
+
+* Introduction
+
+This document explains the *steps* you can use when writing DamageBDD
+feature files.
+
+You do *not* need to know how DamageBDD works internally.
+If you can write plain English sentences, you can write tests.
+
+Each step describes:
+- What the step does
+- When to use it
+- An example you can copy
+
+All steps work inside standard Gherkin files:
+
+#+BEGIN_SRC gherkin
+Feature: Example Feature
+  Scenario: Example Scenario
+    Given something
+    When something happens
+    Then something should be true
+#+END_SRC
+
+
+* Core Concepts (Read This First)
+
+**Steps run in order**
+- Each step builds on the result of the previous step.
+- If one step fails, the scenario stops.
+
+**Variables prevent repetition**
+- You can store values (IDs, tokens, responses) and reuse them later.
+
+**Plain language wins**
+- Write what the system *should do*, not *how* it does it.
+
+
+* HTTP Testing Steps
+
+These steps let you test APIs and web services.
+
+**Before making requests, always set a server or base URL.**
+
+
+** Given I am using server "{{Server}}"
+
+Use this to select the target system you are testing.
+
+#+BEGIN_SRC gherkin
+Given I am using server "https://api.example.com"
+#+END_SRC
+
+
+** Given I set base URL to "{{URL}}"
+
+Same purpose as *using server*, but explicit.
+
+#+BEGIN_SRC gherkin
+Given I set base URL to "https://api.example.com"
+#+END_SRC
+
+
+** Given I set "{{Header}}" header to "{{Value}}"
+
+Adds an HTTP header to all following requests.
+
+#+BEGIN_SRC gherkin
+Given I set "Authorization" header to "Bearer my-token"
+#+END_SRC
+
+
+** Given I store cookies
+
+Tells DamageBDD to remember cookies between requests.
+Use this for login flows.
+
+#+BEGIN_SRC gherkin
+Given I store cookies
+#+END_SRC
+
+
+** When I make a GET request to "{{Path}}"
+
+Sends a GET request.
+
+#+BEGIN_SRC gherkin
+When I make a GET request to "/users"
+#+END_SRC
+
+
+** When I make a POST request to "{{Path}}"
+
+Sends a POST request with a body.
+
+#+BEGIN_SRC gherkin
+When I make a POST request to "/login"
+"""
+{
+  "username": "alice",
+  "password": "secret"
+}
+"""
+#+END_SRC
+
+
+** When I make a PUT request to "{{Path}}"
+
+Updates something.
+
+#+BEGIN_SRC gherkin
+When I make a PUT request to "/users/123"
+"""
+{
+  "email": "new@example.com"
+}
+"""
+#+END_SRC
+
+
+** When I make a PATCH request to "{{Path}}"
+
+Partially updates something.
+
+
+** When I make a DELETE request to "{{Path}}"
+
+Deletes something.
+
+#+BEGIN_SRC gherkin
+When I make a DELETE request to "/users/123"
+#+END_SRC
+
+
+** When I make a CSRF POST request to "{{Path}}"
+
+Use this for systems that require CSRF protection (common in web apps).
+
+#+BEGIN_SRC gherkin
+When I make a CSRF POST request to "/settings"
+"""
+{ "dark_mode": true }
+"""
+#+END_SRC
+
+
+* Response Validation Steps
+
+These steps check what the system returned.
+
+
+** Then the response status must be "{{Status}}"
+
+Check the HTTP status code.
+
+#+BEGIN_SRC gherkin
+Then the response status must be "200"
+#+END_SRC
+
+
+** Then the response status must be one of "{{Statuses}}"
+
+Accepts multiple valid outcomes.
+
+#+BEGIN_SRC gherkin
+Then the response status must be one of "200,201"
+#+END_SRC
+
+
+** Then the response must contain text "{{Contains}}"
+
+Checks for a word or phrase.
+
+#+BEGIN_SRC gherkin
+Then the response must contain text "success"
+#+END_SRC
+
+
+** Then the "{{Header}}" header should be "{{Value}}"
+
+Validates response headers.
+
+#+BEGIN_SRC gherkin
+Then the "Content-Type" header should be "application/json"
+#+END_SRC
+
+
+** Then the JSON should be
+
+Checks the *entire* JSON response.
+
+#+BEGIN_SRC gherkin
+Then the JSON should be
+"""
+{ "status": "ok" }
+"""
+#+END_SRC
+
+
+** Then the JSON at path "{{JsonPath}}" should be
+
+Checks a specific field inside JSON.
+
+#+BEGIN_SRC gherkin
+Then the JSON at path "$.user.id" should be "123"
+#+END_SRC
+
+
+** Then I store the JSON at path "{{Path}}" in "{{Variable}}"
+
+Extracts data for later steps.
+
+#+BEGIN_SRC gherkin
+Then I store the JSON at path "$.token" in "AuthToken"
+#+END_SRC
+
+
+* Variables & Reuse
+
+
+** I set the variable "{{Variable}}" to "{{Value}}"
+
+Manually define a variable.
+
+#+BEGIN_SRC gherkin
+Given I set the variable "UserId" to "123"
+#+END_SRC
+
+
+** The variable "{{Variable}}" should be equal to JSON "{{Value}}"
+
+Validate stored values.
+
+#+BEGIN_SRC gherkin
+Then the variable "UserId" should be equal to JSON "123"
+#+END_SRC
+
+
+* Authentication Steps
+
+
+
+** Then I set BasicAuth username to "{{User}}" and password to "{{Password}}"
+
+Use HTTP Basic Authentication.
+
+#+BEGIN_SRC gherkin
+Then I set BasicAuth username to "admin" and password to "secret"
+#+END_SRC
+
+
+
+** Then I use header OAuth with key="{{Key}}" and secret="{{Secret}}"
+
+Adds OAuth credentials via headers.
+
+
+
+** Then I use query OAuth with key="{{Key}}" and secret="{{Secret}}"
+
+Adds OAuth credentials via URL parameters.
+
+
+
+* Utility Steps
+
+These help with timing, IDs, and dynamic data.
+
+
+** I store an uuid in "{{Variable}}"
+
+Generates a unique ID.
+
+#+BEGIN_SRC gherkin
+Given I store an uuid in "RequestId"
+#+END_SRC
+
+
+** I store current time string in "{{Variable}}" with format "{{Format}}"
+
+Useful for timestamps.
+
+#+BEGIN_SRC gherkin
+Given I store current time string in "Now" with format "%Y-%m-%d"
+#+END_SRC
+
+
+** I wait "{{Seconds}}" seconds
+
+Pauses execution.
+
+#+BEGIN_SRC gherkin
+And I wait "2" seconds
+#+END_SRC
+
+
+
+* Writing Good Scenarios
+
+✔ Describe *behaviour*, not implementation  
+✔ One business rule per scenario  
+✔ Prefer clarity over cleverness  
+
+**Bad**
+#+BEGIN_SRC gherkin
+Then system returns 200
+#+END_SRC
+
+**Good**
+#+BEGIN_SRC gherkin
+Then the user sees a successful login response
+#+END_SRC
+
+
+* Final Advice
+
+If a stakeholder can read your feature file and say:
+> “Yes, that’s exactly what the system should do”
+
+Then you are using DamageBDD correctly.
+
+Verification follows clarity.

@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# -*- mode: sh; sh-shell: bash; -*-
+set -euo pipefail
+
+# -------------------------------------------------------------------
+# install-cln (bootstrap selector)
+#
+# Host this at:  https://YOURDOMAIN/scripts/install-cln
+#
+# Usage:
+#   curl -fsSL https://YOURDOMAIN/scripts/install-cln | sudo bash -s -- [args...]
+#
+# This script detects OS/version/arch and downloads the matching
+# installer script from:
+#   ${CLN_INSTALL_BASE_URL}/scripts/installers/<name>.sh
+#
+# You can override base URL:
+#   CLN_INSTALL_BASE_URL="https://alt.example.com" curl -fsSL ... | sudo -E bash -s -- ...
+# -------------------------------------------------------------------
+
+log() { echo "[install-cln] $*" >&2; }
+die() { echo "[install-cln] ERROR: $*" >&2; exit 1; }
+
+need_cmd() { command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"; }
+
+detect_os() {
+  if [[ -r /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    OS_ID="${ID:-unknown}"
+    OS_VER="${VERSION_ID:-unknown}"
+  else
+    OS_ID="unknown"
+    OS_VER="unknown"
+  fi
+
+  ARCH_RAW="$(uname -m || true)"
+  case "$ARCH_RAW" in
+    x86_64|amd64) ARCH="amd64" ;;
+    aarch64|arm64) ARCH="arm64" ;;
+    *) ARCH="$ARCH_RAW" ;;
+  esac
+
+  echo "${OS_ID}|${OS_VER}|${ARCH}"
+}
+
+# Map detected platform -> installer script name (without path)
+choose_installer_names() {
+  local os_id="$1" os_ver="$2" arch="$3"
+
+  # Order matters: most specific first.
+  # Add more variants as you publish them under /scripts/.
+  case "${os_id}|${os_ver}|${arch}" in
+    'ubuntu|24.04|amd64')
+      echo "install-cln-ubuntu-24.04-amd64"
+      ;;
+    'ubuntu|24.04|arm64')
+      # if you later publish it, it’ll auto-start working
+      echo "install-cln-ubuntu-24.04-arm64"
+      ;;
+    'ubuntu|22.04|amd64')
+      echo "install-cln-ubuntu-22.04-amd64"
+      ;;
+    '*')
+      echo ""
+      ;;
+  esac
+}
+
+http_exists() {
+  local url="$1"
+  # HEAD first; if some servers don’t like HEAD, fall back to GET range.
+  if curl -fsSI "$url" >/dev/null 2>&1; then
+    return 0
+  fi
+  curl -fsS --range 0-0 "$url" >/dev/null 2>&1
+}
+
+main() {
+  need_cmd curl
+  need_cmd uname
+
+  IFS="|" read -r OS_ID OS_VER ARCH < <(detect_os)
+
+  log "Detected: os=${OS_ID} version=${OS_VER} arch=${ARCH}"
+
+  # Default base URL for your hosted scripts.
+  # Override with CLN_INSTALL_BASE_URL env var.
+  BASE_URL="${CLN_INSTALL_BASE_URL:-https://run.dev.damagebdd.com}"
+
+  # Normalize: strip trailing slash
+  BASE_URL="${BASE_URL%/}"
+
+  INSTALLER_NAME="$(choose_installer_names "$OS_ID" "$OS_VER" "$ARCH")"
+  if [[ -z "$INSTALLER_NAME" ]]; then
+    echo "unsupported: os=${OS_ID} version=${OS_VER} arch=${ARCH}" >&2
+    echo "hint: publish an installer at: ${BASE_URL}/scripts/install-cln-${OS_ID}-${OS_VER}-${ARCH}.sh" >&2
+    exit 2
+  fi
+
+  INSTALLER_URL="${BASE_URL}/scripts/${INSTALLER_NAME}.sh"
+
+  log "Looking for installer: ${INSTALLER_URL}"
+
+  if ! http_exists "$INSTALLER_URL"; then
+    echo "unsupported: no installer found for os=${OS_ID} version=${OS_VER} arch=${ARCH}" >&2
+    echo "missing: ${INSTALLER_URL}" >&2
+    exit 2
+  fi
+
+  log "Fetching and executing installer..."
+  # Pass through all args given to this bootstrap script.
+  # Use bash explicitly.
+  curl -fsSL "$INSTALLER_URL" | bash -x -s -- "$@"
+}
+
+main "$@"

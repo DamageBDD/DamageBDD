@@ -1,0 +1,12 @@
+%% Test-only boundary double: records the real ecai_share facade's call.
+-module(ecai_private_index).
+-export([index/4, fetch/3]).
+index(C, P, Id, Records) ->
+    Test = application:get_env(erm, share_test_owner, undefined),
+    Test ! {private_index, C, P, Id, Records},
+    case application:get_env(erm, share_test_result, ok) of
+        ok -> {ok, #{indexed => length(Records)}};
+        recover -> {error, batch_already_exists};
+        pause -> receive continue -> {ok, #{}} after 5000 -> {error, test_timeout} end
+    end.
+fetch(_, _, _) -> application:get_env(erm, share_test_fetch, {error, not_found}).

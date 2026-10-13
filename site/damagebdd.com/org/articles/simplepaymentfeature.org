@@ -1,0 +1,75 @@
+Let’s break this down step by step to explain how DamageBDD uses Lightning Network-based escrow and what the test case does in simple terms.
+
+---
+
+### How DamageBDD Uses Escrow for Payments When Tests Pass
+1. **Test Automation**: 
+   - DamageBDD automates the verification process for specific tasks or conditions.
+   - If the test (like completing a specific task) passes, it triggers a payment.
+
+2. **Escrow via Lightning Network**:
+   - Funds for payment are "escrowed" using the Lightning Network. This ensures the money is secure but inaccessible until the test verifies success.
+   - If the task is successfully completed and verified, the payment is released to the contributor automatically.
+
+3. **Lightning Network Advantages**:
+   - Payments are instant and have low transaction fees.
+   - The system ensures contributors are paid reliably only for work that meets predefined criteria.
+
+---
+
+### Explaining the Test Case
+
+#### **Feature: Scheduled payments to contributors for marketing and promotion**
+The goal of this test is to ensure that contributors posting on Nostr (a decentralized social network) get paid for promoting a specific user (identified by their "npub" key).
+
+#### **Background**:
+1. **Failure Notification**:
+   - If the test fails for any reason, DamageBDD sends a notification to a Discord webhook.
+   - This keeps stakeholders informed of issues.
+
+2. **Server Setup**:
+   - The test interacts with a server (`https://staging.damagebdd.com`), a staging environment where the functionality is tested.
+
+3. **Authentication**:
+   - The test uses a "macaroon" for authentication, which is a secure key that allows access to the Lightning Network's admin functionality.
+
+---
+
+#### **Scenario: I want to make a payment using a Lightning invoice request for Nostr posts**
+
+Here’s what the test checks:
+
+1. **Condition: Posts Verification**:
+   - The system looks for at least one post on Nostr mentioning a specific "npub" (a public key identifier for a user) within the last 24 hours. 
+   - The post must come from a second "npub" (another user, likely the contributor being paid).
+
+   **Layman’s Terms**: 
+   - If someone (Contributor B) creates a social media post promoting a specific person or project (identified by Contributor A's "npub") within the last 24 hours, the condition is met.
+
+2. **Action: Payment**:
+   - If the condition is met, the test triggers a Lightning payment using a pre-defined "invoice request." 
+   - The payment is processed only once in a 24-hour period to avoid duplicates.
+
+   **Layman’s Terms**: 
+   - After verifying that the post exists, the system pays Contributor B for their promotional work.
+
+---
+
+### Example Walkthrough:
+
+1. **A Contributor’s Task**:
+   - Contributor B promotes Contributor A on Nostr by making a post that includes A's "npub."
+
+2. **System Verification**:
+   - The test checks if this post exists within the last 24 hours and matches the criteria (right contributor and target).
+
+3. **Payment Execution**:
+   - If the test passes, a Lightning Network payment (using the specified invoice) is made to Contributor B as a reward for their work.
+
+---
+
+### Why This Matters
+This setup ensures:
+- Payments are fair, based on verified work.
+- Contributors trust the system since payments are automatic and instant upon verification.
+- DamageBDD provides transparency and reliability, critical for decentralized and automated workflows.

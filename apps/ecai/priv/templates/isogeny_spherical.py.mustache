@@ -1,0 +1,323 @@
+# -*- mode: python -*-
+import bpy
+import math
+
+#scene = bpy.context.scene
+scene.frame_start = 1
+scene.frame_end = 240
+scene.render.fps = 24
+
+
+# World background (deep navy)
+# --- ECAI spherical isogeny palette / theme selection ---
+
+THEME = "{{theme}}"
+if not THEME:
+    THEME = "ecai_navy"  # default
+
+def get_palette(theme):
+    # Returns: (bg_rgba, sphere_rgb, sphere_strength,
+    #           hoop_rgb, hoop_strength,
+    #           text_rgb, text_strength)
+
+    if theme == "ecai_navy":
+        # Deep navy, warm cream/orange lines
+        return (
+            (0.03, 0.05, 0.11, 1.0),           # bg
+            (1.00, 0.62, 0.20), 6.0,          # sphere
+            (1.00, 0.78, 0.35), 3.5,          # hoops
+            (1.00, 0.88, 0.55), 4.0           # text
+        )
+
+    if theme == "bitcoin_war":
+        # Bitcoin-orange heavy, very dark blue bg
+        return (
+            (0.01, 0.02, 0.05, 1.0),           # bg
+            (1.00, 0.47, 0.00), 7.0,          # sphere (hard orange)
+            (1.00, 0.84, 0.10), 4.0,          # hoops (yellow-orange)
+            (1.00, 0.95, 0.75), 4.5           # text (pale cream)
+        )
+
+    if theme == "ecai_teal":
+        # Cyber teal / magenta combo
+        return (
+            (0.01, 0.03, 0.06, 1.0),           # bg
+            (0.20, 1.00, 0.85), 5.0,          # sphere (teal)
+            (1.00, 0.30, 0.70), 3.5,          # hoops (magenta)
+            (1.00, 0.95, 0.90), 4.0           # text (soft white)
+        )
+
+    # Fallback: original-ish
+    return (
+        (0.02, 0.03, 0.06, 1.0),
+        (1.00, 0.55, 0.10), 0.8,
+        (1.00, 0.70, 0.20), 0.4,
+        (1.00, 0.80, 0.30), 0.6
+    )
+
+bg_rgba, sphere_rgb, sphere_str, hoop_rgb, hoop_str, text_rgb, text_str = get_palette(THEME)
+
+# World background
+if scene.world is None:
+    scene.world = bpy.data.worlds.new("ECAIWorld")
+scene.world.use_nodes = True
+bg = scene.world.node_tree.nodes.get("Background")
+if bg is not None:
+    bg.inputs[0].default_value = bg_rgba
+    bg.inputs[1].default_value = 1.0
+
+def create_material(name, base_color=(1, 1, 1, 1), metalic=0.0, roughness=0.5):
+    mat = bpy.data.materials.new(name)
+
+    if len(base_color) == 3:
+        base_color = list(base_color)
+        base_color.append(1)
+
+    mat.use_nodes = True
+    node = mat.node_tree.nodes[0]
+    node.inputs['Base Color'].default_value = base_color
+    node.inputs['Metallic'].default_value = metalic
+    node.inputs['Roughness'].default_value = roughness
+    #node.inputs[0].default_value = base_color
+    #node.inputs[4].default_value = metalic
+    #node.inputs[7].default_value = roughness
+
+    return mat 
+# Helper to create emission material
+def make_emission(name, color, strength=5.0):
+    mat = create_material(name, color)
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    # clear default nodes
+    for n in list(nodes):
+        nodes.remove(n)
+    out = nodes.new(type="ShaderNodeOutputMaterial")
+    emis = nodes.new(type="ShaderNodeEmission")
+    emis.inputs["Color"].default_value = (color[0], color[1], color[2], 1.0)
+    emis.inputs["Strength"].default_value = 1 # strength
+
+    links.new(emis.outputs["Emission"], out.inputs["Surface"])
+    return mat
+
+sphere_mat = make_emission("Sphere_Emission", sphere_rgb, sphere_str)
+hoop_mat   = make_emission("Hoop_Emission",   hoop_rgb,   hoop_str)
+text_mat   = make_emission("Text_Emission",   text_rgb,   text_str)
+
+
+# Remove any default camera/lights to avoid clutter
+for obj in list(scene.objects):
+    if obj.type in {"LIGHT", "CAMERA"}:
+        scene.collection.objects.unlink(obj)
+
+# Camera
+bpy.ops.object.camera_add(location=(0.0, -8.0, 2.0), rotation=(math.radians(80), 0.0, 0.0))
+cam = bpy.context.object
+cam.data.lens = 35
+scene.camera = cam
+
+# Soft area light
+bpy.ops.object.light_add(type='AREA', radius=5.0, location=(4.0, -4.0, 6.0))
+light = bpy.context.object
+light.data.energy = 800
+light.data.color = (1.0, 0.8, 0.6)
+
+# Sphere (ECAI surface)
+bpy.ops.mesh.primitive_uv_sphere_add(radius=1.0, location=(0.0, 0.0, 0.0))
+sphere = bpy.context.object
+sphere.name = "ECAI_Sphere"
+sphere.data.materials.append(sphere_mat)
+bpy.ops.object.shade_smooth()
+
+# Sphere emission fade-in
+emis_node = sphere_mat.node_tree.nodes.new('ShaderNodeEmission')
+emis_node.location = (0, 0)
+
+# Color socket is always index 0 for Emission
+emis_node.inputs[0].default_value = (1.0, 0.6, 0.1, 1.0)
+
+# Strength socket name can vary / be missing across versions – be defensive
+strength_socket = None
+
+for sock in emis_node.inputs:
+    if sock.name == "Strength":
+        strength_socket = sock
+        break
+
+if strength_socket is None and len(emis_node.inputs) > 1:
+    # Fallback: second input is usually the strength/scale
+    strength_socket = emis_node.inputs[1]
+
+if strength_socket is not None:
+    strength_socket.default_value = 5.0
+
+#strength_input.keyframe_insert("default_value", frame=40)
+
+# Subtle morph via scale over time
+sphere.scale = (0.9, 0.9, 0.9)
+sphere.keyframe_insert(data_path="scale", frame=1)
+sphere.scale = (1.0, 1.0, 1.0)
+sphere.keyframe_insert(data_path="scale", frame=80)
+sphere.scale = (1.1, 1.1, 1.1)
+sphere.keyframe_insert(data_path="scale", frame=170)
+sphere.scale = (1.0, 1.0, 1.0)
+sphere.keyframe_insert(data_path="scale", frame=240)
+
+# Hoops (kernel subgroups)
+hoops = []
+num_hoops = 8
+radius = 1.6
+
+for i in range(num_hoops):
+    bpy.ops.curve.primitive_bezier_circle_add(radius=radius, location=(0.0, 0.0, 0.0))
+    hoop = bpy.context.object
+    hoop.name = f"Hoop_{i}"
+    hoop.data.fill_mode = 'FULL'
+    hoop.data.bevel_depth = 0.02
+    hoop.data.bevel_resolution = 8
+    hoop.data.materials.append(hoop_mat)
+    angle = i * (math.pi / num_hoops)
+    hoop.rotation_euler = (angle * 0.4, angle * 0.7, angle * 0.1)
+    hoops.append(hoop)
+
+# Hoops appear (scale 0 -> 1)
+for hoop in hoops:
+    hoop.scale = (0.0, 0.0, 0.0)
+    hoop.keyframe_insert(data_path="scale", frame=25)
+    hoop.scale = (1.0, 1.0, 1.0)
+    hoop.keyframe_insert(data_path="scale", frame=70)
+
+# Gentle global wobble (rotate around Z)
+for hoop in hoops:
+    hoop.rotation_euler.z += 0.0
+    hoop.keyframe_insert(data_path="rotation_euler", frame=60)
+    hoop.rotation_euler.z += math.radians(90)
+    hoop.keyframe_insert(data_path="rotation_euler", frame=180)
+    hoop.rotation_euler.z += math.radians(60)
+    hoop.keyframe_insert(data_path="rotation_euler", frame=240)
+
+# Kernel collapse on the first hoop
+kernel_hoop = hoops[0]
+kernel_hoop.scale = (1.0, 1.0, 1.0)
+kernel_hoop.location = (0.0, 0.0, 0.0)
+kernel_hoop.keyframe_insert("scale", frame=110)
+kernel_hoop.keyframe_insert("location", frame=110)
+
+kernel_hoop.location = (0.0, 0.0, 1.1)
+kernel_hoop.scale = (0.3, 0.3, 0.3)
+kernel_hoop.keyframe_insert("location", frame=140)
+kernel_hoop.keyframe_insert("scale", frame=140)
+
+kernel_hoop.location = (0.0, 0.0, 1.05)
+kernel_hoop.scale = (0.02, 0.02, 0.02)
+kernel_hoop.keyframe_insert("location", frame=170)
+kernel_hoop.keyframe_insert("scale", frame=170)
+
+# Title text
+bpy.ops.object.text_add(location=(0.0, 0.0, -2.5))
+txt = bpy.context.object
+txt.data.body = "ECAI – Intelligence as Geometry"
+txt.data.align_x = 'CENTER'
+txt.data.extrude = 0.03
+txt.data.bevel_depth = 0.01
+txt.scale = (0.6, 0.6, 0.6)
+txt.data.materials.append(text_mat)
+txt.rotation_euler = (math.radians(90), 0.0, 0.0)
+
+# Text fade-in near end
+# Helper to find the Strength socket on an Emission node
+def get_emission_strength_socket(mat):
+    nodes = mat.node_tree.nodes
+
+    emis_node = None
+    for n in nodes:
+        if getattr(n, "bl_idname", "") == "ShaderNodeEmission":
+            emis_node = n
+            break
+
+    if emis_node is None:
+        return None
+
+    # Try by name (case-insensitive)
+    for sock in emis_node.inputs:
+        if sock.name.lower() == "strength":
+            return sock
+
+    # Fallback: second input is usually the strength/scale
+    if len(emis_node.inputs) > 1:
+        return emis_node.inputs[1]
+
+    return None
+
+# Text fade-in near end
+text_emis = get_emission_strength_socket(text_mat)
+if text_emis is not None:
+    text_emis.default_value = 0.0
+    text_emis.keyframe_insert("default_value", frame=170)
+    text_emis.default_value = 8.0
+    text_emis.keyframe_insert("default_value", frame=210)
+
+
+# Use Cycles by default for nicer glow (caller still controls output)
+scene.render.engine = 'CYCLES'
+
+# Cycles settings (4.x expects an int for samples)
+if hasattr(scene, "cycles"):
+    scene.cycles.samples = 128
+
+#scene = bpy.context.scene
+
+# ---------------- GPU / Cycles device setup ----------------
+scene.render.engine = 'CYCLES'
+
+def configure_cycles_device():
+    try:
+        prefs = bpy.context.preferences
+        cycles_prefs = prefs.addons['cycles'].preferences
+
+        # Try OptiX first (best for RTX 3090), fallback to CUDA
+        backend_order = ['OPTIX', 'CUDA']
+
+        chosen_backend = None
+
+        for backend in backend_order:
+            try:
+                cycles_prefs.compute_device_type = backend
+                devices = cycles_prefs.get_devices_for_type(backend)
+            except AttributeError:
+                # Older API: get_devices() returns all, filter by type
+                devices_all = cycles_prefs.get_devices()
+                devices = [d for d in devices_all if getattr(d, "type", "") == backend]
+
+            if not devices:
+                continue
+
+            # Enable only NVIDIA devices, disable others
+            any_gpu = False
+            for dev in devices:
+                is_nvidia = "NVIDIA" in getattr(dev, "name", "") or "RTX" in getattr(dev, "name", "")
+                dev.use = is_nvidia
+                any_gpu = any_gpu or is_nvidia
+
+            if any_gpu:
+                chosen_backend = backend
+                break
+
+        if chosen_backend:
+            print(f"ECAI/Blender: using Cycles GPU backend: {chosen_backend}")
+            scene.cycles.device = 'GPU'
+        else:
+            print("ECAI/Blender: no usable GPU device, falling back to CPU")
+            scene.cycles.device = 'CPU'
+
+        # Set a sane sample count – tweak as you like
+        scene.cycles.samples = 64
+
+    except Exception as e:
+        print("ECAI/Blender: failed to configure GPU, falling back to CPU:", e)
+        if hasattr(scene, "cycles"):
+            scene.cycles.device = 'CPU'
+            scene.cycles.samples = 32
+
+configure_cycles_device()
+# -----------------------------------------------------------

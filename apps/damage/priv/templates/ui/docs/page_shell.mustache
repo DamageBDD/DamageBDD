@@ -1,0 +1,170 @@
+<!-- -*- mode: html -*- -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{title}} — {{product}}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="{{description}}">
+  <style>
+    html,body{margin:0;padding:0}
+    body{font-family:Arial,Helvetica,sans-serif;line-height:1.4;color:#222;background:#fff}
+    a{color:#0645ad;text-decoration:none} a:hover{text-decoration:underline}
+    code,pre{font-family:Menlo,Consolas,monospace}
+    pre{background:#f6f8fa;border:1px solid #e5e5e5;padding:8px;overflow:auto}
+    .header{border-bottom:1px solid #e5e5e5;background:#fafafa}
+    .header .inner{max-width:1100px;margin:0 auto;padding:10px 16px}
+    .brand{font-weight:bold}
+    .meta{font-size:12px;color:#555;margin-top:2px}
+    .searchbar{position:sticky;top:0;z-index:10;background:#fff;border-bottom:1px solid #eee}
+    .searchbar .inner{max-width:1100px;margin:0 auto;padding:10px 16px}
+    .searchbar label{display:block;font-size:12px;color:#666;margin-bottom:4px}
+    .search-input{width:100%;padding:14px 12px;border:1px solid #bbb;border-radius:6px;font-size:18px}
+    .jump{margin-top:8px}
+    .jump select{width:100%;padding:12px;border:1px solid #bbb;border-radius:6px;font-size:16px}
+    .layout{max-width:1100px;margin:0 auto}
+    .sidebar{display:none}
+    .content{padding:16px}
+    .step{border:1px solid #e5e5e5;margin:12px 0;padding:12px;border-radius:6px}
+    .step h4{margin:0 0 8px 0;font-size:17px}
+    .badge{display:inline-block;font-size:12px;border:1px solid #ddd;padding:2px 8px;margin-right:6px;background:#f9f9f9;border-radius:999px}
+    .kv{font-size:13px;color:#333;margin:6px 0}
+    .small{font-size:12px;color:#666}
+    .dock{position:fixed;left:0;right:0;bottom:0;background:#fafafa;border-top:1px solid #e5e5e5;z-index:20}
+    .dock .inner{max-width:1100px;margin:0 auto;display:block;padding:8px}
+    .dock .row{display:table;width:100%}
+    .dock .btn{display:table-cell;text-align:center;padding:12px 6px;border-right:1px solid #e5e5e5;font-size:16px}
+    .dock .btn:last-child{border-right:none}
+    .btn a,.btn button{display:block;width:100%;padding:12px 0;border:1px solid #bbb;background:#fff;border-radius:8px;text-decoration:none;color:#111;font-size:16px}
+    .btn button{cursor:pointer}
+    .dock-spacer{height:70px}
+    @media (min-width:900px){
+      .sidebar{display:block;float:left;width:260px;border-right:1px solid #eee;padding:12px 10px}
+      .content{margin-left:260px}
+      .toc{list-style:none;margin:0;padding:0}
+      .toc li{margin:6px 0}
+      .group h3{margin:10px 0 6px 0;font-size:16px}
+    }
+  </style>
+</head>
+<body id="top">
+  <div class="header">
+    <div class="inner">
+      <div class="brand">{{product}} — {{title}}</div>
+      <div class="meta">Version: {{version}} · Commit: {{commit_hash}} · Generated: {{generated_at}}</div>
+    </div>
+  </div>
+
+  <div class="searchbar" role="search">
+    <div class="inner">
+      <label for="q">Search steps (press “/” to focus)</label>
+      <input id="q" class="search-input" type="text" placeholder="e.g. GET request, response status, set header…" autofocus aria-label="Search steps">
+      <div class="jump">
+        <label for="jumpSel" style="display:block;font-size:12px;color:#666;margin-bottom:4px;">Jump to step…</label>
+        <select id="jumpSel" aria-label="Jump to a specific step">
+          <option value="">— choose a step —</option>
+          {{#groups}}
+            <optgroup label="{{name}}">
+              {{#steps}}<option value="#{{html_id}}">{{signature}}</option>{{/steps}}
+            </optgroup>
+          {{/groups}}
+        </select>
+      </div>
+      <noscript><div style="color:#666;font-size:12px;margin-top:6px">Tip: Use the dropdown above to jump without JavaScript.</div></noscript>
+    </div>
+  </div>
+
+  <div class="layout">
+    <nav class="sidebar" aria-label="Step groups">
+      {{#groups}}
+      <div class="group">
+        <h3 id="group-{{slug}}">{{name}}</h3>
+        <ul class="toc">
+          {{#steps}}<li><a href="#{{html_id}}">{{signature}}</a></li>{{/steps}}
+        </ul>
+      </div>
+      {{/groups}}
+    </nav>
+
+    <main class="content" role="main">
+      <h2 style="margin-top:8px">Overview</h2>
+      <p>{{intro}}</p>
+
+      {{#groups}}
+      <section aria-labelledby="h-{{slug}}">
+        <h3 id="h-{{slug}}">{{name}}</h3>
+
+        {{#steps}}
+        <article id="{{html_id}}" class="step" data-search="{{signature}} {{help}} {{keyword}} {{category}} {{since}} {{args_flat}} {{doc}}">
+          <h4>
+            <span class="badge">{{keyword}}</span>
+            <code>{{signature}}</code>
+          </h4>
+
+          {{#help}}<div class="kv"><strong>Help:</strong> {{help}}</div>{{/help}}
+
+          {{#args.0}}<div class="kv"><strong>Args:</strong> {{#args}}{{.}}{{^last}}, {{/last}}{{/args}}</div>{{/args.0}}
+          {{#headers.0}}<div class="kv"><strong>Headers:</strong> {{#headers}}{{.}}{{^last}}, {{/last}}{{/headers}}</div>{{/headers.0}}
+
+          {{#example}}<div class="kv"><strong>Example:</strong></div><pre>{{example}}</pre>{{/example}}
+
+          {{#doc_html}}
+            <div class="kv"><strong>Docs:</strong></div>
+            <div class="kv">{{{doc_html}}}</div>
+          {{/doc_html}}
+          {{^doc_html}}
+            {{#doc}}<div class="kv"><strong>Docs:</strong></div><pre>{{doc}}</pre>{{/doc}}
+          {{/doc_html}}
+
+          {{#spec_text}}
+            <div class="kv"><strong>Spec:</strong></div>
+            <pre>{{spec_text}}</pre>
+          {{/spec_text}}
+
+          <div class="kv">
+            <span class="badge">Module: {{module}}</span>
+            <span class="badge">Function: {{function}}/{{arity}}</span>
+            <span class="badge">Category: {{category}}</span>
+            {{#since}}<span class="badge">Since: {{since}}</span>{{/since}}
+          </div>
+
+          <div class="kv small"><a href="#{{html_id}}">Permalink</a></div>
+        </article>
+        {{/steps}}
+      </section>
+      {{/groups}}
+
+      <div class="dock-spacer"></div>
+      <footer class="kv" style="color:#555">Plain HTML shell; works without JS. JavaScript only enhances filtering and jumping.</footer>
+    </main>
+  </div>
+
+  <div class="dock" role="navigation" aria-label="Quick actions">
+    <div class="inner">
+      <div class="row">
+        <div class="btn"><a href="#top">Top</a></div>
+        <div class="btn"><button type="button" id="clearBtn" aria-label="Clear search">Clear</button></div>
+        <div class="btn"><a href="#group-{{#groups}}{{slug}}{{/groups}}{{^groups}}top{{/groups}}">Groups</a></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  (function(){
+    var q = document.getElementById('q');
+    var clearBtn = document.getElementById('clearBtn');
+    var jumpSel = document.getElementById('jumpSel');
+    var steps = (function(){var a=[],xs=document.getElementsByClassName('step');for(var i=0;i<xs.length;i++)a.push(xs[i]);return a;})();
+    function norm(s){return (s||'').toLowerCase();}
+    function show(n){n.style.display='';}
+    function hide(n){n.style.display='none';}
+    if(q && document.activeElement !== q){try{q.focus();}catch(_){}}  // fallback autofocus
+    document.onkeydown=function(e){e=e||window.event;var k=e.key||String.fromCharCode(e.keyCode||0);if(k==='/'){if(q){q.focus();q.select&&q.select();}if(e.preventDefault)e.preventDefault();return false;}};
+    function refilter(){var term=norm(q.value);if(!term){for(var i=0;i<steps.length;i++)show(steps[i]);return;}for(var i=0;i<steps.length;i++){var hay=norm(steps[i].getAttribute('data-search'));(hay.indexOf(term)!==-1)?show(steps[i]):hide(steps[i]);}}
+    if(q){q.onkeyup=refilter;}
+    if(clearBtn){clearBtn.onclick=function(){if(q){q.value='';refilter();q.focus();}};}
+    if(jumpSel){jumpSel.onchange=function(){var v=jumpSel.value;if(v){window.location.hash=v;}};}
+  })();
+  </script>
+</body>
+</html>

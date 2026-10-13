@@ -1,0 +1,99 @@
+-module(voice_smoke).
+-export([run/0]).
+run() ->
+    TestDir=os:getenv("ERM_VOICE_TEST_DIR"),
+    true=is_list(TestDir),
+    ok=file:write_file(filename:join(TestDir,"current.flac"),<<>>),
+    ok=file:write_file(filename:join(TestDir,"next.flac"),<<>>),
+    persistent_term:put(voice_test_owner,self()),
+    {ok,P}=erm_voice:start_link([{settle_ms,100},{command_window_ms,1000},{ecai_base_dir,"test-index"}]),
+    ok=erm_voice:command("pause"),
+    receive {mpv,pause,[]} -> ok after 1500 -> error(no_pause) end,
+    await_idle(100),
+    receive {ollama_request,_,_,_} -> error(llm_on_fast_path) after 0 -> ok end,
+    ok=erm_voice:transcript("BOB, play!",["bob"]),
+    receive {mpv,status,[]} -> ok after 1500 -> error(no_status) end,
+    receive {mpv,play,[]} -> ok after 1500 -> error(no_play) end,
+    await_idle(100),
+    [erm_voice:transcript("BOB, play!",["bob"]) || _ <- lists:seq(1,5)],
+    receive {mpv,_,_} -> error(replayed_action) after 250 -> ok end,
+    ok=erm_voice:command("play current"),
+    receive {mpv,load_list,[QueueFile]} ->
+        {ok,Queue}=file:read_file(QueueFile),
+        true=binary:match(Queue,<<"current.flac">>)=/=nomatch,
+        true=binary:match(Queue,<<"next.flac">>)=/=nomatch
+    after 1500 -> error(no_queue_load) end,
+    receive {mpv,play,[]} -> ok after 1500 -> error(no_song_play) end,
+    receive {set_current,1} -> ok after 1500 -> error(no_playlist_commit) end,
+    await_idle(100),
+    ok=erm_voice:command("next"),
+    receive {mpv,get_property,_} -> ok after 1500 -> error(no_sync) end,
+    receive {mpv,load_list,[NextFile]} ->
+        {ok,NextQueue}=file:read_file(NextFile),
+        nomatch=binary:match(NextQueue,<<"current.flac">>),
+        true=binary:match(NextQueue,<<"next.flac">>)=/=nomatch
+    after 1500 -> error(no_next) end,
+    receive {mpv,play,[]} -> ok after 1500 -> error(no_next_play) end,
+    receive {set_current,2} -> ok after 1500 -> error(no_next_commit) end,
+    await_idle(100),
+    ok=erm_voice:command("volume 35"),
+    receive {mpv,set_volume,[35]} -> ok after 1500 -> error(no_volume) end,
+    await_idle(100),
+    persistent_term:put(voice_test_mode,intent),
+    ok=erm_voice:command("please pause the music"),
+    receive {ollama_request,_,"/api/chat",Payload} ->
+        false=maps:get(think,Payload),
+        false=maps:get(stream,Payload),
+        2=length(maps:get(messages,Payload)),
+        <<"qwen3:1.7b">>=maps:get(model,Payload),
+        true=is_map(maps:get(format,Payload))
+    after 1500 -> error(no_ollama_request) end,
+    receive {mpv,pause,[]} -> ok after 1500 -> error(no_model_pause) end,
+    await_idle(100),
+    persistent_term:put(voice_test_mode,unsafe),
+    ok=erm_voice:command("do something unusual"),
+    receive {ollama_request,_,_,_} -> ok after 1500 -> error(no_rejected_request) end,
+    await_idle(100),
+    #{last_result:={error,unsupported_action}}=erm_voice:status(),
+    receive {mpv,_,_} -> error(unsafe_action) after 0 -> ok end,
+    persistent_term:put(voice_test_mode,answer),
+    ok=erm_voice:command("ask a generic question"),
+    receive {ollama_request,_,_,AnswerPayload} ->
+        2=length(maps:get(messages,AnswerPayload)),
+        false=maps:is_key(format,AnswerPayload)
+    after 1500 -> error(no_answer) end,
+    await_idle(100),
+    #{last_result:={ok,#{action:=answer,text:=<<"A short answer.">>}}}=erm_voice:status(),
+    ok=erm_voice:command("ask ecai what is indexed"),
+    receive {ecai_retrieve,"test-index",<<"what is indexed">>,3} -> ok
+    after 1500 -> error(no_ecai_retrieval) end,
+    receive {ollama_request,_,_,EcaiPayload} ->
+        [_,#{content:=EcaiQuestion}]=maps:get(messages,EcaiPayload),
+        #{sources:=[#{text:=SourceText}]}=binary_to_term(EcaiQuestion,[safe]),
+        1400=byte_size(SourceText)
+    after 1500 -> error(no_ecai_answer_request) end,
+    await_idle(100),
+    #{last_result:={ok,#{action:=answer,sources:=[_]}}}=erm_voice:status(),
+    persistent_term:put(voice_test_mode,wait),
+    ok=erm_voice:command("ask why is the sky blue"),
+    Blocked=receive {ollama_request,Worker,_,_} -> Worker after 1500 -> error(no_waiting_request) end,
+    ok=erm_voice:command("stop"),
+    receive {mpv,stop,[]} -> ok after 1500 -> error(no_preemptive_stop) end,
+    await_idle(100),
+    false=is_process_alive(Blocked),
+    gen_server:stop(P),
+    {ok,P2}=erm_voice:start_link([{planning_timeout_ms,100}]),
+    ok=erm_voice:command("ask a slow question"),
+    Timed=receive {ollama_request,W2,_,_} -> W2 after 1500 -> error(no_timeout_request) end,
+    await_idle(100),
+    #{last_result:={error,{plan,timeout}}}=erm_voice:status(),
+    false=is_process_alive(Timed),
+    gen_server:stop(P2),
+    io:format("PASS: fast path, wake dispatch, redraw suppression, JSON schema payload, model action validation, planning cancellation, stop, song selection, queue preservation, volume, isolated answers, ECAI source bounds and planning deadlines.~n"),
+    ok.
+await_idle(0) -> error(still_busy);
+await_idle(N) ->
+    case erm_voice:status() of
+        #{busy:=false} -> ok;
+        _ -> receive after 10 -> await_idle(N-1) end
+    end.

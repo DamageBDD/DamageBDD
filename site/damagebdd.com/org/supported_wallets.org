@@ -1,0 +1,56 @@
+#+TITLE: DAMAGE Token - Supported Wallets
+#+DESCRIPTION: Learn which wallets and exchanges support DAMAGE (AEX9) tokens on æternity, including Superhero Wallet and Coinstore, plus essential security best practices.
+#+KEYWORDS: DAMAGE token wallet, AEX9 wallet support, æternity wallets, Superhero Wallet, Coinstore exchange, AEX9 tokens, crypto wallet security, seed phrase safety, token storage guide
+
+
+#+INCLUDE: "header.org"
+* Using Wallets and Exchanges with AEX9 Tokens on Aeternity
+
+** What is a Wallet?
+A wallet is a software application that lets you store, send, and receive digital tokens.  
+On the æternity blockchain, wallets also let you interact with smart contracts and decentralized applications (dApps).
+
+Think of a wallet like a digital bank account – it shows your balance and lets you make transactions.  
+Unlike banks, you control the wallet and its security. Your funds are protected by *private keys* or *seed phrases* that only you should know.
+
+** What is an Exchange?
+An exchange is an online marketplace where you can buy and sell tokens.  
+On Coinstore (a centralized exchange), you can trade æternity tokens and AEX9 tokens like DAMAGE.  
+
+Exchanges make it easy to swap between tokens or fiat currency (e.g., USD, EUR, AUD).  
+But unlike wallets, exchanges *hold your funds for you*, which means you are trusting a third party.
+
+** Safe Usage Tips
+- Always write down and securely store your wallet’s *seed phrase*.  
+  Losing it means losing access to your funds forever.
+- Never share your private key or seed phrase with anyone. No support team will ever ask for it.
+- Use exchanges only when you need to trade.  
+  For long-term storage, move tokens back into your own wallet.
+- Enable 2FA (two-factor authentication) on exchanges like Coinstore to protect your account.
+- Double-check URLs before logging in or downloading a wallet app. Only use official sources.
+- Start with small test transactions before sending larger amounts.
+- Keep your software updated to benefit from the latest security fixes.
+
+** Wallets that Support AEX9 Tokens
+- Superhero Wallet (Android)  
+  [[https://play.google.com/store/apps/details?id=com.superhero.cordova&pli=1][Google Play Store]]
+
+- Superhero Wallet (iOS)  
+  [[https://apps.apple.com/bg/app/superhero-wallet/id1502786641][Apple App Store]]
+
+- Superhero Wallet (Chrome Extension)  
+  [[https://chromewebstore.google.com/detail/superhero-wallet/mnhmmkepfddpifjkamaligfeemcbhdne][Chrome Web Store]]
+
+- Superhero Wallet (Firefox Extension)  
+  [[https://addons.mozilla.org/en-US/firefox/addon/superhero-wallet/][Firefox Add-ons]]
+
+** Exchanges that Support AEX9 Tokens
+- Coinstore  
+  [[https://www.coinstore.com][Coinstore Exchange]]
+
+** Next Steps
+1. Install a wallet (Superhero recommended).
+2. Secure your seed phrase.
+3. Use Coinstore if you want to trade DAMAGE or other æternity tokens.
+4. Transfer tokens back into your wallet for safekeeping after trading.
+

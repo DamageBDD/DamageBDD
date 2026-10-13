@@ -1,0 +1,199 @@
+-module(ecai_app).
+
+-author("Steven Joseph <steven@stevenjoseph.in>").
+
+-copyright("Steven Joseph <steven@stevenjoseph.in>").
+
+-license("Apache-2.0").
+
+-behaviour(application).
+
+-export([start/2, stop/1]).
+-export([start_phase/3]).
+-export([reload_router/0]).
+
+-include_lib("kernel/include/logger.hrl").
+
+start(_StartType, _StartArgs) ->
+    {ok, _} = application:ensure_all_started(gun),
+    {ok, _} = application:ensure_all_started(poolboy),
+    case ecai_sup:start_link() of
+        {ok, SupPid} ->
+            ok = start_index_jobs_resilient(SupPid),
+            ok = maybe_start_wikimedia_fixture_server(SupPid),
+            {ok, SupPid};
+        {error, _Reason} = Error ->
+            Error
+    end.
+
+start_index_jobs_resilient(SupPid) ->
+    case ecai_index_jobs_bootstrap:start_index_jobs(SupPid) of
+        ok ->
+            ok;
+        {error, {invalid_configuration, index_jobs_enabled, _} = Reason} ->
+            erlang:error(Reason);
+        {error, Reason} ->
+            ?LOG_WARNING(
+                "ECAI index-jobs subsystem unavailable at boot; ECAI will continue "
+                "and retry under ecai_sup reason=~p",
+                [Reason]
+            ),
+            ensure_index_jobs_retry_worker(SupPid)
+    end.
+
+ensure_index_jobs_retry_worker(SupPid) ->
+    ChildSpec = ecai_index_jobs_bootstrap:child_spec(SupPid),
+    case supervisor:start_child(SupPid, ChildSpec) of
+        {ok, _Pid} ->
+            ok;
+        {ok, _Pid, _Info} ->
+            ok;
+        {error, {already_started, _Pid}} ->
+            ok;
+        {error, already_present} ->
+            case supervisor:restart_child(SupPid, ecai_index_jobs_bootstrap) of
+                {ok, _Pid} ->
+                    ok;
+                {ok, _Pid, _Info} ->
+                    ok;
+                {error, running} ->
+                    ok;
+                {error, Reason} ->
+                    ?LOG_ERROR(
+                        "ECAI index-jobs retry worker could not restart reason=~p",
+                        [Reason]
+                    ),
+                    ok
+            end;
+        {error, Reason} ->
+            ?LOG_ERROR(
+                "ECAI index-jobs retry worker could not start reason=~p",
+                [Reason]
+            ),
+            ok
+    end.
+
+maybe_start_wikimedia_fixture_server(SupPid) ->
+    case application:get_env(ecai, wikimedia_fixture_server_enabled, false) of
+        true ->
+            case ecai_wikimedia_fixture_server:start_supervised(SupPid) of
+                ok -> ok;
+                {error, Reason} -> error({wikimedia_fixture_start_failed, Reason})
+            end;
+        false ->
+            ok;
+        Invalid ->
+            error({
+                invalid_configuration,
+                wikimedia_fixture_server_enabled,
+                Invalid
+            })
+    end.
+
+get_trails() ->
+    {ok, _} = application:ensure_all_started(poolboy),
+
+    Handlers =
+        [
+            ecai_api,
+            ecai_auth_http,
+            ecai_video_dashboard_http,
+            ecai_mm_dashboard_http,
+            ecai_index_pool_http,
+            ecai_index_jobs_http,
+            ecai_compute_settings_http,
+            ecai_private_http,
+            ecai_wikimedia_http,
+            ecai_yelp_admin,
+            ecai_dashboard,
+            ecai_chat_http_handler
+        ] ++ ollama_api_handlers() ++ code_admin_handlers() ++ marketplace_handlers(),
+    %% The dashboard uses the same supervised browser auth service as DamageBDD.
+    %% Legacy login routes remain for the separate older indexer pages only.
+    AccountRoutes =
+        [
+            trails:trail("/accounts/auth/", damage_accounts, #{action => authenticate}, #{
+                post => #{tags => ["ECAI Authentication"], produces => ["application/json"]}
+            }),
+            trails:trail("/accounts/logout", damage_accounts, #{action => logout}, #{
+                post => #{tags => ["ECAI Authentication"], produces => ["application/json"]}
+            })
+        ] ++ damage_browser_auth_http:trails(ecai),
+    AuthAssets = ecai_auth_http:asset_routes(),
+    Trails =
+        [
+            {"/terms", cowboy_static, {priv_file, ecai, "static/terms.html"}},
+            {"/static/[...]", cowboy_static, {priv_dir, ecai, "static/"}},
+            {"/ecai/ws/", ecai_ws, #{}}
+        ] ++ AuthAssets ++ AccountRoutes ++ trails:trails(Handlers),
+    trails:store(Trails),
+    trails:single_host_compile(Trails).
+
+%% The privileged control plane is an explicit opt-in and does not reuse
+%% normal authenticated-user permissions.
+code_admin_handlers() ->
+    case application:get_env(ecai, code_admin_enabled, false) of
+        true -> [ecai_code_admin_http];
+        _ -> []
+    end.
+
+%% Marketplace deliberately remains opt-in: this handler currently has an
+%% in-memory ledger and does not enforce on-chain settlement or role-based ACLs.
+marketplace_handlers() ->
+    case application:get_env(ecai, marketplace_enabled, false) of
+        true -> [ecai_jobs_http];
+        _ -> []
+    end.
+
+ollama_api_handlers() ->
+    case application:get_env(ecai, ollama_api_enabled, true) of
+        true -> [ecai_ollama_keys_http, ecai_ollama_http];
+        _ -> []
+    end.
+
+start_phase(start_trails_http, _StartType, []) ->
+    ?LOG_INFO("Starting Ecai."),
+    {ok, _} = application:ensure_all_started(yamerl),
+    {ok, _} = application:ensure_all_started(prometheus_cowboy),
+    {ok, _} = application:ensure_all_started(cowboy_telemetry),
+    {ok, _} = application:ensure_all_started(erlexec),
+    {ok, _} = application:ensure_all_started(throttle),
+    {ok, _} = application:ensure_all_started(gproc),
+    {ok, _} = application:ensure_all_started(os_mon),
+    %% Set to 90%
+    memsup:set_sysmem_high_watermark(0.90),
+    %% Set to 10%
+    memsup:set_procmem_high_watermark(0.10),
+
+    WsPort = application:get_env(ecai, port, 9003),
+    WsIp = application:get_env(ecai, ip, {127, 0, 0, 1}),
+    {ok, _} =
+        cowboy:start_clear(
+            http_ecai,
+            [{ip, WsIp}, {port, WsPort}],
+            #{
+                env => #{dispatch => get_trails()},
+                metrics_callback => fun prometheus_cowboy2_instrumenter:observe/1,
+                stream_handlers =>
+                    [cowboy_telemetry_h, cowboy_metrics_h, cowboy_stream_h]
+            }
+        ),
+    damage_metrics:init(),
+    ?LOG_INFO("Started ECAI cowboy.").
+
+stop(_State) ->
+    ok = cowboy:stop_listener(http_ecai),
+    application:stop(gun),
+
+    ok.
+
+%% internal functions
+reload_router() ->
+    %% 1) rebuild trails and compile
+    Dispatch = get_trails(),
+    [{'_', [], Trails}] = Dispatch,
+
+    %% 2) apply to running listener (default name 'http')
+    ok = cowboy:set_env(http_ecai, dispatch, Dispatch),
+    io:format("~n[+] Cowboy router reloaded (~p routes)~n", [length(Trails)]),
+    ok.

@@ -1,0 +1,246 @@
+#+TITLE: How DamageBDD Lightning Swap Funding Compares to All Other Funding Models
+#+SUBTITLE: A New Economic Primitive for Verifiable Work
+#+AUTHOR: DamageBDD
+#+OPTIONS: toc:t num:t
+
+* Introduction
+
+DamageBDD introduces a completely new economic primitive:
+
+*cryptographically enforced behavioural funding.*
+
+Funding in DamageBDD is not a *grant*, not a *donation*, not a *bounty*, and not a
+*DAO vote*. Instead:
+
+- A *Lightning payment* creates a *Lightning Swap Option* on-chain.
+- That option unlocks *DAMAGE tokens* as a reward for funding.
+- Work is tracked in state channels through *JobRegistry*.
+- Payment to contractors occurs only when *BDD tests pass*.
+
+This stands in contrast to all existing funding models.  
+This article compares DamageBDD to the major paradigms used today.
+
+* Overview of the Comparison
+
+We will compare the following categories:
+
+1. Traditional freelance platforms (Upwork, Fiverr, Toptal)
+2. Gitcoin and quadratic funding models
+3. DAO grants and governance-based funding
+4. Bug bounty platforms (HackerOne, Bugcrowd)
+5. Crypto escrows (Kleros, Opolis, Aragon Court)
+6. Generic bounty frameworks (OpenBounty, Bounties Network)
+7. Summary comparison table
+8. Why DamageBDD is fundamentally different
+
+Each section highlights both the traditional model and how DamageBDD addresses
+its systemic weaknesses.
+
+* Traditional Freelance Platforms (Upwork, Fiverr, Toptal)
+
+**How they work**
+
+- Client funds a fiat escrow.
+- Contractor submits work.
+- Platform mediates the relationship and arbitrates disputes.
+- High service fees.
+
+**Limitations**
+
+| Problem                 | Explanation                          |
+|-------------------------+--------------------------------------|
+| Trust-heavy             | Client must trust both platform and contractor. |
+| Centralised arbitration | One party decides disputes.          |
+| High fees               | 10–25% commissions on both sides.    |
+| Slow payouts            | Bank delays and chargebacks.         |
+| No objective verification | Deliverables judged subjectively. |
+
+**DamageBDD vs Traditional Platforms**
+
+| DamageBDD                         | Freelance Platforms        |
+|-----------------------------------|----------------------------|
+| Deterministic BDD verification    | Subjective human review    |
+| Lightning-native, instant funding | Slow, bank-based funding   |
+| Automated payouts                 | Manual adjudication        |
+| Zero custody risk                 | Centralised escrow         |
+| Funder receives DAMAGE            | No reward for funder       |
+
+DamageBDD eliminates mediation and replaces it with executable behaviour.
+
+* Gitcoin / Quadratic Funding Models
+
+**How they work**
+
+- Contributors donate tokens to projects.
+- Matching pools amplify contributions.
+- Not tied to specific deliverables.
+
+**Limitations**
+
+| Problem              | Why It Fails                                |
+|----------------------+----------------------------------------------|
+| No deterministic output | Work may never appear.                 |
+| Donors receive nothing  | Zero return for contribution.           |
+| Sybil concerns          | Gameable even with mitigation.          |
+| No behavioural link     | Cannot express test-based acceptance.   |
+
+**DamageBDD vs Gitcoin**
+
+| DamageBDD                   | Gitcoin                      |
+|-----------------------------|------------------------------|
+| Pay only when tests pass    | Pay whether work is done or not |
+| Rewards funders with DAMAGE | Donors receive nothing       |
+| Native Lightning funding    | ERC-20 payments, gas fees    |
+| Behavioural verification    | Social signalling            |
+
+In DamageBDD, “funding” means “funding a specific behaviour that must succeed.”
+
+* DAO Grants and Governance Funding
+
+**How they work**
+
+- DAO token holders vote to release funds.
+- Payments often happen upfront or in subjective milestones.
+
+**Limitations**
+
+| Problem              | Impact                               |
+|----------------------+----------------------------------------|
+| Governance overhead  | Funding becomes political.             |
+| Upfront payout risk  | Contractor may disappear.              |
+| No objective deliverables | Everything is socially interpreted. |
+| Treasury leakage     | Token dilution and grant wastage.      |
+
+**DamageBDD vs DAO Grants**
+
+| DamageBDD                        | DAO Grants                      |
+|----------------------------------|---------------------------------|
+| No voting required               | Social governance dependency    |
+| Automated settlement             | Manual coordination             |
+| Behaviour is the truth           | Opinion is the truth            |
+| Cannot rug                       | High grant failure rates        |
+
+DamageBDD removes governance from the funding loop entirely.
+
+* Corporate Bug Bounty Platforms (HackerOne, Bugcrowd)
+
+**How they work**
+
+- Company posts rewards.
+- Researcher submits a bug.
+- Company decides severity and payout.
+
+**Limitations**
+
+| Problem            | Explanation                             |
+|--------------------+-----------------------------------------|
+| Subjective severity| Researcher has little control.          |
+| Slow evaluation    | Manual triage processes.                |
+| Centralised        | Company owns the incentives.            |
+| No behavioural tests | No executable definition of acceptance. |
+
+**DamageBDD vs Bug Bounties**
+
+| DamageBDD             | Bug Platforms            |
+|-----------------------|---------------------------|
+| Objective test-based acceptance | Subjective classification |
+| Instant Lightning payout | Long review cycles |
+| Public verifiable tests | Private internal processes |
+
+In DamageBDD, the “definition of done” is executable.
+
+* Crypto Escrow Platforms (Kleros, Aragon Court)
+
+**How they work**
+
+- Funds are locked on-chain.
+- Arbitrators/jurors vote on disputes.
+- Payout depends on majority decisions.
+
+**Limitations**
+
+| Problem               | Why It Breaks                     |
+|-----------------------+-----------------------------------|
+| Human arbitration     | Jury bribery, sybil vectors       |
+| Slow resolution       | Voting delays                     |
+| Subjective decisions  | “Truth by majority”               |
+| Poor integration      | Hard to match to code/test flows  |
+
+**DamageBDD vs Crypto Escrow**
+
+| DamageBDD             | Escrow Services|
+|-----------------------|----------------|
+| No arbitration        | Arbitration core to model |
+| Verified behaviour    | Subjective judgement |
+| Automated execution   | Manual process |
+| Lightning-native funding | ERC-20 only |
+
+DamageBDD does not arbitrate. It verifies.
+
+* Generic Bounty Frameworks (Bounties Network, OpenBounty)
+
+**Limitations**
+
+- Loose requirements
+- Manual verification
+- Payment not linked to testable behaviour
+- Can be abandoned or under-specified
+
+**DamageBDD strength**
+
+- Work is expressed as BDD tests.
+- Contractor must satisfy the spec.
+- Payment is automatic and trustless.
+- Funders receive tokenised economic upside.
+
+DamageBDD is the only system where executable behaviour determines payment.
+
+* Summary Comparison Table
+
+| Model Category     | Objective? | Incentives for Funders | Speed | Trust Required | Automation | Lightning/Tokens | Behaviour-Tied? |
+|--------------------+------------+-------------------------+--------+----------------|------------+------------------+------------------|
+| Freelance Platforms | No | No | Slow | High | Low | No | No |
+| Gitcoin/QF          | No | No | Medium | Medium | Low | No | No |
+| DAO Grants          | No | No | Slow | Medium | Low | No | No |
+| Bug Bounties        | No | No | Slow | Medium | Low | No | No |
+| Crypto Escrow       | No | No | Slow | Medium | Medium | No | No |
+| Generic Bounties    | No | No | Medium | Medium | Low | No | No |
+| *DamageBDD Lightning Swap Funding* | *Yes* | *Yes – DAMAGE* | *Instant (Lightning)* | *Minimal* | *Full* | *Yes* | *Yes* |
+
+DamageBDD is the only model that satisfies every modern requirement for a trustless global labour economy.
+
+* Why DamageBDD Is Fundamentally Different
+
+Instead of funding a person, a platform, or a promise, DamageBDD funds a *behaviour*:
+
+1. Work is defined in BDD.
+2. Tests are executable truth.
+3. Funding flows only when tests pass.
+4. Funders earn DAMAGE tokens.
+5. Contractors are guaranteed payment.
+6. Everything is global, instant, and verifiable.
+
+This creates a new category of economic mechanism:
+
+*behaviourally verified funding.*
+
+No approvals.  
+No arbitration.  
+No governance.  
+No trust.
+
+Just *verified human output* encoded in code.
+
+* Conclusion
+
+DamageBDD Lightning Swap Funding outperforms all legacy systems by replacing
+subjective human judgement with deterministic machine-verifiable behaviour.
+This is a breakthrough in how global talent collaborates, gets funded, and gets
+paid.
+
+The future of work is not crowdsourcing or freelancing or DAOs.
+
+The future of work is:
+
+*Don’t trust. Verify the behaviour. Pay automatically.*
+

@@ -1,0 +1,39 @@
+<!-- -*- mode: html -*- -->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ECAI Search</title>
+    <link rel="stylesheet" type="text/css" href='/static/css/ecai.css' />
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="brand">ECAI Search</div>
+
+      <div class="row">
+        <div class="searchbox" style="width:100%;">
+          <input id="q" type="text" placeholder='Search … (quotes for exact phrase, "-" to exclude)' autofocus />
+          <!-- floating clear button -->
+          <button id="clear" class="clear-btn" title="Clear query" aria-label="Clear">×</button>
+          <button id="go" class="btn btn-primary">Search</button>
+        </div>
+        <button id="connect" class="btn btn-ghost" title="Connect wallet for personalized search">Connect</button>
+      </div>
+
+      <div id="who" class="sub">Not connected</div>
+      <div id="status" class="status">Type and press Enter, or click Search.</div>
+      <div id="count" class="sub"></div>   <!-- NEW: docs indexed -->
+
+
+
+      <div id="results" class="results"></div>
+    </div>
+
+    <!-- Your wallet helpers (paths can be adjusted to your hosting setup) -->
+    <script type='module' src='/static/js/sidekick.js'></script>
+      <script type='module' src="/static/js/wallet.js" defer></script>
+      <script type='module' src="/static/js/ecai.js" defer></script>
+  </body>
+</html>
+

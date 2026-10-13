@@ -1,0 +1,649 @@
+-module(damage_node_admin_http).
+
+-author("Steven Joseph <steven@stevenjoseph.in>").
+-license("Apache-2.0").
+
+-export([init/2]).
+-export([content_types_accepted/2, content_types_provided/2]).
+-export([from_json/2, to_json/2, allowed_methods/2, is_authorized/2]).
+-export([trails/0]).
+
+-include_lib("kernel/include/logger.hrl").
+-include_lib("damage.hrl").
+
+-define(TRAILS_TAG, ["Node Admin"]).
+
+trails() ->
+    [
+        trails:trail(
+            "/api/node_admin/transactions",
+            damage_node_admin_http,
+            #{action => transactions},
+            #{
+                get => #{
+                    tags => ?TRAILS_TAG,
+                    description => "Node admin Lightning and Bitcoin transactions.",
+                    produces => ["application/json"]
+                }
+            }
+        ),
+        trails:trail(
+            "/api/node_admin/aeternity/transactions",
+            damage_node_admin_http,
+            #{action => aeternity_transactions},
+            #{
+                get => #{
+                    tags => ?TRAILS_TAG,
+                    description => "Recent Aeternity transactions for the DamageBDD node account.",
+                    produces => ["application/json"]
+                }
+            }
+        ),
+        trails:trail(
+            "/api/node_admin/channels",
+            damage_node_admin_http,
+            #{action => channels},
+            #{
+                get => #{
+                    tags => ?TRAILS_TAG,
+                    description => "Node admin CLN channels and balances.",
+                    produces => ["application/json"]
+                }
+            }
+        ),
+        trails:trail(
+            "/api/node_admin/best_peers",
+            damage_node_admin_http,
+            #{action => best_peers},
+            #{
+                get => #{
+                    tags => ?TRAILS_TAG,
+                    description => "Suggest best peers to open channels with.",
+                    produces => ["application/json"]
+                }
+            }
+        ),
+        trails:trail(
+            "/api/node_admin/connect_peer",
+            damage_node_admin_http,
+            #{action => connect_peer},
+            #{
+                post => #{
+                    tags => ?TRAILS_TAG,
+                    description => "Connect to a peer.",
+                    consumes => ["application/json"],
+                    produces => ["application/json"]
+                }
+            }
+        ),
+        trails:trail(
+            "/api/node_admin/open_channel",
+            damage_node_admin_http,
+            #{action => open_channel},
+            #{
+                post => #{
+                    tags => ?TRAILS_TAG,
+                    description => "Open a channel with a peer.",
+                    consumes => ["application/json"],
+                    produces => ["application/json"]
+                }
+            }
+        ),
+        trails:trail(
+            "/api/node_admin/open_best_channels",
+            damage_node_admin_http,
+            #{action => open_best_channels},
+            #{
+                post => #{
+                    tags => ?TRAILS_TAG,
+                    description => "Open channels with best peers.",
+                    consumes => ["application/json"],
+                    produces => ["application/json"]
+                }
+            }
+        ),
+        trails:trail(
+            "/api/node_admin/invoices/recent",
+            damage_node_admin_http,
+            #{action => invoices_recent},
+            #{get => #{tags => ?TRAILS_TAG, produces => ["application/json"]}}
+        ),
+        trails:trail(
+            "/api/node_admin/invoices/unpaid",
+            damage_node_admin_http,
+            #{action => invoices_unpaid},
+            #{get => #{tags => ?TRAILS_TAG, produces => ["application/json"]}}
+        ),
+        trails:trail(
+            "/api/node_admin/invoices/status_counts",
+            damage_node_admin_http,
+            #{action => invoice_status_counts},
+            #{get => #{tags => ?TRAILS_TAG, produces => ["application/json"]}}
+        ),
+        trails:trail(
+            "/api/node_admin/accounts/events",
+            damage_node_admin_http,
+            #{action => account_events},
+            #{get => #{tags => ?TRAILS_TAG, produces => ["application/json"]}}
+        ),
+        trails:trail(
+            "/api/node_admin/accounts/summary",
+            damage_node_admin_http,
+            #{action => account_summary},
+            #{get => #{tags => ?TRAILS_TAG, produces => ["application/json"]}}
+        ),
+        trails:trail(
+            "/api/node_admin/peerchannels/summary",
+            damage_node_admin_http,
+            #{action => peerchannel_summary},
+            #{get => #{tags => ?TRAILS_TAG, produces => ["application/json"]}}
+        )
+    ].
+
+init(Req, Opts) ->
+    {cowboy_rest, Req, Opts}.
+
+allowed_methods(Req, State = #{action := Action}) ->
+    Methods =
+        case Action of
+            transactions -> [<<"GET">>];
+            aeternity_transactions -> [<<"GET">>];
+            channels -> [<<"GET">>];
+            best_peers -> [<<"GET">>];
+            invoices_recent -> [<<"GET">>];
+            invoices_unpaid -> [<<"GET">>];
+            invoice_status_counts -> [<<"GET">>];
+            account_events -> [<<"GET">>];
+            account_summary -> [<<"GET">>];
+            peerchannel_summary -> [<<"GET">>];
+            connect_peer -> [<<"POST">>];
+            open_channel -> [<<"POST">>];
+            open_best_channels -> [<<"POST">>]
+        end,
+    {Methods, Req, State}.
+
+content_types_provided(Req, State) ->
+    {[{{<<"application">>, <<"json">>, []}, to_json}], Req, State}.
+
+content_types_accepted(Req, State) ->
+    {[{{<<"application">>, <<"json">>, '*'}, from_json}], Req, State}.
+
+is_authorized(Req, State) ->
+    case damage_http:is_authorized(Req, State) of
+        {true, Req1, AuthState} ->
+            case maps:get(node_admin, AuthState, false) of
+                true ->
+                    {true, Req1, AuthState};
+                false ->
+                    ?LOG_WARNING(
+                        "forbidden node_admin request public_key=~p action=~p",
+                        [
+                            maps:get(public_key, AuthState, undefined),
+                            maps:get(action, State, undefined)
+                        ]
+                    ),
+                    {{false, <<"Forbidden">>}, Req1, AuthState}
+            end;
+        Other ->
+            Other
+    end.
+
+to_json(Req, #{action := transactions} = State) ->
+    #{limit := LimitBin} = cowboy_req:match_qs([{limit, [], <<"50">>}], Req),
+    Limit0 =
+        case LimitBin of
+            B when is_binary(B) ->
+                try
+                    binary_to_integer(B)
+                catch
+                    _:_ -> 50
+                end;
+            I when is_integer(I) ->
+                I;
+            _ ->
+                50
+        end,
+    Limit = erlang:min(limit(Limit0), 100),
+
+    Funds0 = cln_map_or(
+        fun damage_cln:list_funds/0,
+        #{outputs => [], channels => []},
+        list_funds
+    ),
+    Onchain0 = maps:get(outputs, Funds0, []),
+    FundingChannels0 = maps:get(channels, Funds0, []),
+
+    Invoices0 = cln_list_or(
+        fun() -> damage_cln:list_all_invoices(#{page_limit => Limit, order => desc}) end,
+        list_all_invoices
+    ),
+    Pays0 = cln_map_or(fun damage_cln:list_pays/0, #{pays => []}, list_pays),
+    SendPays0 = cln_map_or(
+        fun damage_cln:list_sendpays/0,
+        #{payments => []},
+        list_sendpays
+    ),
+
+    Pays =
+        case Pays0 of
+            #{pays := L} when is_list(L) ->
+                Pays0#{pays := damage_cln:sort_pays_desc(L)};
+            _ ->
+                Pays0
+        end,
+
+    SendPays =
+        case SendPays0 of
+            #{payments := L0} when is_list(L0) ->
+                SendPays0#{payments := damage_cln:sort_sendpays_desc(L0)};
+            _ ->
+                SendPays0
+        end,
+
+    Body =
+        #{
+            ok => true,
+            onchain => Funds0#{
+                outputs => damage_cln:sort_outputs_desc(Onchain0),
+                channels => damage_cln:sort_peerchannels_desc(FundingChannels0)
+            },
+            lightning => #{
+                pays => Pays,
+                sendpays => SendPays,
+                invoices => #{invoices => Invoices0}
+            }
+        },
+    {jsx:encode(Body), Req, State};
+to_json(Req, #{action := aeternity_transactions} = State) ->
+    {Limit0, Req1} = qs_int(Req, <<"limit">>, 50),
+    Limit = erlang:min(limit(Limit0), 100),
+    Body = aeternity_transactions(Limit),
+    safe_json(Req1, State, Body);
+to_json(Req, #{action := channels} = State) ->
+    Channels0 = cln_list_or(fun damage_cln:list_channels/0, list_channels),
+    SortedChannels = damage_cln:sort_peerchannels_desc(Channels0),
+    Balance = cln_map_or(fun damage_cln:get_node_balance/0, #{}, get_node_balance),
+    Body =
+        #{
+            ok => true,
+            balance => Balance,
+            channels => SortedChannels
+        },
+    {jsx:encode(Body), Req, State};
+to_json(Req, #{action := best_peers} = State) ->
+    {AmountMsat0, Req1} = qs_int(Req, <<"amount_msat">>, 200000000),
+    AmountSats = AmountMsat0 div 1000,
+    BestPeers = cln_list_or(
+        fun() -> damage_cln:find_best_peer_to_open(AmountSats) end,
+        find_best_peer_to_open
+    ),
+    Body =
+        #{
+            ok => true,
+            amount_msat => AmountMsat0,
+            amount_sats => AmountSats,
+            best_peers => BestPeers
+        },
+    {jsx:encode(Body), Req1, State};
+to_json(Req, #{action := invoices_recent} = State) ->
+    {Limit0, Req1} = qs_int(Req, <<"limit">>, 50),
+    {Prefix, Req2} = qs_bin(Req1, <<"label_prefix">>, <<>>),
+    L = limit(Limit0),
+
+    Body =
+        case damage_cln:recent_invoices(Prefix, L) of
+            {ok, Rows} ->
+                #{ok => true, invoices => Rows};
+            Error ->
+                #{ok => false, error => normalize_error(Error)}
+        end,
+
+    safe_json(Req2, State, Body);
+to_json(Req, #{action := invoices_unpaid} = State) ->
+    {Limit0, Req1} = qs_int(Req, <<"limit">>, 50),
+    {Prefix, Req2} = qs_bin(Req1, <<"label_prefix">>, <<>>),
+    L = limit(Limit0),
+
+    Body =
+        case damage_cln:unpaid_invoices(Prefix, L) of
+            {ok, Rows} ->
+                #{ok => true, invoices => Rows};
+            Error ->
+                #{ok => false, error => normalize_error(Error)}
+        end,
+
+    safe_json(Req2, State, Body);
+to_json(Req, #{action := invoice_status_counts} = State) ->
+    Body =
+        case damage_cln:invoice_counts_by_status() of
+            {ok, Rows} ->
+                #{ok => true, counts => Rows};
+            Error ->
+                #{ok => false, error => normalize_error(Error)}
+        end,
+
+    safe_json(Req, State, Body);
+to_json(Req, #{action := account_events} = State) ->
+    {Account, Req1} = qs_bin(Req, <<"account">>, <<>>),
+    {Tag, Req2} = qs_bin(Req1, <<"tag">>, <<>>),
+    {Limit0, Req3} = qs_int(Req2, <<"limit">>, 100),
+    L = limit(Limit0),
+
+    Body =
+        case Account of
+            <<>> ->
+                #{ok => false, error => <<"missing account">>};
+            _ ->
+                case Tag of
+                    <<>> ->
+                        case damage_cln:recent_account_events(Account, L) of
+                            {ok, Rows} ->
+                                #{ok => true, events => Rows};
+                            Error ->
+                                #{ok => false, error => normalize_error(Error)}
+                        end;
+                    _ ->
+                        case damage_cln:recent_account_events(Account, Tag, L) of
+                            {ok, Rows} ->
+                                #{ok => true, events => Rows};
+                            Error ->
+                                #{ok => false, error => normalize_error(Error)}
+                        end
+                end
+        end,
+
+    safe_json(Req3, State, Body);
+to_json(Req, #{action := account_summary} = State) ->
+    {Account, Req1} = qs_bin(Req, <<"account">>, <<>>),
+    {Tag, Req2} = qs_bin(Req1, <<"tag">>, <<>>),
+
+    Body =
+        case Account of
+            <<>> ->
+                #{ok => false, error => <<"missing account">>};
+            _ ->
+                case Tag of
+                    <<>> ->
+                        case damage_cln:account_event_summary(Account) of
+                            {ok, Rows} ->
+                                #{ok => true, summary => Rows};
+                            Error ->
+                                #{ok => false, error => normalize_error(Error)}
+                        end;
+                    _ ->
+                        case damage_cln:account_event_summary(Account, Tag) of
+                            {ok, Rows} ->
+                                #{ok => true, summary => Rows};
+                            Error ->
+                                #{ok => false, error => normalize_error(Error)}
+                        end
+                end
+        end,
+
+    safe_json(Req2, State, Body);
+to_json(Req, #{action := peerchannel_summary} = State) ->
+    Body =
+        case damage_cln:peerchannel_summary() of
+            {ok, Rows} ->
+                #{ok => true, summary => Rows};
+            Error ->
+                #{ok => false, error => normalize_error(Error)}
+        end,
+
+    safe_json(Req, State, Body).
+
+from_json(Req, #{action := connect_peer} = State) ->
+    {ok, Raw, Req1} = cowboy_req:read_body(Req),
+    Data = jsx:decode(Raw, [return_maps, {labels, atom}]),
+    Peer = maps:get(peer, Data),
+    Reply = cln_json_result(damage_cln:connect_peer(Peer)),
+    reply_json(Req1, State, #{ok => true, result => Reply});
+from_json(Req, #{action := open_channel} = State) ->
+    {ok, Raw, Req1} = cowboy_req:read_body(Req),
+    Data = jsx:decode(Raw, [return_maps, {labels, atom}]),
+    Peer = maps:get(peer, Data),
+    AmountSats = maps:get(amount_sats, Data, 200000),
+    Reply = cln_json_result(damage_cln:open_channel(Peer, AmountSats)),
+    reply_json(Req1, State, #{ok => true, result => Reply});
+from_json(Req, #{action := open_best_channels} = State) ->
+    {ok, Raw, Req1} = cowboy_req:read_body(Req),
+    Data = jsx:decode(Raw, [return_maps, {labels, atom}]),
+    Reply = cln_json_result(damage_cln:open_channels_with_best_peers(Data)),
+    reply_json(Req1, State, #{ok => true, result => Reply}).
+
+aeternity_transactions(Limit) ->
+    case node_ae_account() of
+        {ok, AeAccount} ->
+            case fetch_aeternity_account_activity(AeAccount, Limit) of
+                {ok, Rows} ->
+                    #{
+                        ok => true,
+                        account => AeAccount,
+                        transactions => Rows,
+                        count => length(Rows),
+                        source => <<"aemdw">>
+                    };
+                {error, Reason} ->
+                    ?LOG_WARNING(
+                        "node_admin Aeternity activity unavailable account=~p reason=~p",
+                        [AeAccount, Reason]
+                    ),
+                    #{
+                        ok => false,
+                        account => AeAccount,
+                        transactions => [],
+                        count => 0,
+                        source => <<"aemdw">>,
+                        error => normalize_error(Reason)
+                    }
+            end;
+        {error, Reason} ->
+            ?LOG_WARNING("node_admin Aeternity node account unavailable reason=~p", [Reason]),
+            #{
+                ok => false,
+                account => <<>>,
+                transactions => [],
+                count => 0,
+                source => <<"aemdw">>,
+                error => normalize_error(Reason)
+            }
+    end.
+
+node_ae_account() ->
+    try secrets:node_keypair() of
+        #{public_key := AeAccount} when is_binary(AeAccount) ->
+            {ok, AeAccount};
+        #{public_key := AeAccount} when is_list(AeAccount) ->
+            {ok, unicode:characters_to_binary(AeAccount)};
+        Other ->
+            {error, {invalid_node_keypair, Other}}
+    catch
+        Class:Reason ->
+            {error, {node_keypair_unavailable, Class, Reason}}
+    end.
+
+fetch_aeternity_account_activity(AeAccount, Limit) ->
+    try damage_ae:get_ae_mdw_node() of
+        {ok, ConnPid, PathPrefix0} ->
+            PathPrefix = to_binary(PathPrefix0),
+            Query = uri_string:compose_query([
+                {"owned_only", "false"},
+                {"type", "transactions"},
+                {"direction", "backward"},
+                {"limit", integer_to_list(Limit)}
+            ]),
+            Path = iolist_to_binary([
+                PathPrefix,
+                "v3/accounts/",
+                AeAccount,
+                "/activities?",
+                Query
+            ]),
+            try
+                StreamRef = gun:get(
+                    ConnPid,
+                    Path,
+                    [{<<"accept">>, <<"application/json">>}]
+                ),
+                await_aeternity_activity(ConnPid, StreamRef)
+            after
+                try
+                    gun:close(ConnPid)
+                catch
+                    _:_ -> ok
+                end
+            end;
+        Error ->
+            {error, {middleware_unavailable, Error}}
+    catch
+        Class:Reason ->
+            {error, {middleware_failed, Class, Reason}}
+    end.
+
+await_aeternity_activity(ConnPid, StreamRef) ->
+    case gun:await(ConnPid, StreamRef, 15000) of
+        {response, fin, Status, _Headers} when Status >= 200, Status < 300 ->
+            {ok, []};
+        {response, nofin, Status, _Headers} when Status >= 200, Status < 300 ->
+            case gun:await_body(ConnPid, StreamRef, 15000) of
+                {ok, Body} -> decode_aeternity_activity(Body);
+                Error -> {error, {middleware_body, Error}}
+            end;
+        {response, nofin, Status, _Headers} ->
+            case gun:await_body(ConnPid, StreamRef, 15000) of
+                {ok, Body} -> {error, {middleware_status, Status, Body}};
+                Error -> {error, {middleware_status, Status, Error}}
+            end;
+        {response, fin, Status, _Headers} ->
+            {error, {middleware_status, Status}};
+        {error, Reason} ->
+            {error, {middleware_request, Reason}};
+        Other ->
+            {error, {middleware_response, Other}}
+    end.
+
+decode_aeternity_activity(Body) ->
+    try jsx:decode(Body, [return_maps]) of
+        #{<<"data">> := Rows} when is_list(Rows) ->
+            {ok, Rows};
+        #{data := Rows} when is_list(Rows) ->
+            {ok, Rows};
+        #{<<"data">> := null} ->
+            {ok, []};
+        #{data := null} ->
+            {ok, []};
+        Other ->
+            {error, {invalid_middleware_response, Other}}
+    catch
+        Class:Reason ->
+            {error, {invalid_middleware_json, Class, Reason}}
+    end.
+
+to_binary(V) when is_binary(V) -> V;
+to_binary(V) when is_list(V) -> unicode:characters_to_binary(V);
+to_binary(V) when is_atom(V) -> atom_to_binary(V, utf8);
+to_binary(V) -> iolist_to_binary(io_lib:format("~p", [V])).
+
+cln_map_or(Fun, Default, Operation) ->
+    case Fun() of
+        Value when is_map(Value) ->
+            Value;
+        {ok, Value} when is_map(Value) ->
+            Value;
+        {error, {cln_unavailable, Reason}} ->
+            logger:warning("CLN unavailable during ~p: ~p", [Operation, Reason]),
+            Default;
+        Other ->
+            logger:warning("Unexpected CLN result during ~p: ~p", [Operation, Other]),
+            Default
+    end.
+
+cln_list_or(Fun, Operation) ->
+    case Fun() of
+        Value when is_list(Value) ->
+            Value;
+        {ok, Value} when is_list(Value) ->
+            Value;
+        {error, {cln_unavailable, Reason}} ->
+            logger:warning("CLN unavailable during ~p: ~p", [Operation, Reason]),
+            [];
+        Other ->
+            logger:warning("Unexpected CLN result during ~p: ~p", [Operation, Other]),
+            []
+    end.
+
+cln_json_result({error, {cln_unavailable, Reason}}) ->
+    #{
+        ok => false,
+        error => cln_unavailable,
+        reason => iolist_to_binary(io_lib:format("~p", [Reason]))
+    };
+cln_json_result({error, Reason}) ->
+    #{
+        ok => false,
+        error => cln_error,
+        reason => iolist_to_binary(io_lib:format("~p", [Reason]))
+    };
+cln_json_result(Result) ->
+    Result.
+
+reply_json(Req, State, Body) ->
+    Req1 = cowboy_req:reply(
+        200,
+        #{<<"content-type">> => <<"application/json">>},
+        jsx:encode(Body),
+        Req
+    ),
+    {stop, Req1, State}.
+
+normalize_error(E) when is_binary(E); is_integer(E); is_float(E); is_boolean(E) ->
+    E;
+normalize_error(null) ->
+    null;
+normalize_error(E) when is_atom(E) ->
+    atom_to_binary(E, utf8);
+normalize_error(E) ->
+    iolist_to_binary(io_lib:format("~p", [E])).
+
+safe_json(Req, State, Body) ->
+    try
+        {jsx:encode(Body), Req, State}
+    catch
+        error:badarg:Stack ->
+            ?LOG_ERROR("node_admin json encode failed body=~p stack=~p", [Body, Stack]),
+            {
+                jsx:encode(#{
+                    ok => false,
+                    error => <<"internal_json_encode_error">>
+                }),
+                Req,
+                State
+            }
+    end.
+
+qs_int(Req, Key, Default) ->
+    QS = maps:from_list(cowboy_req:parse_qs(Req)),
+    case maps:get(Key, QS, integer_to_binary(Default)) of
+        B when is_binary(B) ->
+            try
+                {binary_to_integer(B), Req}
+            catch
+                _:_ -> {Default, Req}
+            end;
+        I when is_integer(I) ->
+            {I, Req};
+        _ ->
+            {Default, Req}
+    end.
+
+qs_bin(Req, Key, Default) ->
+    QS = maps:from_list(cowboy_req:parse_qs(Req)),
+    case maps:get(Key, QS, Default) of
+        B when is_binary(B) -> {B, Req};
+        L when is_list(L) -> {unicode:characters_to_binary(L), Req};
+        _ -> {Default, Req}
+    end.
+
+limit(N) when N < 1 -> 1;
+limit(N) when N > 500 -> 500;
+limit(N) -> N.

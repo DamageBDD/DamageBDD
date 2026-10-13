@@ -1,0 +1,35 @@
+#+Title: Why Damage Tokens?
+#+INCLUDE: "../header.org"
+
+* How does DamageBDD use Bitcoin for payouts and DamageToken for infrastructure ?
+
+DamageBDD leverages **Bitcoin** for payouts through the **Lightning Network**, ensuring fast and low-cost transactions. This integration allows test participants to receive immediate rewards in Bitcoin when they pass tests on the DamageBDD platform. The **Lightning Network** enables scalability, providing quick liquidity exits while maintaining decentralization and security. This minimizes the risk of capture while ensuring close-to-market buybacks, with fees deducted.
+
+For **infrastructure**, DamageBDD uses the **DamageToken**, which is an **AEX9 token** built on the Aeternity blockchain. The token functions as a utility within the platform, allowing users to run BDD tests and interact with the system. DamageToken powers the infrastructure by facilitating actions such as:
+
+- **Running tests**: Users must hold DamageTokens to execute tests on the platform.
+- **Token liquidity**: Public token sales ensure ongoing development and project continuity.
+- **Governance**: Through token usage, participants can influence platform updates and contract upgrades as needed.
+
+Together, Bitcoin handles the rewards and payouts while DamageToken manages infrastructure, aligning incentives for testers and ensuring the system's integrity.
+
+* Why not just use lightning network?
+
+While the **Lightning Network** is excellent for fast and scalable Bitcoin payments, using **DamageToken** alongside it offers specific benefits that make the combination more effective for **DamageBDD’s** infrastructure:
+
+### 1. **Utility Beyond Payments**
+   - **DamageToken** isn't just for transferring value; it plays a role in platform functionality, such as running BDD tests and verifying actions on-chain. This utility extends beyond what the Lightning Network alone can provide, as Bitcoin primarily handles payments without built-in infrastructure for managing platform-specific actions like test execution or verification.
+
+### 2. **Governance and Control**
+   - **DamageToken** allows for governance and control over the platform. Through the token, stakeholders can vote on upgrades, features, or other platform changes. The **Lightning Network** is purely a payment layer, so it cannot offer governance mechanisms tied to the platform's usage.
+
+### 3. **Tokenomics for Sustainability**
+   - The **DamageToken** serves as a tool for funding and sustainability. Selling DamageTokens provides liquidity and financial support for the ongoing development of the platform. Lightning Network payments would only allow for transaction flow, but not a direct method to raise funds or control the release and sale of utility tokens tied to platform growth.
+
+### 4. **Granular Infrastructure Control**
+   - **DamageToken** provides granular control over **who** can run tests, **how many** tests can be executed, and manages the overall activity within the platform. It's part of the infrastructure for controlling access and managing actions, whereas Bitcoin via Lightning Network is not designed to manage infrastructure control.
+
+### 5. **Dual Incentive System**
+   - Using both **Bitcoin** and **DamageToken** creates a dual incentive structure. Testers receive payouts in **Bitcoin**, a widely accepted and liquid asset, but they must use **DamageTokens** to interact with the platform. This aligns incentives and ensures both testers and developers remain invested in the platform’s success.
+
+In essence, the **Lightning Network** provides efficient payouts, while **DamageToken** adds utility, control, and financial support for platform infrastructure. The combination leverages the strengths of both systems.

@@ -1,0 +1,122 @@
+#+TITLE: Contributing to DamageBDD
+#+OPTIONS: toc:nil num:nil
+
+* Overview
+
+DamageBDD uses a simple rule:
+
+**All work flows through GitHub Issues and Pull Requests.**
+**All payouts happen in Bitcoin.**
+
+You do *not* need to know BDD to start contributing.
+You only need:
+
+- A GitHub account
+- A BTC wallet (on-chain address or Lightning invoice)
+
+Over time you will pick up BDD because the project uses it for verification.
+
+For the full contractor workflow, see =docs/contractors.org=.
+
+* How Work Is Organized
+
+- Each *Issue* describes:
+  - The task
+  - The expected result
+  - The payout (in sats)
+- Each *Pull Request*:
+  - References exactly one Issue
+  - Describes what changed and how you tested it
+  - Includes a one-off BTC address or Lightning invoice
+
+Core devs do not manage you.
+GitHub is the communication channel and the contract.
+
+* Finding Work
+
+1. Go to the repository’s *Issues* page.
+2. Look for labels like:
+   - =bounty=
+   - =help-wanted=
+   - =open=
+3. Read the issue carefully. If something is unclear, ask *in the issue*.
+
+If you want to work on an issue, comment:
+
+#+begin_example
+/claim
+I agree to deliver this task for the quoted sats.
+Work will begin now.
+#+end_example
+
+A maintainer will assign the issue to you.
+
+* Branch & Commit Style
+
+- Create a feature branch in your fork:
+  #+begin_src sh
+  git checkout -b feat/<short-description>-<issue-id>
+  #+end_src
+- Keep one issue per branch per PR.
+- Commit messages:
+  - Start with a verb, e.g. =Add HTTP step for Syncthing=.
+  - Reference the issue ID when useful.
+
+* Pull Request Requirements
+
+Every PR must:
+
+1. Reference the issue: =Fixes #<issue-id>=.
+2. Explain what you changed.
+3. Explain how you tested it (manual is OK initially).
+4. Include payout details (address/invoice + sats).
+
+Use the fields in =.github/pull_request_template.md=.
+This template is your invoice.
+
+* BDD Expectations (Evolving)
+
+Initially:
+
+- It’s OK if you don’t write perfect BDD feature files.
+- You can start by:
+  - Implementing code
+  - Adding minimal tests
+  - Describing manual test steps
+
+Over time:
+
+- Issues will include BDD scenarios.
+- You will be expected to:
+  - Add or update Gherkin feature files under =features/=.
+  - Prefer “Given / When / Then” over ad-hoc test descriptions.
+  - Use DamageBDD steps and step modules where possible.
+
+If you’re unsure how to express behaviour in BDD, ask in the issue.
+
+* Code Style & Quality
+
+- Prefer small, focused changes.
+- Don’t introduce new dependencies without discussing in the issue.
+- Add tests whenever it makes sense:
+  - Unit tests for small modules
+  - BDD scenarios for end-to-end behaviour
+- Keep configuration and secrets out of the repo.
+
+* Payments
+
+- Bounties are stated in *sats* on the Issue.
+- You must provide a one-off BTC address or Lightning invoice in the PR.
+- After the PR is merged and verified:
+  - A maintainer pays the bounty in BTC.
+  - The Issue is updated with the tx details.
+
+You are responsible for your own tax and reporting obligations.
+
+* Communication
+
+- Use *Issues* for questions about specific work.
+- Use *PR comments* for review discussions.
+- Avoid private DMs for project-related matters.
+
+If it’s not in GitHub, it doesn’t exist for this project.

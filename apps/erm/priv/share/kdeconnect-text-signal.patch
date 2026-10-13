@@ -1,0 +1,24 @@
+diff --git a/plugins/share/shareplugin.cpp b/plugins/share/shareplugin.cpp
+index 3513a47..bfddf15 100644
+--- a/plugins/share/shareplugin.cpp
++++ b/plugins/share/shareplugin.cpp
+@@ -146,6 +146,7 @@ void SharePlugin::receivePacket(const NetworkPacket &np)
+         }
+     } else if (np.has(QStringLiteral("text"))) {
+         QString text = np.get<QString>(QStringLiteral("text"));
++        Q_EMIT shareTextReceived(text);
+
+         auto mimeData = new QMimeData;
+         mimeData->setText(text);
+diff --git a/plugins/share/shareplugin.h b/plugins/share/shareplugin.h
+index c5406d3..d69ed24 100644
+--- a/plugins/share/shareplugin.h
++++ b/plugins/share/shareplugin.h
+@@ -42,6 +42,7 @@ private Q_SLOTS:
+
+ Q_SIGNALS:
+     Q_SCRIPTABLE void shareReceived(const QString &url);
++    Q_SCRIPTABLE void shareTextReceived(const QString &text);
+
+ private:
+     void finished(KJob *job, const qint64 dateCreated, const qint64 dateModified, const bool open);

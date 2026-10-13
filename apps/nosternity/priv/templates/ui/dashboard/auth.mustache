@@ -1,0 +1,8 @@
+<span class="cardicon">✳</span><h2>Make yourself at home.</h2><p>Nostr is your primary identity here. Your signer keeps your private key.</p>
+<label for="authIntent">I want to</label><select id="authIntent"><option value="login">Sign in</option><option value="signup">Create a {{name}} account</option></select>
+<button class="choice" data-action="nostrLogin">Continue with Nostr <small>Approve your browser signer, then sign a login challenge</small></button>
+<button class="choice" data-action="bunker">Use nsecBunker <small>Approve with your remote Nostr signer</small></button>
+<button class="choice" data-action="lightning">Continue with Lightning <small>Scan a wallet proof · no payment required</small></button>
+<button class="choice" data-action="damageLogin">Continue with DamageBDD <small>Existing email account, signup, or recovery</small></button>
+<p class="caption">New to Nostr? Create an identity in a Nostr signer first, then choose Create account above. Lightning and DamageBDD identities are separate accounts; they are not automatically linked.</p>
+<button class="textbutton" data-action="close">Keep exploring as a guest</button>

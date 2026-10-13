@@ -1,0 +1,5 @@
+%% Offline transport codec, deliberately NOT a replacement for real JSX.
+-module(jsx).
+-export([encode/1,decode/2]).
+encode(T) -> term_to_binary(T).
+decode(B,_) -> binary_to_term(B,[safe]).

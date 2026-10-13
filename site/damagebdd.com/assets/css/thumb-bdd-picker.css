@@ -1,0 +1,74 @@
+/* thumb-bdd-picker.css */
+
+/* Container for Step Picker Buttons */
+#step-picker button {
+  margin: 0.5em;
+  padding: 0.8em 1.2em;
+  font-size: 1em;
+  border-radius: 0.5em;
+  background: #333;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+#step-picker button:hover {
+  background: #555;
+}
+
+/* Input Form for Parameters */
+.step-input-form {
+  margin-top: 1em;
+  padding: 1em;
+  background: #222;
+  border-radius: 0.5em;
+}
+
+.step-input-form h3 {
+  color: #fff;
+  margin-bottom: 0.5em;
+}
+
+.step-input-form label {
+  color: #ccc;
+  display: block;
+  margin-top: 0.5em;
+  font-weight: bold;
+}
+
+.step-input-form input[type="text"] {
+  width: 100%;
+  padding: 0.5em;
+  margin-top: 0.2em;
+  border-radius: 0.5em;
+  border: 1px solid #555;
+  background: #333;
+  color: #fff;
+}
+
+/* Add Step Button */
+.step-input-form button.add-step {
+  margin-top: 1em;
+  padding: 0.6em 1em;
+  border: none;
+  border-radius: 0.5em;
+  background: #28a745;
+  color: #fff;
+  cursor: pointer;
+  font-size: 1em;
+}
+
+.step-input-form button.add-step:hover {
+  background: #34d058;
+}
+
+/* Feature Steps Container */
+#feature-steps div {
+  margin-top: 0.5em;
+  padding: 0.5em;
+  background: #111;
+  border-radius: 0.5em;
+  color: #ccc;
+  font-size: 1em;
+}

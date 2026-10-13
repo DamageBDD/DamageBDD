@@ -1,0 +1,34 @@
+%%% -*- mode: erlang; erlang-indent-level: 2; -*-
+{application, vanillae,
+ [
+  {description, "Erlang library for ecommerce use of the Aeternity blockchain"},
+  {vsn, "0.4.1"},
+  %% If Vanillae defines an application callback module, keep this.
+  %% If it's a pure library with no supervision tree, you may remove this line.
+  {mod, {vanillae_app, []}},
+  {registered, []},
+  {applications,
+   [kernel, stdlib,
+    crypto,
+    public_key,
+    ssl,
+    gun,
+    %% Third‑party/AE libs this library uses (ensure they are available as deps)
+    ec_utils,
+    aebytecode,
+    aesophia,
+    aeserialization,
+    eblake2,
+    getopt
+   ]},
+  {env, []},
+  %% rebar3_hex metadata
+  {maintainers, ["Craig Everett <ceverett@tsuriai.jp>"]},
+  {licenses, ["MIT"]},
+  {links, [{"GitHub", "https://github.com/aeternity/Vanillae"}]},
+  %% Optional extra metadata (not required by OTP, but helpful in hex.pm)
+  {extra, [
+           {copyright, "Craig Everett"},
+           {tags, ["aeternity","blockchain","crypto","ae","defi"]}
+          ]}
+ ]}.

@@ -1,0 +1,7 @@
+{application, zx,
+ [{description, "ZX helpers (net, utils)"},
+  {vsn, "0.1.0"},
+  {modules, []},              %% rebar3 will fill at compile
+  {registered, []},
+  {applications, [kernel, stdlib]},
+  {env, []}]}.

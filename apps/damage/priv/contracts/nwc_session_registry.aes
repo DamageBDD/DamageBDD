@@ -1,0 +1,73 @@
+@compiler >= 6
+
+contract DamageNWCSessionRegistry =
+
+  datatype session_status = Valid | Revoked | Expired
+
+  record session =
+    { agent_id        : string
+    , owner           : address
+    , session_pubkey  : string
+    , scope_hash      : string
+    , max_spend       : int
+    , expires_at      : int
+    , status          : session_status
+    }
+
+  record state =
+    { owner    : address
+    , sessions : map(string, session)
+    }
+
+  datatype event =
+    SessionRegistered(string, string)
+    | SessionRevoked(string)
+
+  entrypoint init() =
+    { owner = Call.caller, sessions = {} }
+
+  stateful entrypoint register_session(
+    session_id : string,
+    agent_id : string,
+    session_pubkey : string,
+    scope_hash : string,
+    max_spend : int,
+    expires_at : int) =
+    require(!exists(session_id), "SESSION_EXISTS")
+    put(state{
+      sessions[session_id] =
+        { agent_id = agent_id
+        , owner = Call.caller
+        , session_pubkey = session_pubkey
+        , scope_hash = scope_hash
+        , max_spend = max_spend
+        , expires_at = expires_at
+        , status = Valid }
+    })
+    Chain.event(SessionRegistered(session_id, agent_id))
+
+  stateful entrypoint revoke_session(session_id : string) =
+    let s = require_session_owner(session_id)
+    put(state{ sessions[session_id] = s{status = Revoked} })
+    Chain.event(SessionRevoked(session_id))
+
+  entrypoint session_valid(session_id : string) : bool =
+    switch(Map.lookup(session_id, state.sessions))
+      None => false
+      Some(s) =>
+        s.status == Valid && Chain.timestamp =< s.expires_at
+
+  entrypoint get_session(session_id : string) : option(session) =
+    Map.lookup(session_id, state.sessions)
+
+  function exists(session_id : string) : bool =
+    switch(Map.lookup(session_id, state.sessions))
+      None => false
+      Some(_) => true
+
+  function require_session_owner(session_id : string) : session =
+    switch(Map.lookup(session_id, state.sessions))
+      None => abort("SESSION_NOT_FOUND")
+      Some(s) =>
+        require(s.owner == Call.caller, "ONLY_SESSION_OWNER")
+        s

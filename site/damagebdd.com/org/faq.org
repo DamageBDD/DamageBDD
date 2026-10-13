@@ -1,0 +1,128 @@
+#+TITLE: FAQ for CTOs & Engineering Managers - DamageBDD
+#+DESCRIPTION: FAQ for CTOs, engineering managers, founders and investors on DamageBDD’s blockchain-verified BDD, CI/CD integration, governance model and Lightning milestone escrow.
+#+KEYWORDS: DamageBDD FAQ, CTO guide, engineering managers, blockchain BDD, CI/CD verification, Lightning escrow, milestone payouts, governance token, software auditability, investor transparency
+
+#+INCLUDE: "header.org"
+#+OPTIONS: toc:2      
+
+* FAQ for CTOs & Engineering Managers
+
+** 1. What is it and why should my team use it?
+DamageBDD is a Behavior-Driven Development (BDD) tool designed to reinforce software quality and resilience through automated, verifiable testing. By integrating blockchain technology, DamageBDD ensures that tests are immutably recorded, providing verifiable proof of quality and compliance. It’s particularly suited for high-performance teams that need clear, traceable, and transparent documentation of development processes.
+
+** 2. How does it differ from traditional BDD frameworks?
+Traditional BDD frameworks primarily focus on communication between developers, testers, and stakeholders through human-readable scenarios. DamageBDD takes this a step further by verifying the behavior and results of these scenarios on the blockchain. This means that once a test is passed, the record is immutable, providing a transparent history of changes and ensuring accountability at every stage of development.
+
+** 3. How does it ensure software quality and resilience?
+By automating tests and recording their results immutably on the blockchain, DamageBDD creates an unchangeable record of a project’s behavior over time. This verification helps ensure that the software meets defined requirements and continues to perform reliably, even as it evolves. The blockchain record also aids in reducing regressions, providing confidence that past issues won't resurface.
+
+** 4. Can it integrate with my existing CI/CD pipeline?
+Yes, DamageBDD can integrate with your existing CI/CD pipeline to automate testing and verification at every stage of development. Its flexibility allows integration with various tools, including Selenium, Appium, and web APIs, so your team can maintain continuous testing practices while benefiting from immutable proof of test results.
+
+** 5. What are the benefits of using blockchain for BDD?
+Using blockchain for BDD offers a range of advantages:
+   - *Transparency*: Every test run is recorded immutably on the blockchain, providing clear accountability for the development process.
+   - *Security*: Blockchain verification ensures that test results cannot be tampered with, adding a layer of trust to your testing and development process.
+   - *Auditability*: A permanent record of your project's test history can be audited by internal teams or external partners to confirm the reliability and quality of the software.
+
+** 6. How does it handle tokenized tests and what are the implications?
+DamageBDD uses Damage Tokens (an AEX9 token on the Aeternity blockchain) to run tests. Developers and testers are incentivized to pass tests, and tokens are required to use the platform. **DamageBDD does not encourage or recommend purchasing tokens as an investment.** The token system enables you to manage test costs effectively, incentivize quality work, and ensure the sustainability of your testing environment. Additionally, Damage Token sales provide liquidity to keep the system functional.
+
+** 7. How does it handle governance and updates? 
+The governance of DamageBDD is token-driven. While 20% of the tokens are available for public use, the founder retains 80%, releasing them in batches over time. Updates to the smart contracts or platform will be signaled in advance, and wallet upgrades may be required if contract updates are made. The token structure also allows for buybacks, ensuring liquidity and stability.
+
+** 8. What kind of use cases are best suited for it?
+DamageBDD excels in scenarios where verification, transparency, and trust are paramount. Some key use cases include:
+   - *Compliance-driven industries*: Sectors like finance, healthcare, and supply chain where audit trails are critical.
+   - *Large-scale web applications*: Where complex systems require reliable, automated end-to-end testing (e.g., APIs, Selenium, Appium-based tests).
+   - *Projects that demand resilience*: Where the evolution of a system over time must be meticulously tracked to prevent regressions or failures.
+
+** 9. How does it enable investor trust and accountability?
+DamageBDD offers unique features through its blockchain-backed BDD approach. With the ability to immutably record each test’s outcome, investors can see real-time verification of milestone completions and software development progress. Moreover, by using Lightning-based payment systems, DamageBDD enables investors to lock funds in escrow and unlock them as specific development milestones are reached and verified, ensuring ROI with minimal risk.
+
+** 10. How can it help my team move faster while ensuring quality?
+DamageBDD’s automated testing framework allows teams to run comprehensive tests quickly, ensuring continuous quality assurance without the need for manual verification. The immutable record of test results reduces the need for constant re-checking and provides confidence that changes won’t introduce regressions. This frees up development resources, allowing your team to focus on delivering features faster without sacrificing quality.
+
+** 11. How scalable is it?
+DamageBDD is designed to scale with your team’s needs. Whether you’re working on a small project or a large enterprise application, the platform can handle a growing number of tests and scenarios. The blockchain-backed system ensures that the history of your development is preserved no matter the scale, offering long-term traceability.
+
+** 12. What is required to get started with it?
+To get started with DamageBDD, you’ll need:
+   - A verified **email** to setup an account on https://run.damagebdd.com.
+   - `curl` or any http client for integration with your existing development pipeline (CI/CD tools, APIs, etc.).
+   - A commitment to using BDD practices and ensuring that scenarios are well-defined.
+
+DamageBDD offers documentation and support to assist with the integration process, making it easier to adopt within your current infrastructure.
+
+** 13. How does it handle failure cases or issues in the development process?
+DamageBDD tracks both successful and failed tests on the blockchain, providing a transparent record of what has worked and what hasn’t. This enables engineering teams to revisit and address issues with full visibility into when and where they occurred, making it easier to pinpoint problems and avoid recurring failures.
+
+** 14. How is pricing structured for it?
+The pricing for DamageBDD is **100 satoshi for one DamageToken**. The tokens are used to run tests and verifications on the platform. Additionally, **support from the founder and core developer** is available for consultation and guidance during the adoption and integration phases, along with custom consultation services to help teams maximize their use of the platform.
+
+** 15. What kind of support does it provide?
+DamageBDD offers support to help teams onboard and integrate the platform into their workflows. Documentation, examples, and potentially demo environments are available to assist in adoption. Additionally, the team provides guidance on using tokens, governance, and managing blockchain integration. You can also access **consultation services from the founder and core developer** for specialized guidance and problem-solving.
+
+* FAQ for Founders & Investors
+
+** 1. What is it and why should I consider it as a founder or investor?
+DamageBDD is an advanced platform that combines Behavior-Driven Development (BDD) with blockchain verification and Lightning Network escrow for milestone-based payouts. It ensures software development transparency by verifying tests and milestones immutably on-chain. For investors, it offers trust in the project's progress, while founders gain accountability and trust through reliable, auditable software processes.
+
+** 2. How does it ensure verifiable proof of software quality?
+By using blockchain, DamageBDD creates an immutable record of passed and failed tests, ensuring complete transparency. The verification is publicly available, allowing stakeholders to audit the development lifecycle in real time, ensuring trust in milestone completion and project progress.
+
+** 3. What is the role of DamageToken (AEX9) on the platform?
+DamageToken is an AEX9 **governance token** used solely to manage platform governance, including contract upgrades and decision-making related to platform evolution. **It is not used for investment purposes**. Tokens do not serve as a currency for project funding but enable community governance for sustainable platform development.
+
+- **Important**: **DamageToken is purely for governance** and **should not be purchased with investment intentions**. It does not provide financial returns or any speculative value.
+
+** 4. How does the escrow system benefit investors and founders?
+DamageBDD utilizes a **Lightning Network-based escrow system** that holds funds until predefined milestones are met and verified through the platform. This ensures that payments are only released upon the successful completion of verified tasks, reducing risk for investors and providing founders with verifiable proof of progress. This system is **only for milestone completion payouts**, not for investment.
+
+** 5. How does it promote investor trust and project accountability?
+For investors, DamageBDD provides blockchain-verified proof of milestone completion, removing ambiguity or misrepresentation of progress. Each completed test or milestone is immutably recorded, ensuring that every stage of development is verifiable and transparent. By using the Lightning Network escrow system, investors gain an additional layer of protection, as payments are only unlocked upon success. **Funds placed in escrow are strictly for milestone payouts**, not investment.
+
+** 6. How does it ensure the proper use of tokens?
+The DamageToken (AEX9) is **not for speculative or investment purposes**. **It is solely for governance** over contract decisions and platform upgrades. Founders and investors interact with the platform through Lightning-based payments for milestone verification, keeping tokens separate from operational costs or funding mechanisms. **There is no expectation of financial return**.
+
+** 7. How can founders leverage it to build investor confidence?
+By adopting DamageBDD, founders offer transparency and verifiable results that build investor confidence. As every milestone is verified through blockchain, investors can track progress and release funds from escrow accordingly, ensuring clear accountability. The platform’s governance structure and escrow integration provide a high degree of security and trust.
+
+** 8. What are the use cases of it in investor-backed projects?
+DamageBDD excels in environments where trust, verifiability, and compliance are paramount. Examples include:
+   - **Startups funded by venture capital**: Where investors require verifiable milestones to release capital.
+   - **Regulated industries**: Such as finance or healthcare, where compliance and audit trails are essential.
+   - **High-growth enterprise projects**: Where transparency and continuous delivery are crucial to stakeholder confidence.
+
+** 9. How does it increase accountability?
+Through blockchain-verified test results and milestone completion, DamageBDD makes it impossible to tamper with or falsify progress. Each result is stored immutably, increasing accountability for developers and project teams. Investors and stakeholders can trust that milestones are being met as claimed, adding credibility to every stage of development.
+
+** 10. How does it manage escrow payments?
+DamageBDD uses the Lightning Network to manage milestone payments via escrow. Funds are locked in escrow and are **only released once the platform verifies specific development milestones are achieved**. This **is not an investment mechanism**, but a **pay-for-results** model to ensure capital is released only when milestones are met, aligning developer efforts with investor interests. **No speculative or investment-based returns are involved**.
+
+** 11. How can founders manage risk using it?
+Founders can demonstrate real progress by providing verifiable results via blockchain, lowering the risk of distrust or project delays. By integrating the Lightning escrow system, they ensure that investors remain confident in the development process while securely managing payments tied to successful milestone completions.
+
+** 12. What are the tokenomics of it?
+DamageToken is used **only for governance** over platform development, contract upgrades, and decision-making. **It is not for investment purposes** and offers no speculative value. The token does not affect the operational aspects of funding projects, which are managed via Lightning Network escrow-based systems tied to development milestones.
+
+- **Important**: **DamageBDD does not encourage or recommend purchasing tokens as an investment**. Tokens are purely for governance purposes. **There are no financial returns or speculative gains**.
+
+** 13. What is required to get started with it as a founder or investor?
+To get started with DamageBDD, you’ll need:
+   - **A custodial wallet** with the ability to transfer out tokens for governance purposes if needed.
+   - Engagement via **email** for initial setup, support, and consultation services.
+   - Well-defined project milestones, as these form the basis for the Lightning escrow payout system.
+   - Integration into your existing development infrastructure (CI/CD pipeline, APIs, etc.).
+
+** 14. What pricing model does it use?
+The cost for platform usage is **100 satoshi per DamageToken** for governance activities. Additionally, DamageBDD charges **platform fees for escrow and milestone verification** services. **Support from the founder and core developer** is available, including consultation services to guide implementation and ensure success.
+
+** 15. What support can founders and investors expect?
+DamageBDD provides full support for onboarding, including:
+   - Help with blockchain and escrow setup.
+   - Guidance on integrating Lightning Network for payments.
+   - Ongoing consultation from the **founder and core developer** to maximize platform use.
+   - Access to documentation and examples to ensure smooth operation and milestone verification.
+
+- **Tax Notice**: Users should seek independent tax advice regarding potential **taxable events** arising from governance activities or milestone payments. DamageBDD does not offer financial or tax advice.

@@ -1,0 +1,13 @@
+%% Trusted local Erlang term; file:consult is NOT an untrusted network parser.
+%% Paths here are relative to the current working directory (repository root).
+%% Use independent takes, one active speaker, PCM16-LE mono/stereo, 16000 Hz.
+[
+ #{speaker => <<"alice">>, split => enroll, source => {wav, "recordings/alice_enroll.wav"}},
+ #{speaker => <<"bob">>, split => enroll, source => {wav, "recordings/bob_enroll.wav"}},
+ #{speaker => <<"alice">>, split => calibrate, source => {wav, "recordings/alice_calibrate.wav"}},
+ #{speaker => <<"bob">>, split => calibrate, source => {wav, "recordings/bob_calibrate.wav"}},
+ #{speaker => unknown, split => calibrate, source => {wav, "recordings/unknown_calibrate.wav"}},
+ #{speaker => <<"alice">>, split => test, source => {wav, "recordings/alice_test.wav"}},
+ #{speaker => <<"bob">>, split => test, source => {wav, "recordings/bob_test.wav"}},
+ #{speaker => unknown, split => test, source => {wav, "recordings/unknown_test.wav"}}
+].

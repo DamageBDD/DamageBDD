@@ -1,0 +1,88 @@
+#+TITLE: DamageBDD · Public Wallet Activity
+#+AUTHOR:
+#+OPTIONS: toc:nil num:nil html-style:nil
+
+#+INCLUDE: "header.org"
+
+* Activity
+
+#+BEGIN_EXPORT html
+
+<header class="site-header">
+  <div class="flex-header">
+    <div class="identity-text">
+      <h1 id="activity-title" class="site-title">Public Wallet Activity</h1>
+      <p class="tagline">
+        Anonymous lookup: on-chain activity + DamageBDD test run reports linked from spends.
+      </p>
+    </div>
+  </div>
+</header>
+
+<main id="activity-page" class="activity-wrap" aria-labelledby="activity-title">
+  <section class="panel">
+    <div class="row" style="justify-content: space-between;">
+      <div class="pill">Source: AE Middleware · newest first</div>
+      <div class="pill">Filter: DAMAGE spend calls · paid runs</div>
+    </div>
+
+    <div style="height:.75rem"></div>
+
+    <div class="row">
+      <div class="grow">
+        <label for="activity-account">AE Account / Contract</label>
+
+        <input
+          id="activity-account"
+          type="text"
+          placeholder="ak_... or ct_..."
+          autocomplete="off"
+          spellcheck="false"
+        />
+
+        <div class="hint">
+          Tip: use <span class="mono">?account=ak_...</span> to prefill.
+          Accepts <span class="mono">ak_</span> and <span class="mono">ct_</span>.
+        </div>
+      </div>
+
+      <div class="right">
+        <button id="activity-refresh" type="button">Refresh</button>
+      </div>
+    </div>
+
+    <div style="height:1rem"></div>
+
+    <div class="row" style="justify-content: space-between;">
+      <div
+        class="meta"
+        id="run-reports-status"
+        aria-live="polite"
+      >Idle.</div>
+
+      <div class="right">
+        <button id="run-reports-prev" type="button" disabled>Prev</button>
+        <button id="run-reports-next" type="button" disabled>Next</button>
+        <span class="meta" id="run-reports-info"></span>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" style="margin-top: 1rem;">
+    <h2 style="margin-top:0">Runs &amp; Reports</h2>
+
+    <ul class="list" id="run-reports-list">
+      <li class="item">
+        <div class="meta">Enter an account or contract id to load public activity.</div>
+      </li>
+    </ul>
+  </section>
+
+  <footer class="footer">
+    <span class="meta">DamageBDD · Verification on-chain · Public data only</span>
+  </footer>
+</main>
+
+<script src="./activity.js" defer></script>
+
+#+END_EXPORT
