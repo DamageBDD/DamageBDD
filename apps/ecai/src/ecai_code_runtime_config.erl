@@ -14,6 +14,7 @@
     update/1,
     reload/0,
     learning_admission/0,
+    learning_admission_for/1,
     prepare_learning_repo/0,
     repository_status/0,
     fetch/0,
@@ -85,6 +86,14 @@ reload() ->
 
 learning_admission() ->
     learning_admission(get()).
+
+learning_admission_for(RepoRoot) when is_binary(RepoRoot); is_list(RepoRoot) ->
+    Config0 = get(),
+    Repository0 = maps:get(repository, Config0),
+    Config = Config0#{repository => Repository0#{working_root => to_binary(RepoRoot)}},
+    learning_admission(Config);
+learning_admission_for(_) ->
+    {error, invalid_repository_root}.
 
 prepare_learning_repo() ->
     Config = get(),

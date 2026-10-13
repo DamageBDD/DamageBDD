@@ -130,7 +130,8 @@ ensure_learning_admitted(Opts) ->
         false ->
             ok;
         true ->
-            try ecai_code_runtime_config:learning_admission() of
+            Repo = repo_root(Opts),
+            try ecai_code_runtime_config:learning_admission_for(Repo) of
                 {ok, _Policy} -> ok;
                 {error, Reason} -> {error, {release_learning_policy_blocked, Reason}};
                 Other -> {error, {unexpected_learning_admission, Other}}
