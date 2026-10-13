@@ -233,13 +233,60 @@
         </section>
 
         <section class="view" data-panel="chat" aria-labelledby="chatTitle" hidden>
-          <div class="page-intro"><div class="eyebrow">CONVERSATION</div><h1 id="chatTitle">Speak to the knowledge layer</h1><p>Use the ECAI chat API with an isolated session. Replies depend on the configured backend and are not cryptographic proofs.</p></div>
-          <div class="surface chat-layout">
-            <div class="chat-toolbar"><span class="status-indicator"><span class="status-pulse"></span>ECAI chat</span><span id="chatSessionLabel" class="mono small">New session</span><button type="button" class="text-button" id="newChatBtn">+ New conversation</button></div>
-            <div class="chat-messages" id="chatMessages" aria-live="polite"><div class="chat-welcome"><div class="welcome-icon">e·</div><h2>Ask a question</h2><p>Your conversation stays in this browser tab. Messages are sent to the configured ECAI chat service.</p></div></div>
-            <form id="chatForm" class="composer"><label class="sr-only" for="chatPrompt">Your message</label><textarea id="chatPrompt" rows="2" required placeholder="Ask the ECAI knowledge layer…"></textarea><button class="button button-primary" type="submit" id="chatSend">Send ↗</button></form>
-            <div class="form-meta"><span id="chatStatus" role="status">Ready</span><span>POST /ecai/chat</span></div>
+          <div class="page-intro"><div class="eyebrow">CONVERSATION</div><h1 id="chatTitle">Speak to the knowledge layer</h1><p>Signed-in conversations are durable, searchable through the private ECAI term index and can be grouped into projects. Guest chat remains an isolated session. Replies depend on the configured backend and are not cryptographic proofs.</p></div>
+          <div class="chat-workspace">
+            <aside class="surface chat-history-panel" id="chatHistoryPanel" aria-label="Conversation history">
+              <div class="chat-history-actions">
+                <button type="button" class="button button-primary chat-new-button" id="newChatBtn">＋ New chat</button>
+                <button type="button" class="chat-search-button" id="chatSearchBtn"><span aria-hidden="true">⌕</span><span>Search chats</span><kbd>⌘K</kbd></button>
+              </div>
+              <div class="chat-history-auth" id="chatHistoryAuth">Sign in or connect a wallet to save account-scoped history, search messages and use projects.</div>
+              <div class="chat-history-section">
+                <div class="chat-history-heading"><span>Projects</span><button type="button" class="chat-history-icon-button" id="chatNewProjectBtn" aria-label="Create project">＋</button></div>
+                <button type="button" class="chat-history-item is-active" id="chatAllChats"><span class="chat-history-icon" aria-hidden="true">◫</span><span class="chat-history-copy"><strong>All chats</strong><small>Every project</small></span></button>
+                <div id="chatProjects" class="chat-project-list"></div>
+              </div>
+              <div class="chat-history-section chat-history-recent">
+                <div class="chat-history-heading"><span>Recent</span><button type="button" class="chat-history-icon-button" id="chatHistoryRefresh" aria-label="Refresh conversation history">↻</button></div>
+                <div id="chatHistoryList" class="chat-history-list"><div class="chat-history-empty">Sign in to keep account-scoped history.</div></div>
+              </div>
+            </aside>
+            <div class="surface chat-layout">
+              <div class="chat-toolbar">
+                <button type="button" class="chat-history-toggle" id="chatHistoryToggle" aria-controls="chatHistoryPanel" aria-expanded="false" aria-label="Toggle conversation history">☰</button>
+                <span class="status-indicator"><span class="status-pulse"></span>ECAI chat</span>
+                <div class="chat-thread-heading"><strong id="chatConversationTitle">New conversation</strong><span id="chatProjectLabel" class="small muted">Guest session</span></div>
+                <span id="chatSessionLabel" class="mono small">New session</span>
+                <div class="chat-thread-actions">
+                  <button type="button" class="text-button" id="chatRenameBtn" disabled>Rename</button>
+                  <select id="chatMoveProject" class="chat-project-select" aria-label="Move conversation to project" disabled><option value="">No project</option></select>
+                  <button type="button" class="text-button chat-delete-button" id="chatDeleteBtn" disabled>Delete</button>
+                </div>
+              </div>
+              <div class="chat-messages" id="chatMessages" aria-live="polite"><div class="chat-welcome"><div class="welcome-icon">e·</div><h2>Ask a question</h2><p>Guest messages use a temporary session. Sign in to keep searchable conversation history.</p></div></div>
+              <form id="chatForm" class="composer"><label class="sr-only" for="chatPrompt">Your message</label><textarea id="chatPrompt" rows="2" required maxlength="16384" placeholder="Ask the ECAI knowledge layer…"></textarea><button class="button button-primary" type="submit" id="chatSend">Send ↗</button></form>
+              <div class="form-meta"><span id="chatStatus" role="status">Ready</span><span>Saved + privately indexed when signed in</span></div>
+            </div>
           </div>
+          <dialog id="chatSearchDialog" class="chat-dialog">
+            <div class="chat-dialog-header"><div><div class="eyebrow">HISTORY</div><h2>Search chats</h2></div><button type="button" class="chat-dialog-close" id="chatSearchClose" aria-label="Close search">×</button></div>
+            <form id="chatSearchForm" class="chat-dialog-form">
+              <label>Search your conversations<input id="chatSearchQuery" type="search" required maxlength="4096" placeholder="Search titles and message text…" autocomplete="off"></label>
+              <label>Project<select id="chatSearchProject"><option value="">All projects</option></select></label>
+              <button class="button button-primary" type="submit">Search</button>
+            </form>
+            <div id="chatSearchResults" class="chat-search-results"><div class="chat-history-empty">Search message text and conversation titles.</div></div>
+          </dialog>
+          <dialog id="chatProjectDialog" class="chat-dialog chat-project-dialog">
+            <div class="chat-dialog-header"><div><div class="eyebrow">PROJECT</div><h2 id="chatProjectDialogTitle">New project</h2></div><button type="button" class="chat-dialog-close" id="chatProjectDialogClose" aria-label="Close project settings">×</button></div>
+            <form id="chatProjectForm" class="stack-form">
+              <input id="chatProjectId" type="hidden">
+              <label>Project name<input id="chatProjectName" required maxlength="120" placeholder="e.g. DamageBDD release work"></label>
+              <label>Project instructions<textarea id="chatProjectInstructions" rows="7" maxlength="8192" placeholder="Optional instructions applied to conversations in this project. These are user preferences, not proof or system policy."></textarea></label>
+              <p class="context-hint">Project search and related-history retrieval stay scoped to the authenticated account. Deleting a project keeps its conversations and moves them to No project.</p>
+              <div class="inline-actions wrap-actions"><button class="button button-primary" type="submit">Save project</button><button class="button button-outline" type="button" id="chatProjectDelete" hidden>Delete project</button></div>
+            </form>
+          </dialog>
         </section>
 
         <section class="view" data-panel="indexing" data-ecai-managed aria-labelledby="indexTitle" hidden>
