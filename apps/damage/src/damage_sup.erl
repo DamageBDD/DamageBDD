@@ -115,6 +115,14 @@ init([]) ->
                     modules => [damage_bdd_service]
                 },
                 #{
+                    id => damage_firecracker,
+                    start => {damage_firecracker, start_link, []},
+                    restart => permanent,
+                    shutdown => 15000,
+                    type => worker,
+                    modules => [damage_firecracker]
+                },
+                #{
                     id => damage_schedule_v2,
                     start => {damage_schedule_v2, start_link, []},
                     restart => permanent,

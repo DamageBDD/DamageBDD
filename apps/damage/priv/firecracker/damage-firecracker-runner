@@ -1,0 +1,424 @@
+#!/usr/bin/python3 -I
+"""Privileged, single-job broker. Install root-owned; policy is never stdin/argv.
+
+stdin stays open until the job completes. EOF cancels it. stdout is one bounded
+JSON response. Workload bytes go only to a guest via vsock, never a host shell.
+"""
+import base64
+import binascii
+import fcntl
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import re
+import select
+import shutil
+import signal
+import socket
+import stat
+import struct
+import subprocess
+import sys
+import time
+import uuid
+
+CONFIG = Path('/etc/damage/firecracker.json')
+STATE = Path('/run/damage-firecracker')
+JAILS = Path('/srv/damage-firecracker')
+SYSTEMD_RUN = '/usr/bin/systemd-run'
+SYSTEMCTL = '/usr/bin/systemctl'
+SAFE_ENV = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C'}
+MAX_SCRIPT = 65536
+MAX_REQUEST = 90000
+MAX_OUTPUT = 1048576
+NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z')
+
+
+class Failure(Exception):
+    pass
+
+
+def integer(value, low, high):
+    if type(value) is not int or not low <= value <= high:
+        raise Failure('invalid_config')
+    return value
+
+
+def trusted_path(path, directory=False):
+    """Require absolute paths and root-owned, non-writable, non-symlink ancestry."""
+    p = Path(path)
+    if not p.is_absolute() or '..' in p.parts:
+        raise Failure('unsafe_path')
+    for item in [*reversed(p.parents), p]:
+        info = item.lstat()
+        if info.st_uid != 0 or info.st_mode & 0o022 or stat.S_ISLNK(info.st_mode):
+            raise Failure('unsafe_path')
+        if item != p and not stat.S_ISDIR(info.st_mode):
+            raise Failure('unsafe_path')
+    expected = stat.S_ISDIR if directory else stat.S_ISREG
+    if not expected(p.stat().st_mode):
+        raise Failure('unsafe_path')
+    return p
+
+
+def private_directory(path):
+    trusted_path(path.parent, directory=True)
+    path.mkdir(mode=0o700, exist_ok=True)
+    trusted_path(path, directory=True)
+    if path.stat().st_mode & 0o077:
+        raise Failure('unsafe_directory_mode')
+
+
+def load_policy():
+    p = trusted_path(CONFIG)
+    if p.stat().st_size > 65536:
+        raise Failure('invalid_config')
+    config = json.loads(p.read_text())
+    if not isinstance(config, dict) or config.get('version') != 1:
+        raise Failure('invalid_config')
+    if config.get('enabled') is not True:
+        raise Failure('disabled')
+    config['max_jobs'] = integer(config.get('max_jobs', 2), 1, 32)
+    config['uid_base'] = integer(config['uid_base'], 1000, 60000)
+    # A distinct UID/GID for each concurrent VM. Reserve the range on the host.
+    config['gid_base'] = integer(config['gid_base'], 1000, 60000)
+    for key in ('jailer', 'firecracker'):
+        config[key] = str(trusted_path(config[key]))
+        if not os.access(config[key], os.X_OK):
+            raise Failure('not_executable')
+    if Path(config['firecracker']).name != 'firecracker':
+        raise Failure('firecracker_basename_must_be_firecracker')
+    if not isinstance(config.get('profiles'), dict):
+        raise Failure('invalid_config')
+    return config
+
+
+def validate_request(request, policy):
+    if not isinstance(request, dict) or set(request) != {
+        'version', 'profile', 'script_b64', 'timeout_ms'
+    } or type(request['version']) is not int or request['version'] != 1:
+        raise Failure('invalid_request')
+    name = request['profile']
+    if not isinstance(name, str) or not NAME.fullmatch(name):
+        raise Failure('invalid_profile')
+    if name not in policy['profiles']:
+        raise Failure('unknown_profile')
+    profile = dict(policy['profiles'][name])
+    profile['vcpu_count'] = integer(profile.get('vcpu_count', 1), 1, 32)
+    profile['mem_size_mib'] = integer(profile.get('mem_size_mib', 256), 128, 32768)
+    profile['timeout_ms'] = integer(profile.get('timeout_ms', 60000), 1000, 3600000)
+    profile['max_output_bytes'] = integer(profile.get('max_output_bytes', 65536), 1, MAX_OUTPUT)
+    profile['max_image_bytes'] = integer(profile.get('max_image_bytes', 4294967296), 1, 68719476736)
+    timeout = request['timeout_ms']
+    if type(timeout) is not int or not 1000 <= timeout <= profile['timeout_ms']:
+        raise Failure('invalid_timeout')
+    encoded = request['script_b64']
+    if not isinstance(encoded, str) or len(encoded) > 4 * ((MAX_SCRIPT + 2) // 3):
+        raise Failure('invalid_script')
+    try:
+        script = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error):
+        raise Failure('invalid_script') from None
+    if not 0 < len(script) <= MAX_SCRIPT or b'\0' in script:
+        raise Failure('invalid_script')
+    for key in ('kernel', 'rootfs'):
+        profile[key] = str(trusted_path(profile[key]))
+        digest = profile.get(key + '_sha256')
+        if not isinstance(digest, str) or not re.fullmatch('[0-9a-f]{64}', digest):
+            raise Failure('invalid_image_digest')
+    return name, profile, script, timeout
+
+
+class Guard:
+    def __init__(self, seconds, fd=0):
+        self.deadline = time.monotonic() + seconds
+        self.fd = fd
+
+    def wait(self, readers=(), writers=(), delay=0.1):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise Failure('timeout')
+        r, w, _ = select.select([self.fd, *readers], list(writers), [], min(delay, remaining))
+        if self.fd in r:
+            # No further bytes are allowed after the one request line.
+            raise Failure('cancelled' if os.read(self.fd, 1) == b'' else 'unexpected_input')
+        return r, w
+
+    def check(self):
+        self.wait(delay=0)
+
+
+def read_request(fd=0):
+    deadline = time.monotonic() + 10
+    data = bytearray()
+    while b'\n' not in data:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0 or not select.select([fd], [], [], remaining)[0]:
+            raise Failure('request_timeout')
+        block = os.read(fd, 4096)
+        if not block:
+            raise Failure('cancelled')
+        data.extend(block)
+        if len(data) > MAX_REQUEST:
+            raise Failure('request_too_large')
+    line, tail = data.split(b'\n', 1)
+    if tail:
+        raise Failure('unexpected_input')
+    return json.loads(line)
+
+
+class Slot:
+    def __init__(self, count):
+        self.file = None
+        for index in range(count):
+            path = STATE / ('slot-%d' % index)
+            fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+            stream = os.fdopen(fd, 'r+b', buffering=0)
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                stream.close()
+                continue
+            # Nonempty records are quarantined after crash/failed cleanup. Never
+            # reuse their UID or delete their jail automatically.
+            if stream.read(1):
+                stream.close()
+                continue
+            self.file, self.index = stream, index
+            return
+        raise Failure('busy_or_quarantined')
+
+    def record(self, vm_id, unit):
+        self.file.write(json.dumps({'vm_id': vm_id, 'unit': unit}).encode())
+        os.fsync(self.file.fileno())
+
+    def release(self, clean):
+        if clean:
+            self.file.truncate(0)
+            os.fsync(self.file.fileno())
+        self.file.close()
+
+
+def copy_verified(source, target, expected, maximum, guard):
+    # Only root can change source ancestry. O_NOFOLLOW also excludes final links.
+    fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+    digest, size = hashlib.sha256(), 0
+    with os.fdopen(fd, 'rb') as src, target.open('xb') as dst:
+        while True:
+            guard.check()
+            block = src.read(1024 * 1024)
+            if not block:
+                break
+            size += len(block)
+            if size > maximum:
+                raise Failure('image_too_large')
+            digest.update(block)
+            dst.write(block)
+    if size == 0 or digest.hexdigest() != expected:
+        raise Failure('image_digest_mismatch')
+    target.chmod(0o444)
+
+
+def vm_configuration(profile):
+    return {
+        'boot-source': {'kernel_image_path': '/kernel',
+                        'boot_args': 'console=ttyS0 reboot=k panic=1 pci=off ro root=/dev/vda init=/sbin/damage-init'},
+        'drives': [{'drive_id': 'rootfs', 'path_on_host': '/rootfs.ext4',
+                    'is_root_device': True, 'is_read_only': True}],
+        'machine-config': {'vcpu_count': profile['vcpu_count'],
+                           'mem_size_mib': profile['mem_size_mib'], 'smt': False},
+        'vsock': {'guest_cid': 3, 'uds_path': '/guest.vsock'}
+        # Deliberately no NIC, MMDS, host mount or snapshot restoration.
+    }
+
+
+def launch_command(policy, profile, slot, vm_id, unit, seconds):
+    return [SYSTEMD_RUN, '--quiet', '--wait', '--pipe', '--collect',
+            '--service-type=exec', '--unit=' + unit,
+            '--property=RuntimeMaxSec=' + str(max(1, math.ceil(seconds))),
+            '--property=TimeoutStartSec=10s', '--property=TimeoutStopSec=2s',
+            '--property=KillMode=control-group', '--property=SendSIGKILL=yes',
+            '--property=MemoryMax=' + str((profile['mem_size_mib'] + 256) * 1048576),
+            '--property=MemorySwapMax=0', '--property=TasksMax=128',
+            '--property=CPUQuota=' + str(profile['vcpu_count'] * 100) + '%',
+            '--property=PrivateNetwork=yes', '--property=UMask=0077',
+            '--property=StandardOutput=null', '--property=StandardError=null',
+            '--', policy['jailer'], '--id', vm_id, '--exec-file', policy['firecracker'],
+            '--uid', str(policy['uid_base'] + slot.index),
+            '--gid', str(policy['gid_base'] + slot.index),
+            '--chroot-base-dir', str(JAILS), '--cgroup-version', '2',
+            '--resource-limit', 'no-file=128', '--',
+            '--no-api', '--config-file', '/vm.json']
+
+
+def connect_guest(path, guard, process):
+    while True:
+        guard.check()
+        if process.poll() is not None:
+            raise Failure('vm_exited_before_guest_ready')
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(0.2)
+        try:
+            sock.connect(str(path))
+            sock.setblocking(False)
+            send_all(sock, b'CONNECT 19000\n', guard)
+            ack = bytearray()
+            while not ack.endswith(b'\n') and len(ack) < 64:
+                ack.extend(receive_exact(sock, 1, guard))
+            if not re.fullmatch(rb'OK [0-9]+\n', ack):
+                raise Failure('invalid_vsock_handshake')
+            return sock
+        except (OSError, Failure) as error:
+            sock.close()
+            if isinstance(error, Failure) and str(error) in ('timeout', 'cancelled', 'unexpected_input'):
+                raise
+            guard.wait(delay=0.05)
+
+
+def send_all(sock, data, guard):
+    pending = memoryview(data)
+    while pending:
+        _, ready = guard.wait(writers=[sock])
+        if ready:
+            try:
+                count = sock.send(pending)
+            except BlockingIOError:
+                continue
+            if count == 0:
+                raise Failure('guest_disconnected')
+            pending = pending[count:]
+
+
+def receive_exact(sock, size, guard):
+    data = bytearray()
+    while len(data) < size:
+        ready, _ = guard.wait(readers=[sock])
+        if ready:
+            try:
+                block = sock.recv(min(65536, size - len(data)))
+            except BlockingIOError:
+                continue
+            if not block:
+                raise Failure('guest_disconnected')
+            data.extend(block)
+    return bytes(data)
+
+
+def exchange(sock, script, max_output, guard):
+    send_all(sock, struct.pack('!4sII', b'DFC1', len(script), max_output) + script, guard)
+    magic, code, truncated, length = struct.unpack('!4sIII', receive_exact(sock, 16, guard))
+    if magic != b'DFR1' or code > 255 or truncated not in (0, 1) or length > max_output:
+        raise Failure('invalid_guest_response')
+    return code, bool(truncated), receive_exact(sock, length, guard)
+
+
+def unit_inactive(unit):
+    result = subprocess.run([SYSTEMCTL, 'show', unit, '--property=ActiveState', '--property=LoadState'],
+                            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            timeout=2, env=SAFE_ENV, check=False)
+    values = dict(line.split(b'=', 1) for line in result.stdout.splitlines() if b'=' in line)
+    return (result.returncode in (0, 1) and
+            (values.get(b'LoadState') == b'not-found' or
+             values.get(b'ActiveState') in (b'inactive', b'failed')))
+
+
+def stop_unit(unit, process):
+    # Account for cancellation racing systemd-run's StartTransientUnit request.
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        try:
+            subprocess.run([SYSTEMCTL, 'stop', unit], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=3, env=SAFE_ENV, check=False)
+            if process.poll() is not None and unit_inactive(unit):
+                return True
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        time.sleep(0.05)
+    # Keep the on-disk record and jail; the slot remains quarantined. A failed
+    # stop is never reported as success. RuntimeMaxSec independently bounds VM.
+    return False
+
+
+def execute(request, policy):
+    name, profile, script, timeout = validate_request(request, policy)
+    guard = Guard(timeout / 1000)
+    started = time.monotonic()
+    private_directory(STATE)
+    private_directory(JAILS)
+    if not Path('/sys/fs/cgroup/cgroup.controllers').is_file():
+        raise Failure('cgroup_v2_required')
+    with open('/dev/kvm', 'rb+', buffering=0):
+        pass
+    slot = Slot(policy['max_jobs'])
+    vm_id = 'dmg-' + uuid.uuid4().hex
+    unit = 'damage-fc-' + vm_id + '.service'
+    parent = JAILS / 'firecracker'
+    jail = parent / vm_id
+    root = jail / 'root'
+    process = None
+    clean = True
+    try:
+        slot.record(vm_id, unit)
+        # Parent remains root-only, even though jailer chowns the jail root.
+        private_directory(parent)
+        jail.mkdir(mode=0o700)
+        root.mkdir(mode=0o700)
+        for key, filename in (('kernel', 'kernel'), ('rootfs', 'rootfs.ext4')):
+            copy_verified(profile[key], root / filename, profile[key + '_sha256'],
+                          profile['max_image_bytes'], guard)
+        (root / 'vm.json').write_text(json.dumps(vm_configuration(profile)))
+        (root / 'vm.json').chmod(0o444)
+        guard.check()
+        command = launch_command(policy, profile, slot, vm_id, unit, guard.deadline - time.monotonic())
+        process = subprocess.Popen(command, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   env=SAFE_ENV, start_new_session=True,
+                                   pass_fds=(slot.file.fileno(),))
+        with connect_guest(root / 'guest.vsock', guard, process) as sock:
+            code, truncated, output = exchange(sock, script, profile['max_output_bytes'], guard)
+        result = {'version': 1, 'ok': True, 'vm_id': vm_id, 'profile': name,
+                  'exit_code': code, 'output_b64': base64.b64encode(output).decode('ascii'),
+                  'output_truncated': truncated, 'kernel_sha256': profile['kernel_sha256'],
+                  'rootfs_sha256': profile['rootfs_sha256'],
+                  'duration_ms': int((time.monotonic() - started) * 1000)}
+    finally:
+        if process is not None:
+            clean = stop_unit(unit, process)
+        if clean:
+            try:
+                # No mounts are made in the host namespace. rmtree does not
+                # follow symlinks; refuse platforms without fd-safe deletion.
+                if not shutil.rmtree.avoids_symlink_attacks:
+                    raise Failure('safe_cleanup_unavailable')
+                if jail.exists():
+                    shutil.rmtree(jail)
+            except (OSError, Failure):
+                clean = False
+        slot.release(clean)
+        if not clean:
+            raise Failure('cleanup_failed_slot_quarantined')
+    return result
+
+
+def main():
+    try:
+        if len(sys.argv) != 1 or os.geteuid() != 0:
+            raise Failure('root_launcher_required')
+        os.umask(0o077)
+        signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(Failure('cancelled')))
+        # Validate binary/config ownership before accepting work.
+        policy = load_policy()
+        result = execute(read_request(), policy)
+    except Failure as error:
+        result = {'version': 1, 'ok': False, 'error': str(error)}
+    except (KeyError, TypeError, ValueError, OSError, subprocess.SubprocessError):
+        # No scripts, secrets, paths or stack traces in responses/logs.
+        result = {'version': 1, 'ok': False, 'error': 'host_configuration_or_io_error'}
+    sys.stdout.write(json.dumps(result, separators=(',', ':')) + '\n')
+    sys.stdout.flush()
+
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,11 @@
+#!/bin/sh
+# Guest-only PID 1, installed at /sbin/damage-init in the trusted rootfs.
+set -eu
+mount -t proc -o nosuid,nodev,noexec proc /proc
+mount -t sysfs -o nosuid,nodev,noexec sysfs /sys
+mount -t devtmpfs -o nosuid devtmpfs /dev
+mount -t tmpfs -o mode=1777,nosuid,nodev,size=64m tmpfs /tmp
+mount -t tmpfs -o mode=0755,nosuid,nodev,size=16m tmpfs /run
+mount -t tmpfs -o mode=0755,nosuid,nodev,size=64m tmpfs /work
+chown 1000:1000 /work
+exec /usr/local/sbin/damage-fc-agent
