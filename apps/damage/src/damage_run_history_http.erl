@@ -1,8 +1,8 @@
 %%% Public run-history directory and read-only AEMDW activity facade.
 %%% Never disclose key material or proxy arbitrary remote URLs.
-%%% Global discovery is a bounded *recent* middleware index; the deployed
-%%% NodeRegistry v2 has no global enumerable entrypoint. Owner lookup is complete
-%%% for that owner, and node lookup is authoritative for that node id.
+%%% Global discovery uses the canonical NodeRegistry v3 append-only node index.
+%%% Middleware transaction scanning remains a bounded fallback only.  Every node
+%%% surfaced by the directory is still verified with the authoritative get_node/1.
 -module(damage_run_history_http).
 
 -author("Steven Joseph <steven@damagebdd.com>").
@@ -28,7 +28,7 @@ trails() ->
                 get => #{
                     tags => ["Run history"],
                     description =>
-                        "Read public nodes from NodeRegistry by owner/node, or discover recent registrations.",
+                        "Read public nodes from the canonical NodeRegistry by owner/node, or discover globally indexed registrations.",
                     produces => ["application/json"]
                 }
             }
@@ -289,10 +289,32 @@ lookup_owner(Owner) ->
             bad_address()
     end.
 
-%% The contract is owner-scoped. Discover *recently registered* node ids from
-%% public middleware transaction arguments, then verify each via get_node/1.
-%% No unverified data is surfaced in the directory.
+%% Prefer the registry's deterministic global node index.  This is complete for
+%% the requested bounded tail and does not depend on middleware transaction
+%% retention.  Keep the transaction scan as an availability fallback.
 discover_nodes() ->
+    case registry_call(fun() -> damage_node_registry:recent_node_ids(?MAX_DISCOVERED) end) of
+        {ok, {ok, #{total := Total, node_ids := Ids}}} ->
+            Nodes = verified_nodes(Ids, undefined),
+            {200, #{
+                status => <<"ok">>,
+                source => <<"node_registry_index">>,
+                total => Total,
+                nodes => Nodes,
+                complete => Total =< ?MAX_DISCOVERED
+            }};
+        {ok, {error, Reason}} ->
+            ?LOG_WARNING("NodeRegistry indexed discovery unavailable: ~p", [Reason]),
+            discover_nodes_from_middleware();
+        {error, Reason} ->
+            ?LOG_WARNING("NodeRegistry indexed discovery failed: ~p", [Reason]),
+            discover_nodes_from_middleware();
+        Other ->
+            ?LOG_WARNING("Unexpected NodeRegistry indexed discovery result: ~p", [Other]),
+            discover_nodes_from_middleware()
+    end.
+
+discover_nodes_from_middleware() ->
     case fetch_registry_transactions() of
         {ok, Transactions} ->
             Ids = lists:usort(lists:append([register_ids(Row) || Row <- Transactions])),
@@ -300,12 +322,10 @@ discover_nodes() ->
             Nodes = verified_nodes(Limited, undefined),
             {200, #{
                 status => <<"ok">>,
-                source => <<"recent_registry_transactions">>,
+                source => <<"recent_registry_transactions_fallback">>,
                 scanned => length(Transactions),
                 nodes => Nodes,
-                complete => false,
-                note =>
-                    <<"Recent contract transactions only. Search by owner to list that owner's registered nodes.">>
+                complete => false
             }};
         {error, Reason} ->
             ?LOG_WARNING("Run history public registry discovery unavailable: ~p", [Reason]),
@@ -436,17 +456,36 @@ address_value(_) ->
 normalize_node(Map) when is_map(Map) ->
     Meta = value(meta, Map, #{}),
     Cfg = value(cfg, Map, #{}),
+    Status = integer(value(status, Map, 1), 1),
     #{
         owner => address_value(value(owner_account, Map, <<>>)),
         name => bin(value(name, Meta, <<>>)),
         endpoint => bin(value(endpoint, Meta, <<>>)),
         location => bin(value(location, Meta, <<>>)),
         version => bin(value(version, Meta, <<>>)),
-        enabled => boolean(value(enabled, Cfg, true))
+        profile_uri => bin(value(profile_uri, Meta, <<>>)),
+        capability_hash => bin(value(capability_hash, Meta, <<>>)),
+        release_hash => bin(value(release_hash, Meta, <<>>)),
+        max_conc => integer(value(max_conc, Cfg, 0), 0),
+        protocol_min => integer(value(protocol_min, Cfg, 0), 0),
+        protocol_max => integer(value(protocol_max, Cfg, 0), 0),
+        pricing_hash => bin(value(pricing_hash, Cfg, <<>>)),
+        status => Status,
+        enabled => Status =:= 1
     };
 normalize_node({record, Values}) ->
     normalize_node(Values);
+normalize_node([Owner, RegisteredAt, UpdatedAt, Status, Meta, Cfg | _]) ->
+    normalize_node(#{
+        owner_account => Owner,
+        registered_at => untype(RegisteredAt),
+        updated_at => untype(UpdatedAt),
+        status => untype(Status),
+        meta => record_meta(Meta),
+        cfg => record_cfg_v3(Cfg)
+    });
 normalize_node([Owner, _RegisteredAt, Meta, Cfg | _]) ->
+    %% Defensive support for callers still decoding an older registry response.
     normalize_node(#{owner_account => Owner, meta => record_meta(Meta), cfg => record_cfg(Cfg)});
 normalize_node(_) ->
     %% A successful call is not by itself proof that an unknown variant is a
@@ -455,6 +494,16 @@ normalize_node(_) ->
 
 record_meta({record, Values}) ->
     record_meta(Values);
+record_meta([Name, Endpoint, Location, Version, ProfileUri, CapabilityHash, ReleaseHash | _]) ->
+    #{
+        name => untype(Name),
+        endpoint => untype(Endpoint),
+        location => untype(Location),
+        version => untype(Version),
+        profile_uri => untype(ProfileUri),
+        capability_hash => untype(CapabilityHash),
+        release_hash => untype(ReleaseHash)
+    };
 record_meta([Name, Endpoint, Location, Version, _Notes | _]) ->
     #{
         name => untype(Name),
@@ -465,6 +514,17 @@ record_meta([Name, Endpoint, Location, Version, _Notes | _]) ->
 record_meta(M) when is_map(M) -> M;
 record_meta(_) ->
     #{}.
+
+record_cfg_v3({record, Values}) -> record_cfg_v3(Values);
+record_cfg_v3([MaxConc, ProtocolMin, ProtocolMax, PricingHash | _]) ->
+    #{
+        max_conc => untype(MaxConc),
+        protocol_min => untype(ProtocolMin),
+        protocol_max => untype(ProtocolMax),
+        pricing_hash => untype(PricingHash)
+    };
+record_cfg_v3(M) when is_map(M) -> M;
+record_cfg_v3(_) -> #{}.
 
 record_cfg({record, Values}) -> record_cfg(Values);
 record_cfg([Enabled | _]) -> #{enabled => untype(Enabled)};
@@ -491,6 +551,12 @@ bin(V) when is_binary(V) -> V;
 bin(V) when is_list(V) -> unicode:characters_to_binary(V);
 bin({_, Value}) -> bin(Value);
 bin(_) -> <<>>.
+
+integer(V, _Default) when is_integer(V) -> V;
+integer({_, V}, Default) -> integer(V, Default);
+integer(V, Default) when is_binary(V) ->
+    try binary_to_integer(V) catch _:_ -> Default end;
+integer(_, Default) -> Default.
 
 boolean(false) -> false;
 boolean(<<"false">>) -> false;

@@ -128,7 +128,12 @@ normalize_contract_source(Source, Key, CtId0) ->
     end.
 
 normalize_ct(<<"ct_", _/binary>> = Ct) -> Ct;
-normalize_ct(Ct) when is_list(Ct) -> list_to_binary(Ct);
+normalize_ct(Ct) when is_list(Ct) ->
+    try unicode:characters_to_binary(Ct) of
+        Bin when is_binary(Bin) -> Bin
+    catch
+        _:_ -> invalid
+    end;
 normalize_ct(Ct) when is_binary(Ct) -> Ct;
 normalize_ct(_) -> invalid.
 
@@ -146,34 +151,79 @@ persist_ct(Key, CtId0) ->
             Error
     end.
 
+%% NodeRegistry is a network-global contract, not per-node infrastructure.
+%% Normal nodes MUST resolve the canonical contract from explicit/network-scoped
+%% configuration and fail closed when it is absent. Only a deliberately marked
+%% genesis/bootstrap node may deploy a registry.
 ensure_node_registry() ->
-    case local_contract_candidate(<<"node_registry">>, node_registry_ct) of
+    case damage_node_registry:resolve_contract_id() of
         {ok, CtId} ->
-            activate_node_registry(CtId);
+            activate_node_registry(CtId, configured);
         missing ->
-            try damage_node_registry:deploy_node_registry() of
-                <<"ct_", _/binary>> = CtId -> activate_node_registry(CtId);
-                Other -> {error, {invalid_deployed_contract_id, <<"node_registry">>, Other}}
-            catch
-                Class:Reason:Stacktrace ->
-                    ?LOG_ERROR(
-                        "Node registry deployment failed class=~p reason=~p stack=~p",
-                        [Class, Reason, Stacktrace]
-                    ),
-                    {error, {node_registry_deploy_failed, Class, Reason}}
+            case node_registry_bootstrap_enabled() of
+                true -> ensure_bootstrap_node_registry();
+                false -> {error, {node_registry_not_configured, damage_network_id()}}
             end;
         {error, _} = Error ->
             Error
     end.
 
-activate_node_registry(CtId) ->
-    case ensure_local_contract_sources(<<"node_registry">>, node_registry_ct, CtId) of
-        ok ->
-            ok = damage_node_registry:set_contract(CtId),
-            {ok, CtId};
+ensure_bootstrap_node_registry() ->
+    case contract_secret_status(node_registry_ct) of
+        {ok, CtId} ->
+            activate_node_registry(CtId, bootstrap_pin);
+        missing ->
+            deploy_bootstrap_node_registry();
         {error, _} = Error ->
             Error
     end.
+
+deploy_bootstrap_node_registry() ->
+    try damage_node_registry:deploy_node_registry() of
+        {error, _} = Error ->
+            Error;
+        CtId0 ->
+            case normalize_ct(CtId0) of
+                <<"ct_", _/binary>> = CtId ->
+                    case persist_ct(node_registry_ct, CtId) of
+                        ok -> activate_node_registry(CtId, bootstrap_pin);
+                        {error, _} = Error -> Error
+                    end;
+                _ ->
+                    {error, {invalid_deployed_contract_id, <<"node_registry">>, CtId0}}
+            end
+    catch
+        Class:Reason:Stacktrace ->
+            ?LOG_ERROR(
+                "Node registry deployment failed class=~p reason=~p stack=~p",
+                [Class, Reason, Stacktrace]
+            ),
+            {error, {node_registry_deploy_failed, Class, Reason}}
+    end.
+
+activate_node_registry(CtId, Source) ->
+    case damage_node_registry:validate_contract(CtId) of
+        {ok, Identity} ->
+            case damage_node_registry:set_contract(CtId) of
+                ok ->
+                    ?LOG_INFO(
+                        "Canonical NodeRegistry activated source=~p identity=~p",
+                        [Source, Identity]
+                    ),
+                    {ok, CtId};
+                {error, _} = Error ->
+                    Error
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+node_registry_bootstrap_enabled() ->
+    application:get_env(damage, node_registry_bootstrap, false) =:= true.
+
+damage_network_id() ->
+    try unicode:characters_to_binary(vanillae:network_id())
+    catch _:_ -> <<"unknown">> end.
 
 %% The schedule vault is node infrastructure, not a per-user contract.
 %% Bootstrap it from the same node contract path as NodeRegistry so normal
@@ -629,15 +679,22 @@ validate_contract(KeyPair, CtId, Validator) when is_function(Validator, 2) ->
 
 deploy_and_activate_contract(KeyPair, RegistryCt, NameBin, EnvKey, DeployFun, Validator) ->
     try DeployFun(KeyPair) of
-        <<"ct_", _/binary>> = CtId ->
-            case validate_deployed_contract(KeyPair, CtId, Validator) of
-                true ->
-                    register_and_activate_contract(KeyPair, RegistryCt, NameBin, EnvKey, CtId);
-                false ->
-                    {error, {deployed_contract_validation_failed, NameBin, CtId}}
-            end;
-        Other ->
-            {error, {invalid_deployed_contract_id, NameBin, Other}}
+        {error, _} = Error ->
+            Error;
+        CtId0 ->
+            case normalize_ct(CtId0) of
+                <<"ct_", _/binary>> = CtId ->
+                    case validate_deployed_contract(KeyPair, CtId, Validator) of
+                        true ->
+                            register_and_activate_contract(
+                                KeyPair, RegistryCt, NameBin, EnvKey, CtId
+                            );
+                        false ->
+                            {error, {deployed_contract_validation_failed, NameBin, CtId}}
+                    end;
+                _ ->
+                    {error, {invalid_deployed_contract_id, NameBin, CtId0}}
+            end
     catch
         Class:Reason:Stacktrace ->
             ?LOG_ERROR(

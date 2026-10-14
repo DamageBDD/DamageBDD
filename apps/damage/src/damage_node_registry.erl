@@ -1,31 +1,11 @@
 %% -------------------------------------------------------------------
 %% damage_node_registry.erl
 %%
-%% Erlang interface for NodeRegistry (Sophia @compiler >= 6).
-%% Mirrors the style of identity_server: gen_server + ETS cache +
-%% damage_ae:contract_call wrappers.
+%% Client for the canonical Damage network NodeRegistry v3.
 %%
-%% Expected Sophia entrypoints (from your NodeRegistry v2):
-%%   - register_account(account, registry, tier) : bool
-%%   - get_user_info(account) : user_info
-%%   - is_registered(account) : bool
-%%   - get_registry(account) : address
-%%   - update_tier(account, tier) : bool
-%%   - register_node(owner_account, node_id, meta, cfg) : bool
-%%   - get_node(node_id) : node_info
-%%   - get_node_owner(node_id) : address
-%%   - is_node_registered(node_id) : bool
-%%   - get_nodes_for(account) : list(address)
-%%   - update_node_meta(node_id, meta) : bool
-%%   - update_node_cfg(node_id, cfg) : bool
-%%   - reassign_node(node_id, new_owner_account) : bool
-%%   - set_node_enabled(node_id, enabled) : bool
-%%
-%% NOTE:
-%% - This module assumes you have:
-%%     * damage_ae:contract_call/[4,5,6] similar to your identity_server usage
-%%     * secrets:node_keypair/0 for signed stateful calls
-%%     * ?NODE_REGISTRY_CONTRACT macro in damage.hrl (or set_contract/1 API below)
+%% The registry is global per Aeternity network.  Durable node identity,
+%% routing, compatibility and policy anchors live on-chain; high-frequency
+%% liveness/load telemetry stays off-chain and is signed by the node key.
 %% -------------------------------------------------------------------
 
 -module(damage_node_registry).
@@ -38,11 +18,19 @@
     start_link/0,
     set_contract/1,
     contract_id/0,
+    resolve_contract_id/0,
+    validate_contract/1,
+    network_info/0,
+    node_count/0,
+    get_node_at/1,
+    recent_node_ids/1,
     clear_cache/0,
     clear_cache/1,
 
-    %% account-level
+    %% operator/account-level
     register_account/3,
+    register_operator/1,
+    set_operator_active/2,
     get_user_info/1,
     is_registered/1,
     get_registry/1,
@@ -51,6 +39,7 @@
 
     %% node-level
     register_node/4,
+    register_self/3,
     get_node/1,
     get_node_owner/1,
     is_node_registered/1,
@@ -59,7 +48,13 @@
     update_node_cfg/2,
     reassign_node/2,
     set_node_enabled/2,
+    set_node_status/2,
 
+    %% governance / explicit genesis tooling
+    set_registry_paused/1,
+    set_protocol_version/1,
+    set_successor/1,
+    set_governance/1,
     deploy_node_registry/0,
     deploy_node_registry/1,
 
@@ -71,9 +66,6 @@
     %% test helpers
     test/0
 ]).
--define(NODE_REGISTRY_CONTRACT,
-    "ct_KxoBnfbSvhy3c2384VMS2j99YKuqtUihAMSsk6TekjqnZeNEQ"
-).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, terminate/2]).
@@ -82,6 +74,8 @@
 -include_lib("damage.hrl").
 
 -define(DEFAULT_CONTRACT_PATH, "node_registry.aes").
+-define(REGISTRY_VERSION, 3).
+-define(DEFAULT_PROTOCOL_VERSION, 1).
 -define(ETS_TABLE, node_registry_cache).
 -define(DEFAULT_TTL_MS, 30_000).
 
@@ -106,6 +100,29 @@ set_contract(ContractId) when is_binary(ContractId); is_list(ContractId) ->
 contract_id() ->
     gen_server:call(?MODULE, get_contract_id).
 
+%% Resolve the canonical contract from explicit node config or the
+%% network-scoped contract table.  There is intentionally no compiled-in
+%% contract id: a wrong default partitions the network.
+resolve_contract_id() ->
+    case application:get_env(damage, node_registry_ct) of
+        {ok, CtId0} ->
+            normalize_contract_id(CtId0);
+        undefined ->
+            resolve_network_contract()
+    end.
+
+network_info() ->
+    gen_server:call(?MODULE, network_info, ?AE_TIMEOUT).
+
+node_count() ->
+    gen_server:call(?MODULE, node_count, ?AE_TIMEOUT).
+
+get_node_at(Index) when is_integer(Index), Index >= 0 ->
+    gen_server:call(?MODULE, {get_node_at, Index}, ?AE_TIMEOUT).
+
+recent_node_ids(Limit) when is_integer(Limit), Limit > 0 ->
+    gen_server:call(?MODULE, {recent_node_ids, Limit}, ?AE_TIMEOUT).
+
 clear_cache() ->
     gen_server:call(?MODULE, clear_cache).
 
@@ -114,6 +131,12 @@ clear_cache(Key) ->
 
 register_account(Account, Registry, Tier) ->
     gen_server:call(?MODULE, {register_account, Account, Registry, Tier}, ?AE_TIMEOUT).
+
+register_operator(Registry) ->
+    gen_server:call(?MODULE, {register_operator, Registry}, ?AE_TIMEOUT).
+
+set_operator_active(Account, Active) when is_boolean(Active) ->
+    gen_server:call(?MODULE, {set_operator_active, Account, Active}, ?AE_TIMEOUT).
 
 get_user_info(Account) ->
     gen_server:call(?MODULE, {get_user_info, Account}, ?AE_TIMEOUT).
@@ -131,10 +154,14 @@ update_registry(Account, RegistryCt) ->
 
 %% -------- Node-level
 
-%% MetaMap keys: name, endpoint, location, version, notes
-%% CfgMap  keys: enabled, max_conc, pricing_tier, cfg_json
+%% MetaMap keys: name, endpoint, location, version, profile_uri,
+%%               capability_hash, release_hash
+%% CfgMap  keys: max_conc, protocol_min, protocol_max, pricing_hash
 register_node(OwnerAccount, NodeId, MetaMap, CfgMap) ->
     gen_server:call(?MODULE, {register_node, OwnerAccount, NodeId, MetaMap, CfgMap}, ?AE_TIMEOUT).
+
+register_self(OwnerAccount, MetaMap, CfgMap) ->
+    gen_server:call(?MODULE, {register_self, OwnerAccount, MetaMap, CfgMap}, ?AE_TIMEOUT).
 
 get_node(NodeId) ->
     gen_server:call(?MODULE, {get_node, NodeId}, ?AE_TIMEOUT).
@@ -159,6 +186,21 @@ reassign_node(NodeId, NewOwnerAccount) ->
 
 set_node_enabled(NodeId, Enabled) when is_boolean(Enabled) ->
     gen_server:call(?MODULE, {set_node_enabled, NodeId, Enabled}, ?AE_TIMEOUT).
+
+set_node_status(NodeId, Status) when is_integer(Status), Status >= 0, Status =< 4 ->
+    gen_server:call(?MODULE, {set_node_status, NodeId, Status}, ?AE_TIMEOUT).
+
+set_registry_paused(Paused) when is_boolean(Paused) ->
+    gen_server:call(?MODULE, {set_registry_paused, Paused}, ?AE_TIMEOUT).
+
+set_protocol_version(Version) when is_integer(Version), Version >= 0 ->
+    gen_server:call(?MODULE, {set_protocol_version, Version}, ?AE_TIMEOUT).
+
+set_successor(CtId) ->
+    gen_server:call(?MODULE, {set_successor, CtId}, ?AE_TIMEOUT).
+
+set_governance(Account) ->
+    gen_server:call(?MODULE, {set_governance, Account}, ?AE_TIMEOUT).
 
 %% Ensure this AE account has an AccountRegistry deployed (and recorded in NodeRegistry).
 %% Returns {ok, RegistryCt} where RegistryCt is <<"ct_...">>.
@@ -296,15 +338,34 @@ contract_call_ok(_) -> false.
 
 init([]) ->
     Tab = ets:new(?ETS_TABLE, [named_table, set, private]),
-    {ok, #state{ets_table = Tab, contract_id = ?NODE_REGISTRY_CONTRACT}}.
+    ContractId =
+        case resolve_contract_id() of
+            {ok, CtId} -> CtId;
+            _ -> undefined
+        end,
+    TtlMs = positive_env(node_registry_cache_ttl_ms, ?DEFAULT_TTL_MS),
+    {ok, #state{ets_table = Tab, contract_id = ContractId, ttl_ms = TtlMs}}.
 
 handle_call(get_contract_id, _From, #state{contract_id = ContractId} = State) ->
     {reply, ContractId, State};
 handle_call({set_contract, ContractId0}, _From, State) ->
-    ContractId = to_bin(ContractId0),
-    erlang:put(node_registry_contract_id, ContractId),
-    ets:delete_all_objects(State#state.ets_table),
-    {reply, ok, State#state{contract_id = ContractId}};
+    case normalize_contract_id(ContractId0) of
+        {ok, ContractId} ->
+            erlang:put(node_registry_contract_id, ContractId),
+            ets:delete_all_objects(State#state.ets_table),
+            {reply, ok, State#state{contract_id = ContractId}};
+        {error, _} = Error ->
+            {reply, Error, State}
+    end;
+handle_call(network_info, _From, State) ->
+    {reply, read_network_info(State), State};
+handle_call(node_count, _From, State) ->
+    {reply, read_node_count(State), State};
+handle_call({get_node_at, Index}, _From, State) ->
+    {reply, read_node_at(State, Index), State};
+handle_call({recent_node_ids, Limit0}, _From, State) ->
+    Limit = erlang:min(Limit0, 256),
+    {reply, read_recent_node_ids(State, Limit), State};
 handle_call(clear_cache, _From, State) ->
     ets:delete_all_objects(State#state.ets_table),
     {reply, ok, State};
@@ -335,6 +396,20 @@ handle_call({register_account, Account0, Registry0, Tier0}, _From, State) ->
     of
         {error, _} = Error ->
             {reply, Error, State};
+        Resp ->
+            invalidate_account(State, Account),
+            {reply, Resp, State}
+    end;
+handle_call({register_operator, Registry0}, _From, State) ->
+    Registry = to_bin(Registry0),
+    case contract_call_with_node_keypair(State, "register_operator", [Registry]) of
+        {error, _} = Error -> {reply, Error, State};
+        Resp -> {reply, Resp, State}
+    end;
+handle_call({set_operator_active, Account0, Active}, _From, State) ->
+    Account = to_bin(Account0),
+    case contract_call_with_node_keypair(State, "set_operator_active", [Account, Active]) of
+        {error, _} = Error -> {reply, Error, State};
         Resp ->
             invalidate_account(State, Account),
             {reply, Resp, State}
@@ -377,6 +452,21 @@ handle_call({get_registry, Account0}, _From, State) ->
 %% Node-level writes
 %% -------------------------
 
+handle_call({register_self, Owner0, MetaMap0, CfgMap0}, _From, State) ->
+    Owner = to_bin(Owner0),
+    MetaRec = meta_map_to_record(MetaMap0),
+    CfgRec = cfg_map_to_record(CfgMap0),
+    case node_keypair() of
+        {ok, #{public_key := NodeId} = KeyPair} ->
+            Resp = contract_call_with_keypair(
+                KeyPair, State, "register_node", [Owner, NodeId, MetaRec, CfgRec]
+            ),
+            invalidate_node(State, NodeId),
+            invalidate_account(State, Owner),
+            {reply, Resp, State};
+        {error, _} = Error ->
+            {reply, Error, State}
+    end;
 handle_call({register_node, Owner0, NodeId0, MetaMap0, CfgMap0}, _From, State) ->
     Owner = to_bin(Owner0),
     NodeId = to_bin(NodeId0),
@@ -450,6 +540,24 @@ handle_call({set_node_enabled, NodeId0, Enabled}, _From, State) ->
             invalidate_node(State, NodeId),
             {reply, Resp, State}
     end;
+handle_call({set_node_status, NodeId0, Status}, _From, State) ->
+    NodeId = to_bin(NodeId0),
+    case contract_call_with_node_keypair(State, "set_node_status", [NodeId, Status]) of
+        {error, _} = Error -> {reply, Error, State};
+        Resp ->
+            invalidate_node(State, NodeId),
+            {reply, Resp, State}
+    end;
+handle_call({set_registry_paused, Paused}, _From, State) ->
+    {reply, contract_call_with_node_keypair(State, "set_paused", [Paused]), State};
+handle_call({set_protocol_version, Version}, _From, State) ->
+    {reply, contract_call_with_node_keypair(State, "set_protocol_version", [Version]), State};
+handle_call({set_successor, CtId0}, _From, State) ->
+    CtId = to_bin(CtId0),
+    {reply, contract_call_with_node_keypair(State, "set_successor", [CtId]), State};
+handle_call({set_governance, Account0}, _From, State) ->
+    Account = to_bin(Account0),
+    {reply, contract_call_with_node_keypair(State, "set_governance", [Account]), State};
 %% -------------------------
 %% Node-level reads
 %% -------------------------
@@ -492,14 +600,16 @@ test() ->
         endpoint => <<"https://runner1.damagebdd.com">>,
         location => <<"AU-SYD">>,
         version => <<"1.0.0">>,
-        notes => <<"poolboy worker nodes">>
+        profile_uri => <<"ipfs://bafy...">>,
+        capability_hash => <<"sha256:capabilities">>,
+        release_hash => <<"sha256:release">>
     },
 
     Cfg = #{
-        enabled => true,
         max_conc => 64,
-        pricing_tier => <<"market">>,
-        cfg_json => <<"{\"tags\":[\"http\",\"selenium\"],\"limits\":{\"cpu\":8}}">>
+        protocol_min => 1,
+        protocol_max => 1,
+        pricing_hash => <<"sha256:pricing">>
     },
 
     ?LOG_INFO("register_node -> ~p", [register_node(Owner, NodeId, Meta, Cfg)]),
@@ -511,11 +621,44 @@ test() ->
 %%% =========================
 
 require_contract(#state{contract_id = undefined}) ->
-    error(
-        {node_registry_contract_not_set, "call set_contract/1 or define ?NODE_REGISTRY_CONTRACT"}
-    );
+    error({
+        node_registry_contract_not_set,
+        "configure damage.node_registry_ct or damage.node_registry_contracts"
+    });
 require_contract(#state{contract_id = C}) ->
     C.
+
+normalize_contract_id(<<"ct_", _/binary>> = ContractId) ->
+    {ok, ContractId};
+normalize_contract_id(ContractId) when is_list(ContractId) ->
+    try unicode:characters_to_binary(ContractId) of
+        <<"ct_", _/binary>> = Bin -> {ok, Bin};
+        Bin -> {error, {invalid_contract_id, Bin}}
+    catch
+        _:_ -> {error, {invalid_contract_id, ContractId}}
+    end;
+normalize_contract_id(Other) ->
+    {error, {invalid_contract_id, Other}}.
+
+resolve_network_contract() ->
+    Network = expected_network_id(),
+    Contracts = application:get_env(damage, node_registry_contracts, []),
+    case [Ct || {Net, Ct} <- Contracts, to_bin(Net) =:= Network] of
+        [CtId0 | _] -> normalize_contract_id(CtId0);
+        [] -> missing
+    end.
+
+expected_network_id() ->
+    to_bin(vanillae:network_id()).
+
+expected_protocol_version() ->
+    application:get_env(damage, node_protocol_version, ?DEFAULT_PROTOCOL_VERSION).
+
+positive_env(Key, Default) ->
+    case application:get_env(damage, Key, Default) of
+        Value when is_integer(Value), Value > 0 -> Value;
+        _ -> Default
+    end.
 
 to_bin(V) when is_binary(V) -> V;
 to_bin(V) when is_list(V) -> list_to_binary(V);
@@ -533,7 +676,7 @@ cached_contract_call(State, CacheKey, Func, Args) ->
                     Resp = damage_ae:contract_call_dry(
                         KeyPair,
                         ContractId,
-                        damage_ae:contract_path(State#state.contract_path),
+                        damage_ae:contract_path(damage, State#state.contract_path),
                         Func,
                         Args
                     ),
@@ -559,16 +702,19 @@ node_keypair() ->
             {error, {node_keypair_lookup_failed, Class, Reason}}
     end.
 
+contract_call_with_keypair(KeyPair, State, Func, Args) ->
+    damage_ae:contract_call(
+        KeyPair,
+        require_contract(State),
+        damage_ae:contract_path(damage, State#state.contract_path),
+        Func,
+        Args
+    ).
+
 contract_call_with_node_keypair(State, Func, Args) ->
     case node_keypair() of
         {ok, KeyPair} ->
-            damage_ae:contract_call(
-                KeyPair,
-                require_contract(State),
-                damage_ae:contract_path(State#state.contract_path),
-                Func,
-                Args
-            );
+            contract_call_with_keypair(KeyPair, State, Func, Args);
         {error, _} = Error ->
             Error
     end.
@@ -579,10 +725,10 @@ maybe_cache_put(State, Key, Resp) ->
         false -> ok
     end.
 
-is_cacheable_response(#{"return_type" := "ok"}) ->
-    true;
-is_cacheable_response(_) ->
-    false.
+is_cacheable_response(#{"return_type" := "ok"}) -> true;
+is_cacheable_response(#{<<"return_type">> := <<"ok">>}) -> true;
+is_cacheable_response(#{return_type := ok}) -> true;
+is_cacheable_response(_) -> false.
 
 invalidate_account(State, Account) ->
     cache_delete(State, {user_info, Account}),
@@ -634,88 +780,236 @@ normalize_cache_key({is_node_registered, NodeId}) ->
 normalize_cache_key(Key) ->
     Key.
 
-%% Convert Erlang maps into Sophia records-as-maps expected by your contract_call encoder.
-%% This assumes your damage_ae encoder supports nested record maps in the usual style:
-%%   #{field := Value, ...}
+%% Convert Erlang maps into Sophia records-as-maps expected by the v3 contract.
 meta_map_to_record(M) when is_map(M) ->
     #{
-        name => to_bin(maps:get(name, M, <<"">>)),
-        endpoint => to_bin(maps:get(endpoint, M, <<"">>)),
-        location => to_bin(maps:get(location, M, <<"">>)),
-        version => to_bin(maps:get(version, M, <<"">>)),
-        notes => to_bin(maps:get(notes, M, <<"">>))
+        name => to_bin(maps:get(name, M, <<>>)),
+        endpoint => to_bin(maps:get(endpoint, M, <<>>)),
+        location => to_bin(maps:get(location, M, <<>>)),
+        version => to_bin(maps:get(version, M, <<>>)),
+        profile_uri => to_bin(maps:get(profile_uri, M, <<>>)),
+        capability_hash => to_bin(maps:get(capability_hash, M, <<>>)),
+        release_hash => to_bin(maps:get(release_hash, M, <<>>))
     }.
 
 cfg_map_to_record(M) when is_map(M) ->
+    Protocol = expected_protocol_version(),
     #{
-        enabled => maps:get(enabled, M, true),
         max_conc => maps:get(max_conc, M, 0),
-        pricing_tier => to_bin(maps:get(pricing_tier, M, <<"">>)),
-        cfg_json => to_bin(maps:get(cfg_json, M, <<"">>))
+        protocol_min => maps:get(protocol_min, M, Protocol),
+        protocol_max => maps:get(protocol_max, M, Protocol),
+        pricing_hash => to_bin(maps:get(pricing_hash, M, <<>>))
     }.
 
 %% -------------------------------------------------------------------
-%% Deployment helper
+%% Canonical registry validation / explicit deployment
 %% -------------------------------------------------------------------
 
-%% Deploy using the node (service) keypair (server-owned deployment)
--spec deploy_node_registry() -> binary() | {error, term()}.
-deploy_node_registry() ->
-    case node_keypair() of
-        {ok, KeyPair} ->
-            DeployPath = damage_ae:contract_path(?DEFAULT_CONTRACT_PATH),
-            case damage_ae:contract_deploy(KeyPair, DeployPath, []) of
-                #{"contract_id" := ContractId} ->
-                    %% Optional: remember + hot-set for this runtime
-                    erlang:put(node_registry_contract_id, ContractId),
-                    damage_otp_compat:catch_value(fun() ->
-                        gen_server:call(?MODULE, {set_contract, ContractId})
-                    end),
-                    ContractId;
-                #{"return_type" := "revert"} = Info ->
-                    {error, {node_registry_deploy_revert, Info}};
-                Other ->
-                    {error, {node_registry_deploy_failed, Other}}
+-spec validate_contract(binary() | list()) -> {ok, map()} | {error, term()}.
+validate_contract(CtId0) ->
+    case normalize_contract_id(CtId0) of
+        {ok, CtId} ->
+            case node_keypair() of
+                {ok, KeyPair} ->
+                    Path = damage_ae:contract_path(damage, ?DEFAULT_CONTRACT_PATH),
+                    Version = query_contract_value(KeyPair, CtId, Path, "registry_version", []),
+                    Network = query_contract_value(KeyPair, CtId, Path, "network_id", []),
+                    ExpectedNetwork = expected_network_id(),
+                    case {normalize_int_value(Version), normalize_bin_value(Network)} of
+                        {{ok, ?REGISTRY_VERSION}, {ok, ExpectedNetwork}} ->
+                            {ok, #{
+                                contract_id => CtId,
+                                registry_version => ?REGISTRY_VERSION,
+                                network_id => ExpectedNetwork
+                            }};
+                        {{ok, OtherVersion}, {ok, OtherNetwork}} ->
+                            {error, {node_registry_identity_mismatch, #{
+                                contract_id => CtId,
+                                expected_registry_version => ?REGISTRY_VERSION,
+                                registry_version => OtherVersion,
+                                expected_network_id => ExpectedNetwork,
+                                network_id => OtherNetwork
+                            }}};
+                        Other ->
+                            {error, {node_registry_validation_failed, CtId, Other}}
+                    end;
+                {error, _} = Error ->
+                    Error
             end;
         {error, _} = Error ->
             Error
     end.
 
-%% Deploy using a provided keypair (account-owned deployment)
-%% Returns ContractId (<<"ct_...">>)
--spec deploy_node_registry(map()) -> binary().
-deploy_node_registry(KeyPair) when is_map(KeyPair) ->
-    %% IMPORTANT:
-    %% - contract_path here should point at the NodeRegistry Sophia file
-    %% - you already keep State#state.contract_path as "contracts/node_registry.aes"
-    %%   but deploy needs the on-disk path (same pattern as AccountRegistry)
-    DeployPath = damage_ae:contract_path(?DEFAULT_CONTRACT_PATH),
-
-    %% If your deploy fn is named differently (contract_deploy_for vs contract_deploy),
-    %% swap this call to match your damage_ae API.
-    case damage_ae:contract_deploy_for(KeyPair, DeployPath, []) of
-        #{"contract_id" := ContractId} ->
-            %% Optional: remember + hot-set for this runtime
-            erlang:put(node_registry_contract_id, ContractId),
-            SetContractResult =
-                try gen_server:call(?MODULE, {set_contract, ContractId}) of
-                    Result ->
-                        {ok, Result}
-                catch
-                    Class:Reason:Stack ->
-                        ?LOG_DEBUG(
-                            "set_contract failed contract_id=~p class=~p reason=~p stack=~p",
-                            [ContractId, Class, Reason, Stack]
-                        ),
-                        {error, {Class, Reason, Stack}}
-                end,
-            ?LOG_DEBUG(
-                "set_contract result contract_id=~p result=~p",
-                [ContractId, SetContractResult]
-            ),
-            ContractId;
-        #{"return_type" := "revert"} = Info ->
-            error({node_registry_deploy_revert, Info});
-        Other ->
-            error({node_registry_deploy_failed, Other})
+query_contract_value(KeyPair, CtId, Path, Func, Args) ->
+    case damage_ae:contract_query(KeyPair, CtId, Path, Func, Args) of
+        #{"return_type" := "ok", "return_value" := Value} -> Value;
+        #{<<"return_type">> := <<"ok">>, <<"return_value">> := Value} -> Value;
+        #{return_type := ok, return_value := Value} -> Value;
+        Other -> {error, {contract_query_failed, Func, Other}}
     end.
+
+normalize_int_value(I) when is_integer(I) -> {ok, I};
+normalize_int_value({int, I}) when is_integer(I) -> {ok, I};
+normalize_int_value(Other) -> {error, {invalid_int_value, Other}}.
+
+normalize_bin_value(B) when is_binary(B) -> {ok, B};
+normalize_bin_value(L) when is_list(L) ->
+    try {ok, unicode:characters_to_binary(L)}
+    catch _:_ -> {error, {invalid_binary_value, L}} end;
+normalize_bin_value({string, V}) -> normalize_bin_value(V);
+normalize_bin_value(Other) -> {error, {invalid_binary_value, Other}}.
+
+bootstrap_enabled() ->
+    application:get_env(damage, node_registry_bootstrap, false) =:= true.
+
+deploy_args() ->
+    [binary_to_list(expected_network_id()), integer_to_list(expected_protocol_version())].
+
+-spec deploy_node_registry() -> binary() | {error, term()}.
+deploy_node_registry() ->
+    case bootstrap_enabled() of
+        false ->
+            {error, node_registry_bootstrap_disabled};
+        true ->
+            case node_keypair() of
+                {ok, KeyPair} -> deploy_node_registry_direct(KeyPair);
+                {error, _} = Error -> Error
+            end
+    end.
+
+%% Explicit account-owned bootstrap helper.  Kept for administrative tooling;
+%% ordinary nodes never call it implicitly.
+-spec deploy_node_registry(map()) -> binary() | {error, term()}.
+deploy_node_registry(KeyPair) when is_map(KeyPair) ->
+    case bootstrap_enabled() of
+        false ->
+            {error, node_registry_bootstrap_disabled};
+        true ->
+            DeployPath = damage_ae:contract_path(damage, ?DEFAULT_CONTRACT_PATH),
+            case damage_ae:contract_deploy_for(KeyPair, DeployPath, deploy_args()) of
+                #{"contract_id" := ContractId0} -> activate_deployed_contract(ContractId0);
+                #{<<"contract_id">> := ContractId0} -> activate_deployed_contract(ContractId0);
+                #{"return_type" := "revert"} = Info ->
+                    {error, {node_registry_deploy_revert, Info}};
+                Other ->
+                    {error, {node_registry_deploy_failed, Other}}
+            end
+    end.
+
+deploy_node_registry_direct(KeyPair) ->
+    DeployPath = damage_ae:contract_path(damage, ?DEFAULT_CONTRACT_PATH),
+    case damage_ae:contract_deploy(KeyPair, DeployPath, deploy_args()) of
+        #{"contract_id" := ContractId0} -> activate_deployed_contract(ContractId0);
+        #{<<"contract_id">> := ContractId0} -> activate_deployed_contract(ContractId0);
+        #{"return_type" := "revert"} = Info ->
+            {error, {node_registry_deploy_revert, Info}};
+        Other ->
+            {error, {node_registry_deploy_failed, Other}}
+    end.
+
+activate_deployed_contract(ContractId0) ->
+    case normalize_contract_id(ContractId0) of
+        {ok, ContractId} ->
+            application:set_env(damage, node_registry_ct, ContractId),
+            _ = damage_otp_compat:catch_value(fun() ->
+                gen_server:call(?MODULE, {set_contract, ContractId})
+            end),
+            ContractId;
+        {error, _} = Error ->
+            Error
+    end.
+
+%% -------------------------------------------------------------------
+%% Typed reads used by directory/discovery APIs
+%% -------------------------------------------------------------------
+
+read_network_info(State) ->
+    case {
+        read_scalar(State, network_id, "network_id", []),
+        read_scalar(State, protocol_version, "protocol_version", []),
+        read_scalar(State, registry_version, "registry_version", []),
+        read_scalar(State, governance, "governance", []),
+        read_scalar(State, paused, "paused", [])
+    } of
+        {{ok, Network0}, {ok, Protocol0}, {ok, Registry0}, {ok, Governance0}, {ok, Paused0}} ->
+            case {
+                normalize_bin_value(Network0),
+                normalize_int_value(Protocol0),
+                normalize_int_value(Registry0),
+                normalize_account_value(Governance0),
+                normalize_bool_value(Paused0)
+            } of
+                {{ok, Network}, {ok, Protocol}, {ok, Registry}, {ok, Governance}, {ok, Paused}} ->
+                    {ok, #{
+                        contract_id => State#state.contract_id,
+                        network_id => Network,
+                        protocol_version => Protocol,
+                        registry_version => Registry,
+                        governance => Governance,
+                        paused => Paused
+                    }};
+                Other ->
+                    {error, {invalid_network_info, Other}}
+            end;
+        Other ->
+            {error, {network_info_unavailable, Other}}
+    end.
+
+read_node_count(State) ->
+    case read_scalar(State, node_count, "node_count", []) of
+        {ok, Value} -> normalize_int_value(Value);
+        Error -> Error
+    end.
+
+read_node_at(State, Index) ->
+    case read_scalar(State, {node_at, Index}, "get_node_at", [Index]) of
+        {ok, Value} -> normalize_account_value(Value);
+        Error -> Error
+    end.
+
+read_recent_node_ids(State, Limit) ->
+    case read_node_count(State) of
+        {ok, 0} ->
+            {ok, #{total => 0, node_ids => []}};
+        {ok, Count} when Count > 0 ->
+            N = erlang:min(Limit, Count),
+            Start = Count - N,
+            Indices = lists:reverse(lists:seq(Start, Count - 1)),
+            collect_node_ids(State, Indices, [], Count);
+        {error, _} = Error ->
+            Error
+    end.
+
+collect_node_ids(_State, [], Acc, Total) ->
+    {ok, #{total => Total, node_ids => lists:reverse(Acc)}};
+collect_node_ids(State, [Index | Rest], Acc, Total) ->
+    case read_node_at(State, Index) of
+        {ok, NodeId} -> collect_node_ids(State, Rest, [NodeId | Acc], Total);
+        {error, _} = Error -> Error
+    end.
+
+read_scalar(State, CacheKey, Func, Args) ->
+    case cached_contract_call(State, CacheKey, Func, Args) of
+        #{"return_type" := "ok", "return_value" := Value} -> {ok, Value};
+        #{<<"return_type">> := <<"ok">>, <<"return_value">> := Value} -> {ok, Value};
+        #{return_type := ok, return_value := Value} -> {ok, Value};
+        {error, _} = Error -> Error;
+        Other -> {error, {registry_read_failed, Func, Other}}
+    end.
+
+normalize_account_value({address, Raw}) when is_binary(Raw), byte_size(Raw) =:= 32 ->
+    try {ok, to_bin(aeser_api_encoder:encode(account_pubkey, Raw))}
+    catch Class:Reason -> {error, {account_encode_failed, Class, Reason}} end;
+normalize_account_value(Value) when is_binary(Value); is_list(Value) ->
+    Bin = to_bin(Value),
+    case Bin of
+        <<"ak_", _/binary>> -> {ok, Bin};
+        _ -> {error, {invalid_account_value, Value}}
+    end;
+normalize_account_value(Other) ->
+    {error, {invalid_account_value, Other}}.
+
+normalize_bool_value(true) -> {ok, true};
+normalize_bool_value(false) -> {ok, false};
+normalize_bool_value({bool, Value}) when is_boolean(Value) -> {ok, Value};
+normalize_bool_value(Other) -> {error, {invalid_bool_value, Other}}.

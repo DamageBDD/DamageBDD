@@ -1,0 +1,27 @@
+%% Canonical Damage network NodeRegistry configuration.
+%%
+%% Normal production nodes should set either node_registry_ct directly or use
+%% node_registry_contracts keyed by Aeternity network id.  They MUST NOT deploy
+%% a private NodeRegistry on startup.
+[
+    {damage, [
+        %% Direct pin for a single-network deployment:
+        %% {node_registry_ct, <<"ct_REPLACE_WITH_CANONICAL_REGISTRY">>},
+
+        %% Preferred when one configuration is shared across networks:
+        {node_registry_contracts, [
+            %% {"ae_mainnet", <<"ct_REPLACE_WITH_MAINNET_REGISTRY">>},
+            %% {"ae_uat", <<"ct_REPLACE_WITH_TESTNET_REGISTRY">>}
+        ]},
+
+        %% Only the deliberate genesis/governance deployment node should ever
+        %% enable this.  Leave false everywhere else.
+        {node_registry_bootstrap, false},
+
+        %% Damage protocol compatibility advertised in NodeRegistry entries.
+        {node_protocol_version, 1},
+
+        %% Local read cache only; it does not affect on-chain authority.
+        {node_registry_cache_ttl_ms, 30000}
+    ]}
+].
