@@ -42,26 +42,18 @@ call(Msg) ->
     end.
 
 init([]) ->
-    File = nosternity_config:get(auth_store_file),
-    ok = filelib:ensure_dir(File),
-    case dets:open_file(?MODULE, [{file, File}, {type, set}, {repair, false}]) of
-        {ok, ?MODULE} ->
-            case file:change_mode(File, 8#600) of
-                ok ->
-                    erlang:send_after(30000, self(), prune),
-                    {ok, #{
-                        challenges => #{},
-                        sessions => #{},
-                        attempts => #{},
-                        metrics => #{requests => 0, searches => 0, hidden => 0, duration_ms => 0},
-                        started_at => erlang:system_time(second)
-                    }};
-                Error ->
-                    dets:close(?MODULE),
-                    {stop, {account_store_permissions, Error}}
-            end;
+    case nosternity_storage:open(auth_store_file, ?MODULE, false) of
+        {ok, ?MODULE, _File} ->
+            erlang:send_after(30000, self(), prune),
+            {ok, #{
+                challenges => #{},
+                sessions => #{},
+                attempts => #{},
+                metrics => #{requests => 0, searches => 0, hidden => 0, duration_ms => 0},
+                started_at => erlang:system_time(second)
+            }};
         {error, Why} ->
-            {stop, {account_store_unavailable, Why}}
+            {stop, Why}
     end.
 
 handle_call(Msg, From, State0) ->

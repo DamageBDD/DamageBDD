@@ -64,7 +64,9 @@ request, and inference concurrency limits at the reverse proxy.
 | --- | --- | --- |
 | `ip` | `{127,0,0,1}` | Cowboy listener address. |
 | `port` | `9001` | Cowboy clear-text listener port. |
-| `search_store_file` | `"data/nosternity/search.dets"` | Durable local event file; preserve it across deployment/restart. |
+| `data_dir` | `<damage.state_dir>/dets/nosternity` | Root for durable Nosternity data; uses the shared state-root resolver. |
+| `search_store_file` | `<data_dir>/search.dets` | Durable local events and deletion tombstones; preserve across restarts. |
+| `auth_store_file` | `<data_dir>/accounts.dets` | Accounts and preferences. |
 | `search_max_events` | `10000` | Maximum retained events; valid range is 1 to 100000. |
 | `ae_event_store_enabled` | `false` | Existing optional Aeternity archive writes. |
 | `ae_event_store_rehydrate` | `true` | Import from the existing archive in background; the example explicitly disables it. |
@@ -476,3 +478,5 @@ public deployment, and live chain archive integration were not executed in
 this validation. Use the full-checkout build/test commands above before
 deployment; the unit/transport tests do not establish model quality or
 deployment readiness.
+
+See [STORAGE.md](STORAGE.md) for path precedence, initialization and migration.

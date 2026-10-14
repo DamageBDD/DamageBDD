@@ -18,6 +18,8 @@ erlc "${paths[@]}" -DTEST -I apps/damage/include -I apps/ecai/include -o "$work/
     apps/nosternity/src/nosternity_dashboard*.erl \
     apps/nosternity/src/nosternity_damage_http.erl \
     apps/nosternity/src/nosternity_config.erl \
+    apps/nosternity/src/nosternity_storage.erl \
+    apps/damage/src/damage_config.erl \
     apps/nosternity/src/nosternity_branding.erl \
     apps/nosternity/src/nosternity_page.erl apps/nosternity/src/nosternity_http.erl \
     apps/nosternity/src/nosternity_websocket.erl \

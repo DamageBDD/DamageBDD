@@ -20,7 +20,9 @@
    {port, 9001},
    {dashboard_enabled, true},
    {browser_auth_origin, "https://nosternity.example.com"},
-   {auth_store_file, "/var/lib/nosternity/accounts.dets"},
+   %% Stores inherit damage.state_dir/dets/nosternity. Optional overrides:
+   %% {data_dir, "~/.local/state/damage/dets/nosternity"},
+   %% {auth_store_file, "/absolute/path/accounts.dets"},
    {auth_signup_enabled, true},
    {auth_challenge_ttl_seconds, 180},
    {auth_session_ttl_seconds, 3600},

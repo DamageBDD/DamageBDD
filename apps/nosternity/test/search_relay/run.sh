@@ -11,10 +11,12 @@ paths=()
 for path in "$root"/_build/default/lib/*/ebin; do
     [[ -d "$path" ]] && paths+=( -pa "$path" )
 done
-erlc "${paths[@]}" -DTEST -I apps/ecai/include -o "$work/ebin" \
+erlc "${paths[@]}" -I apps/damage/include -DTEST -I apps/ecai/include -o "$work/ebin" \
     apps/nosternity/src/nostrlib_schnorr.erl \
     apps/damage/src/damage_nostr_event.erl \
     apps/nosternity/src/nosternity_config.erl \
+    apps/nosternity/src/nosternity_storage.erl \
+    apps/damage/src/damage_config.erl \
     apps/nosternity/src/nosternity_branding.erl \
     apps/nosternity/src/nosternity_app.erl \
     apps/nosternity/src/nosternity_sup.erl \
