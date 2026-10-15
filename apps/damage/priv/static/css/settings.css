@@ -72,3 +72,14 @@ button:disabled{opacity:.5;cursor:wait}button:focus-visible,input:focus-visible,
 .settings-tax-guidance { margin: .5rem 0 .8rem; max-width: 62rem; font-size: .9rem; line-height: 1.5; }
 .settings-tax-reports-link { display: inline-block; margin: 0 0 .9rem; text-decoration: underline; text-underline-offset: .15em; }
 .settings-tax-not-ready { margin: 0 0 .9rem; font-size: .83rem; opacity: .78; }
+
+/* ECAI paper market maker: explicit safety boundary and compact advanced controls. */
+.settings-market-note{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin:0 0 12px;font-size:13px}
+.settings-market-note strong{display:block;font-size:14px}
+.settings-market-note p{color:var(--muted);margin:7px 0}
+.settings-market-note a{display:inline-block;font-weight:620;margin-top:4px}
+.settings-market-runtime{font-weight:620;color:var(--ink)!important}
+.settings-market-advanced{border-top:1px solid var(--border);background:var(--surface)}
+.settings-market-advanced>summary{padding:15px 22px;font-size:13px;font-weight:650;cursor:pointer;color:var(--accent)}
+.settings-market-advanced-fields{border-top:1px solid var(--border)}
+.settings-market-advanced-fields .settings-field:first-child{border-top:0}

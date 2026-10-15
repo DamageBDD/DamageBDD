@@ -265,6 +265,16 @@ init([]) ->
                     type => supervisor,
                     modules => [damage_mm_sup]
                 },
+                %% Admin Settings can enable/disable the paper engine without
+                %% restarting the node. The controller is not a trading worker.
+                #{
+                    id => ecai_mm_control,
+                    start => {ecai_mm_control, start_link, []},
+                    restart => permanent,
+                    shutdown => 5000,
+                    type => worker,
+                    modules => [ecai_mm_control]
+                },
                 {damage_hwmon,
                     {damage_hwmon, start_link, [
                         #{

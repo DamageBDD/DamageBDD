@@ -293,7 +293,7 @@ base_fields(ecai) ->
             86400000,
             restart
         )
-    ];
+    ] ++ ecai_mm_settings:fields();
 base_fields(nosternity) ->
     [
         ?B(enabled, <<"Enable Nosternity">>, restart),
@@ -417,6 +417,7 @@ public_value(#{type := parallelism}, auto) ->
 public_value(#{type := parallelism}, N) when is_integer(N) -> {ok, N};
 public_value(#{type := boolean}, B) when is_boolean(B) -> {ok, B};
 public_value(#{type := integer}, I) when is_integer(I) -> {ok, I};
+public_value(#{type := number}, N) when is_number(N) -> {ok, N};
 public_value(#{type := tax_jurisdiction}, B) when is_binary(B) -> {ok, B};
 public_value(#{type := ae_account}, B) when is_binary(B) -> {ok, B};
 public_value(#{type := ae_account}, L) when is_list(L) ->
@@ -511,6 +512,12 @@ decode(#{type := integer, min := Min, max := Max}, I) when
     is_integer(I), I >= Min, I =< Max
 ->
     {ok, I};
+%% Numeric bounds are intentionally explicit; atom, numeric-string and
+%% non-number JSON values are rejected rather than coerced.
+decode(#{type := number, min := Min, max := Max}, N) when
+    is_number(N), N >= Min, N =< Max
+->
+    {ok, N};
 decode(#{type := string}, B) when is_binary(B), byte_size(B) =< 512, byte_size(B) > 0 ->
     try
         S = unicode:characters_to_list(B),
@@ -559,7 +566,10 @@ validate_effective(All) when is_map(All) ->
     Max = maps:get(search_max_limit, N, 200),
     case Default =< Max of
         true ->
-            validate_tax_effective(maps:get(damage, All, #{}));
+            case validate_tax_effective(maps:get(damage, All, #{})) of
+                ok -> ecai_mm_settings:validate_effective(maps:get(ecai, All, #{}));
+                Error -> Error
+            end;
         false ->
             {error,
                 {invalid_setting_combination, nosternity, search_default_limit, search_max_limit}}

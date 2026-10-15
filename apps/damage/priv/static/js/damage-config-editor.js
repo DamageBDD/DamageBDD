@@ -60,13 +60,14 @@ function asInputValue(field) {
 }
 function readValue(field, input) {
   if (field.type === 'boolean') return input.checked;
-  if (field.type === 'integer' || field.type === 'parallelism') {
+  if (field.type === 'integer' || field.type === 'parallelism' || field.type === 'number') {
     const text = input.value.trim();
     if (field.type === 'parallelism' && text === 'auto') return 'auto';
     if (!text) throw new Error(`${field.label}: enter an integer`);
     const n = Number(text);
-    if (!Number.isSafeInteger(n) || n < field.min || n > field.max) {
-      throw new Error(`${field.label}: must be between ${field.min} and ${field.max}`);
+    if (!Number.isFinite(n) || (field.type !== 'number' && !Number.isSafeInteger(n)) ||
+        n < field.min || n > field.max) {
+      throw new Error(`${field.label}: must be a ${field.type === 'number' ? 'number' : 'whole number'} between ${field.min} and ${field.max}`);
     }
     return n;
   }
@@ -153,11 +154,11 @@ function makeField(field) {
     input.placeholder = 'One host or suffix per line';
   } else {
     input = document.createElement('input');
-    input.type = field.type === 'boolean' ? 'checkbox' : field.type === 'integer' ? 'number' : 'text';
+    input.type = field.type === 'boolean' ? 'checkbox' : (field.type === 'integer' || field.type === 'number') ? 'number' : 'text';
   }
   input.id = `setting-${field.name}`;
   input.setAttribute('aria-label', field.label);
-  if (field.type === 'integer') { input.min = field.min; input.max = field.max; input.step = '1'; }
+  if (field.type === 'integer' || field.type === 'number') { input.min = field.min; input.max = field.max; input.step = field.type === 'number' ? 'any' : '1'; }
   const initial = asInputValue(field);
   if (field.type === 'boolean') input.checked = initial;
   else input.value = initial;
@@ -230,10 +231,49 @@ function makeFeature(group, fields, discovered) {
     }
   }
 
+  let advancedDetails = null;
+  if (group.id === 'marketplace') {
+    const info = document.createElement('div');
+    info.className = 'settings-market-note';
+    const summary = document.createElement('strong');
+    summary.textContent = 'ECAI paper market maker · DAMAGEUSDT / BTCUSDT';
+    const description = document.createElement('p');
+    description.textContent = 'Start or stop local paper quoting, configure risk and feed limits, and inspect simulated performance. This does not enable Coinstore order submission, marketplace sales or wallet funding.';
+    const runtime = config?.market_maker || {};
+    const state = document.createElement('p');
+    state.className = 'settings-market-runtime';
+    state.setAttribute('role', 'status');
+    const states = {
+      running: 'Running · paper only', disabled: 'Disabled',
+      starting: 'Starting · awaiting worker', error: 'Attention · paper worker unavailable'
+    };
+    state.textContent = `Worker: ${states[runtime.state] || 'Status unavailable'}`;
+    if (runtime.error && runtime.state === 'error') state.textContent += ` (${runtime.error})`;
+    const link = document.createElement('a');
+    link.href = '/ecai/market-maker';
+    link.textContent = 'Open market maker dashboard ↗';
+    info.append(summary, description, state, link);
+    section.append(info);
+  }
   if (fields.length) {
     const rows = document.createElement('div');
     rows.className = 'settings-fields';
-    rows.append(...fields.map(makeField));
+    if (group.id === 'marketplace') {
+      const main = fields.filter(field => field.name === 'market_maker_enabled');
+      const other = fields.filter(field => field.name !== 'market_maker_enabled');
+      rows.append(...main.map(makeField));
+      if (other.length) {
+        advancedDetails = document.createElement('details');
+        advancedDetails.className = 'settings-market-advanced';
+        const toggle = document.createElement('summary');
+        toggle.textContent = `Advanced paper strategy & risk (${other.length} settings)`;
+        const advanced = document.createElement('div');
+        advanced.className = 'settings-market-advanced-fields';
+        advanced.append(...other.map(makeField));
+        advancedDetails.append(toggle, advanced);
+        rows.append(advancedDetails);
+      }
+    } else rows.append(...fields.map(makeField));
     section.append(rows);
   }
   let details = null;
@@ -255,7 +295,7 @@ function makeFeature(group, fields, discovered) {
     details.append(summary, help, list);
     section.append(details);
   }
-  return {section, details, discoveredRows};
+  return {section, details, advancedDetails, discoveredRows};
 }
 function renderFeatures(data) {
   const nav = document.querySelector('#settings-feature-nav');
@@ -313,7 +353,11 @@ async function submitMutation(payload, result) {
     await jsonRequest(api, 'POST', { ...payload, version: config.version });
     await load();
     const restarted = config.pending_restart?.length || 0;
-    showNotice(restarted ? `${result}. ${restarted} setting(s) need an application/node restart.` : `${result}. Live settings are applied.`, 'info');
+    const marketChange = Object.keys(payload.changes || {}).some(key => key.startsWith('market_maker_')) ||
+      (payload.keys || []).some(key => key.startsWith('market_maker_'));
+    showNotice(restarted ? `${result}. ${restarted} setting(s) need an application/node restart.` :
+      marketChange ? `${result}. The paper worker is reconciling; refresh to verify its state.` :
+      `${result}. Live settings are applied.`, 'info');
   } catch (error) {
     showNotice(error.httpStatus === 409 ? 'The config changed since you opened it. Reload before saving.' : `Save failed: ${error.message}`, 'error');
   } finally { setBusy(false); updatePending(); }
@@ -351,6 +395,12 @@ function filterSettings() {
     }
     // A feature is discoverable even when it only contains protected keys.
     const hasContent = visible > 0 || discoveredVisible > 0;
+    if (query && record.advancedDetails) {
+      const advancedMatch = config.fields.filter(f => f.group === group.id).some(field =>
+        field.name !== 'market_maker_enabled' &&
+        !controls.get(field.name).row.hidden);
+      if (advancedMatch) record.advancedDetails.open = true;
+    }
     record.section.hidden = !hasContent;
     if (query && discoveredVisible > 0 && record.details) record.details.open = true;
     const navLink = document.querySelector('#settings-feature-nav a[data-feature="' + group.id + '"]');

@@ -37,6 +37,11 @@ with_isolated_config(Fun) ->
             ]
         ] ++
             [
+                {ecai, Key, application:get_env(ecai, Key)}
+             || Key <- [market_maker_enabled, market_maker_levels,
+                        market_maker_base_half_spread_bps, market_maker_poll_interval_ms]
+            ] ++
+            [
                 {erm, media_enabled, application:get_env(erm, media_enabled)},
                 {bop, port, application:get_env(bop, port)}
             ],
@@ -193,7 +198,38 @@ check_settings(Base, Overlay) ->
         {error, {invalid_setting_combination, damage, tax_enabled, tax_cln_owner}},
         damage_settings:reset(damage, [<<"tax_cln_owner">>], maps:get(version, TaxSaved))
     ),
-    ?assertEqual({ok, TaxOwner}, application:get_env(damage, tax_cln_owner)).
+    ?assertEqual({ok, TaxOwner}, application:get_env(damage, tax_cln_owner)),
+
+    %% ECAI paper market maker controls share the same version-checked XDG
+    %% overlay. Invalid risk combinations must not write any changes.
+    {ok, MM0} = damage_settings:get(ecai),
+    MMVersion = maps:get(version, MM0),
+    ?assertMatch({error, {invalid_market_maker_settings, _}},
+        damage_settings:save(ecai, #{<<"market_maker_poll_interval_ms">> => 45000}, MMVersion)),
+    {ok, MMLatest} = damage_settings:get(ecai),
+    ?assertEqual(MMVersion, maps:get(version, MMLatest)),
+    {ok, _} = damage_settings:save(ecai, #{
+        <<"market_maker_enabled">> => true,
+        <<"market_maker_levels">> => 7,
+        <<"market_maker_base_half_spread_bps">> => 45.5
+    }, MMVersion),
+    ?assertEqual({ok, true}, application:get_env(ecai, market_maker_enabled)),
+    ?assertEqual({ok, 7}, application:get_env(ecai, market_maker_levels)),
+    {ok, MM1} = damage_settings:get(ecai),
+    ?assertEqual([], maps:get(pending_restart, MM1)),
+    [MMField] = [F || F <- maps:get(fields, MM1),
+        maps:get(name, F) =:= <<"market_maker_base_half_spread_bps">>],
+    ?assertEqual(45.5, maps:get(value, MMField)),
+    ?assertEqual(<<"damage.config">>, maps:get(source, MMField)),
+    {ok, [Term]} = file:consult(Overlay),
+    ECAIConfig = proplists:get_value(ecai, Term, []),
+    ?assertEqual(true, proplists:get_value(market_maker_enabled, ECAIConfig)),
+    ?assertEqual(7, proplists:get_value(market_maker_levels, ECAIConfig)),
+    ?assertMatch({error, {conflict, _}},
+        damage_settings:save(ecai, #{<<"market_maker_levels">> => 9}, MMVersion)),
+    {ok, _} = damage_settings:reset(ecai, [<<"market_maker_enabled">>],
+        maps:get(version, MM1)),
+    ?assertEqual(undefined, application:get_env(ecai, market_maker_enabled)).
 
 restore(App, Key, {ok, Value}) -> application:set_env(App, Key, Value);
 restore(App, Key, undefined) -> application:unset_env(App, Key).

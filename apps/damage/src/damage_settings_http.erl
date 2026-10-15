@@ -6,7 +6,7 @@
 %%%-------------------------------------------------------------------
 -module(damage_settings_http).
 
--export([init/2, trails/0]).
+-export([init/2, trails/0, node_admin/1]).
 
 -define(JSON, #{
     <<"content-type">> => <<"application/json; charset=utf-8">>,
@@ -69,6 +69,14 @@ init(Req0, Opts) ->
             {error, Req1} -> reply_json(403, #{error => <<"node_admin_required">>}, Req1)
         end,
     {ok, Req, Opts}.
+
+%% Reuse the exact same node-admin authorization for the read-only
+%% ECAI paper dashboard; never infer authority from a wallet address.
+node_admin(Req) ->
+    case authorize(Req) of
+        {ok, _} -> true;
+        _ -> false
+    end.
 
 authorize(Req) ->
     %% Do not derive elevated permissions from an account address alone.

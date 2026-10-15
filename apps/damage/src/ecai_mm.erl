@@ -103,6 +103,13 @@ init_paper(Cfg) ->
                     _ ->
                         Cfg
                 end,
+            %% For Settings-managed workers, the versioned XDG node settings
+            %% take precedence over any older DETS-only runtime values.
+            %% Standalone paper workers retain the original DETS behaviour.
+            ManagedCfg = case maps:get(settings_managed, Cfg, false) of
+                true -> maps:merge(EffectiveCfg, ecai_mm_config:public(Cfg));
+                false -> EffectiveCfg
+            end,
             %% Restart invalidates paper quotes; a newly verified feed poll is
             %% required before any quote IDs can accept fills.
             RestoredLedger = maps:get(ledger, Restored),
@@ -110,10 +117,10 @@ init_paper(Cfg) ->
                 ledger => ecai_mm_ledger:replace_quotes(RestoredLedger, []),
                 feed_error => awaiting_fresh_market
             },
-            PollMs = max(2000, maps:get(poll_interval_ms, EffectiveCfg, 10000)),
+            PollMs = max(2000, maps:get(poll_interval_ms, ManagedCfg, 10000)),
             State = #{
                 tab => Tab,
-                config => EffectiveCfg,
+                config => ManagedCfg,
                 poll_ms => PollMs,
                 poll_timer => undefined,
                 snapshot => Snapshot
