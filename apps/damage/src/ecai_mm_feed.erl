@@ -3,6 +3,10 @@
 -module(ecai_mm_feed).
 -export([fetch/0, fetch/1, decode_depth/1, decode_prices/1, reference/1]).
 
+-ifdef(TEST).
+-export([tls_options/1]).
+-endif.
+
 -define(API, "https://api.coinstore.com/api").
 
 fetch() -> fetch(fun https_get/1).
@@ -127,16 +131,27 @@ num(V) when is_list(V) ->
             end
     end.
 
+%% Use HTTPS hostname rules so a SAN such as *.coinstore.com can match
+%% api.coinstore.com. OTP's generic DNS-ID matcher does not allow this
+%% wildcard by default. Keep chain verification, OS trust roots and SNI;
+%% never override bad_cert with a permissive verify_fun or fail_callback.
+%% The CA list is an argument only to make the policy testable offline.
+tls_options(CACerts) ->
+    [
+        {verify, verify_peer},
+        {cacerts, CACerts},
+        {server_name_indication, "api.coinstore.com"},
+        {customize_hostname_check, [
+            {match_fun, public_key:pkix_verify_hostname_match_fun(https)}
+        ]}
+    ].
+
 https_get(Path) ->
     try
         {ok, _} = application:ensure_all_started(inets),
         {ok, _} = application:ensure_all_started(ssl),
         %% Trust store supplied by OTP; deliberately NO verify_none.
-        SslOpts = [
-            {verify, verify_peer},
-            {cacerts, public_key:cacerts_get()},
-            {server_name_indication, "api.coinstore.com"}
-        ],
+        SslOpts = tls_options(public_key:cacerts_get()),
         Opts = [{timeout, 5000}, {connect_timeout, 3500}, {ssl, SslOpts}],
         case
             httpc:request(
