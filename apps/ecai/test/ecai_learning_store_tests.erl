@@ -156,6 +156,46 @@ log_incidents_are_sorted_filterable_and_thinned_in_snapshot_test() ->
         _ = file:del_dir_r(Base)
     end.
 
+
+release_memory_is_summarized_without_copying_full_history_test() ->
+    Base = temp_dir("release-memory"),
+    File = filename:join(Base, "store.dets"),
+    Tab = ecai_learning_store_release_memory_dets,
+    try dets:close(Tab) catch _:_:_ -> ok end,
+    {ok, Tab} = dets:open_file(Tab, [{file, File}, {type, set}]),
+    try
+        ok = dets:insert(Tab, [
+            {{release_change, <<"aaa">>}, #{
+                authored_at => <<"2026-10-13T00:00:00Z">>,
+                subject => <<"older">>,
+                evidence_sha256 => <<"oldhash">>,
+                config_changes => [#{key => <<"secret">>, old => <<"not-for-snapshot">>}]
+            }},
+            {{release_change, <<"bbb">>}, #{
+                authored_at => <<"2026-10-14T00:00:00Z">>,
+                subject => <<"newer">>,
+                evidence_sha256 => <<"newhash">>,
+                breaking_changes => [#{kind => exported_api_removed}]
+            }},
+            {{release_baseline, <<"production">>}, #{
+                ref => <<"v1.2.3">>,
+                commit => <<"aaa">>
+            }}
+        ]),
+        ok = dets:sync(Tab),
+        Snapshot = ecai_learning_store:build_snapshot_data(Tab),
+        Release = maps:get(release_memory, Snapshot),
+        ?assertEqual(2, maps:get(change_count, Release)),
+        Latest = maps:get(latest, Release),
+        ?assertEqual(<<"bbb">>, maps:get(commit, Latest)),
+        ?assertEqual(false, maps:is_key(breaking_changes, Latest)),
+        Production = maps:get(<<"production">>, maps:get(baselines, Release)),
+        ?assertEqual(<<"v1.2.3">>, maps:get(ref, Production))
+    after
+        _ = dets:close(Tab),
+        _ = file:del_dir_r(Base)
+    end.
+
 temp_dir(Suffix) ->
     Base = filename:join(
         "/tmp",

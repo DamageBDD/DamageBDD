@@ -80,6 +80,12 @@
             {code_log_learning_cluster_attempts, 2},
             {code_log_learning_max_prompt_bytes, 65536},
             {code_log_learning_provider, ollama},
+            %% Deterministic Git/config/API release memory. Each successful full
+            %% learning cycle persists new commit evidence and refreshes an
+            %% operator-ready Markdown/JSON release manual under the state logs.
+            {code_release_memory_enabled, true},
+            {code_release_memory_max_commits, 5000},
+            {code_release_memory_default_environment, production},
             {code_repair_feedback_enabled, true},
             {code_repair_feedback_min_confidence, medium},
             {code_repair_feedback_replay_limit, 100},

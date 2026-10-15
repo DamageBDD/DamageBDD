@@ -840,13 +840,40 @@ finish_cycle(State0) ->
     case GlobalResult of
         ok ->
             ok = refresh_relations(State0),
-            State0#state{ready = true, last_completed_at = now_iso8601()};
+            case refresh_release_memory(State0) of
+                ok ->
+                    State0#state{ready = true, last_completed_at = now_iso8601()};
+                {error, Reason} ->
+                    State0#state{
+                        ready = false,
+                        last_error = {release_memory_failed, Reason},
+                        last_completed_at = now_iso8601()
+                    }
+            end;
         {error, Reason} ->
             State0#state{
                 ready = false,
                 last_error = {finalization_failed, Reason},
                 last_completed_at = now_iso8601()
             }
+    end.
+
+refresh_release_memory(State) ->
+    case application:get_env(ecai, code_release_memory_enabled, true) of
+        false ->
+            ok;
+        true ->
+            case ecai_release_memory:accumulate(State#state.opts) of
+                {ok, Summary} ->
+                    logger:info(
+                        "ECAI release memory refreshed head=~p recorded=~p",
+                        [maps:get(head, Summary, undefined), maps:get(recorded_this_cycle, Summary, 0)]
+                    ),
+                    ok;
+                {error, Reason} ->
+                    logger:error("ECAI release memory refresh failed reason=~p", [Reason]),
+                    {error, Reason}
+            end
     end.
 
 refresh_relations(State) ->
