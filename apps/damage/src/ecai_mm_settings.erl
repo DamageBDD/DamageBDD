@@ -18,7 +18,7 @@ fields() ->
         #{key => Key, label => Label, type => Type, min => Min, max => Max,
           default => maps:get(Core, ecai_mm_config:defaults()), apply => hot, help => Help}
      || {Key, Core, Label, Type, Min, Max, Help} <- parameter_specs()
-    ]].
+    ]] ++ ecai_mm_price_cache:fields().
 
 %% The tuple list is the ONLY translation from public settings names into
 %% the runtime engine's existing bounded configuration fields.
@@ -79,7 +79,7 @@ settings_config(_, _) ->
 
 validate_effective(Ecai) when is_map(Ecai) ->
     case settings_config(Ecai, #{}) of
-        {ok, _} -> ok;
+        {ok, _} -> ecai_mm_price_cache:validate_settings(Ecai);
         {error, Why} -> {error, {invalid_market_maker_settings, Why}}
     end;
 validate_effective(_) ->

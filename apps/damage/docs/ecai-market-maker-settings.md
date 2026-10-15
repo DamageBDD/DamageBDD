@@ -35,6 +35,14 @@ zero and yield no funded simulated quotes until explicitly configured by the
 trusted operator. The Settings values take precedence over any previous
 DETS-only *strategy* overrides for a controller-managed worker.
 
+## Persistent price history
+
+Four additional controls configure the live-feed cache and automatic historical
+population. The read-only market chart can display stored Coinstore candles while
+the paper engine is off; paper P&L remains tied to its own execution timeline.
+See [Price-feed cache and historical population](ecai-price-feed-cache.md) for
+configuration, backfill commands, limits and recovery details.
+
 ## Erlang diagnostics
 
 ```erlang

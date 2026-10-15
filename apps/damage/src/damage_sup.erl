@@ -265,6 +265,16 @@ init([]) ->
                     type => supervisor,
                     modules => [damage_mm_sup]
                 },
+                %% Cached market history remains readable when quoting is disabled.
+                %% Startup opens storage only; HTTP backfill is independently queued.
+                #{
+                    id => ecai_mm_price_cache,
+                    start => {ecai_mm_price_cache, start_link, []},
+                    restart => permanent,
+                    shutdown => 10000,
+                    type => worker,
+                    modules => [ecai_mm_price_cache]
+                },
                 %% Admin Settings can enable/disable the paper engine without
                 %% restarting the node. The controller is not a trading worker.
                 #{

@@ -123,6 +123,7 @@ init_paper(Cfg) ->
                 config => ManagedCfg,
                 poll_ms => PollMs,
                 poll_timer => undefined,
+                feed_request => undefined,
                 snapshot => Snapshot
             },
             {ok, schedule_poll(State, 1000)};
@@ -250,13 +251,28 @@ handle_call(_, _, State) ->
 handle_cast(poll, State) -> {noreply, run_feed(State)};
 handle_cast(_, State) -> {noreply, State}.
 
-handle_info(poll, State) ->
+handle_info({timeout, Ref, poll}, #{poll_timer := Ref} = State) ->
     Updated = run_feed(State#{poll_timer => undefined}),
     {noreply, schedule_poll(Updated, maps:get(poll_ms, Updated))};
+handle_info(poll, State) ->
+    %% Compatibility with a queued pre-upgrade timer message.
+    Updated = run_feed(State),
+    {noreply, schedule_poll(Updated, maps:get(poll_ms, Updated))};
+handle_info({mm_feed_result, Id, Result}, State) ->
+    {noreply, finish_feed(Id, Result, State)};
+handle_info({mm_feed_timeout, Id}, State) ->
+    {noreply, finish_feed(Id, {error, price_request_timeout}, State)};
+handle_info({'DOWN', Ref, process, _Pid, Reason}, State) ->
+    case maps:get(feed_request, State, undefined) of
+        #{monitor := Ref, id := Id} ->
+            {noreply, finish_feed(Id, {error, {feed_worker_exit, Reason}}, State)};
+        _ -> {noreply, State}
+    end;
 handle_info(_, State) ->
     {noreply, State}.
 
 terminate(_, State) ->
+    cancel_feed(State),
     cancel_poll(State),
     case maps:find(tab, State) of
         {ok, Tab} ->
@@ -267,23 +283,57 @@ terminate(_, State) ->
     end.
 code_change(_, State, _) -> {ok, State}.
 
+%% Feed/network latency must not block status, risk controls or paper fills.
+%% At most one request is in flight; repeated poll actions are coalesced.
 run_feed(State) ->
-    case ecai_mm_feed:fetch() of
-        {ok, Book} ->
-            {_Result, Updated} = ingest_book(Book, State),
-            Updated;
-        {error, Error} ->
-            S = maps:get(snapshot, State),
-            Ledger = ecai_mm_ledger:replace_quotes(maps:get(ledger, S), []),
-            persist(State#{
-                snapshot => S#{
-                    ledger => Ledger,
-                    feed_error => Error,
-                    failures => maps:get(failures, S) + 1
-                }
-            })
+    case maps:get(feed_request, State, undefined) of
+        Task when is_map(Task) -> State;
+        _ ->
+            Owner = self(), Id = make_ref(),
+            {Pid, Ref} = spawn_monitor(fun() ->
+                Result = try ecai_mm_feed:fetch()
+                         catch C:R -> {error, {feed_exception, C, R}} end,
+                Owner ! {mm_feed_result, Id, Result}
+            end),
+            Timer = erlang:send_after(21000, self(), {mm_feed_timeout, Id}),
+            State#{feed_request => #{id => Id, pid => Pid, monitor => Ref, timer => Timer}}
     end.
 
+cancel_feed(State) ->
+    case maps:get(feed_request, State, undefined) of
+        #{pid := Pid, monitor := Ref, timer := Timer} ->
+            erlang:cancel_timer(Timer), erlang:demonitor(Ref, [flush]), exit(Pid, kill), ok;
+        _ -> ok
+    end.
+
+finish_feed(Id, Result, State) ->
+    case maps:get(feed_request, State, undefined) of
+        #{id := Id} ->
+            cancel_feed(State),
+            apply_feed_result(Result, State#{feed_request => undefined});
+        _ -> State
+    end.
+
+apply_feed_result({ok, Book}, State) when is_map(Book) ->
+    Snapshot = maps:get(snapshot, State),
+    case maps:get(fetched_ms, Book, 0) =< maps:get(last_good_ms, Snapshot) of
+        true ->
+            %% Cache hits must not count as new observations, reset quote IDs,
+            %% replenish partially filled quotes, or mutate the EWMA twice.
+            State;
+        false ->
+            {_Result, Updated} = ingest_book(Book, State), Updated
+    end;
+apply_feed_result({error, Error}, State) ->
+    S = maps:get(snapshot, State),
+    Ledger = ecai_mm_ledger:replace_quotes(maps:get(ledger, S), []),
+    persist(State#{snapshot => S#{ledger => Ledger, feed_error => Error,
+                                 failures => maps:get(failures, S) + 1}});
+apply_feed_result(_, State) -> apply_feed_result({error, invalid_feed_result}, State).
+
+%% A candle (even fetched one millisecond ago) is not a tradable order book.
+ingest_book(#{kind := Kind}, State) when Kind =/= live_order_book ->
+    {{error, historical_price_not_live_book}, State};
 ingest_book(Book0, State) ->
     Book = Book0#{fetched_ms => maps:get(fetched_ms, Book0, erlang:system_time(millisecond))},
     S = maps:get(snapshot, State),
@@ -501,7 +551,7 @@ public_config(State) ->
 schedule_poll(State, Delay) ->
     cancel_poll(State),
     case maps:get(auto_poll, maps:get(config, State), true) of
-        true -> State#{poll_timer => erlang:send_after(Delay, self(), poll)};
+        true -> State#{poll_timer => erlang:start_timer(Delay, self(), poll)};
         false -> State#{poll_timer => undefined}
     end.
 
@@ -530,7 +580,7 @@ public_snapshot(State) ->
         feed_error => display_error(maps:get(feed_error, S)),
         failures => maps:get(failures, S),
         feed_age_ms => Age,
-        fresh => is_number(Age) andalso
+        fresh => is_number(Age) andalso Age >= 0 andalso
             Age =< maps:get(max_feed_age_ms, maps:get(config, State), 20000) andalso
             maps:get(feed_error, S) =:= none,
         price =>

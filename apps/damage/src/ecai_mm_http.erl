@@ -21,6 +21,12 @@ trails() ->
         trails:trail("/api/ecai/mm/quotes", ?MODULE,
             #{resource => <<"quotes">>, authorize => Auth},
             #{get => #{tags => ["Node administration"], produces => ["application/json"]}}),
+        trails:trail("/api/ecai/mm/price-cache", ?MODULE,
+            #{resource => <<"price-cache">>, authorize => Auth},
+            #{get => #{tags => ["Node administration"], produces => ["application/json"]}}),
+        trails:trail("/api/ecai/mm/prices", ?MODULE,
+            #{resource => <<"prices">>, authorize => Auth},
+            #{get => #{tags => ["Node administration"], produces => ["application/json"]}}),
         trails:trail("/api/ecai/mm/history", ?MODULE,
             #{resource => <<"history">>, authorize => Auth},
             #{get => #{tags => ["Node administration"], produces => ["application/json"]}})
@@ -62,6 +68,10 @@ serve(Req, Opts) ->
         cowboy_req:binding(resource, Req, <<"status">>)
     ),
     case Resource of
+        <<"price-cache">> ->
+            json(ecai_mm_price_cache:status(), Req, Opts);
+        <<"prices">> ->
+            prices_json(Req, Opts);
         <<"status">> ->
             live_json(fun ecai_mm:status/0, Req, Opts);
         <<"quotes">> ->
@@ -89,6 +99,27 @@ serve(Req, Opts) ->
             serve_asset(cowboy_req:binding(asset, Req, <<>>), Req, Opts);
         _ ->
             respond(404, <<"text/plain">>, <<"Not found">>, Req, Opts)
+    end.
+
+prices_json(Req, Opts) ->
+    Params = cowboy_req:parse_qs(Req),
+    Period = proplists:get_value(<<"period">>, Params, <<"60min">>),
+    Symbol = proplists:get_value(<<"symbol">>, Params, undefined),
+    Limit = try binary_to_integer(proplists:get_value(<<"limit">>, Params, <<"1000">>))
+            catch _:_ -> invalid end,
+    try
+        Result = case Symbol of
+            undefined -> ecai_mm_price_cache:history(Period, Limit);
+            _ -> ecai_mm_price_cache:candles(Symbol, Period, Limit)
+        end,
+        case Result of
+            {ok, Data} -> json(Data, Req, Opts);
+            {error, _} -> respond(400, <<"application/json">>,
+                <<"{\"error\":\"invalid_history_request\"}">>, Req, Opts)
+        end
+    catch exit:_ ->
+        respond(503, <<"application/json">>,
+            <<"{\"error\":\"price_cache_unavailable\"}">>, Req, Opts)
     end.
 
 live_json(Fun, Req, Opts) ->

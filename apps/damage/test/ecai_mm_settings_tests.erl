@@ -3,7 +3,7 @@
 
 schema_fields_are_explicit_and_bounded_test() ->
     Fields = ecai_mm_settings:fields(),
-    ?assertEqual(16, length(Fields)),
+    ?assertEqual(20, length(Fields)),
     ?assertEqual(market_maker_enabled, maps:get(key, hd(Fields))),
     ?assertEqual(false, maps:get(default, hd(Fields))),
     ?assertEqual(true, lists:all(fun(F) -> maps:get(apply, F) =:= hot end, Fields)),
@@ -11,7 +11,8 @@ schema_fields_are_explicit_and_bounded_test() ->
         lists:sort(ecai_mm_config:editable()),
         lists:sort(lists:map(
             fun(K) -> maps:get(K, field_key_map()) end,
-            [maps:get(key, F) || F <- tl(Fields)]
+            [maps:get(key, F) || F <- tl(Fields),
+                maps:is_key(maps:get(key, F), field_key_map())]
         ))
     ).
 
