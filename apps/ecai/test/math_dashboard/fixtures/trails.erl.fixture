@@ -1,0 +1,3 @@
+-module(trails).
+-export([trail/4]).
+trail(P,H,S,M) -> {P,H,S,M}.

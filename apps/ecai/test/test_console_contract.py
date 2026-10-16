@@ -41,6 +41,7 @@ class ConsoleContractTests(unittest.TestCase):
         cls.html = HTML.read_text(encoding='utf-8').replace(
             '{{{market_maker_panel}}}',
             (APP/'priv/templates/ui/dashboard/ecai_market_maker.mustache').read_text(encoding='utf-8'))
+        cls.html = cls.html.replace('{{{math_paths_panel}}}', (APP/'priv/templates/ui/dashboard/ecai_math_paths.mustache').read_text(encoding='utf-8'))
         cls.markup = Elements()
         cls.markup.feed(cls.html)
 
@@ -66,7 +67,7 @@ class ConsoleContractTests(unittest.TestCase):
 
     def test_dashboard_views_have_navigation(self):
         views = {'overview','search','chat','video','indexing','wikimedia',
-                 'knowledge','marketplace','market-maker','operations','code','api','network','compute','keys'}
+                 'knowledge','marketplace','market-maker','math','operations','code','api','network','compute','keys'}
         self.assertEqual(set(self.markup.views), views)
         # Compute and Keys are rendered as dashboard fragments into the shell.
         self.assertEqual(set(self.markup.panels), views - {'compute', 'keys'})
@@ -75,8 +76,11 @@ class ConsoleContractTests(unittest.TestCase):
 
     def test_api_catalog_matches_cowboy_routes(self):
         catalog = set(re.findall(r'method:\s*"(GET|POST|SSE|WS)",\s*path:\s*"([^"]+)"', self.js))
-        self.assertEqual(len(catalog), 93)
+        self.assertEqual(len(catalog), 110)
         declared = {
+            ('GET', '/ecai/math/jobs'), ('POST', '/ecai/math/jobs'),
+            ('GET', '/ecai/math/jobs/:id'), ('POST', '/ecai/math/jobs/:id/replay'),
+            ('GET', '/ecai/math/jobs/:id/path'),
             ('GET','/ecai/auth/session'),
             ('POST','/ecai/search'), ('GET','/ecai/chat'), ('POST','/ecai/chat'),
             ('POST','/v1/chat/completions'), ('POST','/ecai/ekef'),
@@ -115,6 +119,11 @@ class ConsoleContractTests(unittest.TestCase):
             ('GET','/ecai/video/versions/:id/verify'),
             ('POST','/ecai/video/projects/:project/versions'),
         }
+        declared |= {('GET', '/ecai/admin/code/' + p) for p in ('settings', 'learning/bundles')}
+        declared |= {('POST', '/ecai/admin/code/' + p) for p in (
+            'learning/export', 'publishers/add', 'publishers/remove', 'repository/fetch',
+            'repository/pull', 'reviewers/add', 'reviewers/remove', 'settings/update')}
+        declared |= {('POST', '/ecai/quick-index'), ('POST', '/ecai/quick-index/inspect')}
         self.assertEqual(catalog, declared)
 
     def test_canceled_retry_requeues_durable_checkpoint(self):

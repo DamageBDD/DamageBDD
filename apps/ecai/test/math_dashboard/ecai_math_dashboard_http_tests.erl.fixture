@@ -1,0 +1,40 @@
+%% Isolated handler tests use test-only Cowboy/auth adapters, not real sessions.
+-module(ecai_math_dashboard_http_tests).
+-include_lib("eunit/include/eunit.hrl").
+
+routes_test() -> ?assertEqual(4,length(ecai_math_dashboard_http:trails())).
+anonymous_denied_test() -> ?assertEqual(401,code(req(<<"GET">>,#{}),jobs,[get,post])).
+wallet_denied_test() -> ?assertEqual(401,code(req(<<"GET">>,#{<<"authorization">>=><<"Bearer test-wallet-bearer">>}),jobs,[get,post])).
+post_cookie_denied_test() -> ?assertEqual(401,code((req(<<"POST">>,#{}))#{cookie_owner=><<"alice">>},jobs,[get,post])).
+invalid_bearer_no_cookie_fallback_test() ->
+    ?assertEqual(401,code((req(<<"GET">>,#{<<"authorization">>=><<"Bearer invalid-token">>}))#{cookie_owner=><<"alice">>},jobs,[get,post])).
+cross_site_denied_test() -> ?assertEqual(401,code(req(<<"GET">>,(auth())#{<<"sec-fetch-site">>=><<"cross-site">>}),jobs,[get,post])).
+wrong_method_test() -> ?assertEqual(405,code(req(<<"DELETE">>,auth()),jobs,[get,post])).
+media_type_test() -> ?assertEqual(415,code(req(<<"POST">>,auth()),jobs,[get,post])).
+malformed_json_test() -> ?assertEqual(400,code((req(<<"POST">>,json_auth()))#{body=><<"oops">>},jobs,[get,post])).
+array_rejected_test() -> ?assertEqual(400,code((req(<<"POST">>,json_auth()))#{body=><<"[]">>},jobs,[get,post])).
+chunked_limit_test() ->
+    R=(req(<<"POST">>,json_auth()))#{chunks=>[binary:copy(<<" ">>,200000),binary:copy(<<" ">>,100000)]},
+    ?assertEqual(413,code(R,jobs,[get,post])).
+chunked_object_test() ->
+    R=(req(<<"POST">>,json_auth()))#{chunks=>[<<"{\"operation\":">>,<<"\"demo\"}">>]},
+    %% No service is started for this test, but the complete JSON is accepted.
+    ?assertEqual(503,code(R,jobs,[get,post])).
+not_found_is_private_test() ->
+    application:ensure_all_started(crypto), {ok,P}=ecai_math_dashboard_srv:start_link(),
+    try
+        {ok,J}=ecai_math_dashboard_srv:submit(<<"alice">>,#{<<"operation">>=><<"demo">>}),
+        R=(req(<<"GET">>,#{<<"authorization">>=><<"Bearer test-bob-bearer">>}))#{bindings=>#{id=>maps:get(id,J)}},
+        ?assertEqual(404,code(R,job,[get]))
+    after gen_server:stop(P) end.
+no_store_test() ->
+    #{headers:=H}=response(req(<<"GET">>,#{}),jobs,[get,post]),
+    ?assertEqual(<<"no-store, private">>,maps:get(<<"cache-control">>,H)),
+    ?assertNot(maps:is_key(<<"access-control-allow-origin">>,H)).
+
+req(M,H)->#{method=>M,headers=>H}.
+auth()->#{<<"authorization">>=><<"Bearer test-alice-bearer">>}.
+json_auth()->(auth())#{<<"content-type">>=><<"application/json; charset=utf-8">>}.
+response(R,A,M)->
+    {ok,Out,_}=ecai_math_dashboard_http:init(R,#{action=>A,methods=>M}),maps:get(response,Out).
+code(R,A,M)->maps:get(status,response(R,A,M)).

@@ -28,6 +28,8 @@
         ]},
         {env, [
             {marketplace_enabled, false},
+            %% Managed-account mathematical jobs; local bounded computation only.
+            {math_dashboard_enabled, true},
             %% Durable, account-scoped dashboard conversation history. Search
             %% uses the canonical ECAI term pipeline in a separate private store.
             {conversation_history_enabled, true},

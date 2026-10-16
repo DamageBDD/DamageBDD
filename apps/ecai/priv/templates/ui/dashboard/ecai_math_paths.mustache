@@ -1,0 +1,74 @@
+<section class="view math-workspace" data-panel="math" aria-labelledby="mathTitle" hidden>
+  <div class="page-intro math-intro"><div><div class="eyebrow">EXACT OBJECTS · REPLAYABLE EVIDENCE</div><h1 id="mathTitle">Mathematical paths</h1><p>Explore exact isogenies, trace rational points, and challenge every claim.</p></div><span id="mathStatus" class="status-tag">No path loaded</span></div>
+  <p id="mathNotice" class="context-hint" role="status" aria-live="polite">Sign in with a managed account to run the mathematical pathfinder.</p>
+  <section class="surface panel-pad math-library" aria-labelledby="mathLibraryTitle">
+    <div class="panel-heading"><div><div class="eyebrow">13 CURATED EXAMPLES · NO LOGIN TO EXPLORE</div><h2 id="mathLibraryTitle">A mathematician’s workbench</h2></div><span class="status-tag math-status-preview">Public sample library</span></div>
+    <div class="math-sample-toolbar">
+      <label for="mathSampleSelect">Choose a mathematical problem<select id="mathSampleSelect" aria-label="Choose a mathematical sample"></select></label>
+      <div class="inline-actions"><button type="button" id="mathSamplePrevious" class="button button-outline button-sm" aria-label="Previous example">←</button><button type="button" id="mathSampleNext" class="button button-outline button-sm" aria-label="Next example">→</button><button type="button" id="mathSampleReset" class="button button-outline button-sm">Reset example</button></div>
+      <button type="button" id="mathSampleVerify" class="button button-primary">Verify on node</button>
+    </div>
+    <div class="math-sample-description"><div><h3 id="mathSampleTitle"></h3><p id="mathSampleSummary"></p></div><div id="mathSampleTags" class="math-sample-tags"></div></div>
+    <p id="mathSampleQuestion" class="math-experiment-prompt"></p>
+    <div class="inline-actions"><button type="button" id="mathSampleEdit" class="text-button">Use these endpoints in the editor ↗</button><button type="button" id="mathSampleLink" class="text-button">Copy example link</button></div>
+    <p id="mathSampleMode" class="context-hint"></p>
+    <details id="mathGalleryDisclosure"><summary>Browse the complete collection</summary><label class="math-gallery-search">Filter examples<input id="mathSampleFilter" type="search" placeholder="Try: degree 5, kernel, rational, non-CM…" maxlength="80"></label><div id="mathCatalog" class="math-catalog"></div><p id="mathCatalogCount" class="context-hint"></p></details>
+  </section>
+  <details class="surface panel-pad math-builder" id="mathBuilderDisclosure"><summary id="mathBuildSummary">Edit a problem or import your own path</summary>
+  <section aria-labelledby="mathBuildTitle">
+    <div class="panel-heading"><div><div class="eyebrow">RATIONAL ELLIPTIC CURVES</div><h2 id="mathBuildTitle">Find a connection over Q</h2></div><button type="button" id="mathDemo" class="button button-outline button-sm" disabled>Run explicit demo</button></div>
+    <form id="mathDiscoverForm" class="stack-form">
+      <div class="math-curve-inputs">
+        <fieldset><legend>Source · y² = x³ + a₂x² + a₄x + a₆</legend><div class="math-coefficients">
+          <label>a₂<input name="source_a2" value="0" maxlength="130" required aria-label="Source a2"></label>
+          <label>a₄<input name="source_a4" value="-1" maxlength="130" required aria-label="Source a4"></label>
+          <label>a₆<input name="source_a6" value="0" maxlength="130" required aria-label="Source a6"></label>
+        </div></fieldset>
+        <fieldset><legend>Target · y² = x³ + a₂x² + a₄x + a₆</legend><div class="math-coefficients">
+          <label>a₂<input name="target_a2" value="0" maxlength="130" required aria-label="Target a2"></label>
+          <label>a₄<input name="target_a4" value="-16" maxlength="130" required aria-label="Target a4"></label>
+          <label>a₆<input name="target_a6" value="0" maxlength="130" required aria-label="Target a6"></label>
+        </div></fieldset>
+      </div>
+      <div class="math-bounds">
+        <label>Max hops<input name="max_depth" type="number" min="0" max="3" value="2" required></label>
+        <label>Max curve models<input name="max_curves" type="number" min="1" max="64" value="64" required></label>
+        <label>Kernel numerator |n| ≤<input name="numerator_bound" type="number" min="0" max="32" value="8" required></label>
+        <label>Kernel denominator d ≤<input name="denominator_bound" type="number" min="1" max="16" value="4" required></label>
+        <button type="submit" id="mathDiscover" class="button button-primary" disabled>Discover &amp; verify →</button>
+      </div>
+      <p class="context-hint">Enter integers or fractions, such as -1 or 3/5; no floating-point coefficients. Discovery considers bounded rational degree-2 kernels, not every possible isogeny.</p>
+    </form>
+    <div class="math-import-row"><label class="math-file-label" for="mathImportFile">Replay an existing path JSON<input id="mathImportFile" type="file" accept=".json,application/json" disabled></label><button type="button" id="mathImport" class="button button-outline button-sm" disabled>Import &amp; check</button><span class="context-hint">Path files only · up to 192 KiB · submitted flags are not trusted</span></div>
+  </section>
+  </details>
+  <div class="math-work-grid">
+    <section class="surface panel-pad math-path-panel" aria-labelledby="mathPathTitle">
+      <div class="panel-heading"><div><div class="eyebrow">SELECTED PATH</div><h2 id="mathPathTitle">Objects and transformations</h2></div><button type="button" id="mathReplay" class="button button-outline button-sm" disabled>Replay checks ↻</button></div>
+      <div id="mathMetrics" class="math-metrics" aria-label="Path summary"></div>
+      <div id="mathGraph" class="math-path-graph" aria-label="Ordered mathematical path"><div class="empty-state">Run a discovery or import a path to see its exact curve models and maps.</div></div>
+      <p class="context-hint">Select a curve or arrow to inspect it. Layout shows composition order, not mathematical distance. The path is not a global minimum-degree claim.</p>
+  <section class="surface panel-pad math-point-lab" aria-labelledby="mathPointTitle">
+    <div class="panel-heading"><div><div class="eyebrow">EXACT LOCAL EXPERIMENT · NO SERVER JOB</div><h2 id="mathPointTitle">Follow a rational point</h2></div><button type="button" id="mathSageExport" class="button button-outline button-sm">Export SageMath check</button></div>
+    <div id="mathPointPresets" class="math-point-presets" aria-label="Suggested rational points"></div>
+    <form id="mathPointForm" class="math-point-form"><label>x<input id="mathPointX" value="12" maxlength="130" required></label><label>y<input id="mathPointY" value="36" maxlength="130" required></label><label class="math-infinity-label"><input id="mathPointInfinity" type="checkbox"> Point at infinity O</label><button type="submit" id="mathPointEvaluate" class="button button-primary">Trace through maps →</button></form>
+    <div id="mathPointResult" class="math-point-result" role="status" aria-live="polite"></div>
+    <div class="math-scalar-row"><label>Compare on the source curve<select id="mathPointScalar"><option value="2">[2]P</option><option value="3">[3]P</option><option value="4">[4]P</option></select></label><button type="button" id="mathPointMultiply" class="button button-outline button-sm">Calculate by group law</button><output id="mathScalarResult"></output></div>
+    <p class="context-hint">Fractions use bounded BigInt arithmetic, never floating-point rounding. A point experiment checks that point only; it is not an all-points isogeny proof. Live replay checks the full polynomial identities.</p>
+  </section>
+    </section>
+    <section class="surface panel-pad math-inspector" aria-labelledby="mathInspectorTitle"><div class="eyebrow">INSPECTOR</div><h2 id="mathInspectorTitle">Select an object</h2><div id="mathInspectorBody" class="math-inspector-body"><p class="context-hint">Equations, exact coefficients and replay checks appear here.</p></div></section>
+  </div>
+  <section class="surface panel-pad math-evidence" aria-labelledby="mathEvidenceTitle">
+    <div class="panel-heading"><div><div class="eyebrow">SCOPE MATTERS</div><h2 id="mathEvidenceTitle">Evidence, not a universal badge</h2></div><div class="inline-actions"><button type="button" id="mathExport" class="button button-outline button-sm" disabled>Export path JSON</button><button type="button" id="mathBundle" class="button button-outline button-sm" disabled>Export evidence bundle</button></div></div>
+    <div class="math-tabs" role="tablist" aria-label="Mathematical evidence">
+      <button type="button" id="mathTabChecks" role="tab" aria-selected="true" aria-controls="mathChecks" data-math-tab="mathChecks">Verification</button>
+      <button type="button" id="mathTabSearch" role="tab" aria-selected="false" aria-controls="mathSearch" data-math-tab="mathSearch" tabindex="-1">Search &amp; bounds</button>
+      <button type="button" id="mathTabRun" role="tab" aria-selected="false" aria-controls="mathRun" data-math-tab="mathRun" tabindex="-1">Run &amp; provenance</button>
+    </div>
+    <div id="mathChecks" role="tabpanel" aria-labelledby="mathTabChecks" class="math-tab-panel">No verification evidence loaded.</div>
+    <div id="mathSearch" role="tabpanel" aria-labelledby="mathTabSearch" class="math-tab-panel" hidden>No search data loaded.</div>
+    <div id="mathRun" role="tabpanel" aria-labelledby="mathTabRun" class="math-tab-panel" hidden>No run selected.</div>
+  </section>
+  <section class="surface panel-pad math-history" aria-labelledby="mathJobsTitle"><div class="panel-heading"><div><div class="eyebrow">THIS ACCOUNT · THIS NODE</div><h2 id="mathJobsTitle">Recent mathematical jobs</h2></div><button type="button" id="mathRefresh" class="text-button">Refresh ↻</button></div><p class="context-hint">Jobs are volatile: up to 8 per account, 32 per node, one hour. A node restart clears them. Export artifacts to keep your evidence.</p><div id="mathJobs" class="math-jobs"><div class="empty-state">No jobs loaded.</div></div></section>
+</section>

@@ -1,0 +1,11 @@
+%% TEST ONLY request adapter; this does not validate real HTTP/cookies.
+-module(cowboy_req).
+-export([method/1,header/3,binding/2,read_body/2,reply/4,set_resp_header/3]).
+method(R) -> maps:get(method,R).
+header(K,R,D) -> maps:get(K,maps:get(headers,R,#{}),D).
+binding(K,R) -> maps:get(K,maps:get(bindings,R,#{}),undefined).
+read_body(#{chunks:=[B]}=R,_) -> {ok,B,R#{chunks:=[]}};
+read_body(#{chunks:=[B|Rest]}=R,_) -> {more,B,R#{chunks:=Rest}};
+read_body(R,_) -> {ok,maps:get(body,R,<<>>),R}.
+reply(Code,H,B,R) -> R#{response=>#{status=>Code,headers=>H,body=>iolist_to_binary(B)}}.
+set_resp_header(K,V,R) -> R#{response_headers=>#{K=>V}}.

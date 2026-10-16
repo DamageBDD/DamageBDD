@@ -1,0 +1,21 @@
+import {test} from 'node:test';
+import {strict as assert} from 'node:assert';
+import {readFile} from 'node:fs/promises';
+const source=await readFile(new URL('../../priv/static/js/ecai-math-paths.js',import.meta.url),'utf8');
+const {rationalInput,polynomial,curveEquation,initMathPaths}=await import('../../priv/static/js/ecai-math-paths.js');
+test('integer remains a string',()=>assert.deepEqual(rationalInput('9007199254740993'),['9007199254740993','1']));
+test('fraction stays exact',()=>assert.deepEqual(rationalInput('-7/12'),['-7','12']));
+test('zero denominator rejected',()=>assert.throws(()=>rationalInput('1/0')));
+test('floating coefficients rejected',()=>assert.throws(()=>rationalInput('1.5')));
+test('exponent input rejected',()=>assert.throws(()=>rationalInput('1e20')));
+test('overlong integer rejected',()=>assert.throws(()=>rationalInput('1'.repeat(65))));
+test('source equation',()=>assert.equal(curveEquation({a2:['0','1'],a4:['-1','1'],a6:['0','1']}),'y² = x³ − x'));
+test('target equation',()=>assert.equal(curveEquation({a2:['0','1'],a4:['-16','1'],a6:['0','1']}),'y² = x³ − 16x'));
+test('zero polynomial',()=>assert.equal(polynomial([]),'0'));
+test('large polynomial coefficient preserved',()=>assert.equal(polynomial([['9007199254740993','7']]),'(9007199254740993/7)'));
+test('negative leading term is formatted',()=>assert.equal(polynomial([['0','1'],['-3','2']]),'−(3/2)x'));
+test('missing fragment degrades without exceptions',async()=>{
+  globalThis.document={querySelector:()=>null};
+  const stub=initMathPaths({});stub.reset();stub.setVisible(true);stub.accessChanged();await stub.refresh();stub.dispose();
+  delete globalThis.document;
+});

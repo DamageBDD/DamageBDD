@@ -8,6 +8,7 @@
   <meta name="theme-color" content="#101b32">
   <title>ECAI · Control plane</title>
   <link rel="stylesheet" href="/static/css/ecai-console.css">
+  <link rel="stylesheet" href="/static/css/ecai-math-paths.css?v=math-samples-v1">
   <link rel="stylesheet" href="/static/css/ecai-video.css">
   <link rel="stylesheet" href="/static/css/ecai-market-maker.css">
   <link rel="stylesheet" href="/ecai/auth-assets/css/auth.css">
@@ -29,6 +30,7 @@
       <nav id="consoleNav" class="main-nav" aria-label="ECAI areas">
         <button type="button" data-view="overview" class="nav-link is-active" aria-current="page"><span class="nav-icon" aria-hidden="true">◫</span>Overview</button>
         <button type="button" data-view="search" class="nav-link"><span class="nav-icon" aria-hidden="true">⌕</span>Knowledge search</button>
+        <button type="button" data-view="math" class="nav-link"><span class="nav-icon" aria-hidden="true">↝</span>Mathematical paths</button>
         <button type="button" data-view="chat" class="nav-link"><span class="nav-icon" aria-hidden="true">▤</span>Conversation</button>
         <button type="button" data-view="video" class="nav-link"><span class="nav-icon" aria-hidden="true">▸</span>Video Studio</button>
         <button type="button" data-view="indexing" class="nav-link"><span class="nav-icon" aria-hidden="true">▦</span>Index jobs</button>
@@ -571,6 +573,8 @@
 
         {{{market_maker_panel}}}
 
+        {{{math_paths_panel}}}
+
         {{{compute_settings_panel}}}
 
         {{{ollama_keys_panel}}}
@@ -591,6 +595,6 @@
   <script type="module" src="/static/js/ecai-index-pool.js"></script>
   <script type="module" src="/static/js/ecai-compute-settings.js"></script>
   <script type="module" src="/static/js/ecai-keys.js"></script>
-  <script type="module" src="/static/js/ecai-console.js?v=video-studio-v4-mm-v1-compute-v2-keys-v1"></script>
+  <script type="module" src="/static/js/ecai-console.js?v=video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-v1"></script>
 </body>
 </html>

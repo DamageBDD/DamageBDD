@@ -51,6 +51,7 @@ init([]) ->
     ok = ecai_paths:ensure_parent(SnapPath),
     Interval = application:get_env(ecai, index_snapshot_ms, 60000),
     PoolSpecs0 =
+        ecai_math_dashboard_srv:child_specs() ++
         conversation_history_specs() ++
             maybe_ollama_key_specs() ++ maybe_compute_specs() ++ maybe_ingest_specs() ++
             [

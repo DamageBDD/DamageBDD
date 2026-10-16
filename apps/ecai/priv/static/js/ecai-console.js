@@ -2,8 +2,10 @@
 // Wallet transport remains a lazy import inside auth-wallet-loader.js.
 import {TokenManager, logoutActiveSession} from "/ecai/auth-assets/js/wallet-switcher.js";
 import {initAuthUI} from "/ecai/auth-assets/js/auth-ui.js?v=ecai-browser-v1";
-import {initVideoStudio} from "/static/js/ecai-video.js?v=video-studio-v4-mm-v1-compute-v2-keys-v1";
+import {initVideoStudio} from "/static/js/ecai-video.js?v=video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-v1";
 import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1";
+
+import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
 
 /* ECAI Control Plane. Uses only routes exported by the current ECAI Cowboy handlers. */
 (() => {
@@ -11,6 +13,11 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
 
   const $ = (id) => document.getElementById(id);
   const routes = [
+    {group: "Mathematical paths", method: "GET", path: "/ecai/math/jobs", description: "Account-scoped volatile mathematical jobs; no payment challenge."},
+    {group: "Mathematical paths", method: "POST", path: "/ecai/math/jobs", description: "Run a native explicit demo, bounded discovery or JSON path import with fresh checks.", body: {operation: "demo"}},
+    {group: "Mathematical paths", method: "GET", path: "/ecai/math/jobs/:id", params: ["id"], description: "Read a mathematical path, scoped evidence and measured check time."},
+    {group: "Mathematical paths", method: "POST", path: "/ecai/math/jobs/:id/replay", params: ["id"], body: {}, description: "Submit a fresh replay as a new account-scoped job."},
+    {group: "Mathematical paths", method: "GET", path: "/ecai/math/jobs/:id/path", params: ["id"], description: "Download native replay JSON for independent checking."},
     // Parameters represent the actual path, query and JSON fields handled by the server.
     { group: "Authentication", method: "GET", path: "/ecai/auth/session", description: "Read-only account session check; no L402 invoice is generated." },
     { group: "Search & chat", method: "POST", path: "/ecai/search", description: "Free-text public search, with proof material.", body: { q: "elliptic curve", limit: 10 } },
@@ -126,7 +133,8 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     ask: { question: "What is known about this topic?", destination: "local" }
   };
   const marketExamples = { claim: { miner_ak: "ak_..." }, submit: { miner_ak: "ak_...", attestation: "attestation", evidence_ref: "" }, pay: { admin_ak: "ak_..." } };
-  const VIEW_NAMES = { overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing", compute: "Compute & NFTs", keys: "Keys" };
+  const VIEW_NAMES = { math: "Mathematical paths", overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing", compute: "Compute & NFTs", keys: "Keys" };
+  let mathPaths = null;
   let videoStudio = null;
   let marketMaker = null;
   const state = {
@@ -470,6 +478,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     const tokenChanged = token !== observedToken;
     if (tokenChanged) {
       state.authEpoch++;
+      mathPaths?.reset();
       videoStudio?.reset();
       marketMaker?.reset();
       if (state.authenticated) setAuthenticated(false);
@@ -479,6 +488,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     state.sessionMode = session?.mode || "anonymous";
     state.email = session?.email || session?.address || "";
     setAuthenticated(Boolean(session), state.email);
+    mathPaths?.accessChanged();
     videoStudio?.accountChanged();
     marketMaker?.accessChanged();
     if (tokenChanged) {
@@ -547,6 +557,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
       setCodeActionsEnabled(false);
       if (["code", "network"].includes(state.view)) navigate("overview");
       marketMaker?.reset();
+      mathPaths?.reset();
       window.EcaiComputeSettings?.clear();
       window.EcaiOllamaKeys?.clear();
       put("codeReviewDetail", "Select a validated repair from the review queue.");
@@ -613,6 +624,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
       if (state.nodeAdmin) await probeCodeAccess();
       if (state.view === "network" && state.nodeAdmin) await window.EcaiIndexPool?.refresh();
       if (state.view === "code" && state.nodeAdmin) await refreshCode();
+      if (state.view === "math" && managedSession()) await mathPaths?.refresh();
       if (state.view === "compute" && managedSession()) await window.EcaiComputeSettings?.refresh();
       if (state.view === "keys" && managedSession()) await window.EcaiOllamaKeys?.refresh();
       const result = await request("/ecai/index-jobs/status", { ignoreAuth: true });
@@ -630,6 +642,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     if (!Object.prototype.hasOwnProperty.call(VIEW_NAMES, view)) view = "overview";
     const previous = state.view;
     state.view = view;
+    $("ecaiConsole").dataset.activeView = view;
     for (const panel of document.querySelectorAll("[data-panel]")) {
       const active = panel.dataset.panel === view;
       panel.hidden = !active;
@@ -644,6 +657,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     if (location.hash !== `#${view}`) history.replaceState(null, "", `#${view}`);
     closeNav();
     window.EcaiIndexPool?.setVisible(view === "network");
+    mathPaths?.setVisible(view === "math");
     videoStudio?.setVisible(view === "video");
     marketMaker?.setVisible(view === "market-maker");
     if (previous === "indexing" && view !== "indexing") stopStream();
@@ -2964,7 +2978,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
   }
 
   async function refreshView() {
-    if (state.sessionMode === "wallet" && !["overview", "search", "chat", "api"].includes(state.view)) {
+    if (state.sessionMode === "wallet" && !["overview", "search", "chat", "api", "math"].includes(state.view)) {
       applyConsoleCapabilities();
       return;
     }
@@ -2974,6 +2988,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
       case "indexing": await refreshIndexing(); break;
       case "wikimedia": await refreshWikiProjects(); break;
       case "network": await window.EcaiIndexPool?.refresh(); break;
+      case "math": await mathPaths?.refresh(); break;
       case "compute": if (managedSession()) await window.EcaiComputeSettings?.refresh(); else window.EcaiComputeSettings?.clear(); break;
       case "keys": if (managedSession()) await window.EcaiOllamaKeys?.refresh(); else window.EcaiOllamaKeys?.clear(); break;
       case "code": await refreshCode(); break;
@@ -3125,7 +3140,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     $("apiCopyResponse").addEventListener("click", copyResponse);
     window.addEventListener("hashchange", () => navigate(location.hash.slice(1)));
     window.addEventListener("beforeunload", () => {
-      stopStream(); disconnectSocket(); videoStudio?.dispose(); marketMaker?.dispose(); clearInterval(state.poller);
+      stopStream(); disconnectSocket(); videoStudio?.dispose(); marketMaker?.dispose(); mathPaths?.dispose(); clearInterval(state.poller);
       clearInterval(state.telemetryPoller); clearInterval(state.clockTicker);
     });
     document.addEventListener("visibilitychange", () => {
@@ -3138,13 +3153,14 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
     window.EcaiIndexPool?.init({request, toast, openLogin, currentToken});
     window.EcaiComputeSettings?.init({request, toast, openLogin, currentToken});
     window.EcaiOllamaKeys?.init({request, toast, openLogin, currentToken});
+    mathPaths = initMathPaths({request, currentToken, managedSession, openLogin, toast});
     videoStudio = initVideoStudio({request, currentToken, managedSession, openLogin, toast});
     marketMaker = initMarketMaker({request, canManage: () => managedSession() && state.nodeAdmin, openLogin});
     initAuthUI();
     bindEvents(); resetChat(); fillPrivateExample(); updateMarketActionExample();
     $("indexIdempotency").value = newKey("ecai-job");
     syncBrowserSession();
-    navigate(location.hash.slice(1) || "overview");
+    navigate(location.hash.slice(1) || "math");
     renderRoutes();
     refreshOverview().catch(() => { renderServices(); });
     state.clockTicker = setInterval(tickJobClocks, 1000);
