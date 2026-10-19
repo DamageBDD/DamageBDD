@@ -6,7 +6,9 @@
   <meta name="description" content="ECAI node control plane: search, conversational access, indexing, private knowledge and operations">
   <meta name="referrer" content="no-referrer">
   <meta name="theme-color" content="#101b32">
-  <title>ECAI · Control plane</title>
+  <title>{{brand_name}} · Control plane</title>
+  {{#has_brand_favicon}}<link rel="icon" href="{{brand_favicon}}">{{/has_brand_favicon}}
+  <link rel="stylesheet" href="/static/css/ecai-model-internals.css?v=model-internals-v1">
   <link rel="stylesheet" href="/static/css/ecai-console.css?v=personality-conversations-v1">
   <link rel="stylesheet" href="/static/css/ecai-personalities.css?v=personalities-v1">
   <link rel="stylesheet" href="/static/css/ecai-eval.css?v=eval-v1">
@@ -19,13 +21,15 @@
   <link rel="stylesheet" href="/static/css/ecai-index-pool.css">
   <link rel="stylesheet" href="/static/css/ecai-compute-settings.css">
   <link rel="stylesheet" href="/static/css/ecai-keys.css">
+  <link rel="stylesheet" href="/api/themes/css?app=ecai">
 </head>
 <body>
   <div class="console-shell" id="ecaiConsole" data-node-version="{{node_version}}">
     <aside class="console-sidebar" id="consoleSidebar" aria-label="Primary navigation">
       <div class="brand-block">
-        <div class="brand-symbol" aria-hidden="true">e<span>·</span></div>
-        <div><div class="brand-name">ECAI</div><div class="brand-caption">INTELLIGENCE FABRIC</div></div>
+        {{#has_brand_logo}}<img class="theme-brand-logo" src="{{brand_logo}}" alt="">{{/has_brand_logo}}
+        {{^has_brand_logo}}<div class="brand-symbol" aria-hidden="true">e<span>·</span></div>{{/has_brand_logo}}
+        <div><div class="brand-name">{{brand_name}}</div><div class="brand-caption">{{brand_tagline}}</div></div>
         <button class="icon-button sidebar-close" type="button" id="closeNav" aria-label="Close menu">×</button>
       </div>
       <div class="sidebar-label">WORKSPACE</div>

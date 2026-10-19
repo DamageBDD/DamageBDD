@@ -25,7 +25,7 @@
     <meta name="twitter:creator" content="@damagebdd">
 
 
-    <link rel="icon" type="image/x-icon" href="/static/img/favicon.ico">
+    <link rel="icon" href="{{favicon_image}}">
     <title>DamageBDD - Behaviour Driven Development At Planetary Scale</title>
 
     <script src="/static/js/three.min.js"></script>
@@ -67,6 +67,8 @@
     <link rel="stylesheet" href="/static/css/dashboard-guest.css">
     <link rel="stylesheet" href="/static/css/dashboard-tax-reports.css">
     <link rel="stylesheet" href="/static/css/dashboard-wallet.css">
+    <!-- Shared, validated design tokens loaded after all application CSS. -->
+    <link rel="stylesheet" href="/api/themes/css?app=damage">
     <noscript><style>
       .damage-dashboard [data-dashboard-view][hidden] { display: block !important; }
       .damage-dashboard #dashboard-nav-toggle, .damage-dashboard #dashboard-nav-close { display: none; }

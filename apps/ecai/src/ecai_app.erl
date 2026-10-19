@@ -128,7 +128,9 @@ get_trails() ->
         [
             {"/terms", cowboy_static, {priv_file, ecai, "static/terms.html"}},
             {"/static/[...]", cowboy_static, {priv_dir, ecai, "static/"}},
-            {"/ecai/ws/", ecai_ws, #{}}
+            {"/ecai/ws/", ecai_ws, #{}},
+            {"/api/themes/css", damage_theme_http, #{action => css}},
+            {"/api/themes/branding", damage_theme_http, #{action => branding}}
         ] ++ AuthAssets ++ AccountRoutes ++ trails:trails(Handlers),
     trails:store(Trails),
     trails:single_host_compile(Trails).

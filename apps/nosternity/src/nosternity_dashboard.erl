@@ -9,6 +9,7 @@ routes() ->
             [
                 {"/", ?MODULE, #{action => page}},
                 {"/dashboard", ?MODULE, #{action => page}},
+                {"/api/themes/css", damage_theme_http, #{action => css}},
                 {"/dashboard/fragments/:fragment", ?MODULE, #{action => fragment}}
             ] ++
                 [

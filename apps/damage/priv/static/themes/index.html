@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Themes & branding · DamageBDD</title>
+  <link rel="stylesheet" href="/static/css/theme-studio.css">
+  <script type="module" src="/static/js/theme-studio.js"></script>
+</head>
+<body data-theme-mode="__MODE__">
+  <div class="layout">
+    <aside class="rail">
+      <a class="rail-home" href="/dashboard">← Dashboard</a>
+      <div class="rail-symbol" aria-hidden="true">◈</div>
+      <div class="rail-title">DamageBDD<span>Theme studio</span></div>
+      <div class="rail-nav">
+        <a href="/themes">Explore marketplace</a>
+        <a href="/dashboard/node/themes" id="admin-link">Node branding</a>
+        <a href="/dashboard/node/settings">Node settings</a>
+      </div>
+      <div class="rail-footer">Design system v1<br>AEX-141 · IPFS · Lightning · DAMAGE</div>
+    </aside>
+    <main>
+      <header class="topbar"><span class="eyebrow">DESIGN / MARKETPLACE</span><span class="node-tag">DamageBDD Ecosystem</span></header>
+      <div class="content">
+        <div class="hero"><span class="eyebrow">ONE DESIGN SYSTEM. EVERY NODE.</span>
+          <h1>Make it yours.</h1><p>Explore portable themes for DamageBDD, ECAI, Nosternity, ERM and BOP. Each published theme is pinned to IPFS and registered to an AEX-141 NFT contract.</p></div>
+        <div id="notice" role="status" aria-live="polite"></div>
+        <section class="area-head"><div><span class="eyebrow">01 / LIBRARY</span><h2>Theme collections</h2></div><button id="refresh" class="button ghost">↻ Refresh</button></section>
+        <div class="catalog" id="catalog"><p>Loading catalog…</p></div>
+        <section class="studio-only" id="studio-controls" hidden>
+          <div class="area-head"><div><span class="eyebrow">02 / APPLY</span><h2>Node appearance</h2><p class="sub">Theme and branding are independently configured for each application.</p></div></div>
+          <div class="studio-grid">
+            <form class="box" id="selection-form">
+              <label for="app">Application</label><select id="app" name="app"><option value="damage">DamageBDD</option><option value="ecai">ECAI</option><option value="nosternity">Nosternity</option><option value="erm">ERM</option><option value="bop">BOP</option></select>
+              <label for="theme-key">Theme package</label><select id="theme-key" name="theme-key"></select>
+              <label for="nft-token">NFT licence token ID (required for paid themes)</label><input id="nft-token" type="number" min="0" step="1" value="0">
+              <label for="brand-name">Brand name</label><input id="brand-name" maxlength="90" placeholder="e.g. Acme Verification">
+              <label for="brand-tagline">Tagline</label><input id="brand-tagline" maxlength="180" placeholder="e.g. Reliability at scale">
+              <label for="brand-logo">Logo path (same-origin PNG/JPG/WebP)</label><input id="brand-logo" maxlength="132" placeholder="/static/img/your-logo.png">
+              <label for="brand-favicon">Favicon path</label><input id="brand-favicon" maxlength="132" placeholder="/static/img/favicon.ico">
+              <button type="submit" class="button primary">Apply to node</button>
+              <p class="help">Paid themes require on-chain proof that the administrator owns the matching NFT. Branding overrides do not alter NFT metadata.</p>
+            </form>
+            <div class="box preview" id="live-preview" aria-live="polite">
+              <span class="eyebrow">LIVE PREVIEW</span><div class="preview-window"><div class="preview-sidebar"><span class="preview-icon">◈</span><strong id="preview-name">DamageBDD</strong><small id="preview-tagline">Behaviour verification</small><i></i><i></i><i></i></div><div class="preview-content"><div class="preview-bar"></div><span class="eyebrow">YOUR WORKSPACE</span><h3 id="preview-heading">Build without limits.</h3><div class="preview-card">Scenarios<br><strong>48 passed</strong></div><div class="preview-card muted">Trust through verification</div></div></div>
+              <div class="preview-meta" id="preview-meta"></div>
+            </div>
+          </div>
+          <div class="area-head"><div><span class="eyebrow">03 / CREATE</span><h2>Publish & distribute</h2><p class="sub">Data-only package, immutable IPFS CID and AEX-141 registration.</p></div></div>
+          <div class="studio-grid">
+            <form class="box" id="publish-form"><label for="manifest">Theme manifest (JSON)</label><textarea id="manifest" spellcheck="false" rows="17"></textarea><button type="submit" class="button primary">Package → IPFS → register NFT</button><p class="help">Publishing requires a configured NFT contract and IPFS node. Prices: sats are integers; DAMAGE uses 8-decimal base units.</p></form>
+            <form class="box" id="import-form"><span class="eyebrow">DISTRIBUTION</span><h3>Import a theme by CID</h3><p>Fetch and validate a remote package from your local IPFS node. Contract metadata must match the exact manifest digest and CID.</p><label for="import-cid">IPFS CID</label><input id="import-cid" placeholder="bafy…" required><button type="submit" class="button secondary">Verify and install</button><h3>On-chain registry</h3><p class="mono" id="registry-id">Not configured</p><p class="help">Imported paid packages still require an NFT in the node administrator's account before activation.</p></form>
+          </div>
+        </section>
+        <dialog id="checkout"><form method="dialog"><button class="dialog-close" aria-label="Close">×</button></form><div id="checkout-content"></div></dialog>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

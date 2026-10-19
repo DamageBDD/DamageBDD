@@ -11,7 +11,8 @@ allowed(<<"GET">>, Path, wallet) ->
         <<"/accounts/wallet">>,
         <<"/ai/bdd/catalog">>,
         <<"/version">>,
-        <<"/ecai/auth/session">>
+        <<"/ecai/auth/session">>,
+        <<"/api/themes/order">>
     ]);
 allowed(<<"POST">>, Path, wallet) ->
     lists:member(trim(Path), [
@@ -19,7 +20,10 @@ allowed(<<"POST">>, Path, wallet) ->
         <<"/ai/bdd/validate">>,
         <<"/ai/bdd/cancel">>,
         <<"/accounts/session/logout">>,
-        <<"/accounts/logout">>
+        <<"/accounts/logout">>,
+        <<"/api/themes/buy/sats">>,
+        <<"/api/themes/buy/damage">>,
+        <<"/api/themes/order/settle">>
     ]);
 allowed(_, _, wallet) ->
     false.

@@ -61,6 +61,14 @@ init([]) ->
                 modules => [damage_settings]
             },
             #{
+                id => damage_theme_store,
+                start => {damage_theme_store, start_link, []},
+                restart => permanent,
+                shutdown => 5000,
+                type => worker,
+                modules => [damage_theme_store]
+            },
+            #{
                 id => secrets,
                 start => {secrets, start_link, []},
                 restart => permanent,

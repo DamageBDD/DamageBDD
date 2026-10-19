@@ -101,8 +101,22 @@ base_context(Req) ->
         request_path => cowboy_req:path(Req),
         node_version => <<"v0.1">>,
         indexer_path => <<"/indexer">>,
-        advanced_indexer_path => <<"/indexer/advanced">>
+        advanced_indexer_path => <<"/indexer/advanced">>,
+        brand_name => branded(<<"name">>, <<"ECAI">>),
+        brand_tagline => branded(<<"tagline">>, <<"INTELLIGENCE FABRIC">>),
+        brand_logo => branded(<<"logo">>, <<>>),
+        brand_favicon => branded(<<"favicon">>, <<>>),
+        has_brand_logo => branded(<<"logo">>, <<>>) =/= <<>>,
+        has_brand_favicon => branded(<<"favicon">>, <<>>) =/= <<>>
     }.
+
+branded(Field, Default) ->
+    try
+        case damage_theme:branding(<<"ecai">>) of
+            #{Field := V} when is_binary(V), V =/= <<>> -> V;
+            _ -> Default
+        end
+    catch _:_ -> Default end.
 
 %% ---------------------- Dashboard pieces --------------------
 render_dashboard_component(<<"topbar">>, Ctx) ->

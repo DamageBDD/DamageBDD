@@ -69,6 +69,7 @@ get_trails() ->
             damage_doc,
             damage_swap_options_http,
             damage_settings_http,
+            damage_theme_http,
             ecai_mm_http,
             damage_dashboard,
             damage_nwc_http,

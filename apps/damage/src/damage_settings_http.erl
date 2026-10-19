@@ -6,7 +6,7 @@
 %%%-------------------------------------------------------------------
 -module(damage_settings_http).
 
--export([init/2, trails/0, node_admin/1]).
+-export([init/2, trails/0, node_admin/1, csrf_check/1]).
 
 -define(JSON, #{
     <<"content-type">> => <<"application/json; charset=utf-8">>,

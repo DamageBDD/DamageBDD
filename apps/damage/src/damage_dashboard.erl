@@ -58,7 +58,10 @@ base_context(Req) ->
     #{
         request_path => cowboy_req:path(Req),
         node_version => <<"v0.1">>,
-        logo_image => logo_image(),
+        logo_image => branded(<<"logo">>, logo_image()),
+        favicon_image => branded(<<"favicon">>, <<"/static/img/favicon.ico">>),
+        brand_name => branded(<<"name">>, <<"DamageBDD">>),
+        brand_tagline => branded(<<"tagline">>, <<"Verification workspace">>),
         tax_enabled => application:get_env(damage, tax_enabled, false)
     }.
 
@@ -71,6 +74,14 @@ logo_image() ->
         _ ->
             <<"/static/img/logo.png">>
     end.
+
+branded(Field, Default) ->
+    try
+        case damage_theme:branding(<<"damage">>) of
+            #{Field := Value} when is_binary(Value), Value =/= <<>> -> Value;
+            _ -> Default
+        end
+    catch _:_ -> Default end.
 
 %% Do not substitute a user wallet as the node identity. A locked node
 %% deliberately leaves the default empty instead of silently scanning another account.
