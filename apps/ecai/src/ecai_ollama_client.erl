@@ -8,6 +8,7 @@
     generate_json_with_meta/2,
     generate_text_with_meta/2,
     native_chat_with_meta/2,
+    evaluation_chat_with_meta/2,
     native_generate_with_meta/2,
     tags/1,
     probe/1,
@@ -69,6 +70,27 @@ generate_text_with_meta(Prompt, Opts) when is_map(Opts) ->
 
 native_chat_with_meta(Request, Opts) when is_map(Request), is_map(Opts) ->
     native_request(chat, Request, Opts).
+
+%% Evaluations preserve explicit role messages and bypass pool retries/fallback.
+%% The caller supplies a node-policy-resolved target; never browser host/options.
+evaluation_chat_with_meta(Messages, Opts0) when is_list(Messages), is_map(Opts0) ->
+    Opts = provider_defaults(Opts0#{response_decode => json_binary, store => false}),
+    case maps:get(provider, Opts) of
+        ollama ->
+            Request = #{<<"messages">> => Messages, <<"model">> => to_binary(maps:get(model, Opts)),
+                        <<"options">> => ollama_generation_options(Opts), <<"stream">> => false},
+            case ollama_native_request(chat, Request, Opts) of
+                {ok, Json, Meta} ->
+                    Message = maps:get(<<"message">>, Json, #{}),
+                    case maps:get(<<"tool_calls">>, Message, []) of
+                        [] -> {ok, maps:get(<<"content">>, Message, <<>>), Meta};
+                        _ -> {error, evaluation_native_tools_not_supported}
+                    end;
+                Error -> Error
+            end;
+        openai -> openai_request(Messages, false, Opts);
+        _ -> {error, evaluation_provider_not_supported}
+    end.
 
 native_generate_with_meta(Request, Opts) when is_map(Request), is_map(Opts) ->
     native_request(generate, Request, Opts).
@@ -500,7 +522,8 @@ request_opts(Opts, Timeout) ->
     Base = #{
         timeout => Timeout,
         connect_timeout => maps:get(connect_timeout, Opts),
-        decode => json,
+        decode => maps:get(response_decode, Opts, json),
+        max_response_bytes => maps:get(max_response_bytes, Opts, infinity),
         proxy => maps:get(proxy, Opts, direct),
         transport => Transport
     },

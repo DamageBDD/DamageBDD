@@ -126,6 +126,7 @@ groups(damage) ->
     ];
 groups(ecai) ->
     [
+        g(<<"evaluation">>, <<"LLM evaluation">>, <<"Node ceilings, provider allowlists and review policy; separate from account preferences">>),
         g(
             <<"indexing">>,
             <<"Indexing & ingestion">>,
@@ -283,6 +284,7 @@ group_key(ecai, K) ->
     first_prefix(
         K,
         [
+            {<<"eval_">>, <<"evaluation">>},
             {<<"index_">>, <<"indexing">>},
             {<<"ingest_">>, <<"indexing">>},
             {<<"wikimedia_">>, <<"indexing">>},

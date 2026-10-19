@@ -173,7 +173,7 @@ run_config_steps(State, [Args | Rest]) ->
 
 start_daemon(State = #state{config = Config}) ->
     Args =
-        case maps:get(kubo_gc, Config, true) of
+        case maps:get(kubo_gc, Config, false) of
             true -> ["daemon", "--enable-gc"];
             false -> ["daemon"]
         end,

@@ -88,6 +88,14 @@
     </article>
   </section>
 
+  <section class="workspace-card account-settings-card" aria-labelledby="account-evaluation-title">
+    <div class="workspace-card-body"><p class="workspace-eyebrow">ECAI · MODEL QUALITY</p><h2 id="account-evaluation-title">LLM evaluation preferences</h2>
+      <p class="account-card-copy">Choose allowed model targets, repetitions, reference retrieval, request limits and remote-data consent. Node administration controls ceilings and provider access; this form cannot change them. Paper-trading evaluation never places live orders.</p>
+      <form id="account-evaluation-form"><div id="account-evaluation-fields" class="account-settings-grid"></div><div class="account-card-actions"><button class="workspace-button workspace-primary" type="submit" id="account-evaluation-save" disabled>Save evaluation preferences</button></div></form>
+      <p id="account-evaluation-status" class="workspace-status" role="status" aria-live="polite">Loading evaluation settings…</p>
+    </div>
+  </section>
+
   <div class="workspace-section-heading account-settings-section-heading">
     <div>
       <p class="workspace-eyebrow">AUTOMATION</p>

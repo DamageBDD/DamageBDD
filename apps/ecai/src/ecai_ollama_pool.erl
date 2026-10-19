@@ -5,6 +5,7 @@
     start_link/0,
     start_link/1,
     status/0,
+    evaluation_configurations/0,
     refresh/0,
     capacity/1,
     inference_available/4,
@@ -51,6 +52,11 @@
 
 start_link() -> start_link(#{}).
 start_link(Opts) -> gen_server:start_link({local, ?SERVER}, ?MODULE, Opts, []).
+
+%% Pure configuration resolution shared with the pinned evaluation adapter.
+%% This internal API returns credential REFERENCES; it is not exposed over HTTP.
+evaluation_configurations() ->
+    normalize_nodes(configured_nodes(#{})).
 
 status() -> gen_server:call(?SERVER, status).
 refresh() -> gen_server:cast(?SERVER, refresh).

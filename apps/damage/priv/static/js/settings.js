@@ -1,3 +1,4 @@
+import {initEvaluationAccountSettings} from "/static/js/evaluation-account-settings.js?v=eval-v1";
 // Account settings and node-context controls. No account secrets are persisted in browser storage.
 (() => {
   const $ = (id) => document.getElementById(id);
@@ -154,7 +155,11 @@
     }
   }
 
+  const evaluationSettings = initEvaluationAccountSettings({api,
+    getToken: () => window.TokenManager?.getToken?.(), session});
+
   async function refreshAccount() {
+    void evaluationSettings.refresh();
     renderSession();
     setStatus(accountStatus, 'Refreshing account…');
     try {

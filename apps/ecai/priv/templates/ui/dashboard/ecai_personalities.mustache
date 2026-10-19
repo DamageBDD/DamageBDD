@@ -1,0 +1,41 @@
+<section class="view personalities-view" data-panel="personalities" aria-labelledby="personalitiesTitle" hidden>
+  <div class="personality-hero">
+    <div class="personality-hero-copy"><div class="eyebrow eyebrow-light">ECAI PERSONALITIES <span aria-hidden="true">/</span> OWN YOUR EDITION</div><h1 id="personalitiesTitle">A character.<br>A point of view.<br>Your AI.</h1><p>Discover portable personality packages for your LLM. Choose an edition, pay in sats, and collect its on-chain record.</p><div class="personality-hero-tags"><span>Lightning checkout</span><span>Versioned packages</span><span>Aeternity ownership</span></div></div>
+    <div class="personality-geometry" aria-hidden="true"><div class="personality-orbit p-orbit-one"></div><div class="personality-orbit p-orbit-two"></div><div class="personality-orbit p-orbit-three"></div><div class="personality-core">e<span>·</span></div><span class="personality-geometry-label">IDENTITY / CONTINUITY / CHARACTER</span></div>
+  </div>
+  <div class="personality-section-heading"><div><div class="eyebrow">THE COLLECTION</div><h2>Find your personality.</h2></div><button type="button" id="personalitiesRefresh" class="button button-outline">Refresh collection</button></div>
+  <div id="personalitiesStatus" class="personality-status" role="status" aria-live="polite">Loading the collection…</div>
+  <div id="personalityCatalogue" class="personality-grid" aria-label="AI personality catalogue"></div>
+  <div class="personality-inclusions"><div><strong>01 / Choose</strong><p>Review the character, licence and available editions.</p></div><div><strong>02 / Pay in sats</strong><p>Scan the invoice with your Lightning wallet.</p></div><div><strong>03 / Collect</strong><p>Download the package after payment and mint confirmation.</p></div></div>
+  <section class="surface panel-pad personality-purchases" aria-labelledby="personalityPurchasesTitle">
+    <div class="panel-heading"><div><div class="eyebrow">YOUR COLLECTION</div><h2 id="personalityPurchasesTitle">Purchases &amp; receipts</h2></div></div>
+    <div id="personalitySignInNotice" class="personality-access"><p>Sign in with your managed account to purchase a personality or resume a checkout.</p><button id="personalitySignIn" type="button" class="button button-outline">Sign in to collect</button></div>
+    <div id="personalityOrders" class="personality-orders"></div>
+  </section>
+  <p class="personality-footnote">Your edition includes the package and rights described in its licence. Model inference is separate. Personality behavior can differ between models; private conversations and memories are not included in a transfer.</p>
+  <dialog id="personalityCheckout" class="personality-dialog" aria-labelledby="personalityCheckoutTitle" aria-describedby="personalityCheckoutDescription">
+    <div class="personality-dialog-top"><div class="eyebrow">YOUR NEXT PERSONALITY</div><button id="personalityCloseCheckout" type="button" class="icon-button" aria-label="Close checkout">×</button></div>
+    <h2 id="personalityCheckoutTitle">Collect a personality</h2><p id="personalityCheckoutDescription" class="personality-checkout-description"></p>
+    <div id="personalityCheckoutStatus" class="personality-status" role="status" aria-live="polite"></div>
+    <div id="personalityCheckoutDetails" class="personality-details"></div>
+    <form id="personalityCheckoutForm" class="stack-form">
+      <label for="personalityRecipient">NFT recipient · Aeternity account<input id="personalityRecipient" name="recipient" autocomplete="off" spellcheck="false" placeholder="ak_…" maxlength="100" required></label>
+      <p class="context-hint">Use an account you control. This recipient is fixed when the invoice is created.</p>
+      <label class="personality-license-check"><input id="personalityAcceptLicense" type="checkbox" required><span>I have reviewed the edition's licence and recipient.</span></label>
+      <button id="personalityCreateInvoice" type="submit" class="button button-primary">Create Lightning invoice</button>
+    </form>
+    <div id="personalityPayment" hidden>
+      <ol class="personality-progress" aria-label="Purchase progress"><li id="personalityStepInvoice">Invoice</li><li id="personalityStepPaid">Payment verified</li><li id="personalityStepMinted">Edition minted</li></ol>
+      <div class="personality-order-summary"><strong id="personalityOrderAmount"></strong><span id="personalityOrderState" class="personality-state"></span></div>
+      <div id="personalityInvoiceArea" class="personality-invoice-area" hidden>
+        <div class="personality-qr-frame"><img id="personalityInvoiceQr" alt="Lightning invoice QR code" width="256" height="256" hidden><p id="personalityQrStatus" role="status">Preparing QR code…</p></div>
+        <p id="personalityInvoiceExpiry" class="personality-expiry" role="timer" aria-live="off"></p>
+        <div class="personality-pay-actions"><a id="personalityOpenWallet" class="button button-primary">Open Lightning wallet ↗</a><button id="personalityCopyInvoice" type="button" class="button button-outline">Copy invoice</button></div>
+        <label for="personalityInvoiceText" class="sr-only">BOLT11 Lightning invoice</label><textarea id="personalityInvoiceText" class="personality-invoice-text" rows="3" readonly spellcheck="false"></textarea>
+        <p class="context-hint">Pay this invoice once. Payment is confirmed by the server; closing this window does not cancel an order.</p>
+      </div>
+      <div id="personalityReceipt" class="personality-receipt"></div>
+      <div class="personality-pay-actions"><button id="personalityReconcile" type="button" class="button button-outline">Check payment &amp; mint</button><button id="personalityRetryPurchase" type="button" class="button button-primary" hidden>Start a new purchase</button><button id="personalityDownload" type="button" class="button button-primary" hidden>Download personality</button><button id="personalityReceiptDownload" type="button" class="button button-outline">Save receipt</button></div>
+    </div>
+  </dialog>
+</section>
