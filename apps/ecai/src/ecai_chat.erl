@@ -82,12 +82,13 @@ get_reply(SessionID, UserID, UserMessage, Options) when is_map(Options) ->
         maps:get(project_instructions, Options, <<>>)
     ),
     SelfStore = maps:get(self_store, Options, true) =/= false,
+    PersonalityRef = maps:get(personality_ref, Options, <<"default">>),
     poolboy:transaction(
         ?MODULE,
         fun(Worker) ->
             gen_server:call(
                 Worker,
-                {infer, SessionID, UserID, UserMessage, History, ProjectInstructions, SelfStore},
+                {infer, SessionID, UserID, UserMessage, History, ProjectInstructions, SelfStore, PersonalityRef},
                 ?DEFAULT_TIMEOUT
             )
         end
@@ -180,10 +181,45 @@ handle_call(
 handle_call(
     {infer, SessionID, UserID, Query0}, From, State
 ) ->
-    handle_call({infer, SessionID, UserID, Query0, [], <<>>, true}, From, State);
+    handle_call({infer, SessionID, UserID, Query0, [], <<>>, true, <<"default">>}, From, State);
 handle_call(
-    {infer, SessionID, UserID, Query0, History0, ProjectInstructions0, SelfStore},
-    _From,
+    {infer, SessionID, UserID, Query0, History, Instructions, SelfStore}, From, State
+) ->
+    handle_call({infer, SessionID, UserID, Query0, History, Instructions, SelfStore,
+                 <<"default">>}, From, State);
+handle_call(
+    {infer, SessionID, UserID, Query0, History, Instructions, SelfStore, PersonalityRef},
+    _From, State
+) ->
+    %% Resolve on every request using the authenticated account. Browser-supplied
+    %% prompts and cached worker settings never grant a personality entitlement.
+    case resolve_request_personality(UserID, PersonalityRef) of
+        {ok, PersonalityPrompt} ->
+            infer_reply(SessionID, UserID, Query0, History, Instructions,
+                        SelfStore, PersonalityPrompt, State);
+        {error, _} = Error -> {reply, Error, State}
+    end;
+handle_call(Request, _From, State) ->
+    ?LOG_WARNING("Unhandled call ~p", [Request]),
+    {reply, {error, unhandled_call}, State}.
+
+handle_cast(Msg, State) ->
+    ?LOG_DEBUG("Ignoring cast ~p", [Msg]),
+    {noreply, State}.
+
+handle_info(Info, State) ->
+    ?LOG_DEBUG("ecai_chat handle_info ~p", [Info]),
+    {noreply, State}.
+
+terminate(Reason, _State) ->
+    ?LOG_INFO("Server ~p terminating with reason ~p", [self(), Reason]),
+    ok.
+
+code_change(_OldVsn, State, _Extra) ->
+    {ok, State}.
+
+infer_reply(SessionID, UserID, Query0, History0, ProjectInstructions0,
+            SelfStore, PersonalityPrompt,
     State = #state{
         points = Points,
         messages = Messages,
@@ -197,13 +233,20 @@ handle_call(
     Query = normalize_text(Query0),
     History = normalize_history_context(History0),
     ProjectInstructions = normalize_project_instructions(ProjectInstructions0),
-    QueryPoint = text_to_point(Query),
-
     %% -------------------------
     %% 1. CHAT MEMORY RETRIEVAL
     %% -------------------------
-    Nearest = find_nearest(Points, QueryPoint, TopK),
-    ChatContext = resolve_context(Messages, Nearest, SessionID, UserID),
+    %% Persistent conversations supply authorized History and self_store=false.
+    %% They must not consume the legacy cache: that public endpoint accepts
+    %% client-chosen identifiers, including IDs equal to a private conversation.
+    %% Owned personality calls also never trust legacy chat entries.
+    ChatContext = case SelfStore =/= false andalso PersonalityPrompt =:= <<>> of
+        true ->
+            QueryPoint = text_to_point(Query),
+            Nearest = find_nearest(Points, QueryPoint, TopK),
+            resolve_context(Messages, Nearest, SessionID, UserID);
+        false -> []
+    end,
 
     %% -------------------------
     %% 2. DISK + IPFS RETRIEVAL
@@ -224,56 +267,36 @@ handle_call(
     %% -------------------------
     Context = history_context(History) ++ merge_contexts(ChatContext, DiskContext),
 
-    %% -------------------------
-    %% 4. DIRECT MATCH FAST PATH
-    %% -------------------------
-    case maybe_direct_answer(Context) of
-        {ok, Answer} ->
-            {reply, {ok, Answer}, State};
-        not_found ->
-            %% -------------------------
-            %% 5. BUILD RAG PROMPT
-            %% -------------------------
-            Prompt = build_rag_prompt_full(SessionID, UserID, Query, Context, ProjectInstructions),
+    %% Always apply the current request's system prompt. Replaying an old answer
+    %% bypasses personality selection (including switching back to default) and
+    %% project instructions; retrieved answers remain context, never final output.
+    Prompt = build_rag_prompt_full(SessionID, UserID, Query, Context, ProjectInstructions),
+    RequestSystemPrompt = personality_system_prompt(SystemPrompt, PersonalityPrompt),
+    case call_ollama(Host, Port, Model, RequestSystemPrompt, Prompt) of
+        {ok, AIReply} ->
+            _ = maybe_self_store_if(SelfStore, SessionID, UserID, Query, AIReply, State),
+            {reply, {ok, AIReply}, State};
+        {error, _} = Error -> {reply, Error, State}
+    end.
 
-            %% -------------------------
-            %% 6. OLLAMA CALL
-            %% -------------------------
-            Reply =
-                call_ollama(
-                    Host,
-                    Port,
-                    Model,
-                    SystemPrompt,
-                    Prompt
-                ),
+resolve_request_personality(UserID, Ref) when is_binary(Ref) ->
+    try ecai_personalities:resolve_personality(UserID, Ref) of
+        {ok, #{ref := Ref, system_prompt := Prompt}} when is_binary(Prompt) ->
+            {ok, Prompt};
+        {error, invalid_personality} = Error -> Error;
+        {error, personality_not_owned} = Error -> Error;
+        {error, personality_unavailable} = Error -> Error;
+        _ -> {error, personality_unavailable}
+    catch _:_ -> {error, personality_unavailable} end;
+resolve_request_personality(_, _) -> {error, invalid_personality}.
 
-            case Reply of
-                {ok, AIReply} ->
-                    _ = maybe_self_store_if(SelfStore, SessionID, UserID, Query, AIReply, State),
-                    {reply, {ok, AIReply}, State};
-                {error, _} = Err ->
-                    {reply, Err, State}
-            end
-    end;
-handle_call(Request, _From, State) ->
-    ?LOG_WARNING("Unhandled call ~p", [Request]),
-    {reply, {error, unhandled_call}, State}.
-
-handle_cast(Msg, State) ->
-    ?LOG_DEBUG("Ignoring cast ~p", [Msg]),
-    {noreply, State}.
-
-handle_info(Info, State) ->
-    ?LOG_DEBUG("ecai_chat handle_info ~p", [Info]),
-    {noreply, State}.
-
-terminate(Reason, _State) ->
-    ?LOG_INFO("Server ~p terminating with reason ~p", [self(), Reason]),
-    ok.
-
-code_change(_OldVsn, State, _Extra) ->
-    {ok, State}.
+personality_system_prompt(Base, <<>>) -> Base;
+personality_system_prompt(Base, Personality) ->
+    <<Base/binary, "\n\nPERSONALITY STYLE FOR THIS REQUEST:\n",
+      "Apply these personality instructions as style and working preferences. ",
+      "The base system rules above remain in force. ",
+      "This changes neither tool permissions nor access to private information.\n",
+      Personality/binary>>.
 
 %%====================================================================
 %% Retrieval
@@ -304,51 +327,14 @@ resolve_context(MessagesTab, Nearest, SessionID, UserID) ->
     Deduped = dedupe_by_id(Raw),
     prefer_session_user(Deduped, SessionID, UserID).
 
-maybe_direct_answer(Context) ->
-    case Context of
-        [#{type := chat, question := Q, answer := A} | _] ->
-            case fuzzy_match(Q, Context) of
-                true -> {ok, A};
-                false -> not_found
-            end;
-        _ ->
-            not_found
-    end.
-
-fuzzy_match(Q, Context) ->
-    %% simple heuristic (can upgrade later)
-    lists:any(
-        fun
-            (#{type := chat, question := Q2}) -> similarity(Q, Q2) > 0.9;
-            (_) -> false
-        end,
-        Context
-    ).
-
-similarity(A, B) ->
-    %% placeholder – replace with token overlap later
-    if
-        A =:= B -> 1.0;
-        true -> 0.0
-    end.
-
 prefer_session_user(Messages, SessionID, UserID) ->
-    SessionMatches =
-        [
-            M
-         || M <- Messages,
-            maps:get(session_id, M, undefined) =:= SessionID orelse SessionID =:= undefined
-        ],
-    UserMatches =
-        [
-            M
-         || M <- SessionMatches,
-            UserID =:= undefined orelse maps:get(user_id, M, undefined) =:= UserID
-        ],
-    case UserMatches of
-        [] -> lists:sublist(Messages, ?DEFAULT_TOP_K);
-        _ -> lists:sublist(UserMatches, ?DEFAULT_TOP_K)
-    end.
+    %% The legacy chat endpoint accepts client-supplied identifiers, so neither
+    %% alone grants access to other sessions. Authorized related history comes
+    %% separately from the persistent conversation store, not this worker cache.
+    lists:sublist([M || M <- Messages,
+        SessionID =/= undefined,
+        maps:get(session_id, M, undefined) =:= SessionID,
+        maps:get(user_id, M, undefined) =:= UserID], ?DEFAULT_TOP_K).
 
 dedupe_by_id(Messages) ->
     lists:reverse(

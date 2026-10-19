@@ -28,6 +28,13 @@
         ]},
         {env, [
             {marketplace_enabled, false},
+            %% Public catalogue is available; invoice issuance requires operator setup.
+            {personality_sales_enabled, false},
+            {personality_nft, #{enabled => false}},
+            {personality_lightning, #{}},
+            {eval_enabled, false},
+            {eval_allow_remote, false},
+            {eval_target_ids, []},
             %% Managed-account mathematical jobs; local bounded computation only.
             {math_dashboard_enabled, true},
             %% Durable, account-scoped dashboard conversation history. Search

@@ -6,7 +6,18 @@ conversation_history_projects_test_() ->
     {setup,
         fun setup/0,
         fun cleanup/1,
-        fun run_history_case/1}.
+        fun(Context) ->
+            %% Return a test descriptor; do not run the case during instantiation.
+            ?_test(run_history_case(Context))
+        end}.
+
+conversation_history_instantiator_is_deferred_test() ->
+    {setup, _Setup, _Cleanup, Instantiate} = conversation_history_projects_test_(),
+    %% Building the descriptor must not require starting the conversation store.
+    ?assertMatch(
+        {Line, Test} when is_integer(Line) andalso is_function(Test, 0),
+        Instantiate(#{})
+    ).
 
 setup() ->
     case whereis(ecai_conversation_store) of

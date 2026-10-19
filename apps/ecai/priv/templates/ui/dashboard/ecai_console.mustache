@@ -7,8 +7,10 @@
   <meta name="referrer" content="no-referrer">
   <meta name="theme-color" content="#101b32">
   <title>ECAI · Control plane</title>
-  <link rel="stylesheet" href="/static/css/ecai-console.css">
-  <link rel="stylesheet" href="/static/css/ecai-math-paths.css?v=math-samples-v1">
+  <link rel="stylesheet" href="/static/css/ecai-console.css?v=personality-conversations-v1">
+  <link rel="stylesheet" href="/static/css/ecai-personalities.css?v=personalities-v1">
+  <link rel="stylesheet" href="/static/css/ecai-eval.css?v=eval-v1">
+  <link rel="stylesheet" href="/static/css/ecai-math-paths.css?v=math-samples-explorer-v2">
   <link rel="stylesheet" href="/static/css/ecai-video.css">
   <link rel="stylesheet" href="/static/css/ecai-market-maker.css">
   <link rel="stylesheet" href="/ecai/auth-assets/css/auth.css">
@@ -30,7 +32,9 @@
       <nav id="consoleNav" class="main-nav" aria-label="ECAI areas">
         <button type="button" data-view="overview" class="nav-link is-active" aria-current="page"><span class="nav-icon" aria-hidden="true">◫</span>Overview</button>
         <button type="button" data-view="search" class="nav-link"><span class="nav-icon" aria-hidden="true">⌕</span>Knowledge search</button>
+        <button type="button" data-view="evaluation" class="nav-link"><span class="nav-icon" aria-hidden="true">✓</span>LLM evaluation</button>
         <button type="button" data-view="math" class="nav-link"><span class="nav-icon" aria-hidden="true">↝</span>Mathematical paths</button>
+        <button type="button" data-view="personalities" class="nav-link"><span class="nav-icon" aria-hidden="true">◉</span>AI personalities</button>
         <button type="button" data-view="chat" class="nav-link"><span class="nav-icon" aria-hidden="true">▤</span>Conversation</button>
         <button type="button" data-view="video" class="nav-link"><span class="nav-icon" aria-hidden="true">▸</span>Video Studio</button>
         <button type="button" data-view="indexing" class="nav-link"><span class="nav-icon" aria-hidden="true">▦</span>Index jobs</button>
@@ -264,6 +268,12 @@
                   <select id="chatMoveProject" class="chat-project-select" aria-label="Move conversation to project" disabled><option value="">No project</option></select>
                   <button type="button" class="text-button chat-delete-button" id="chatDeleteBtn" disabled>Delete</button>
                 </div>
+              </div>
+              <div class="chat-personality-bar">
+                <div class="chat-personality-choice"><label for="chatPersonality">PERSONALITY</label><select id="chatPersonality" aria-describedby="chatPersonalityStatus"><option value="default">ECAI default · built-in</option></select></div>
+                <button type="button" id="chatPersonalityRefresh" class="icon-button" aria-label="Refresh owned personalities" title="Refresh owned personalities">↻</button>
+                <button type="button" class="text-button" data-go="personalities">Explore personalities ↗</button>
+                <p id="chatPersonalityStatus" class="chat-personality-status" role="status" aria-live="polite">Guest conversations use ECAI default.</p>
               </div>
               <div class="chat-messages" id="chatMessages" aria-live="polite"><div class="chat-welcome"><div class="welcome-icon">e·</div><h2>Ask a question</h2><p>Guest messages use a temporary session. Sign in to keep searchable conversation history.</p></div></div>
               <form id="chatForm" class="composer"><label class="sr-only" for="chatPrompt">Your message</label><textarea id="chatPrompt" rows="2" required maxlength="16384" placeholder="Ask the ECAI knowledge layer…"></textarea><button class="button button-primary" type="submit" id="chatSend">Send ↗</button></form>
@@ -573,7 +583,11 @@
 
         {{{market_maker_panel}}}
 
+        {{{personalities_panel}}}
+
         {{{math_paths_panel}}}
+
+        {{{evaluation_panel}}}
 
         {{{compute_settings_panel}}}
 
@@ -595,6 +609,6 @@
   <script type="module" src="/static/js/ecai-index-pool.js"></script>
   <script type="module" src="/static/js/ecai-compute-settings.js"></script>
   <script type="module" src="/static/js/ecai-keys.js"></script>
-  <script type="module" src="/static/js/ecai-console.js?v=video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-v1"></script>
+  <script type="module" src="/static/js/ecai-console.js?v=personality-conversations-v1-personalities-v1-video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-explorer-v2-eval-v1"></script>
 </body>
 </html>

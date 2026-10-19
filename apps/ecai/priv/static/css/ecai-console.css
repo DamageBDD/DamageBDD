@@ -629,3 +629,8 @@ input::placeholder,textarea::placeholder { color: #a7b0c0; }
 @media (max-width: 1100px) { .wiki-custom-layout { grid-template-columns: 1fr; } }
 @media (max-width: 700px) { .wiki-custom-fields { grid-template-columns: 1fr; } .wiki-json-grid { grid-template-columns: 1fr; } .wiki-picker-tools { flex-wrap: wrap; } .wiki-search-label { max-width: none; flex-basis: 100%; } .wiki-picker-footer .button { width: 100%; } .wiki-plan-card { padding: 14px; } }
 @media (prefers-reduced-motion: reduce) { .wiki-project-card { transition: none; } }
+
+/* Owned personality selection is scoped to the current conversation. */
+.chat-personality-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 20px;background:#f9fbfd;border-bottom:1px solid var(--line)}
+.chat-personality-choice{display:flex;align-items:center;gap:10px;flex:1;min-width:0}.chat-personality-choice label{font-size:9px;letter-spacing:.12em;font-weight:750;color:#7989a1;flex-shrink:0}.chat-personality-choice select{font-size:12px;border:1px solid #dce4ed;border-radius:7px;padding:7px 9px;max-width:100%;min-width:0;width:min(100%,320px);background:#fff;color:#344761}.chat-personality-bar>.text-button{font-size:10px;margin-left:auto}.chat-personality-status{flex-basis:100%;font-size:10px;line-height:1.6;margin:0;color:#728198;overflow-wrap:anywhere}.chat-personality-status[data-error=true]{color:#a13e4c}
+@media(max-width:560px){.chat-personality-bar{padding:12px;gap:8px}.chat-personality-choice{flex-basis:calc(100% - 40px);flex-wrap:wrap;gap:6px}.chat-personality-choice label{flex-basis:100%}.chat-personality-choice select{width:100%}.chat-personality-bar>.text-button{margin-left:0}.chat-personality-status{font-size:11px}}

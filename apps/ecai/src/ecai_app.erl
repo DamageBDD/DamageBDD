@@ -97,6 +97,8 @@ get_trails() ->
         [
             ecai_api,
             ecai_auth_http,
+            ecai_eval_http,
+            ecai_personality_http,
             ecai_math_dashboard_http,
             ecai_video_dashboard_http,
             ecai_mm_dashboard_http,

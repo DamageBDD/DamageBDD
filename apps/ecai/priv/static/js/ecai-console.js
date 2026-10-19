@@ -1,11 +1,13 @@
+import {initPersonalities} from "/static/js/ecai-personalities.js?v=personalities-v1";
+import {initEvaluation} from "/static/js/ecai-eval.js?v=eval-v1";
 // Use the current DamageBDD browser-session and authentication modules.
 // Wallet transport remains a lazy import inside auth-wallet-loader.js.
 import {TokenManager, logoutActiveSession} from "/ecai/auth-assets/js/wallet-switcher.js";
 import {initAuthUI} from "/ecai/auth-assets/js/auth-ui.js?v=ecai-browser-v1";
-import {initVideoStudio} from "/static/js/ecai-video.js?v=video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-v1";
+import {initVideoStudio} from "/static/js/ecai-video.js?v=video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-explorer-v2";
 import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1";
 
-import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
+import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explorer-v2";
 
 /* ECAI Control Plane. Uses only routes exported by the current ECAI Cowboy handlers. */
 (() => {
@@ -13,8 +15,17 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
 
   const $ = (id) => document.getElementById(id);
   const routes = [
+    {group: "AI personalities", method: "GET", path: "/ecai/conversations/personalities", description: "Built-in default and owned personality editions available to this signed-in account."},
+    {group: "AI personalities", method: "GET", path: "/ecai/personalities", description: "Public personality collection, edition prices and checkout availability."},
+    {group: "AI personalities", method: "GET", path: "/ecai/personalities/orders", description: "Purchases and pending invoices for the managed account."},
+    {group: "AI personalities", method: "GET", path: "/ecai/personalities/orders/:id", params: ["id"], description: "Account-owned Lightning payment and NFT mint status."},
+    {group: "LLM evaluation", method: "GET", path: "/ecai/eval/settings", description: "Account preferences, effective node limits and allowed model targets."},
+    {group: "LLM evaluation", method: "GET", path: "/ecai/eval/suites", description: "Versioned account-scoped evaluation datasets."},
+    {group: "LLM evaluation", method: "GET", path: "/ecai/eval/runs", description: "Durable evaluation runs, failures and release gates."},
+    {group: "LLM evaluation", method: "GET", path: "/ecai/eval/review-queue", description: "Explicitly authorized annotation and human-rubric reviews."},
+    {group: "Mathematical paths", method: "GET", path: "/ecai/math/jobs/:id/path/:model_id", params: ["id","model_id"], description: "Download one retained exploration path by model ID."},
     {group: "Mathematical paths", method: "GET", path: "/ecai/math/jobs", description: "Account-scoped volatile mathematical jobs; no payment challenge."},
-    {group: "Mathematical paths", method: "POST", path: "/ecai/math/jobs", description: "Run a native explicit demo, bounded discovery or JSON path import with fresh checks.", body: {operation: "demo"}},
+    {group: "Mathematical paths", method: "POST", path: "/ecai/math/jobs", description: "Run a native source-only exploration, explicit demo, bounded connection or JSON path import with fresh checks.", body: {operation: "demo"}},
     {group: "Mathematical paths", method: "GET", path: "/ecai/math/jobs/:id", params: ["id"], description: "Read a mathematical path, scoped evidence and measured check time."},
     {group: "Mathematical paths", method: "POST", path: "/ecai/math/jobs/:id/replay", params: ["id"], body: {}, description: "Submit a fresh replay as a new account-scoped job."},
     {group: "Mathematical paths", method: "GET", path: "/ecai/math/jobs/:id/path", params: ["id"], description: "Download native replay JSON for independent checking."},
@@ -133,8 +144,10 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
     ask: { question: "What is known about this topic?", destination: "local" }
   };
   const marketExamples = { claim: { miner_ak: "ak_..." }, submit: { miner_ak: "ak_...", attestation: "attestation", evidence_ref: "" }, pay: { admin_ak: "ak_..." } };
-  const VIEW_NAMES = { math: "Mathematical paths", overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing", compute: "Compute & NFTs", keys: "Keys" };
+  const VIEW_NAMES = { personalities: "AI personalities", evaluation: "LLM evaluation", math: "Mathematical paths", overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing", compute: "Compute & NFTs", keys: "Keys" };
   let mathPaths = null;
+  let evaluation = null;
+  let personalities = null;
   let videoStudio = null;
   let marketMaker = null;
   const state = {
@@ -143,6 +156,8 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
     codeSettings: null, codeRepository: null, codeBundles: [],
     selectedIndexId: "", selectedIndexJob: null, jobEntries: new Map(), selectedMarketId: "", activeRoute: -1, lastApiResult: null,
     chatSession: randomHex(16), chatUser: `console-${randomHex(12)}`, chatBusy: false,
+    chatPersonalityRef: "default", chatPersonalityChoices: [], chatPersonalityChoiceEpoch: -1, chatPersonalitySequence: 0,
+    chatPersonalityLoading: false, chatPersonalitySaving: false, chatPersonalityPendingRef: "", chatPersonalityError: "", chatPersonalityUncertain: false, chatViewEpoch: 0, chatWorkspaceSequence: 0, chatThreadLoading: false,
     chatConversationId: "", chatFilterProjectId: "", chatConversations: [], chatProjects: [], chatHistoryOpen: false,
     streamSession: null, socket: null,
     wikiSelectedPresets: new Set(), wikiPresetKeys: new Map(), wikiQueueBusy: false, wikiLoadingPresets: false,
@@ -446,7 +461,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
   function managedSession() { return state.authenticated && state.sessionMode === "custodial"; }
   const WALLET_PUBLIC_REQUESTS = new Set([
     "GET /ecai/auth/session", "GET /ecai/chat", "POST /ecai/chat",
-    "POST /ecai/search", "GET /yelp/status"
+    "POST /ecai/search", "GET /yelp/status", "GET /ecai/personalities"
   ]);
   function walletRequestAllowed(path, method = "GET") {
     const pathname = new URL(path, location.origin).pathname;
@@ -478,7 +493,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
     const tokenChanged = token !== observedToken;
     if (tokenChanged) {
       state.authEpoch++;
-      mathPaths?.reset();
+      mathPaths?.reset(); evaluation?.reset(); personalities?.reset();
       videoStudio?.reset();
       marketMaker?.reset();
       if (state.authenticated) setAuthenticated(false);
@@ -488,7 +503,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
     state.sessionMode = session?.mode || "anonymous";
     state.email = session?.email || session?.address || "";
     setAuthenticated(Boolean(session), state.email);
-    mathPaths?.accessChanged();
+    mathPaths?.accessChanged(); evaluation?.accessChanged(); personalities?.accessChanged();
     videoStudio?.accountChanged();
     marketMaker?.accessChanged();
     if (tokenChanged) {
@@ -557,7 +572,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
       setCodeActionsEnabled(false);
       if (["code", "network"].includes(state.view)) navigate("overview");
       marketMaker?.reset();
-      mathPaths?.reset();
+      mathPaths?.reset(); evaluation?.reset(); personalities?.reset();
       window.EcaiComputeSettings?.clear();
       window.EcaiOllamaKeys?.clear();
       put("codeReviewDetail", "Select a validated repair from the review queue.");
@@ -625,6 +640,8 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
       if (state.view === "network" && state.nodeAdmin) await window.EcaiIndexPool?.refresh();
       if (state.view === "code" && state.nodeAdmin) await refreshCode();
       if (state.view === "math" && managedSession()) await mathPaths?.refresh();
+      evaluation?.accessChanged();
+      if (state.view === "evaluation" && managedSession()) await evaluation?.refresh();
       if (state.view === "compute" && managedSession()) await window.EcaiComputeSettings?.refresh();
       if (state.view === "keys" && managedSession()) await window.EcaiOllamaKeys?.refresh();
       const result = await request("/ecai/index-jobs/status", { ignoreAuth: true });
@@ -658,6 +675,8 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
     closeNav();
     window.EcaiIndexPool?.setVisible(view === "network");
     mathPaths?.setVisible(view === "math");
+    evaluation?.setVisible(view === "evaluation");
+    personalities?.setVisible(view === "personalities");
     videoStudio?.setVisible(view === "video");
     marketMaker?.setVisible(view === "market-maker");
     if (previous === "indexing" && view !== "indexing") stopStream();
@@ -786,6 +805,25 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
     return chatProject(projectId)?.name || "Project";
   }
   function resetChat() {
+    state.chatViewEpoch++; state.chatWorkspaceSequence++;
+    state.chatBusy = false;
+    state.chatThreadLoading = false;
+    state.chatPersonalitySaving = false;
+    state.chatPersonalityPendingRef = "";
+    state.chatPersonalityUncertain = false;
+    state.chatPersonalityRef = "default";
+    if (state.chatPersonalityChoiceEpoch !== state.authEpoch || !state.authenticated) {
+      state.chatConversations = []; state.chatProjects = []; state.chatFilterProjectId = "";
+      for (const id of ["chatSearchDialog", "chatProjectDialog"]) { if ($(id).open) $(id).close(); }
+      for (const id of ["chatSearchQuery", "chatProjectName", "chatProjectInstructions", "chatProjectId"]) $(id).value = "";
+      $("chatSearchResults").replaceChildren();
+      state.chatPersonalitySequence++;
+      state.chatPersonalityChoices = [];
+      state.chatPersonalityChoiceEpoch = state.authEpoch;
+      state.chatPersonalityLoading = false;
+      state.chatPersonalityError = "";
+      $("chatPrompt").value = "";
+    }
     state.chatConversationId = "";
     state.chatSession = randomHex(16);
     state.chatUser = `console-${randomHex(12)}`;
@@ -797,6 +835,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
     welcome.append(element("div", "welcome-icon", "e·"), element("h2", "", "A new conversation"), element("p", "", copy));
     $("chatMessages").append(welcome);
     put("chatStatus", "Ready");
+    renderChatProjectOptions(); renderChatProjects();
     renderChatThreadControls();
     renderChatHistory();
   }
@@ -875,6 +914,112 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
       host.append(button);
     }
   }
+  function chatPersonalityAvailable(ref = state.chatPersonalityRef) {
+    return ref === "default" || (state.authenticated && state.chatPersonalityChoiceEpoch === state.authEpoch &&
+      state.chatPersonalityChoices.some(item => item.ref === ref));
+  }
+  function renderChatPersonality() {
+    const select = $("chatPersonality");
+    const ref = state.chatPersonalityPendingRef || state.chatPersonalityRef;
+    select.replaceChildren(new Option("ECAI default · built-in", "default"));
+    if (state.authenticated && state.chatPersonalityChoiceEpoch === state.authEpoch) {
+      for (const item of state.chatPersonalityChoices) {
+        select.append(new Option(`${item.name}${item.version ? " · " + item.version : ""}`, item.ref));
+      }
+    }
+    const available = chatPersonalityAvailable(ref);
+    if (!available) select.append(new Option("Saved personality · unavailable", ref));
+    select.value = ref;
+    select.disabled = !state.authenticated || state.chatBusy || state.chatPersonalitySaving || state.chatPersonalityLoading || state.chatThreadLoading;
+    $("chatPersonalityRefresh").disabled = !state.authenticated || state.chatBusy || state.chatPersonalitySaving || state.chatThreadLoading;
+    $("chatSend").disabled = state.chatBusy || state.chatPersonalitySaving || state.chatThreadLoading || state.chatPersonalityUncertain || !chatPersonalityAvailable();
+    let text;
+    if (!state.authenticated) text = "Guest conversations use ECAI default. Sign in to use an owned personality.";
+    else if (state.chatPersonalitySaving) text = "Saving personality for this conversation…";
+    else if (state.chatPersonalityUncertain) text = "The personality update could not be confirmed. Refresh before sending.";
+    else if (state.chatPersonalityLoading) text = "Checking your owned personalities…";
+    else if (!available) text = "This saved personality is unavailable. Choose ECAI default or another owned personality before sending.";
+    else if (state.chatPersonalityError) text = state.chatPersonalityError;
+    else text = state.chatConversationId ? "Applies to future replies in this conversation." : "Choose a personality before your first message.";
+    $("chatPersonalityStatus").textContent = text;
+    $("chatPersonalityStatus").dataset.error = String(!available || state.chatPersonalityUncertain || !!state.chatPersonalityError);
+  }
+  async function refreshChatPersonalities() {
+    const epoch = state.authEpoch, sequence = ++state.chatPersonalitySequence;
+    if (!state.authenticated) {
+      state.chatPersonalityChoices = []; state.chatPersonalityRef = "default";
+      state.chatPersonalityLoading = false; state.chatPersonalityError = "";
+      renderChatPersonality(); return;
+    }
+    state.chatPersonalityLoading = true; renderChatPersonality();
+    try {
+      const response = expectSuccess(await request("/ecai/conversations/personalities"));
+      if (epoch !== state.authEpoch || sequence !== state.chatPersonalitySequence) return;
+      const unique = new Map();
+      for (const item of Array.isArray(response.items) ? response.items : []) {
+        if (typeof item.ref === "string" && item.ref.startsWith("purchase:") && item.ref.length > 9 &&
+            typeof item.name === "string") unique.set(item.ref, item);
+      }
+      state.chatPersonalityChoices = [...unique.values()];
+      state.chatPersonalityChoiceEpoch = epoch; state.chatPersonalityError = "";
+    } catch (error) {
+      if (epoch !== state.authEpoch || sequence !== state.chatPersonalitySequence || error.name === "AbortError") return;
+      state.chatPersonalityChoices = []; state.chatPersonalityChoiceEpoch = epoch;
+      state.chatPersonalityError = "Owned personalities could not be loaded. ECAI default is available; refresh to retry.";
+    } finally {
+      if (epoch === state.authEpoch && sequence === state.chatPersonalitySequence) {
+        state.chatPersonalityLoading = false; renderChatPersonality();
+      }
+    }
+  }
+  function rememberChatConversation(conversation) {
+    state.chatConversations = [conversation, ...state.chatConversations.filter(item => String(item.id) !== String(conversation.id))];
+  }
+  async function changeChatPersonality() {
+    const ref = $("chatPersonality").value;
+    if (!state.authenticated || state.chatBusy || state.chatPersonalitySaving || state.chatPersonalityLoading || state.chatThreadLoading || !chatPersonalityAvailable(ref)) {
+      renderChatPersonality(); return;
+    }
+    if (!state.chatConversationId) {
+      state.chatPersonalityRef = ref; state.chatPersonalityUncertain = false; state.chatPersonalityError = "";
+      renderChatPersonality(); return;
+    }
+    const epoch = state.authEpoch, serial = state.chatViewEpoch, id = state.chatConversationId;
+    const current = () => epoch === state.authEpoch && serial === state.chatViewEpoch && id === state.chatConversationId;
+    state.chatWorkspaceSequence++;
+    state.chatPersonalitySaving = true; state.chatPersonalityPendingRef = ref; state.chatPersonalityError = "";
+    renderChatThreadControls();
+    try {
+      const response = expectSuccess(await request(`/ecai/conversations/${encodeURIComponent(id)}`, {method:"PATCH", body:{personality_ref:ref}}));
+      if (!current()) return;
+      if (!response.conversation || response.conversation.personality_ref !== ref) throw new Error("Personality update was not confirmed");
+      rememberChatConversation(response.conversation); state.chatPersonalityRef = ref;
+      state.chatPersonalityUncertain = false;
+    } catch (error) {
+      if (!current() || error.name === "AbortError") return;
+      // A lost PATCH response can follow a successful save. Read the persisted
+      // conversation before deciding which personality the next message uses.
+      try {
+        const response = expectSuccess(await request(`/ecai/conversations/${encodeURIComponent(id)}`));
+        if (!current()) return;
+        if (!response.conversation) throw new Error("Conversation was not returned");
+        rememberChatConversation(response.conversation);
+        state.chatPersonalityRef = response.conversation.personality_ref || "default";
+        state.chatPersonalityUncertain = false;
+        state.chatPersonalityError = state.chatPersonalityRef === ref
+          ? "Personality saved; the initial response was interrupted."
+          : "Personality was not changed. The saved selection has been restored.";
+      } catch (_) {
+        if (current()) { state.chatPersonalityUncertain = true; state.chatPersonalityError = ""; }
+      }
+    } finally {
+      if (current()) {
+        state.chatWorkspaceSequence++;
+        state.chatPersonalitySaving = false; state.chatPersonalityPendingRef = "";
+        renderChatThreadControls(); renderChatHistory();
+      }
+    }
+  }
   function renderChatThreadControls() {
     const conversation = activeChatConversation();
     const persistent = state.authenticated;
@@ -882,10 +1027,13 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
     put("chatConversationTitle", conversation?.title || "New conversation");
     put("chatProjectLabel", persistent ? chatProjectName(projectId) : "Guest session");
     put("chatSessionLabel", conversation ? `History · ${String(conversation.id).slice(0, 8)}` : persistent ? "Saved on send" : `Guest · ${state.chatSession.slice(0, 8)}`);
-    $("chatRenameBtn").disabled = !conversation;
-    $("chatDeleteBtn").disabled = !conversation;
-    $("chatMoveProject").disabled = !persistent;
+    const locked = state.chatBusy || state.chatPersonalitySaving || state.chatThreadLoading;
+    $("chatRenameBtn").disabled = !conversation || locked;
+    $("chatDeleteBtn").disabled = !conversation || locked;
+    $("chatMoveProject").disabled = !persistent || locked;
+    $("newChatBtn").disabled = locked;
     $("chatMoveProject").value = String(projectId);
+    renderChatPersonality();
   }
   function setChatHistoryAuthState() {
     const authenticated = state.authenticated;
@@ -896,11 +1044,15 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
     renderChatThreadControls();
   }
   async function refreshChatWorkspace() {
+    if (state.chatPersonalitySaving) return;
+    const epoch = state.authEpoch, serial = state.chatViewEpoch, sequence = ++state.chatWorkspaceSequence;
     setChatHistoryAuthState();
     if (!state.authenticated) {
       state.chatProjects = [];
       state.chatConversations = [];
       state.chatFilterProjectId = "";
+      state.chatPersonalityRef = "default"; state.chatPersonalityChoices = [];
+      state.chatPersonalityUncertain = false; state.chatPersonalityLoading = false;
       renderChatProjectOptions();
       renderChatProjects();
       renderChatHistory();
@@ -911,16 +1063,24 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
     if (state.chatFilterProjectId) params.set("project_id", state.chatFilterProjectId);
     const [projectsResponse, conversationsResponse] = await Promise.all([
       request("/ecai/projects"),
-      request(`/ecai/conversations?${params}`)
+      request(`/ecai/conversations?${params}`),
+      refreshChatPersonalities()
     ]);
+    if (epoch !== state.authEpoch || serial !== state.chatViewEpoch || sequence !== state.chatWorkspaceSequence) return;
     state.chatProjects = Array.isArray(projectsResponse.projects) ? projectsResponse.projects : [];
     state.chatConversations = Array.isArray(conversationsResponse.conversations) ? conversationsResponse.conversations : [];
+    if (state.chatPersonalityUncertain && !state.chatPersonalitySaving) {
+      const active = activeChatConversation();
+      if (active) { state.chatPersonalityRef = active.personality_ref || "default"; state.chatPersonalityUncertain = false; }
+    }
     renderChatProjectOptions();
     renderChatProjects();
     renderChatHistory();
     renderChatThreadControls();
   }
   async function selectChatProject(projectId) {
+    if (state.chatBusy || state.chatPersonalitySaving) return;
+    state.chatViewEpoch++;
     state.chatFilterProjectId = String(projectId || "");
     const active = activeChatConversation();
     if (active && String(active.project_id || "") !== state.chatFilterProjectId) resetChat();
@@ -928,41 +1088,57 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
   }
   async function ensurePersistentConversation() {
     if (state.chatConversationId) return state.chatConversationId;
-    const body = {};
+    const body = {personality_ref: state.chatPersonalityRef};
+    const epoch = state.authEpoch, serial = state.chatViewEpoch;
     if (state.chatFilterProjectId) body.project_id = state.chatFilterProjectId;
     const response = expectSuccess(await request("/ecai/conversations", {method: "POST", body}));
+    if (epoch !== state.authEpoch || serial !== state.chatViewEpoch) throw new DOMException("Conversation changed", "AbortError");
     const conversation = response.conversation;
     if (!conversation?.id) throw new Error("Conversation was not created");
     state.chatConversationId = String(conversation.id);
+    state.chatPersonalityRef = conversation.personality_ref || "default";
     state.chatConversations = [conversation, ...state.chatConversations.filter((item) => String(item.id) !== String(conversation.id))];
     renderChatHistory();
     renderChatThreadControls();
     return state.chatConversationId;
   }
   async function openChatConversation(id) {
-    const response = expectSuccess(await request(`/ecai/conversations/${encodeURIComponent(String(id))}`));
-    if (!response.conversation) throw new Error("Conversation was not returned");
-    state.chatConversationId = String(response.conversation.id);
-    state.chatFilterProjectId = String(response.conversation.project_id || "");
-    const messages = Array.isArray(response.messages) ? response.messages : [];
-    await refreshChatWorkspace();
-    renderChatMessages(messages);
-    put("chatStatus", "Conversation loaded");
-    $("chatPrompt").focus();
+    if (state.chatBusy || state.chatPersonalitySaving) return;
+    const epoch = state.authEpoch, serial = ++state.chatViewEpoch;
+    const current = () => epoch === state.authEpoch && serial === state.chatViewEpoch;
+    state.chatThreadLoading = true; renderChatThreadControls();
+    try {
+      const response = expectSuccess(await request(`/ecai/conversations/${encodeURIComponent(String(id))}`));
+      if (!current()) return;
+      if (!response.conversation) throw new Error("Conversation was not returned");
+      state.chatConversationId = String(response.conversation.id);
+      state.chatPersonalityRef = response.conversation.personality_ref || "default";
+      state.chatPersonalityUncertain = false; state.chatPersonalityError = "";
+      state.chatFilterProjectId = String(response.conversation.project_id || "");
+      rememberChatConversation(response.conversation);
+      const messages = Array.isArray(response.messages) ? response.messages : [];
+      renderChatMessages(messages); renderChatThreadControls();
+      await refreshChatWorkspace();
+      if (!current()) return;
+      put("chatStatus", "Conversation loaded"); $("chatPrompt").focus();
+    } finally { if (current()) { state.chatThreadLoading = false; renderChatThreadControls(); } }
   }
   async function sendChat(event) {
     event.preventDefault();
-    if (state.chatBusy) return;
+    if (state.chatBusy || state.chatPersonalitySaving || state.chatThreadLoading || state.chatPersonalityUncertain || !chatPersonalityAvailable()) return;
+    const epoch = state.authEpoch, serial = state.chatViewEpoch;
+    const current = () => epoch === state.authEpoch && serial === state.chatViewEpoch;
     const message = $("chatPrompt").value.trim();
     if (!message) return;
     $("chatPrompt").value = "";
     addChatMessage(message, "user");
-    state.chatBusy = true; $("chatSend").disabled = true;
+    state.chatBusy = true; renderChatThreadControls();
     put("chatStatus", state.authenticated ? "Searching conversation and knowledge context…" : "Retrieving a reply…");
     try {
       let response;
       if (state.authenticated) {
         const conversationId = await ensurePersistentConversation();
+        if (!current()) return;
         response = expectSuccess(await request(`/ecai/conversations/${encodeURIComponent(conversationId)}/messages`, {
           method: "POST", body: {message}
         }));
@@ -971,23 +1147,26 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
           session_id: state.chatSession, user_id: state.chatUser, message
         }, ignoreAuth: true}));
       }
+      if (!current()) return;
       addChatMessage(response.reply ?? "Empty response", "agent");
       if (response.conversation) {
         const conversation = response.conversation;
         state.chatConversationId = String(conversation.id);
+        state.chatPersonalityRef = conversation.personality_ref || "default";
         state.chatConversations = [conversation, ...state.chatConversations.filter((item) => String(item.id) !== state.chatConversationId)];
         renderChatHistory();
         renderChatThreadControls();
       }
       put("chatStatus", state.authenticated ? "Reply received · history indexed" : "Reply received");
     } catch (error) {
+      if (!current() || error.name === "AbortError") return;
       addChatMessage(`Unable to obtain a reply: ${showError(error)}`, "agent");
-      put("chatStatus", "Request failed · user message saved when signed in");
+      put("chatStatus", state.authenticated ? "Request failed · check conversation history before retrying" : "Request failed");
       if (state.authenticated) {
         try { await refreshChatWorkspace(); } catch (_) { /* preserve original error state */ }
       }
     } finally {
-      state.chatBusy = false; $("chatSend").disabled = false; $("chatPrompt").focus();
+      if (current()) { state.chatBusy = false; renderChatThreadControls(); $("chatPrompt").focus(); }
     }
   }
   function openChatSearch() {
@@ -2978,7 +3157,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
   }
 
   async function refreshView() {
-    if (state.sessionMode === "wallet" && !["overview", "search", "chat", "api", "math"].includes(state.view)) {
+    if (state.sessionMode === "wallet" && !["overview", "search", "chat", "api", "math", "personalities"].includes(state.view)) {
       applyConsoleCapabilities();
       return;
     }
@@ -2989,6 +3168,8 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
       case "wikimedia": await refreshWikiProjects(); break;
       case "network": await window.EcaiIndexPool?.refresh(); break;
       case "math": await mathPaths?.refresh(); break;
+      case "evaluation": await evaluation?.refresh(); break;
+      case "personalities": await personalities?.refresh(); break;
       case "compute": if (managedSession()) await window.EcaiComputeSettings?.refresh(); else window.EcaiComputeSettings?.clear(); break;
       case "keys": if (managedSession()) await window.EcaiOllamaKeys?.refresh(); else window.EcaiOllamaKeys?.clear(); break;
       case "code": await refreshCode(); break;
@@ -3028,6 +3209,8 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
     $("chatSearchForm").addEventListener("submit", searchChats);
     $("chatAllChats").addEventListener("click", () => task(() => selectChatProject("")));
     $("chatNewProjectBtn").addEventListener("click", () => openChatProjectDialog());
+    $("chatPersonality").addEventListener("change", () => void changeChatPersonality());
+    $("chatPersonalityRefresh").addEventListener("click", () => void task(refreshChatWorkspace));
     $("chatHistoryRefresh").addEventListener("click", () => task(refreshChatWorkspace));
     $("chatProjectDialogClose").addEventListener("click", () => $("chatProjectDialog").close());
     $("chatProjectForm").addEventListener("submit", saveChatProject);
@@ -3140,7 +3323,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
     $("apiCopyResponse").addEventListener("click", copyResponse);
     window.addEventListener("hashchange", () => navigate(location.hash.slice(1)));
     window.addEventListener("beforeunload", () => {
-      stopStream(); disconnectSocket(); videoStudio?.dispose(); marketMaker?.dispose(); mathPaths?.dispose(); clearInterval(state.poller);
+      stopStream(); disconnectSocket(); videoStudio?.dispose(); marketMaker?.dispose(); mathPaths?.dispose(); evaluation?.dispose(); personalities?.dispose(); clearInterval(state.poller);
       clearInterval(state.telemetryPoller); clearInterval(state.clockTicker);
     });
     document.addEventListener("visibilitychange", () => {
@@ -3153,6 +3336,8 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
     window.EcaiIndexPool?.init({request, toast, openLogin, currentToken});
     window.EcaiComputeSettings?.init({request, toast, openLogin, currentToken});
     window.EcaiOllamaKeys?.init({request, toast, openLogin, currentToken});
+    personalities = initPersonalities({request, currentToken, managedSession, openLogin});
+    evaluation = initEvaluation({request, currentToken, managedSession, isAdmin: () => state.nodeAdmin, openLogin});
     mathPaths = initMathPaths({request, currentToken, managedSession, openLogin, toast});
     videoStudio = initVideoStudio({request, currentToken, managedSession, openLogin, toast});
     marketMaker = initMarketMaker({request, canManage: () => managedSession() && state.nodeAdmin, openLogin});
@@ -3160,7 +3345,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-v1";
     bindEvents(); resetChat(); fillPrivateExample(); updateMarketActionExample();
     $("indexIdempotency").value = newKey("ecai-job");
     syncBrowserSession();
-    navigate(location.hash.slice(1) || "math");
+    navigate(location.hash.slice(1) || (new URLSearchParams(location.search).has("personality") ? "personalities" : "math"));
     renderRoutes();
     refreshOverview().catch(() => { renderServices(); });
     state.clockTicker = setInterval(tickJobClocks, 1000);
