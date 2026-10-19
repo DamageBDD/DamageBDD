@@ -60,7 +60,7 @@ class MathDashboardContract(unittest.TestCase):
         self.assertNotIn('https://',s);self.assertNotIn('http://',s)
     def test_export_path_uses_original_json_bytes(self):
         s=src('priv/static/js/ecai-math-paths.js')
-        self.assertIn("kind==='path'?selected.result.path_json",s)
+        self.assertIn("kind==='path'?r.path_json",s)
         self.assertIn('URL.revokeObjectURL',s)
     def test_owner_scoping_and_retention(self):
         s=src('src/ecai_math_dashboard_srv.erl')

@@ -18,13 +18,14 @@
   <section aria-labelledby="mathBuildTitle">
     <div class="panel-heading"><div><div class="eyebrow">RATIONAL ELLIPTIC CURVES</div><h2 id="mathBuildTitle">Find a connection over Q</h2></div><button type="button" id="mathDemo" class="button button-outline button-sm" disabled>Run explicit demo</button></div>
     <form id="mathDiscoverForm" class="stack-form">
+      <div class="math-mode-row"><label>Question<select id="mathMode" name="operation"><option value="explore" selected>Explore from source · no target</option><option value="discover">Connect two given curves</option></select></label><p id="mathQuestionHint" class="context-hint">Which models can we reach, and which are non-isomorphic to the source over Q?</p></div>
       <div class="math-curve-inputs">
         <fieldset><legend>Source · y² = x³ + a₂x² + a₄x + a₆</legend><div class="math-coefficients">
           <label>a₂<input name="source_a2" value="0" maxlength="130" required aria-label="Source a2"></label>
           <label>a₄<input name="source_a4" value="-1" maxlength="130" required aria-label="Source a4"></label>
           <label>a₆<input name="source_a6" value="0" maxlength="130" required aria-label="Source a6"></label>
         </div></fieldset>
-        <fieldset><legend>Target · y² = x³ + a₂x² + a₄x + a₆</legend><div class="math-coefficients">
+        <fieldset id="mathTargetFields" hidden disabled><legend>Target · y² = x³ + a₂x² + a₄x + a₆</legend><div class="math-coefficients">
           <label>a₂<input name="target_a2" value="0" maxlength="130" required aria-label="Target a2"></label>
           <label>a₄<input name="target_a4" value="-16" maxlength="130" required aria-label="Target a4"></label>
           <label>a₆<input name="target_a6" value="0" maxlength="130" required aria-label="Target a6"></label>
@@ -32,16 +33,24 @@
       </div>
       <div class="math-bounds">
         <label>Max hops<input name="max_depth" type="number" min="0" max="3" value="2" required></label>
-        <label>Max curve models<input name="max_curves" type="number" min="1" max="64" value="64" required></label>
+        <label>Max curve models<input name="max_curves" type="number" min="1" max="32" value="24" required></label>
         <label>Kernel numerator |n| ≤<input name="numerator_bound" type="number" min="0" max="32" value="8" required></label>
         <label>Kernel denominator d ≤<input name="denominator_bound" type="number" min="1" max="16" value="4" required></label>
-        <button type="submit" id="mathDiscover" class="button button-primary" disabled>Discover &amp; verify →</button>
+        <label id="mathTimeBudget">Search budget (ms)<input name="timeout_ms" type="number" min="1" max="20000" value="8000" required></label>
+        <button type="submit" id="mathDiscover" class="button button-primary" disabled>Explore from source →</button>
       </div>
       <p class="context-hint">Enter integers or fractions, such as -1 or 3/5; no floating-point coefficients. Discovery considers bounded rational degree-2 kernels, not every possible isogeny.</p>
     </form>
     <div class="math-import-row"><label class="math-file-label" for="mathImportFile">Replay an existing path JSON<input id="mathImportFile" type="file" accept=".json,application/json" disabled></label><button type="button" id="mathImport" class="button button-outline button-sm" disabled>Import &amp; check</button><span class="context-hint">Path files only · up to 192 KiB · submitted flags are not trusted</span></div>
+  </section></details>
+  <section id="mathExploration" class="surface panel-pad math-exploration" aria-labelledby="mathExploreTitle" hidden>
+    <div class="panel-heading"><div><div class="eyebrow">NO PRESELECTED DESTINATION</div><h2 id="mathExploreTitle">Reachable models</h2></div><button type="button" id="mathExploreExport" class="button button-outline button-sm" disabled>Export exploration JSON</button></div>
+    <p id="mathExploreScope" class="context-hint" role="status"></p>
+    <div id="mathExploreMetrics" class="math-metrics" aria-label="Exploration summary"></div>
+    <label class="math-filter"><input id="mathNonIsoOnly" type="checkbox"> Show only models proved non-isomorphic to the source over Q</label>
+    <div id="mathExploreResults" class="math-explore-results" aria-label="Select a reachable curve model"></div>
+    <p class="context-hint">Local classes group the retained models by exact Q-isomorphism. They are not global class identifiers. Different model IDs or equal j-invariants alone do not decide isomorphism.</p>
   </section>
-  </details>
   <div class="math-work-grid">
     <section class="surface panel-pad math-path-panel" aria-labelledby="mathPathTitle">
       <div class="panel-heading"><div><div class="eyebrow">SELECTED PATH</div><h2 id="mathPathTitle">Objects and transformations</h2></div><button type="button" id="mathReplay" class="button button-outline button-sm" disabled>Replay checks ↻</button></div>

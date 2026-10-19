@@ -96,3 +96,23 @@ await(O,Id,N) ->
 discover() ->
     #{<<"operation">>=><<"discover">>,<<"source">>=>c(<<"-1">>),<<"target">>=>c(<<"-16">>)}.
 c(A4) -> #{<<"a2">>=>[<<"0">>,<<"1">>],<<"a4">>=>[A4,<<"1">>],<<"a6">>=>[<<"0">>,<<"1">>]}.
+
+
+exploration_owner_path_selection_test_() -> {timeout,45,fun()->with_server(fun()->
+    Body=#{<<"operation">>=><<"explore">>,<<"source">>=>c(<<"-1">>),
+           <<"bounds">>=>#{<<"max_depth">>=>1,<<"timeout_ms">>=>20000}},
+    {ok,J}=?S:submit(<<"alice">>,Body),Id=maps:get(id,J),
+    Done=await(<<"alice">>,Id,2500),
+    #{status:=succeeded,result:=#{exploration:=W}}=Done,
+    [_,R|_]=maps:get(<<"results">>,W),Mid=maps:get(<<"model_id">>,R),
+    ?assertEqual({error,model_selection_required},?S:path(<<"alice">>,Id,undefined)),
+    ?assertEqual({error,not_found},?S:path(<<"bob">>,Id,Mid)),
+    ?assertEqual({error,not_found},?S:replay(<<"bob">>,Id,Mid)),
+    ?assertEqual({error,not_found},?S:path(<<"alice">>,Id,<<"unknown">>)),
+    ?assertEqual({ok,maps:get(<<"path_json">>,R)},?S:path(<<"alice">>,Id,Mid)),
+    timer:sleep(1050),
+    {ok,Replay}=?S:replay(<<"alice">>,Id,Mid),
+    Final=await(<<"alice">>,maps:get(id,Replay),1000),
+    ?assertEqual(succeeded,maps:get(status,Final)),
+    ?assertEqual(Mid,maps:get(replayed_model_id,Final))
+end) end}.

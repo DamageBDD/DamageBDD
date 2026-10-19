@@ -2,7 +2,7 @@
 -module(ecai_math_dashboard_http_tests).
 -include_lib("eunit/include/eunit.hrl").
 
-routes_test() -> ?assertEqual(4,length(ecai_math_dashboard_http:trails())).
+routes_test() -> ?assertEqual(5,length(ecai_math_dashboard_http:trails())).
 anonymous_denied_test() -> ?assertEqual(401,code(req(<<"GET">>,#{}),jobs,[get,post])).
 wallet_denied_test() -> ?assertEqual(401,code(req(<<"GET">>,#{<<"authorization">>=><<"Bearer test-wallet-bearer">>}),jobs,[get,post])).
 post_cookie_denied_test() -> ?assertEqual(401,code((req(<<"POST">>,#{}))#{cookie_owner=><<"alice">>},jobs,[get,post])).

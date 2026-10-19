@@ -4,7 +4,7 @@
 -module(ecai_math_pathfinder).
 -export([new/0, add_curve/2, add_isogeny/2, add_isogeny/3,
          find/3, find/4, verify_path/1, stats/1, demo/0, to_relation/1,
-         expand_two/3, solve_two/3, apply_path/2]).
+         expand_two/3, solve_two/3, apply_path/2, from_steps/2]).
 -define(C,ecai_math_curve).
 -define(I,ecai_math_isogeny).
 -define(MAX_CURVES,4000).
@@ -166,6 +166,22 @@ make_path(G,From,To,Ids,Cost) ->
 path_id(#{source:=S,target:=T,steps:=Steps}) ->
     Keys = [{?I:id(E),C,O} || #{map:=E,cost:=C,origins:=O} <- Steps],
     ?C:hash(<<"ECAI-MATH-PATH-V1">>,{?C:id(S),?C:id(T),Keys}).
+
+%% Assemble an explicit path without needing a preselected endpoint or graph.
+%% Pure bounded checking, intended to run inside an admitted math worker.
+-spec from_steps(map(),[map()]) -> {ok,map()} | {error,term()}.
+from_steps(Source,Steps) when is_list(Steps), length(Steps) =< 64 ->
+    try
+        S = must(?C:normalize(Source)),
+        T = case Steps of [] -> S; _ -> maps:get(codomain,maps:get(map,lists:last(Steps))) end,
+        Cost = lists:sum([maps:get(cost,E) || E <- Steps]),
+        Degree = lists:foldl(fun(E,A) -> maps:get(degree,maps:get(map,E))*A end,1,Steps),
+        P0 = #{schema=>1,kind=>mathematical_path,source=>S,target=>T,
+               steps=>Steps,hops=>length(Steps),total_cost=>Cost,total_degree=>Degree},
+        P = P0#{id=>path_id(P0)},
+        Proof = must(replay(P)), {ok,P#{verification=>Proof}}
+    catch error:Reason -> {error,Reason} end;
+from_steps(_,_) -> {error,invalid_path_steps}.
 
 -spec verify_path(map()) -> {ok,map()} | {error,term()}.
 verify_path(Path) -> ecai_math_job:run(fun() -> replay(Path) end,5000).

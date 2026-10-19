@@ -34,7 +34,7 @@ export function initMathPaths({request, currentToken, managedSession, openLogin,
   const $ = (id) => document.getElementById(id);
   let visible = false, disposed = false, epoch = 0, readSerial = 0, selectionSerial = 0;
   let timer = null, reader = null, selectedId = '', selected = null, jobs = [], submitting = false;
-  let selection = {kind:'curve', index:0};
+  let selection = {kind:'curve', index:0}, activeRowId = '';
   let sampleId = initialSample();
   const listeners = [], downloads = new Set();
   const node = (tag, cls = '', value) => {
@@ -56,17 +56,42 @@ export function initMathPaths({request, currentToken, managedSession, openLogin,
     if (visible && !document.hidden && allowed() && jobs.some(j => j.status === 'running'))
       timer = setTimeout(() => void refresh(), 1500);
   }
+  function activeRow() {
+    return selected?.result?.exploration?.results?.find(r => r.model_id === activeRowId) || null;
+  }
+  function activeResult() {
+    const r = selected?.result;
+    if (!r?.exploration) return r || null;
+    const row = activeRow();
+    if (!row) return null;
+    return {...r, path:JSON.parse(row.path_json), path_json:row.path_json,
+      artifact_sha256:row.artifact_sha256, comparison:row.comparison_to_source,
+      classCertificate:row.class_certificate, localClass:row.local_class};
+  }
+  function questionMode() {
+    const explore=$('mathMode').value==='explore';
+    $('mathTargetFields').hidden=explore; $('mathTargetFields').disabled=explore;
+    const limit=$('mathDiscoverForm').elements.namedItem('max_curves');
+    limit.max=explore?'32':'64';
+    if(Number(limit.value)>Number(limit.max))limit.value=limit.max;
+    $('mathTimeBudget').hidden=!explore;
+    $('mathDiscoverForm').elements.namedItem('timeout_ms').disabled=!explore;
+    put('mathBuildTitle',explore?'Explore from one curve over Q':'Find a connection over Q');
+    put('mathDiscover',explore?'Explore from source →':'Discover & verify →');
+    put('mathQuestionHint',explore?'Which models can we reach, and which are non-isomorphic to the source over Q?':'Find a checked degree-2 transformation path between the two given models.');
+  }
   function controls() {
     const canWrite = writable() && !submitting;
+    const r = activeResult(), canInspect = Boolean((selected?.preview || allowed()) && r?.path);
     for (const id of ['mathDiscover','mathDemo','mathImportFile']) $(id).disabled = !canWrite;
     $('mathImport').disabled = !canWrite || !$('mathImportFile').files?.length;
-    $('mathReplay').disabled = !canWrite || selected?.status !== 'succeeded';
-    for (const id of ['mathExport','mathBundle']) $(id).disabled = !allowed() || !selected?.result?.path_json;
+    $('mathReplay').disabled = !canWrite || selected?.status !== 'succeeded' || !r?.path_json;
+    for (const id of ['mathExport','mathBundle']) $(id).disabled = !canInspect || !r?.path_json;
+    $('mathExploreExport').disabled = !allowed() || !selected?.result?.exploration_json;
     $('mathRefresh').disabled = !allowed() || submitting;
     $('mathSampleVerify').disabled = submitting;
     $('mathSampleVerify').textContent = !writable() ? 'Sign in to verify on node' : currentSample().expected === 'reject' ? 'Test expected rejection' : 'Verify this example on node';
-    for (const id of ['mathPointEvaluate','mathPointMultiply','mathSageExport']) $(id).disabled = !selected?.result?.path;
-    for (const id of ['mathExport','mathBundle']) $(id).disabled = !(selected?.preview || allowed()) || !selected?.result?.path_json;
+    for (const id of ['mathPointEvaluate','mathPointMultiply','mathSageExport']) $(id).disabled = !canInspect;
   }
   function reportError(error) {
     if (error?.name === 'AbortError') return;
@@ -84,6 +109,8 @@ export function initMathPaths({request, currentToken, managedSession, openLogin,
     const d = node('details'); d.append(node('summary','',title), node('pre','math-json',pretty(value))); return d;
   }
   function clearPath() {
+    $('mathPointResult').replaceChildren(); $('mathPointResult').className='math-point-result'; put('mathScalarResult','');
+    $('mathExploration').hidden=true; $('mathExploreResults').replaceChildren(); $('mathExploreMetrics').replaceChildren(); put('mathExploreScope','');
     $('mathMetrics').replaceChildren();
     $('mathGraph').replaceChildren(node('div','empty-state','Run a discovery or import a path to see its exact curve models and maps.'));
     put('mathInspectorTitle','Select an object');
@@ -92,7 +119,9 @@ export function initMathPaths({request, currentToken, managedSession, openLogin,
   }
   function reset() {
     epoch++; readSerial++; selectionSerial++; stopPoll(); reader?.abort(); reader = null;
-    selectedId = ''; selected = null; jobs = []; submitting = false;
+    selectedId = ''; selected = null; jobs = []; submitting = false; activeRowId='';
+    $('mathNonIsoOnly').checked=false;
+    $('mathDiscoverForm').reset(); questionMode();
     $('mathImportFile').value = ''; clearPath(); renderJobs();
     put('mathStatus','No path loaded'); $('mathStatus').className = 'status-tag';
     loadSample(sampleId); controls();
@@ -109,7 +138,7 @@ export function initMathPaths({request, currentToken, managedSession, openLogin,
     }
   }
   function renderInspector() {
-    const path = selected?.result?.path; if (!path) return;
+    const path = activeResult()?.path; if (!path) return;
     const host = $('mathInspectorBody'); host.replaceChildren();
     if (selection.kind === 'curve') {
       const i = selection.index, c = i === 0 ? path.source : path.steps[i-1].map.codomain;
@@ -140,7 +169,7 @@ export function initMathPaths({request, currentToken, managedSession, openLogin,
     renderInspector();
   }
   function renderPath() {
-    const p = selected.result.path;
+    const p = activeResult().path;
     $('mathMetrics').replaceChildren();
     for (const [label,value] of [['Curve occurrences',p.hops+1],['Transformations',p.hops],['Composite degree',p.total_degree],['Edge-weight sum',p.total_cost]]) {
       const card = node('div','math-metric'); card.append(node('span','',label),node('strong','',value)); $('mathMetrics').append(card);
@@ -163,7 +192,7 @@ export function initMathPaths({request, currentToken, managedSession, openLogin,
     highlightSelection();
   }
   function renderEvidence() {
-    const r=selected.result, p=r.path, host=$('mathChecks'); host.replaceChildren();
+    const r=activeResult(), p=r.path, host=$('mathChecks'); host.replaceChildren();
     const checkRow=(label,value,good=false)=>{const row=node('div','math-check-row');row.append(node('span','',label),node('strong',good?'':'math-unattached',value));host.append(row);};
     checkRow('Native algebra replay',`${p.verification.status} · ${p.hops} maps`,p.verification.status==='verified');
     checkRow('Native path identity','Checked by the Erlang verifier',true);
@@ -172,8 +201,16 @@ export function initMathPaths({request, currentToken, managedSession, openLogin,
     checkRow('DamageBDD feature report','Not attached to this job');
     checkRow('Source/provenance authentication','Not established by algebraic verification');
     host.append(rawDetails('Native verification receipt',p.verification));
+    if (r.comparison) {
+      checkRow('Q-isomorphism to source',r.comparison.relation==='non_isomorphic'?'Proved non-isomorphic':'Checked isomorphism',true);
+      host.append(rawDetails('Source-comparison certificate',r.comparison),rawDetails('Local class certificate',r.classCertificate));
+    }
     const search=$('mathSearch'); search.replaceChildren();
-    if (p.search) search.append(facts(Object.entries(p.search)));
+    if (selected.result.exploration) {
+      const e=selected.result.exploration;
+      search.append(facts([['Stop reason',e.stop_reason],['Completed within declared bounds',e.completed_within_declared_bounds],['Global completeness','Not claimed'],...Object.entries(e.stats)]),rawDetails('Exploration budget',e.bounds));
+    }
+    else if (p.search) search.append(facts(Object.entries(p.search)));
     else search.append(node('p','context-hint','No trusted search counters are available for this path. Import and replay do not authenticate submitted search history.'));
     if (r.metadata?.generation_bounds) search.append(rawDetails('Kernel-discovery bounds',r.metadata.generation_bounds));
     if (p.bounds) search.append(rawDetails('Path-search bounds',p.bounds));
@@ -182,19 +219,49 @@ export function initMathPaths({request, currentToken, managedSession, openLogin,
       ['Dashboard job',selected.id],['Operation',selected.operation],['Created',date(selected.created_at_ms)],
       ['Checked',date(r.checked_at_ms)],['Math task elapsed',`${r.elapsed_ms} ms (includes verification and encoding; excludes HTTP)`],
       ['Output JSON SHA-256',r.artifact_sha256],['Path ID',p.id],['Replay of job',selected.replayed_job_id || 'Not a replay'],
+      ['Selected model',activeRowId || 'Single path'],['Replayed model',selected.replayed_model_id || 'Not selected'],
       ['Input SHA-256',r.metadata?.input_sha256 || 'Generated on this node'],['Retention',selected.retention]
     ]));
     run.append(node('p','context-hint','This is a dashboard-native run, not a DamageBDD feature execution. No report CID, release attestation, payment or settlement is inferred.'),node('p','context-hint',r.metadata?.note || ''));
   }
+  function renderExploration() {
+    const e=selected?.result?.exploration;
+    $('mathExploration').hidden=!e;
+    if (!e) return;
+    const summary=e.summary;
+    put('mathExploreScope', e.completed_within_declared_bounds
+      ? 'Finished within the declared coordinate and depth bounds. This is not a complete isogeny class or a claim of new mathematics.'
+      : `Stopped: ${e.stop_reason}. Retained paths are checked; the exploration is incomplete.`);
+    const metrics=$('mathExploreMetrics'); metrics.replaceChildren();
+    for (const [label,value] of [['Retained models (incl. source)',summary.retained_models],['Non-isomorphic to source',summary.non_isomorphic_to_source_models],['Local Q-isomorphism classes',summary.local_q_classes],['Other classes found',summary.non_source_q_classes]]) {
+      const card=node('div','math-metric');card.append(node('span','',label),node('strong','',value));metrics.append(card);
+    }
+    const results=$('mathExploreResults');results.replaceChildren();
+    for (const row of e.results) {
+      const nonIso=row.comparison_to_source.relation==='non_isomorphic';
+      if ($('mathNonIsoOnly').checked && !nonIso) continue;
+      const b=node('button','math-explore-row'); b.type='button'; b.dataset.modelId=row.model_id;
+      b.setAttribute('aria-pressed',String(row.model_id===activeRowId));
+      const copy=node('span','math-explore-copy');
+      copy.append(node('strong','',curveEquation(row.curve)),node('small','',`Class ${row.local_class} · ${row.depth} hops · ${short(row.model_id)}`));
+      b.append(copy,node('span',nonIso?'math-relation-different':'math-relation-same',row.depth===0?'Source model':nonIso?'Non-isomorphic over Q':'Isomorphic to source'));
+      results.append(b);
+    }
+    if (!results.childElementCount) results.append(node('p','context-hint','No retained model meets this filter. This is not proof that no such model exists.'));
+  }
   function renderSelected() {
     renderJobs();
-    if (selected?.preview) { renderPath(); renderPreviewEvidence(); controls(); return; }
+    if (selected?.preview) { renderExploration(); renderPath(); renderPreviewEvidence(); controls(); return; }
     if (!selected) { clearPath(); controls(); return; }
     put('mathPathTitle',`Node job · ${short(selected.id)}`);
-    put('mathStatus',selected.status === 'succeeded' ? 'Algebraically verified' : selected.status);
-    $('mathStatus').className='status-tag '+(selected.status==='succeeded'?'math-status-good':selected.status==='failed'?'math-status-failed':'math-status-running');
-    if (selected.status==='succeeded' && selected.result?.path) {
-      renderPath(); renderEvidence(); put('mathNotice','Exact mathematical checks passed for the selected artifact. Verification scope and provenance are shown separately below.');
+    const expedition=selected.result?.exploration;
+    if (expedition && !expedition.results.some(r=>r.model_id===activeRowId))
+      activeRowId=(expedition.results.find(r=>r.comparison_to_source.relation==='non_isomorphic') || expedition.results[0])?.model_id || '';
+    put('mathStatus',selected.status === 'succeeded' ? (expedition ? (expedition.completed_within_declared_bounds?'Bounded exploration complete':'Partial exploration · checked paths'):'Algebraically verified') : selected.status);
+    $('mathStatus').className='status-tag '+(selected.status==='succeeded'?(expedition&&!expedition.completed_within_declared_bounds?'math-status-running':'math-status-good'):selected.status==='failed'?'math-status-failed':'math-status-running');
+    if (selected.status==='succeeded' && activeResult()?.path) {
+      renderExploration(); renderPath(); renderEvidence();
+      put('mathNotice',expedition ? 'Select any retained model to inspect its path. Source-comparison and class certificates are separate from path verification.' : 'Exact mathematical checks passed for the selected artifact. Verification scope and provenance are shown separately below.');
     } else {
       clearPath();
       put('mathNotice',selected.status==='failed' ? `Job failed: ${selected.error || 'Unknown error'}. A bounded search failure does not prove that no relationship exists.` : 'The node is computing this job. No verification claim is made until it completes.');
@@ -203,7 +270,7 @@ export function initMathPaths({request, currentToken, managedSession, openLogin,
     controls();
   }
   async function selectJob(id) {
-    const e=epoch, serial=++selectionSerial; selectedId=id; selected=null; selection={kind:'curve',index:0}; $('mathPointPresets').replaceChildren(); $('mathPointResult').replaceChildren(); put('mathScalarResult',''); clearPath(); renderJobs(); controls();
+    const e=epoch, serial=++selectionSerial; selectedId=id; selected=null; activeRowId=''; selection={kind:'curve',index:0}; $('mathPointPresets').replaceChildren(); clearPath(); renderJobs(); controls();
     put('mathStatus','Loading job'); $('mathStatus').className='status-tag';
     try {
       const job=payload(await request(`/ecai/math/jobs/${encodeURIComponent(id)}`));
@@ -254,7 +321,10 @@ export function initMathPaths({request, currentToken, managedSession, openLogin,
       const f=$('mathDiscoverForm').elements;
       const curve=(prefix)=>Object.fromEntries(['a2','a4','a6'].map(k=>[k,rationalInput(f.namedItem(`${prefix}_${k}`).value)]));
       const bounds=Object.fromEntries(['max_depth','max_curves','numerator_bound','denominator_bound'].map(k=>[k,Number(f.namedItem(k).value)]));
-      void submit({operation:'discover',source:curve('source'),target:curve('target'),bounds});
+      if ($('mathMode').value==='explore') {
+        bounds.timeout_ms=Number(f.namedItem('timeout_ms').value);
+        void submit({operation:'explore',source:curve('source'),bounds});
+      } else void submit({operation:'discover',source:curve('source'),target:curve('target'),bounds});
     } catch(err) {reportError(err);}
   }
   async function importFile() {
@@ -269,8 +339,10 @@ export function initMathPaths({request, currentToken, managedSession, openLogin,
     } catch(err) {if(e===epoch)reportError(err);}
   }
   function download(kind) {
-    if (!(selected?.preview || allowed()) || !selected?.result?.path_json) return;
-    const text=kind==='path'?selected.result.path_json:pretty(selected.preview ? {schema:'ecai-math-sample-bundle/v1',live_verification:false,sample:currentSample()} : {schema:'ecai-math-dashboard-bundle/v1',job:selected});
+    const r=activeResult();
+    if (!(selected?.preview || allowed()) || !r?.path_json) return;
+    if (kind==='exploration' && !selected?.result?.exploration_json) return;
+    const text=kind==='path'?r.path_json:kind==='exploration'?selected.result.exploration_json:pretty(selected.preview ? {schema:'ecai-math-sample-bundle/v1',live_verification:false,sample:currentSample()} : {schema:'ecai-math-dashboard-bundle/v1',selected_model_id:activeRowId || null,job:selected});
     const url=URL.createObjectURL(new Blob([text],{type:'application/json'})); downloads.add(url);
     const a=node('a');a.href=url;a.download=`ecai-math-${kind}-${selected.id}.json`;document.body.append(a);a.click();a.remove();
     setTimeout(()=>{URL.revokeObjectURL(url);downloads.delete(url);},10000);
@@ -295,6 +367,7 @@ export function initMathPaths({request, currentToken, managedSession, openLogin,
       const [n,d]=sample.path[prefix][k];f.namedItem(`${prefix}_${k}`).value=d==='1'?n:`${n}/${d}`;
     }
     for(const [k,v]of Object.entries(sample.bounds))f.namedItem(k).value=String(v);
+    questionMode();
   }
   function renderCatalog() {
     const term=$('mathSampleFilter').value.trim().toLowerCase(), host=$('mathCatalog');host.replaceChildren();
@@ -308,6 +381,7 @@ export function initMathPaths({request, currentToken, managedSession, openLogin,
   }
   function loadSample(id) {
     const sample=MATH_SAMPLES.samples.find(s=>s.id===id);if(!sample)return;
+    activeRowId='';clearPath();
     sampleId=id;selectionSerial++;readSerial++;reader?.abort();reader=null;stopPoll();selectedId='';
     const p=structuredClone(sample.path);
     // Display-only scaffold, explicitly NOT an imported or signed receipt.
@@ -344,26 +418,27 @@ export function initMathPaths({request, currentToken, managedSession, openLogin,
     }
   }
   function evaluatePoint(event) {
-    event?.preventDefault();if(!selected?.result?.path)return;
+    event?.preventDefault();const path=activeResult()?.path;if(!path || !(selected?.preview || allowed()))return;
     const host=$('mathPointResult');host.replaceChildren();
     try {
-      const trace=tracePoint(selected.result.path,$('mathPointX').value,$('mathPointY').value,{infinity:$('mathPointInfinity').checked});
+      const trace=tracePoint(path,$('mathPointX').value,$('mathPointY').value,{infinity:$('mathPointInfinity').checked});
       for(const [i,p]of trace.entries()) {const box=node('div','math-point-image');box.append(node('small','',`E${i}`),node('strong','',p.infinity?'O · infinity':`(${p.x}, ${p.y})`));host.append(box);}
       host.className='math-point-result';
     } catch(error) {host.append(node('p','',message(error)));host.className='math-point-result math-point-error';}
     put('mathScalarResult','');
   }
   function multiplyPoint() {
-    if(!selected?.result?.path)return;
+    const path=activeResult()?.path;if(!path || !(selected?.preview || allowed()))return;
     try {
       if($('mathPointInfinity').checked){put('mathScalarResult','[n]O = O on the source curve.');return;}
-      const n=Number($('mathPointScalar').value),p=scalarPoint(selected.result.path.source,$('mathPointX').value,$('mathPointY').value,n);
+      const n=Number($('mathPointScalar').value),p=scalarPoint(path.source,$('mathPointX').value,$('mathPointY').value,n);
       put('mathScalarResult',`[${n}]P = ${p.infinity?'O':`(${p.x}, ${p.y})`} on E0 (computed by the group law).`);
     } catch(error) {put('mathScalarResult',message(error));}
   }
   function exportSage() {
-    if(!(selected?.preview||allowed()) || !selected?.result?.path_json)return;
-    const url=URL.createObjectURL(new Blob([sageScript(JSON.parse(selected.result.path_json))],{type:'text/x-python'}));downloads.add(url);
+    const r=activeResult();
+    if(!(selected?.preview||allowed()) || !r?.path_json)return;
+    const url=URL.createObjectURL(new Blob([sageScript(JSON.parse(r.path_json))],{type:'text/x-python'}));downloads.add(url);
     const a=node('a');a.href=url;a.download='ecai-math-check.py';document.body.append(a);a.click();a.remove();
     setTimeout(()=>{URL.revokeObjectURL(url);downloads.delete(url);},10000);
   }
@@ -373,7 +448,7 @@ export function initMathPaths({request, currentToken, managedSession, openLogin,
   on($('mathCatalog'),'click',event=>{const b=event.target.closest('[data-sample-id]');if(b)loadSample(b.dataset.sampleId);});
   for(const [id,d]of [['mathSamplePrevious',-1],['mathSampleNext',1]])on($(id),'click',()=>{const i=MATH_SAMPLES.samples.findIndex(s=>s.id===sampleId);loadSample(MATH_SAMPLES.samples[(i+d+MATH_SAMPLES.samples.length)%MATH_SAMPLES.samples.length].id);});
   on($('mathSampleReset'),'click',()=>loadSample(sampleId));
-  on($('mathSampleEdit'),'click',()=>{fillEditor(currentSample());$('mathBuilderDisclosure').open=true;$('mathDiscoverForm').elements.namedItem('source_a2').focus();});
+  on($('mathSampleEdit'),'click',()=>{$('mathMode').value='discover';questionMode();fillEditor(currentSample());$('mathBuilderDisclosure').open=true;$('mathDiscoverForm').elements.namedItem('source_a2').focus();});
   on($('mathSampleVerify'),'click',()=>void submit({operation:'import',path_json:currentSample().path_json}));
   on($('mathSampleLink'),'click',async()=>{
     try {const url=new URL('/dashboard',globalThis.location.href);url.searchParams.set('math_sample',sampleId);url.hash='math';if(!navigator.clipboard?.writeText)throw new Error('Clipboard is unavailable.');await navigator.clipboard.writeText(url.href);toast?.('Public example link copied.');}catch(error){reportError(error);}
@@ -386,7 +461,15 @@ export function initMathPaths({request, currentToken, managedSession, openLogin,
   on($('mathDiscoverForm'),'submit',discover);
   on($('mathDemo'),'click',()=>void submit({operation:'demo'}));
   on($('mathImportFile'),'change',controls);on($('mathImport'),'click',()=>void importFile());
-  on($('mathReplay'),'click',()=>{if(selected?.status==='succeeded')void submit({},selected.id);});
+  on($('mathReplay'),'click',()=>{if(selected?.status==='succeeded')void submit(selected.result?.exploration?{model_id:activeRowId}:{},selected.id);});
+  on($('mathMode'),'change',questionMode);
+  on($('mathNonIsoOnly'),'change',renderExploration);
+  on($('mathExploreExport'),'click',()=>download('exploration'));
+  on($('mathExploreResults'),'click',event=>{
+    const b=event.target.closest('[data-model-id]');if(!b)return;
+    activeRowId=b.dataset.modelId;selection={kind:'curve',index:0};
+    $('mathPointResult').replaceChildren();put('mathScalarResult','');renderSelected();
+  });
   on($('mathExport'),'click',()=>download('path'));on($('mathBundle'),'click',()=>download('bundle'));
   on($('mathRefresh'),'click',()=>void refresh());
   on($('mathGraph'),'click',event=>{const b=event.target.closest('button[data-kind]');if(!b)return;selection={kind:b.dataset.kind,index:Number(b.dataset.index)};highlightSelection();});
@@ -400,7 +483,7 @@ export function initMathPaths({request, currentToken, managedSession, openLogin,
     });
   }
   on(document,'visibilitychange',()=>{if(document.hidden){stopPoll();reader?.abort();}else if(visible)void refresh();});
-  reset();
+  questionMode(); reset();
   return {
     reset,refresh,
     setVisible(value){visible=Boolean(value);if(!visible){stopPoll();reader?.abort();}else schedule();},

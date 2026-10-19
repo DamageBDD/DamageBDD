@@ -117,6 +117,7 @@ async def main():
         await page.wait_for_function("document.querySelector('#mathRun').textContent.includes('replayed')")
         assert (await page.evaluate('window.__calls.findLast(x=>x.method===\'POST\')'))['body']=={}
         checks.append('Replay submits a new explicit job, not a client-side badge change')
+        await page.locator('#mathMode').select_option('discover')
         await page.locator('[name=source_a4]').fill('9007199254740993/7')
         await page.locator('#mathDiscover').click()
         await page.wait_for_function("window.__calls.some(x=>x.body?.source?.a4?.[0]==='9007199254740993')")

@@ -2,7 +2,7 @@
 %% All expensive work happens outside the server; admission is serialized here.
 -module(ecai_math_dashboard_srv).
 -behaviour(gen_server).
--export([start_link/0, child_specs/0, enabled/0, submit/2, list/1, get/2, replay/2]).
+-export([start_link/0, child_specs/0, enabled/0, submit/2, list/1, get/2, replay/2, replay/3, path/3]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 -define(TTL_MS, 3600000).
@@ -21,7 +21,9 @@ start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 submit(Owner, Body) -> call({submit, Owner, Body}).
 list(Owner) -> call({list, Owner}).
 get(Owner, Id) -> call({get, Owner, Id}).
-replay(Owner, Id) -> call({replay, Owner, Id}).
+replay(Owner, Id) -> replay(Owner, Id, undefined).
+replay(Owner, Id, ModelId) -> call({replay, Owner, Id, ModelId}).
+path(Owner, Id, ModelId) -> call({path, Owner, Id, ModelId}).
 call(Request) ->
     case enabled() of
         false -> {error, math_dashboard_disabled};
@@ -51,16 +53,27 @@ handle_call({submit, Owner, Body}, _, S0) ->
             end;
         E -> {reply, E, S}
     end;
-handle_call({replay, Owner, Id}, _, S0) ->
+handle_call({path, Owner, Id, ModelId}, _, S0) ->
+    S = prune(S0),
+    Reply = case lookup(Owner,Id,S) of {ok,J} -> selected_path(J,ModelId); E -> E end,
+    {reply,Reply,S};
+handle_call({replay, Owner, Id, ModelId}, _, S0) ->
     S = prune(S0),
     case lookup(Owner, Id, S) of
-        {ok, #{status := succeeded, result := #{path_json := Bin}}} ->
-            case admission(Owner, S) of
-                ok -> start_task(Owner, #{operation => replay, path_json => Bin},
-                                 #{replayed_job_id => Id}, S);
-                E -> {reply, E, S}
+        {ok, J} ->
+            case selected_path(J,ModelId) of
+                {ok,Bin} ->
+                    case admission(Owner,S) of
+                        ok ->
+                            Extra = case ModelId of
+                                undefined -> #{replayed_job_id=>Id};
+                                _ -> #{replayed_job_id=>Id,replayed_model_id=>ModelId}
+                            end,
+                            start_task(Owner,#{operation=>replay,path_json=>Bin},Extra,S);
+                        E -> {reply,E,S}
+                    end;
+                E -> {reply,E,S}
             end;
-        {ok, _} -> {reply, {error, result_not_ready}, S};
         E -> {reply, E, S}
     end;
 handle_call(_, _, S) -> {reply, {error, invalid_request}, S}.
@@ -130,6 +143,17 @@ terminate(_, S) ->
 code_change(_, S, _) -> {ok, S}.
 put_job(Id, J, S) -> {noreply, S#{jobs := (maps:get(jobs, S))#{Id => J}}}.
 
+selected_path(#{status:=succeeded,result:=#{path_json:=Bin}},undefined) -> {ok,Bin};
+selected_path(#{status:=succeeded,result:=#{exploration:=_}},undefined) -> {error,model_selection_required};
+selected_path(#{status:=succeeded,result:=#{exploration:=#{<<"results">>:=Rows}}},ModelId)
+        when is_binary(ModelId), byte_size(ModelId) =:= 64 ->
+    case [maps:get(<<"path_json">>,R) || R <- Rows,maps:get(<<"model_id">>,R)=:=ModelId] of
+        [Bin] -> {ok,Bin};
+        _ -> {error,not_found}
+    end;
+selected_path(#{status:=succeeded},_) -> {error,not_found};
+selected_path(_,_) -> {error,result_not_ready}.
+
 lookup(Owner, Id, S) ->
     case maps:find(Id, maps:get(jobs, S)) of
         {ok, #{owner := Owner} = J} -> {ok, J};
@@ -169,7 +193,7 @@ evict(Jobs, S) ->
     [Old | _] = lists:sort(fun(A, B) -> maps:get(started_mono, A) < maps:get(started_mono, B) end, Jobs),
     S#{jobs := maps:remove(maps:get(id, Old), maps:get(jobs, S))}.
 public(J, Full) ->
-    Base = maps:with([id, operation, status, created_at_ms, finished_at_ms, error, replayed_job_id], J),
+    Base = maps:with([id, operation, status, created_at_ms, finished_at_ms, error, replayed_job_id, replayed_model_id], J),
     Public = Base#{retention => <<"Volatile: up to 8 jobs per account, 32 per node, one hour; cleared on restart. Export evidence to keep it.">>},
     case {Full, maps:find(result, J)} of
         {true, {ok, R}} -> Public#{result => R};

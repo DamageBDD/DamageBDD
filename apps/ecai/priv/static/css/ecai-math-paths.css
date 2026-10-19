@@ -116,3 +116,25 @@
 .math-real-plot text { fill:#687b96;font-size:14px; }
 .math-path-panel .math-edge-title { white-space:nowrap;font-size:10px; }
 .math-inspector-body summary { cursor:pointer;font-weight:600; }
+
+/* Source-only exploration remains inside the existing dashboard shell. */
+.math-mode-row { display:flex;gap:18px;align-items:end;flex-wrap:wrap; }
+.math-mode-row select { padding:10px;border:1px solid #d5ddea;border-radius:8px;color:#14223d;background:#fff;font:inherit;max-width:100%; }
+.math-workspace select:focus-visible { outline:3px solid #6487ef;outline-offset:3px; }
+.math-curve-inputs:has(#mathTargetFields[hidden]) { grid-template-columns:1fr; }
+.math-bounds { grid-template-columns:repeat(5,minmax(0,1fr)); }
+.math-bounds>.button { grid-column:1/-1;justify-self:start; }
+.math-exploration { margin:20px 0; }
+.math-workspace .math-filter { display:flex;flex-direction:row;align-items:center;margin:18px 0;line-height:1.6; }
+.math-filter input { width:auto; }
+.math-explore-results { display:grid;grid-template-columns:1fr 1fr;gap:9px;max-height:370px;overflow:auto;padding:3px; }
+.math-explore-row { display:flex;gap:12px;align-items:center;justify-content:space-between;background:#f8faff;border:1px solid #d5e0f5;border-radius:10px;padding:14px;text-align:left;cursor:pointer;color:#14223d;min-width:0; }
+.math-explore-copy { min-width:0;overflow-wrap:anywhere; }
+.math-explore-copy strong { font-size:13px; }
+.math-explore-copy small { display:block;margin-top:8px;color:#687b96;font-size:10px; }
+.math-explore-row[aria-pressed="true"] { outline:2px solid #315ed5;outline-offset:0;background:#eef3ff; }
+.math-relation-different,.math-relation-same { flex:0 0 105px;font-size:10px;line-height:1.5; }
+.math-relation-different { color:#116d51; }
+.math-relation-same { color:#687b96; }
+@media(max-width:850px) { .math-explore-results{grid-template-columns:1fr} .math-bounds{grid-template-columns:repeat(3,minmax(0,1fr))} }
+@media(max-width:620px) { .math-bounds{grid-template-columns:1fr 1fr} .math-mode-row>label,.math-mode-row select{width:100%;min-width:0} }

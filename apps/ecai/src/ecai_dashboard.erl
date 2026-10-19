@@ -203,6 +203,7 @@ render_dashboard_page("ecai_console.mustache", Ctx) ->
     MarketMaker = render_tpl(?DASH_TPL("ecai_market_maker.mustache"), Ctx),
     ComputeSettings = render_tpl(?DASH_TPL("compute_settings.mustache"), Ctx),
     MathPaths = render_tpl(?DASH_TPL("ecai_math_paths.mustache"), Ctx),
+    Evaluation = render_tpl(?DASH_TPL("ecai_eval.mustache"), Ctx),
     OllamaKeys = render_tpl(?DASH_TPL("ollama_keys.mustache"), Ctx),
     render_tpl(
         ?DASH_TPL("ecai_console.mustache"),
@@ -211,6 +212,7 @@ render_dashboard_page("ecai_console.mustache", Ctx) ->
             market_maker_panel => MarketMaker,
             compute_settings_panel => ComputeSettings,
             math_paths_panel => MathPaths,
+            evaluation_panel => Evaluation,
             ollama_keys_panel => OllamaKeys
         }
     );

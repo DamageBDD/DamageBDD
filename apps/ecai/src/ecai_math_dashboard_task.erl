@@ -12,6 +12,10 @@ prepare(Input) ->
 
 prepare_1(#{<<"operation">> := <<"demo">>} = M) ->
     only(M, [<<"operation">>]), #{operation => demo};
+prepare_1(#{<<"operation">> := <<"explore">>, <<"source">> := S} = M) ->
+    only(M, [<<"operation">>, <<"source">>, <<"bounds">>]),
+    #{operation => explore, source => curve(S),
+      bounds => exploration_bounds(maps:get(<<"bounds">>, M, #{}))};
 prepare_1(#{<<"operation">> := <<"discover">>, <<"source">> := S,
             <<"target">> := T} = M) ->
     only(M, [<<"operation">>, <<"source">>, <<"target">>, <<"bounds">>]),
@@ -43,12 +47,34 @@ bounds(M) when is_map(M) ->
       numerator_bound => bounded(M, <<"numerator_bound">>, 8, 0, 32),
       denominator_bound => bounded(M, <<"denominator_bound">>, 4, 1, 16)};
 bounds(_) -> error(invalid_bounds).
+exploration_bounds(M) when is_map(M) ->
+    only(M, [<<"max_depth">>, <<"max_curves">>, <<"numerator_bound">>,
+             <<"denominator_bound">>, <<"timeout_ms">>]),
+    #{max_depth => bounded(M, <<"max_depth">>, 2, 0, 3),
+      max_curves => bounded(M, <<"max_curves">>, 24, 1, 32),
+      numerator_bound => bounded(M, <<"numerator_bound">>, 8, 0, 32),
+      denominator_bound => bounded(M, <<"denominator_bound">>, 4, 1, 16),
+      timeout_ms => bounded(M, <<"timeout_ms">>, 8000, 1, 20000)};
+exploration_bounds(_) -> error(invalid_bounds).
 bounded(M, Key, Default, Min, Max) ->
     V = maps:get(Key, M, Default),
     need(is_integer(V) andalso V >= Min andalso V =< Max, {invalid_bound, Key}), V.
 only(M, Keys) -> need(maps:without(Keys, M) =:= #{}, unexpected_fields).
 
 -spec execute(map()) -> {ok, map()} | {error, term()}.
+execute(#{operation := explore, source := S, bounds := B}) ->
+    try
+        R = must(ecai_math_explorer:explore(S,B)),
+        Bin = must(ecai_math_explorer:encode(R)),
+        {ok, #{exploration => json:decode(Bin), exploration_json => Bin,
+               artifact_sha256 => sha(Bin), elapsed_ms => maps:get(elapsed_ms,R),
+               checked_at_ms => erlang:system_time(millisecond),
+               evidence => #{native_replay => passed, q_classification => checked,
+                   formal_proof => false, independent_check => not_attached,
+                   damagebdd_run => not_attached, provenance => not_authenticated},
+               metadata => #{mode => source_only_exploration, generation_bounds => B,
+                   note => <<"No target supplied. A stopped exploration retains checked paths; it does not claim a complete isogeny class or mathematical novelty.">>}}}
+    catch error:Reason -> {error,Reason} end;
 execute(Task) ->
     try
         Start = erlang:monotonic_time(millisecond),

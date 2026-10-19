@@ -1,5 +1,9 @@
 # Mathematical paths in the ECAI dashboard
 
+**Source-only extension:** see `SOURCE_EXPLORATION.md` for the new default
+Explore mode, per-model replay, exact Q-classification, limits and current tests.
+The original integration notes below describe the single-path foundation.
+
 This integration adds a real, authenticated mathematical workspace to the existing
 ECAI control-plane dashboard. It uses the existing exact-rational pathfinder; it
 is not the earlier standalone HTML prototype. Open `/dashboard#math` after deploying

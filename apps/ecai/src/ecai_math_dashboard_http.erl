@@ -6,7 +6,8 @@ trails() ->
     [trail("/ecai/math/jobs", jobs, [get, post]),
      trail("/ecai/math/jobs/:id", job, [get]),
      trail("/ecai/math/jobs/:id/replay", replay, [post]),
-     trail("/ecai/math/jobs/:id/path", path, [get])].
+     trail("/ecai/math/jobs/:id/path", path, [get]),
+     trail("/ecai/math/jobs/:id/path/:model_id", model_path, [get])].
 trail(Path, Action, Methods) ->
     Meta = maps:from_list([{M, #{tags => ["ECAI Mathematical Paths"],
                                 produces => ["application/json"]}} || M <- Methods]),
@@ -55,12 +56,12 @@ route(jobs, <<"GET">>, Owner, Req, State) ->
     result(ecai_math_dashboard_srv:list(Owner), Req, State, 200);
 route(job, <<"GET">>, Owner, Req, State) ->
     result(ecai_math_dashboard_srv:get(Owner, cowboy_req:binding(id, Req)), Req, State, 200);
-route(path, <<"GET">>, Owner, Req, State) ->
-    case ecai_math_dashboard_srv:get(Owner, cowboy_req:binding(id, Req)) of
-        {ok, #{status := succeeded, result := #{path_json := Bin}}} ->
+route(Action, <<"GET">>, Owner, Req, State) when Action =:= path; Action =:= model_path ->
+    ModelId = case Action of model_path -> cowboy_req:binding(model_id,Req); path -> undefined end,
+    case ecai_math_dashboard_srv:path(Owner, cowboy_req:binding(id, Req),ModelId) of
+        {ok, Bin} ->
             Headers = (headers())#{<<"content-disposition">> => <<"attachment; filename=ecai-math-path.json">>},
             {ok, cowboy_req:reply(200, Headers, Bin, Req), State};
-        {ok, _} -> result({error, result_not_ready}, Req, State, 200);
         Error -> result(Error, Req, State, 200)
     end;
 route(Action, <<"POST">>, Owner, Req0, State) ->
@@ -69,6 +70,8 @@ route(Action, <<"POST">>, Owner, Req0, State) ->
             Reply = case Action of
                 jobs -> ecai_math_dashboard_srv:submit(Owner, Body);
                 replay when map_size(Body) =:= 0 -> ecai_math_dashboard_srv:replay(Owner, cowboy_req:binding(id, Req));
+                replay when map_size(Body) =:= 1, is_map_key(<<"model_id">>,Body) ->
+                    ecai_math_dashboard_srv:replay(Owner,cowboy_req:binding(id,Req),maps:get(<<"model_id">>,Body));
                 _ -> {error, unexpected_fields}
             end,
             result(Reply, Req, State, 202);
@@ -103,6 +106,7 @@ result({error, Why}, Req, State, _) ->
     Code = case Why of
         not_found -> 404;
         result_not_ready -> 409;
+        model_selection_required -> 409;
         owner_busy -> 429;
         rate_limited -> 429;
         math_capacity_full -> 429;

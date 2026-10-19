@@ -42,6 +42,8 @@ class ConsoleContractTests(unittest.TestCase):
             '{{{market_maker_panel}}}',
             (APP/'priv/templates/ui/dashboard/ecai_market_maker.mustache').read_text(encoding='utf-8'))
         cls.html = cls.html.replace('{{{math_paths_panel}}}', (APP/'priv/templates/ui/dashboard/ecai_math_paths.mustache').read_text(encoding='utf-8'))
+        cls.html = cls.html.replace('{{{evaluation_panel}}}', (APP/'priv/templates/ui/dashboard/ecai_eval.mustache').read_text(encoding='utf-8'))
+        cls.html = cls.html.replace('{{{personalities_panel}}}', (APP/'priv/templates/ui/dashboard/ecai_personalities.mustache').read_text(encoding='utf-8'))
         cls.markup = Elements()
         cls.markup.feed(cls.html)
 
@@ -67,7 +69,7 @@ class ConsoleContractTests(unittest.TestCase):
 
     def test_dashboard_views_have_navigation(self):
         views = {'overview','search','chat','video','indexing','wikimedia',
-                 'knowledge','marketplace','market-maker','math','operations','code','api','network','compute','keys'}
+                 'personalities','knowledge','marketplace','market-maker','math','evaluation','operations','code','api','network','compute','keys'}
         self.assertEqual(set(self.markup.views), views)
         # Compute and Keys are rendered as dashboard fragments into the shell.
         self.assertEqual(set(self.markup.panels), views - {'compute', 'keys'})
@@ -76,11 +78,16 @@ class ConsoleContractTests(unittest.TestCase):
 
     def test_api_catalog_matches_cowboy_routes(self):
         catalog = set(re.findall(r'method:\s*"(GET|POST|SSE|WS)",\s*path:\s*"([^"]+)"', self.js))
-        self.assertEqual(len(catalog), 110)
+        self.assertEqual(len(catalog), 119)
         declared = {
+            ('GET', '/ecai/conversations/personalities'),
+            ('GET', '/ecai/personalities'), ('GET', '/ecai/personalities/orders'),
+            ('GET', '/ecai/personalities/orders/:id'),
+            ('GET', '/ecai/eval/settings'), ('GET', '/ecai/eval/suites'),
+            ('GET', '/ecai/eval/runs'), ('GET', '/ecai/eval/review-queue'),
             ('GET', '/ecai/math/jobs'), ('POST', '/ecai/math/jobs'),
             ('GET', '/ecai/math/jobs/:id'), ('POST', '/ecai/math/jobs/:id/replay'),
-            ('GET', '/ecai/math/jobs/:id/path'),
+            ('GET', '/ecai/math/jobs/:id/path'), ('GET', '/ecai/math/jobs/:id/path/:model_id'),
             ('GET','/ecai/auth/session'),
             ('POST','/ecai/search'), ('GET','/ecai/chat'), ('POST','/ecai/chat'),
             ('POST','/v1/chat/completions'), ('POST','/ecai/ekef'),
@@ -125,6 +132,18 @@ class ConsoleContractTests(unittest.TestCase):
             'repository/pull', 'reviewers/add', 'reviewers/remove', 'settings/update')}
         declared |= {('POST', '/ecai/quick-index'), ('POST', '/ecai/quick-index/inspect')}
         self.assertEqual(catalog, declared)
+
+    def test_evaluation_lifecycle_and_registration(self):
+        for hook in ('initEvaluation({', 'evaluation?.reset()',
+                     'evaluation?.accessChanged()', 'evaluation?.dispose()',
+                     'evaluation?.setVisible(view === "evaluation")',
+                     'case "evaluation":'):
+            self.assertIn(hook, self.js)
+        self.assertIn('evaluation_panel => Evaluation',
+                      (APP/'src/ecai_dashboard.erl').read_text())
+        self.assertIn('ecai_eval_http,', (APP/'src/ecai_app.erl').read_text())
+        self.assertIn('ecai_eval_sup', (APP/'src/ecai_sup.erl').read_text())
+        self.assertIn('{eval_enabled, false}', (APP/'src/ecai.app.src').read_text())
 
     def test_canceled_retry_requeues_durable_checkpoint(self):
         srv = (APP / 'src/ecai_index_jobs_srv.erl').read_text(encoding='utf-8')
