@@ -17,7 +17,7 @@
 ]).
 
 -ifdef(TEST).
--export([decode_json/1]).
+-export([decode_json/1, ollama_generation_options/1]).
 -endif.
 
 -define(DEFAULT_HOST, "localhost").
@@ -228,7 +228,7 @@ ollama_request(Prompt, JsonMode, Opts) ->
             WithSystem = maybe_put_system(Base, <<"system">>, Opts),
             BodyMap =
                 case JsonMode of
-                    true -> WithSystem#{<<"format">> => <<"json">>};
+                    true -> WithSystem#{<<"format">> => maps:get(format, Opts, <<"json">>)};
                     false -> WithSystem
                 end,
             Headers = [
@@ -425,7 +425,15 @@ native_ollama_meta(Json, WallMs) ->
     }.
 
 ollama_generation_options(Opts) ->
-    Base = #{<<"temperature">> => maps:get(temperature, Opts, 0)},
+    %% Only known native options are serialized; transport/auth maps never leak.
+    Base0 = #{<<"temperature">> => maps:get(temperature, Opts, 0)},
+    Keys = [top_p, top_k, min_p, seed, repeat_penalty, num_ctx],
+    Base = lists:foldl(fun(Key, Acc) ->
+        case maps:find(Key, Opts) of
+            {ok, Value} when is_number(Value) -> Acc#{atom_to_binary(Key, utf8) => Value};
+            _ -> Acc
+        end
+    end, Base0, Keys),
     case maps:get(max_output_tokens, Opts, undefined) of
         N when is_integer(N), N > 0 -> Base#{<<"num_predict">> => N};
         _ -> Base

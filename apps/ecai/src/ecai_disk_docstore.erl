@@ -9,6 +9,7 @@
     sync/1,
     put/3,
     get/2,
+    get_source/3,
     next_id/1
 ]).
 
@@ -36,7 +37,17 @@ sync(Tab) ->
     dets:sync(Tab).
 
 put(Tab, DocInt, MetaMap) when is_integer(DocInt), DocInt > 0, is_map(MetaMap) ->
-    dets:insert(Tab, {DocInt, MetaMap});
+    case maps:find(source_blob, MetaMap) of
+        {ok, #{source_key := Key, source_version := Version} = Ref} ->
+            SourceId = {'$source', Key, Version},
+            case dets:lookup(Tab, SourceId) of
+                [{SourceId, Existing}] when Existing =/= Ref ->
+                    {error, source_version_conflict};
+                _ -> dets:insert(Tab, [{DocInt, MetaMap}, {SourceId, Ref}])
+            end;
+        error -> dets:insert(Tab, {DocInt, MetaMap});
+        _ -> {error, invalid_source_descriptor}
+    end;
 put(_Tab, _DocInt, _MetaMap) ->
     {error, badarg}.
 
@@ -47,6 +58,12 @@ get(Tab, DocInt) when is_integer(DocInt), DocInt > 0 ->
     end;
 get(_Tab, _DocInt) ->
     {error, badarg}.
+
+get_source(Tab, Key, Version) ->
+    case dets:lookup(Tab, {'$source', Key, Version}) of
+        [{_, Ref}] -> {ok, Ref};
+        [] -> not_found
+    end.
 
 %% Atomically allocate a monotonically increasing local document ID. The
 %% stored value is the next unallocated ID, so update_counter/3 returns one

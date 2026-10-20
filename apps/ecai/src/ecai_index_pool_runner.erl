@@ -144,8 +144,30 @@ compute_step(J, C) ->
             Id = maps:get(id, U),
             Old = maps:get(Id, R, #{phase => new}),
             Next = unit_step(J, U, Old, C),
-            #{results => R#{Id => Next}, cursor => Pos + 1, stage => indexing, last_error => null}
+            NewResults = R#{Id => Next},
+            Update = #{results => NewResults, cursor => Pos + 1, stage => indexing, last_error => null},
+            case maps:get(phase, Next) =:= accepted andalso maps:get(phase, Old) =/= accepted of
+                true -> maps:merge(Update, publish_live_manifest(J#{results => NewResults}));
+                false -> Update
+            end
     end.
+publish_live_manifest(J) ->
+    Accepted = [U || U <- maps:get(units, J),
+        maps:get(phase, maps:get(maps:get(id, U), maps:get(results, J), #{}), new) =:= accepted],
+    Entries = [execution_entry(J, U, index) || U <- Accepted],
+    Receipts = maps:from_list([{maps:get(ordinal, U),
+        maps:get(index_receipt, maps:get(maps:get(id, U), maps:get(results, J)))} || U <- Accepted]),
+    Out = ecai_index_pool_util:shared_path(filename:join([
+        ecai_index_pool_util:shared_root(), "pool-live", binary_to_list(maps:get(id, J)),
+        integer_to_list(length(Accepted)) ++ ".etf"])),
+    case ecai_index_shards:merge_plan((maps:get(plan, J))#{entries => Entries, receipts => Receipts}, Out) of
+        {ok, Manifest} ->
+            #{live_manifest => #{path => text(Out), index_root => maps:get(index_root, Manifest),
+                accepted_shards => length(Accepted), total_shards => length(maps:get(units, J)),
+                live => true, final => false}, live_search_error => null};
+        {error, Why} -> #{live_search_error => text(io_lib:format("~p", [Why]))}
+    end.
+
 eligible(J, U) ->
     Results = maps:get(results, J),
     Unit = maps:get(id, U),

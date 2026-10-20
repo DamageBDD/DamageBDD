@@ -18,6 +18,13 @@ else
         if [[ -f "$CANDIDATE/jsx.beam" ]]; then CODE_PATH+=(-pa "$CANDIDATE"); break; fi
     done
 fi
+# Keep production-name doubles AND their fixture-only test driver out of the
+# recursive rebar3 test source scan. Only this private VM receives their beams.
+mkdir -p "$OUT/src"
+for fixture in "$ROOT/apps/ecai/test/conversation_personalities/fixtures/"*.erl.fixture \
+               "$ROOT/apps/ecai/test/conversation_personalities/ecai_conversation_personalities_tests.erl.fixture"; do
+    cp -- "$fixture" "$OUT/src/$(basename -- "${fixture%.fixture}")"
+done
 "$ECAI_ERLC" -Werror -o "$OUT" \
     "$ROOT/apps/ecai/src/ecai_paths.erl" \
     "$ROOT/apps/ecai/src/ecai_otp_compat.erl" \
@@ -26,8 +33,7 @@ fi
     "$ROOT/apps/ecai/src/ecai_conversation_store.erl" \
     "$ROOT/apps/ecai/src/ecai_conversation_http.erl" \
     "$ROOT/apps/ecai/test/ecai_conversation_store_tests.erl" \
-    "$ROOT/apps/ecai/test/conversation_personalities/fixtures/"*.erl \
-    "$ROOT/apps/ecai/test/conversation_personalities/ecai_conversation_personalities_tests.erl"
+    "$OUT/src/"*.erl
 "$ECAI_ERL" +S 2:2 +A 1 -noshell -noinput "${CODE_PATH[@]}" -eval '
     {ok, _} = application:ensure_all_started(crypto),
     {module, jsx} = code:ensure_loaded(jsx),

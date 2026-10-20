@@ -230,7 +230,7 @@ prepare_request(Kind, Body0, ModelSpec, Principal) ->
 
 profile_context(code, Query, _Principal) ->
     case application:get_env(ecai, ollama_api_code_index_dir) of
-        {ok, Dir} -> retrieve_public_context(Dir, Query);
+        {ok, Dir} -> retrieve_public_context(Dir, Query, code);
         undefined -> code_learning_context()
     end;
 profile_context(Profile, Query, _Principal) when Profile =:= rag; Profile =:= strict ->
@@ -241,9 +241,17 @@ profile_context(Profile, Query, _Principal) when Profile =:= rag; Profile =:= st
         end,
     retrieve_public_context(Dir, Query).
 
-retrieve_public_context(Dir, Query) ->
+retrieve_public_context(Dir, Query) -> retrieve_public_context(Dir, Query, rag).
+retrieve_public_context(Dir, Query, Profile) ->
     TopK = application:get_env(ecai, ollama_api_rag_top_k, ?DEFAULT_TOP_K),
-    try ecai_ollama_rag:retrieve_sources_lexical(Dir, Query, positive_int(TopK, ?DEFAULT_TOP_K)) of
+    try
+        Public = case Profile of
+            code -> [];
+            _ -> ecai_knowledge:context(undefined, Query, positive_int(TopK, ?DEFAULT_TOP_K))
+        end,
+        Extra = ecai_ollama_rag:retrieve_sources_lexical(Dir, Query, positive_int(TopK, ?DEFAULT_TOP_K)),
+        lists:sublist(Public ++ Extra, positive_int(TopK, ?DEFAULT_TOP_K))
+    of
         Sources when is_list(Sources) ->
             {ok, sources_context(Sources), length(Sources)};
         _ ->

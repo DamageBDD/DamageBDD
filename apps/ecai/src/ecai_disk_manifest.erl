@@ -31,6 +31,8 @@ append_segment(BaseDir, SegPath) ->
     Old = load(BaseDir),
     New = [SegPath | Old],
     Bin = iolist_to_binary([[S, "\n"] || S <- New]),
-    ok = file:write_file(Tmp, Bin),
+    {ok, Fd} = file:open(Tmp, [write, raw, binary]),
+    try ok = file:write(Fd, Bin), ok = file:sync(Fd)
+    after file:close(Fd) end,
     ok = file:rename(Tmp, P),
     ok.

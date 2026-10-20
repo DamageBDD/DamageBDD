@@ -28,6 +28,10 @@
     code_change/3
 ]).
 
+-ifdef(TEST).
+-export([output_options/1, inference_request_id/5]).
+-endif.
+
 -define(SERVER, ?MODULE).
 -define(DEFAULT_HEALTH_INTERVAL_MS, 30000).
 -define(DEFAULT_HEALTH_TIMEOUT_MS, 5000).
@@ -211,6 +215,16 @@ terminate(_Reason, State) ->
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 
 run_request(Kind, Role, Prompt, Opts0) when is_atom(Role), is_map(Opts0) ->
+    %% Pin once, before checkout/retries; policy changes apply to new requests.
+    Opts = ecai_model_internals:prepare(Kind, Role, Opts0),
+    Result = run_prepared_request(Kind, Role, Prompt, Opts),
+    case Result of
+        {ok, _, Meta} -> ecai_model_internals:observe(Meta);
+        _ -> ok
+    end,
+    Result.
+
+run_prepared_request(Kind, Role, Prompt, Opts0) ->
     RequestedModel = optional_binary(maps:get(model, Opts0, undefined)),
     RequestedProvider = normalize_requested_provider(maps:get(provider, Opts0, any)),
     Attempts = positive_int(
@@ -519,7 +533,7 @@ handle_billing_result(
 
 invoke_client(Kind, Prompt, ClientOpts) ->
     try
-        case Kind of
+        Result = case Kind of
             json ->
                 ecai_ollama_client:generate_json_with_meta(Prompt, ClientOpts);
             text ->
@@ -532,6 +546,11 @@ invoke_client(Kind, Prompt, ClientOpts) ->
                 ecai_ollama_client:native_generate_with_meta(
                     maps:get(native_request, ClientOpts), ClientOpts
                 )
+        end,
+        case Result of
+            {ok, Value, Meta} ->
+                {ok, Value, maps:merge(Meta, ecai_model_internals:metadata(ClientOpts))};
+            _ -> Result
         end
     catch
         Class:Reason ->
@@ -566,10 +585,11 @@ client_opts(Lease, Opts) ->
         proxy => maps:get(proxy, Lease, direct),
         model => maps:get(model, Lease)
     },
-    case maps:find(auth, NodeOpts) of
+    Resolved = case maps:find(auth, NodeOpts) of
         {ok, Auth} -> Merged1#{auth => Auth};
         error -> Merged1
-    end.
+    end,
+    ecai_model_internals:apply_policy(Resolved).
 
 enrich_meta(Role, Lease, ClientMeta) ->
     ClientMeta#{
@@ -1291,7 +1311,7 @@ receipt_meta(RequestId, Kind, Role, Prompt0, Lease, Opts) ->
         model => maps:get(model, Lease),
         prompt_sha256 => sha256_hex(to_binary(Prompt0)),
         options_sha256 => sha256_hex(
-            term_to_binary(output_options(Opts), [deterministic])
+            term_to_binary(output_options(client_opts(Lease, Opts)), [deterministic])
         ),
         created_at => now_iso8601()
     }.
@@ -1305,14 +1325,15 @@ inference_request_id(Kind, Role, Prompt0, Lease, Opts) ->
         maps:get(provider, Lease),
         maps:get(model, Lease),
         Prompt,
-        output_options(Opts)
+        output_options(client_opts(Lease, Opts))
     },
     sha256_hex(term_to_binary(Fingerprint, [deterministic])).
 
 output_options(Opts) ->
     maps:with(
         [
-            temperature,
+            temperature, top_p, top_k, min_p, seed, repeat_penalty, num_ctx,
+            system, format, model_internals,
             reasoning_effort,
             max_output_tokens
         ],

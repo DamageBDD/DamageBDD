@@ -63,7 +63,7 @@ ingest_cid_result(BaseDir, SourceKey0, Cid0, Title0) ->
     with_searchable_index_lock(BaseDir, fun(AbsoluteBaseDir) ->
         case normalize_source_args(SourceKey0, Cid0, Title0) of
             {ok, SourceKey, Cid, Title} ->
-                case fetch_and_build(SourceKey, Cid, Title, configured_max_source_chunks()) of
+                case fetch_searchable(AbsoluteBaseDir, SourceKey, Cid, Title) of
                     {ok, Records} -> persist_searchable_records(AbsoluteBaseDir, Records);
                     {error, _Reason} = Error -> Error
                 end;
@@ -126,7 +126,7 @@ persist_searchable_records(BaseDir, Records) ->
 persist_searchable_manifest(BaseDir, Docs) ->
     try ecai_disk_indexer:new(BaseDir) of
         Index0 ->
-            case add_manifest_docs_to_index(Index0, Docs, 1, 0) of
+            case add_manifest_docs_to_index(BaseDir, Index0, Docs, 1, 0) of
                 {ok, Index1, _RecordsIndexed} ->
                     safe_close_index(Index1);
                 {error, Reason, Index1} ->
@@ -138,17 +138,17 @@ persist_searchable_manifest(BaseDir, Docs) ->
             {error, {searchable_manifest_ingest_failed, Class, Reason, Stacktrace}}
     end.
 
-add_manifest_docs_to_index(Index, [], _Ordinal, RecordsIndexed) ->
+add_manifest_docs_to_index(_BaseDir, Index, [], _Ordinal, RecordsIndexed) ->
     {ok, Index, RecordsIndexed};
-add_manifest_docs_to_index(Index0, [Doc | Rest], Ordinal, RecordsIndexed0) when is_map(Doc) ->
+add_manifest_docs_to_index(BaseDir, Index0, [Doc | Rest], Ordinal, RecordsIndexed0) when is_map(Doc) ->
     case manifest_doc_fields(Doc) of
         {ok, SourceKey, Cid, Title} ->
-            case fetch_and_build(SourceKey, Cid, Title, configured_max_source_chunks()) of
+            case fetch_searchable(BaseDir, SourceKey, Cid, Title) of
                 {ok, Records} ->
                     case safe_add_records(Index0, Records) of
                         {ok, Index1} ->
                             add_manifest_docs_to_index(
-                                Index1,
+                                BaseDir, Index1,
                                 Rest,
                                 Ordinal + 1,
                                 RecordsIndexed0 + length(Records)
@@ -162,7 +162,7 @@ add_manifest_docs_to_index(Index0, [Doc | Rest], Ordinal, RecordsIndexed0) when 
         {error, Reason} ->
             {error, {invalid_manifest_document, Ordinal, Reason}, Index0}
     end;
-add_manifest_docs_to_index(Index, [_Invalid | _], Ordinal, _RecordsIndexed) ->
+add_manifest_docs_to_index(_BaseDir, Index, [_Invalid | _], Ordinal, _RecordsIndexed) ->
     {error, {invalid_manifest_document, Ordinal, not_map}, Index}.
 
 safe_add_records(Index, Records) ->
@@ -346,6 +346,24 @@ reverse_fold_result({ok, {_Count, RecordsRev}}) ->
     {ok, lists:reverse(RecordsRev)};
 reverse_fold_result({error, _Reason} = Error) ->
     Error.
+
+fetch_searchable(BaseDir, SourceKey, Cid, Title) ->
+    case fetch_ipfs_bytes(Cid) of
+        {ok, Bytes} ->
+            case check_source_size(Bytes) of
+                ok ->
+                    case build_records(SourceKey, Cid, Title, Bytes, configured_max_source_chunks()) of
+                        {ok, Records} ->
+                            case ecai_source_retrieval:retain(BaseDir, Bytes, SourceKey, Cid) of
+                                {ok, Ref} -> {ok, [R#{source_blob => Ref} || R <- Records]};
+                                Error -> Error
+                            end;
+                        Error -> Error
+                    end;
+                Error -> Error
+            end;
+        Error -> Error
+    end.
 
 fetch_and_build(SourceKey, Cid, Title, MaxChunks) ->
     case fetch_ipfs_bytes(Cid) of

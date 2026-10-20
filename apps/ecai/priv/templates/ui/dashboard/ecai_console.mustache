@@ -233,13 +233,13 @@
         </section>
 
         <section class="view" data-panel="search" aria-labelledby="searchTitle" hidden>
-          <div class="page-intro"><div class="eyebrow">RETRIEVAL</div><h1 id="searchTitle">Knowledge search</h1><p>Search indexed records and inspect returned verification material.</p></div>
+          <div class="page-intro"><div class="eyebrow">RETRIEVAL</div><h1 id="searchTitle">Knowledge search</h1><p>Search live builds, published disk segments and your accepted funded shards. Retrieve retained sources independently of previews.</p></div>
           <section class="surface panel-pad">
             <form id="searchForm" class="search-form"><label for="searchQuery" class="sr-only">Search query</label><span class="search-leading" aria-hidden="true">⌕</span><input id="searchQuery" type="search" placeholder="Search the ECAI fabric…" required minlength="1" maxlength="2048"><label class="compact-field">Results <input type="number" id="searchLimit" min="1" max="100" value="10"></label><button class="button button-primary" type="submit">Search</button></form>
-            <div class="form-meta"><span id="searchStatus" role="status">Search is available without signing in.</span><span>POST /ecai/search</span></div>
+            <div class="form-meta"><span id="searchStatus" role="status">Search is available without signing in.</span><label><input id="searchLiveRefresh" type="checkbox" checked> Refresh while building</label><span>POST /ecai/knowledge/search</span></div>
             <div id="searchResults" class="result-stack"><div class="empty-state">Start with a name, term, category or location.</div></div>
           </section>
-          <details class="surface expandable"><summary>Verification payload <span class="expand-arrow">⌄</span></summary><pre id="searchProofs" class="code-display">Run a search to view the proofs returned by the server.</pre></details>
+          <details class="surface expandable"><summary>Retrieval status &amp; verification <span class="expand-arrow">⌄</span></summary><pre id="searchProofs" class="code-display">Run a search to inspect backend availability. Live previews are not final artifact proofs.</pre></details>
         </section>
 
         <section class="view" data-panel="chat" aria-labelledby="chatTitle" hidden>
@@ -433,6 +433,11 @@
 
         <section class="view" data-panel="code" data-ecai-managed aria-labelledby="codeTitle" hidden>
           <div class="page-intro"><div class="eyebrow">NODE ADMINISTRATION · REVIEW GATE</div><h1 id="codeTitle">Code learning &amp; repair</h1><p>Inspect durable learning and repair activity, review verifier-validated Git diffs, and publish human-approved changes to a dedicated <code>origin</code> review branch. Nothing publishes automatically.</p></div>
+          <div class="code-subnav" role="tablist" aria-label="Code learning and repair sections">
+            <button type="button" id="codePipelineTab" role="tab" aria-controls="codePipelinePanel" aria-selected="true" data-code-section="pipeline">Pipeline &amp; reviews</button>
+            <button type="button" id="codeModelInternalsTab" role="tab" aria-controls="modelInternalsPanel" aria-selected="false" tabindex="-1" data-code-section="model-internals">Model Internals</button>
+          </div>
+          <div id="codePipelinePanel" role="tabpanel" aria-labelledby="codePipelineTab">
           <div class="surface panel-pad">
             <div class="panel-heading"><div><div class="eyebrow">LEARNING CYCLE</div><h2>Code intelligence &amp; repair workers</h2></div><button type="button" class="button button-outline button-sm" id="codeRefresh">Refresh</button></div>
             <div id="codeAdminNotice" class="context-hint" role="status">This workspace requires a server-authorized node administrator account.</div>
@@ -552,6 +557,61 @@
           </div>
           </div>
           </div>
+          </div>
+          <section id="modelInternalsPanel" class="model-internals" role="tabpanel" aria-labelledby="codeModelInternalsTab" hidden>
+            <div class="mi-heading"><div><div class="eyebrow">INFERENCE CONTROL · NODE POLICY</div><h2>Model Internals</h2><p>Control the interfaces this node actually exposes. Keep deeper runtime hooks explicit, isolated and testable.</p></div><button type="button" id="miRefresh" class="button button-outline button-sm">Refresh telemetry</button></div>
+            <div id="miNotice" class="mi-notice" role="status" aria-live="polite">Checking administrator access…</div>
+            <div class="mi-summary" aria-label="Inference policy status">
+              <article class="surface mi-stat"><span>Policy</span><strong id="miPolicyState">Not loaded</strong><small id="miPolicyScope">No policy snapshot loaded</small></article>
+              <article class="surface mi-stat"><span>Saved revision</span><strong id="miRevision">—</strong><small id="miUpdatedAt">Never changed</small></article>
+              <article class="surface mi-stat"><span>Configured targets</span><strong id="miNodeCount">—</strong><small>Read from the existing inference pool</small></article>
+            </div>
+            <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">01 · CAPABILITY MAP</div><h3>Wired here, or runtime required?</h3></div></div><div id="miCapabilities" class="mi-capabilities"><p class="context-hint">Capabilities have not been loaded.</p></div></section>
+            <div class="mi-workspace">
+              <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">02 · CONTROL POLICY</div><h3>Generation overrides</h3></div><span id="miDraftState" class="status-tag">No draft</span></div>
+                <p class="context-hint">Node-wide policy, not an account preference. Blank numbers inherit existing node/request settings. Saves affect new requests; in-flight retries keep their pinned revision.</p>
+                <form id="miForm" class="stack-form">
+                  <fieldset id="miFields" disabled>
+                    <label class="mi-toggle"><input id="miEnabled" type="checkbox"> Enable this policy for selected code roles</label>
+                    <fieldset class="mi-role-fields"><legend>Code roles</legend><div class="mi-role-choices">
+                      <label><input type="checkbox" name="miRole" value="patch"> Repair</label><label><input type="checkbox" name="miRole" value="learning"> Learning</label><label><input type="checkbox" name="miRole" value="audit"> Audit</label><label><input type="checkbox" name="miRole" value="synthesis"> Synthesis</label>
+                    </div></fieldset>
+                    <p class="context-hint">Public chat, native chat/generate requests and LLM evaluation are outside this policy.</p>
+                    <div class="mi-subheading">Ollama · native generation</div><div class="mi-field-grid">
+                      <label>Temperature<input id="miTemperature" type="number" min="0" max="2" step="0.01" placeholder="Inherit"></label>
+                      <label>Top-p<input id="miTopP" type="number" min="0.001" max="1" step="0.001" placeholder="Inherit"></label>
+                      <label>Top-k<input id="miTopK" type="number" min="1" max="1000" step="1" placeholder="Inherit"></label>
+                      <label>Min-p<input id="miMinP" type="number" min="0" max="1" step="0.01" placeholder="Inherit"></label>
+                      <label>Seed<input id="miSeed" type="number" min="0" max="2147483647" step="1" placeholder="Inherit"></label>
+                      <label>Repeat penalty<input id="miRepeatPenalty" type="number" min="0.1" max="2" step="0.01" placeholder="Inherit"></label>
+                      <label>Context tokens<input id="miNumCtx" type="number" min="512" max="131072" step="1" placeholder="Inherit"></label>
+                      <label>Maximum output tokens<input id="miMaxOutput" type="number" min="1" max="32768" step="1" placeholder="Inherit"></label>
+                    </div>
+                    <p class="context-hint">Large context windows increase resource use. A fixed seed or zero temperature does not guarantee identical results across model/runtime changes.</p>
+                    <label class="mi-toggle"><input id="miPatchSchema" type="checkbox"> Use the fixed JSON schema for Ollama repair requests</label>
+                    <p class="context-hint">Constrains summary, security_property, tests and patch fields. It does not validate a patch or bypass compilation, tests or review.</p>
+                    <details class="mi-advanced"><summary>OpenAI · existing Responses adapter</summary><p class="context-hint">Only the controls wired into this adapter appear here. Leave temperature blank for models that reject it. Credentials and model routing stay in server configuration.</p><div class="mi-field-grid">
+                      <label>Maximum output tokens<input id="miOpenaiMaxOutput" type="number" min="1" max="32768" step="1" placeholder="Inherit"></label><label>Temperature (model-dependent)<input id="miOpenaiTemperature" type="number" min="0" max="2" step="0.01" placeholder="Inherit"></label>
+                    </div></details>
+                    <label>Appended system guidance<textarea id="miSystemSuffix" rows="4" maxlength="2048" placeholder="Optional operator guidance for selected code roles"></textarea></label>
+                    <p class="context-hint">Maximum 2,048 UTF-8 bytes. Existing system guidance is preserved. Do not paste credentials, private keys or untrusted source instructions.</p>
+                    <div class="inline-actions wrap-actions"><button id="miSave" type="submit" class="button button-primary button-sm">Save policy</button><button id="miDiscard" type="button" class="button button-outline button-sm">Discard local edits</button></div>
+                  </fieldset>
+                </form>
+              </section>
+              <div class="mi-side-column">
+                <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">03 · INSPECT BEFORE SAVING</div><h3>Request preview</h3></div><span class="status-tag">NO INFERENCE</span></div>
+                  <p class="context-hint">Validate the current draft and inspect its overrides. No model is loaded, no prompt is sent and no spend is initiated.</p>
+                  <div class="mi-field-grid"><label>Provider<select id="miPreviewProvider"><option value="ollama">Ollama</option><option value="openai">OpenAI</option></select></label><label>Role<select id="miPreviewRole"><option value="patch">Repair</option><option value="learning">Learning</option><option value="audit">Audit</option><option value="synthesis">Synthesis</option></select></label></div>
+                  <button id="miPreview" type="button" class="button button-outline button-sm" disabled>Validate &amp; preview draft</button>
+                  <pre id="miPreviewOutput" class="code-display mi-output" aria-live="polite">No preview requested.</pre>
+                </section>
+                <section class="surface panel-pad"><div class="eyebrow">CONFIGURATION FINGERPRINT</div><h3>Saved policy evidence</h3><code id="miConfigHash" class="mi-hash">Not loaded</code><p class="context-hint">This SHA-256 fingerprint identifies the saved configuration. It is not a digital signature or proof that generated statements are true.</p><div id="miChanges" class="mi-events">No policy changes recorded.</div></section>
+              </div>
+            </div>
+            <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">04 · EXISTING POOL</div><h3>Inference targets</h3></div><span id="miPoolState" class="status-tag">Not checked</span></div><div id="miNodes" class="mi-nodes">No target telemetry loaded.</div><p class="context-hint">This page cannot edit endpoints, add credentials, select an arbitrary model or load executable adapters.</p></section>
+            <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">05 · OBSERVABILITY</div><h3>Recent code inference</h3></div><span class="status-tag">METADATA ONLY</span></div><p class="context-hint">The latest 32 successful calls observed on this node. This view resets on service restart; policy metadata on repair attempts follows the existing durable repair store. No prompts, generated code or hidden activations are displayed.</p><div id="miObservations" class="mi-events">No calls observed yet.</div></section>
+          </section>
         </section>
 
         <section class="view" data-panel="network" data-ecai-managed aria-labelledby="poolTitle" hidden>
@@ -613,6 +673,6 @@
   <script type="module" src="/static/js/ecai-index-pool.js"></script>
   <script type="module" src="/static/js/ecai-compute-settings.js"></script>
   <script type="module" src="/static/js/ecai-keys.js"></script>
-  <script type="module" src="/static/js/ecai-console.js?v=personality-conversations-v1-personalities-v1-video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-explorer-v2-eval-v1"></script>
+  <script type="module" src="/static/js/ecai-console.js?v=model-internals-v1-personality-conversations-v1-personalities-v1-video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-explorer-v2-eval-v1-source-retrieval-v1"></script>
 </body>
 </html>

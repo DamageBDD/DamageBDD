@@ -1,3 +1,4 @@
+import {initModelInternals} from "/static/js/ecai-model-internals.js?v=model-internals-v1";
 import {initPersonalities} from "/static/js/ecai-personalities.js?v=personalities-v1";
 import {initEvaluation} from "/static/js/ecai-eval.js?v=eval-v1";
 // Use the current DamageBDD browser-session and authentication modules.
@@ -15,6 +16,10 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
 
   const $ = (id) => document.getElementById(id);
   const routes = [
+    { group: "Model Internals", method: "GET", path: "/ecai/admin/code/model-internals", description: "Node-admin policy, wired capabilities and sanitized inference telemetry." },
+    { group: "Model Internals", method: "POST", path: "/ecai/admin/code/model-internals/update", description: "Replace a validated inference policy using its expected revision. Use the Model Internals form to build the full config.", body: {revision: 0, config: {}} },
+    { group: "Model Internals", method: "POST", path: "/ecai/admin/code/model-internals/preview", description: "Validate draft overrides without calling a model or spending. Use the Model Internals form to build the full config.", body: {provider: "ollama", role: "patch", config: {}} },
+
     {group: "AI personalities", method: "GET", path: "/ecai/conversations/personalities", description: "Built-in default and owned personality editions available to this signed-in account."},
     {group: "AI personalities", method: "GET", path: "/ecai/personalities", description: "Public personality collection, edition prices and checkout availability."},
     {group: "AI personalities", method: "GET", path: "/ecai/personalities/orders", description: "Purchases and pending invoices for the managed account."},
@@ -150,9 +155,11 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
   let personalities = null;
   let videoStudio = null;
   let marketMaker = null;
+  let modelInternals = null;
   const state = {
     authenticated: false, sessionMode: "anonymous", authEpoch: 0, email: "", view: "overview", jobs: [], presets: [], marketJobs: [],
     nodeAdmin: false, codeAdmin: false, codeFeatureConfigured: false, adminProbeSequence: 0, codeQueue: {}, codeRepairs: [], codeReviews: [], codeReview: null, codeReviewOpenId: "", codeReviewLoadSerial: 0, codeDiffFiles: [], codeDiffSelectedFile: "0",
+    codeSection: "pipeline",
     codeSettings: null, codeRepository: null, codeBundles: [],
     selectedIndexId: "", selectedIndexJob: null, jobEntries: new Map(), selectedMarketId: "", activeRoute: -1, lastApiResult: null,
     chatSession: randomHex(16), chatUser: `console-${randomHex(12)}`, chatBusy: false,
@@ -496,6 +503,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
       mathPaths?.reset(); evaluation?.reset(); personalities?.reset();
       videoStudio?.reset();
       marketMaker?.reset();
+      modelInternals?.reset();
       if (state.authenticated) setAuthenticated(false);
       observedToken = token;
       document.dispatchEvent(new CustomEvent("ecai:identity-changed"));
@@ -656,6 +664,9 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     }
   }
   function navigate(view) {
+    const codeSection = view === "code/model-internals" ? "model-internals" : "pipeline";
+    if (view === "code/model-internals") view = "code";
+    state.codeSection = codeSection;
     if (!Object.prototype.hasOwnProperty.call(VIEW_NAMES, view)) view = "overview";
     const previous = state.view;
     state.view = view;
@@ -670,8 +681,17 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
       link.classList.toggle("is-active", active);
       if (active) link.setAttribute("aria-current", "page"); else link.removeAttribute("aria-current");
     }
-    put("viewBreadcrumb", VIEW_NAMES[view]);
-    if (location.hash !== `#${view}`) history.replaceState(null, "", `#${view}`);
+    const internalsVisible = view === "code" && codeSection === "model-internals";
+    $("codePipelinePanel").hidden = internalsVisible;
+    $("modelInternalsPanel").hidden = !internalsVisible;
+    for (const tab of document.querySelectorAll("[data-code-section]")) {
+      const selected = tab.dataset.codeSection === codeSection;
+      tab.setAttribute("aria-selected", String(selected)); tab.tabIndex = selected ? 0 : -1;
+    }
+    put("viewBreadcrumb", internalsVisible ? "Code learning & repair / Model Internals" : VIEW_NAMES[view]);
+    const fragment = internalsVisible ? "code/model-internals" : view;
+    if (location.hash !== `#${fragment}`) history.replaceState(null, "", `#${fragment}`);
+    modelInternals?.setVisible(internalsVisible);
     closeNav();
     window.EcaiIndexPool?.setVisible(view === "network");
     mathPaths?.setVisible(view === "math");
@@ -767,15 +787,28 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
       toast("Quick Index job queued");
     });
   });
+  let knowledgeRefreshTimer = null;
+  let knowledgeSearchBusy = false;
+  document.addEventListener("ecai:identity-changed", () => {
+    clearTimeout(knowledgeRefreshTimer);
+    $("searchResults")?.replaceChildren();
+    put("searchStatus", "Identity changed. Run the search again.");
+    put("searchProofs", "No retrieval status for this session.");
+  });
   async function search(event) {
     event.preventDefault();
     const q = $("searchQuery").value.trim();
     const limit = Math.min(100, Math.max(1, Number($("searchLimit").value) || 10));
     if (!q) return;
-    put("searchStatus", "Searching the index…");
+    if (knowledgeSearchBusy) return;
+    clearTimeout(knowledgeRefreshTimer);
+    knowledgeSearchBusy = true;
+    const searchAuthEpoch = state.authEpoch;
+    put("searchStatus", "Searching published segments and live builds…");
     const results = $("searchResults"); results.replaceChildren();
     await task(async () => {
-      const data = expectSuccess(await request("/ecai/search", { method: "POST", body: { q, limit }, ignoreAuth: true }));
+      const data = expectSuccess(await request("/ecai/knowledge/search", { method: "POST", body: { q, limit } }));
+      if (state.authEpoch !== searchAuthEpoch) return;
       const items = Array.isArray(data.results) ? data.results : [];
       if (!items.length) results.append(element("div", "empty-state", "No matching records. Try a broader term."));
       for (const result of items) {
@@ -788,11 +821,47 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
         if (result?.doc_id) meta.append(element("span", "", `ID: ${result.doc_id}`));
         if (Number.isFinite(result?.score)) meta.append(element("span", "", `Score: ${result.score.toFixed(3)}`));
         if (result?.record?.city) meta.append(element("span", "", result.record.city));
-        card.append(meta); results.append(card);
+        meta.append(element("span", "", result.live ? "Live / partial build" : "Published snapshot"));
+        if (result.index) meta.append(element("span", "", result.index));
+        const sourceInfo = result?.record?.source_retrieval;
+        meta.append(element("span", "", sourceInfo?.complete ? "Complete retained representation" : "Excerpt / completeness unknown"));
+        card.append(meta);
+        if (result.source_ref) {
+          const resolve = element("button", "button", "Retrieve source");
+          resolve.type = "button";
+          resolve.addEventListener("click", () => void task(async () => {
+            clearTimeout(knowledgeRefreshTimer);
+            if ($("searchLiveRefresh")) $("searchLiveRefresh").checked = false;
+            resolve.disabled = true;
+            try {
+              const source = expectSuccess(await request("/ecai/knowledge/source", {
+                method: "POST", body: { source_ref: result.source_ref }
+              }));
+              if (state.authEpoch !== searchAuthEpoch) return;
+              const details = element("details", "expandable"); details.open = true;
+              details.append(element("summary", "", `${source.complete ? "Complete" : "Partial"} · ${source.representation || "stored text"} · ${source.integrity || "unverified"}`));
+              details.append(element("pre", "code-display", String(source.text || "").slice(0, 64000)));
+              if (String(source.text || "").length > 64000) details.append(element("p", "context-hint", "The endpoint returned the full source; this viewer shows the first 64,000 characters."));
+              card.append(details);
+            } finally { resolve.disabled = false; }
+          }));
+          card.append(resolve);
+        }
+        results.append(card);
       }
-      put("searchStatus", `${items.length} result${items.length === 1 ? "" : "s"} returned`);
-      put("searchProofs", data.proofs ?? "No proof material returned by this endpoint.");
+      put("searchStatus", `${items.length} result${items.length === 1 ? "" : "s"} returned${data.partial ? " · Some backends unavailable" : ""}`);
+      put("searchProofs", { ranking: data.ranking, consistency: data.consistency, backends: data.backends,
+        note: "Live previews omit Merkle proofs. Use a finalized artifact for release verification." });
     }, "searchStatus");
+    knowledgeSearchBusy = false;
+    if ($("searchLiveRefresh")?.checked && state.authEpoch === searchAuthEpoch) {
+      knowledgeRefreshTimer = setTimeout(() => {
+        const panel = document.querySelector('[data-panel="search"]');
+        if (panel && !panel.hidden && $("searchQuery").value.trim() === q && $("searchLiveRefresh")?.checked) {
+          void search({ preventDefault() {} });
+        }
+      }, 3000);
+    }
   }
   function chatProject(projectId) {
     return state.chatProjects.find((project) => String(project.id) === String(projectId || ""));
@@ -2440,6 +2509,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     $("codeAdminNav").hidden = !(state.authenticated && (state.nodeAdmin || state.codeAdmin));
     $("indexPoolNav").hidden = !(state.authenticated && state.nodeAdmin);
     window.EcaiIndexPool?.setSession(state.authenticated, state.nodeAdmin);
+    modelInternals?.accessChanged();
   }
   function setCodeActionsEnabled(allowed) {
     for (const id of ["codeLearn", "codeScan", "codeIntegrate", "codeProposeSubmit", "codeSettingsSave",
@@ -3172,7 +3242,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
       case "personalities": await personalities?.refresh(); break;
       case "compute": if (managedSession()) await window.EcaiComputeSettings?.refresh(); else window.EcaiComputeSettings?.clear(); break;
       case "keys": if (managedSession()) await window.EcaiOllamaKeys?.refresh(); else window.EcaiOllamaKeys?.clear(); break;
-      case "code": await refreshCode(); break;
+      case "code": if (state.codeSection === "model-internals") await modelInternals?.refresh(); else await refreshCode(); break;
       case "marketplace": await refreshMarket(); break;
       case "video": await videoStudio?.refresh(); break;
       case "market-maker": await marketMaker?.refresh(true); break;
@@ -3341,6 +3411,20 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     mathPaths = initMathPaths({request, currentToken, managedSession, openLogin, toast});
     videoStudio = initVideoStudio({request, currentToken, managedSession, openLogin, toast});
     marketMaker = initMarketMaker({request, canManage: () => managedSession() && state.nodeAdmin, openLogin});
+    modelInternals = initModelInternals({request, canManage: () => managedSession() && (state.nodeAdmin || state.codeAdmin)});
+    const codeTabs = [...document.querySelectorAll("[data-code-section]")];
+    codeTabs.forEach((tab, index) => {
+      tab.addEventListener("click", () => navigate(tab.dataset.codeSection === "model-internals" ? "code/model-internals" : "code"));
+      tab.addEventListener("keydown", event => {
+        let next;
+        if (event.key === "ArrowRight") next = (index + 1) % codeTabs.length;
+        else if (event.key === "ArrowLeft") next = (index + codeTabs.length - 1) % codeTabs.length;
+        else if (event.key === "Home") next = 0;
+        else if (event.key === "End") next = codeTabs.length - 1;
+        else return;
+        event.preventDefault(); codeTabs[next].focus(); codeTabs[next].click();
+      });
+    });
     initAuthUI();
     bindEvents(); resetChat(); fillPrivateExample(); updateMarketActionExample();
     $("indexIdempotency").value = newKey("ecai-job");
@@ -3353,6 +3437,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     state.poller = setInterval(() => {
       if (document.hidden || !managedSession()) return;
       if (state.view === "code") {
+        if (state.codeSection === "model-internals") { modelInternals?.poll(); return; }
         if (state.codeReview?.status === "publishing") task(refreshCode);
         else if (!state.codeStatusLastPoll || Date.now() - state.codeStatusLastPoll >= 24000) task(refreshCodeStatusOnly);
         return;

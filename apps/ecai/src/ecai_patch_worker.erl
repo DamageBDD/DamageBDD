@@ -1545,6 +1545,7 @@ record_inference_attempt(Attempt, Meta0, Opts) when
             model,
             model_digest,
             model_revision,
+            model_internals,
             host,
             port,
             done_reason,

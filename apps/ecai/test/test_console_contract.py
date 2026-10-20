@@ -52,7 +52,12 @@ class ConsoleContractTests(unittest.TestCase):
         self.assertTrue(CSS.is_file())
         for asset in self.markup.scripts + self.markup.styles:
             path = asset.split('?', 1)[0]
+            if path == '/api/themes/css':
+                # Dynamic Cowboy theme route, not a file in priv/static.
+                self.assertIn('"/api/themes/css", damage_theme_http', (APP/'src/ecai_app.erl').read_text())
+                continue
             if path.startswith('/ecai/auth-assets/'):
+
                 source = APP.parent / 'damage/priv/static' / path.removeprefix('/ecai/auth-assets/')
                 if not (APP.parent / 'damage/priv/static').exists():
                     # This archive contains only the DamageBDD market-maker
@@ -78,8 +83,11 @@ class ConsoleContractTests(unittest.TestCase):
 
     def test_api_catalog_matches_cowboy_routes(self):
         catalog = set(re.findall(r'method:\s*"(GET|POST|SSE|WS)",\s*path:\s*"([^"]+)"', self.js))
-        self.assertEqual(len(catalog), 119)
+        self.assertEqual(len(catalog), 122)
         declared = {
+            ('GET', '/ecai/admin/code/model-internals'),
+            ('POST', '/ecai/admin/code/model-internals/update'),
+            ('POST', '/ecai/admin/code/model-internals/preview'),
             ('GET', '/ecai/conversations/personalities'),
             ('GET', '/ecai/personalities'), ('GET', '/ecai/personalities/orders'),
             ('GET', '/ecai/personalities/orders/:id'),
@@ -253,7 +261,8 @@ class ConsoleContractTests(unittest.TestCase):
         self.assertIn('stale_base_commit', git)
         self.assertIn('push_committed_review', git)
         self.assertIn('"worktree", "add", "--detach"', git)
-        self.assertIn('"--no-verify", "origin"', git)
+        self.assertRegex(git, r'"--no-verify",\s*review_remote\(\)')
+        self.assertIn('ecai_code_runtime_config:review_config()', git)
         self.assertNotIn('"--force", "origin"', git)
         self.assertIn('ecai/reviews/', git)
 
@@ -324,7 +333,7 @@ class ConsoleAuthContractTests(unittest.TestCase):
         self.assertNotIn('            damage_accounts,', source)
         for forbidden in ('/accounts/create', '/accounts/reset_password'):
             self.assertNotIn(forbidden, source)
-        self.assertIn('] ++ ollama_api_handlers() ++ code_admin_handlers() ++ marketplace_handlers()', source)
+        self.assertIn('] ++ conversation_history_handlers() ++ ollama_api_handlers() ++ code_admin_handlers() ++ marketplace_handlers()', source)
 
     def test_session_probe_is_present_and_non_billable(self):
         source = (APP/'src/ecai_auth_http.erl').read_text(encoding='utf-8')

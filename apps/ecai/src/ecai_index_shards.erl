@@ -13,6 +13,8 @@
     merge_plan/2,
     read_manifest/1,
     search/3,
+    search/4,
+    source/3,
     snapshot/2
 ]).
 
@@ -491,8 +493,11 @@ verified_receipt(Entry, Placement) ->
 
 %% Query one verified shard at a time, so peak ETS usage scales with the shard
 %% rather than with the aggregate corpus. Scores/roots stay per-shard.
-search(ManifestPath, Query, Limit) when
-    is_map(Query),
+search(ManifestPath, Query, Limit) ->
+    search(ManifestPath, Query, Limit, #{include_proofs => true}).
+
+search(ManifestPath, Query, Limit, Opts) when
+    is_map(Query), is_map(Opts),
     is_integer(Limit),
     Limit >= 1,
     Limit =< 1000
@@ -509,11 +514,11 @@ search(ManifestPath, Query, Limit) when
                 Ctx0 = ecai_search:new(),
                 try
                     {ok, Ctx} = expect(ecai_search:load(Ctx0, path(SnapPath))),
-                    {Results, Headers} = ecai_search:search(Ctx, Query, Limit),
+                    {Results, Headers} = ecai_search:search(Ctx, Query, Limit, Opts),
                     Ord = maps:get(ordinal, S),
                     Best = bounded_top_k(
                         AccHits ++
-                            [H#{shard_ordinal => Ord} || H <- Results],
+                            [H#{shard_ordinal => Ord, record => ecai_source_retrieval:summary(maps:get(record,H,#{}))} || H <- Results],
                         Limit
                     ),
                     Needed = lists:usort([maps:get(shard_ordinal, H) || H <- Best]),
@@ -536,8 +541,28 @@ search(ManifestPath, Query, Limit) when
         error:{badmatch, {error, Reason}} -> {error, Reason};
         Class:Reason -> {error, {shard_search_failed, Class, Reason}}
     end;
-search(_, _, _) ->
+search(_, _, _, _) ->
     {error, invalid_query}.
+
+source(ManifestPath, Ordinal, DocId) when is_integer(Ordinal), is_binary(DocId) ->
+    try
+        {ok, Manifest} = expect(read_manifest(ManifestPath)),
+        case [S || S <- maps:get(shards, Manifest), maps:get(ordinal, S) =:= Ordinal] of
+            [Shard] ->
+                Path = maps:get(snapshot_path, Shard),
+                ok = expect_ok(verify_snapshot(Path, maps:get(snapshot_sha256, Shard))),
+                Ctx0 = ecai_search:new(),
+                try
+                    {ok, Ctx} = expect(ecai_search:load(Ctx0, path(Path))),
+                    ecai_search:source(Ctx, DocId)
+                after ecai_search:wipe(Ctx0) end;
+            _ -> {error, source_not_found}
+        end
+    catch
+        throw:{shard_error, Why} -> {error, Why};
+        Class:Why -> {error, {shard_source_failed, Class, Why}}
+    end;
+source(_, _, _) -> {error, badarg}.
 
 bounded_top_k(Hits, Limit) ->
     Sorted = lists:sort(

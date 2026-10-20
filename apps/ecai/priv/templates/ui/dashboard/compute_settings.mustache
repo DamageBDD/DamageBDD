@@ -2,49 +2,140 @@
   <div class="page-intro">
     <div class="eyebrow">ACCOUNT SETTINGS · COMPUTE · PUBLICATION</div>
     <h1 id="computeTitle">Compute &amp; NFT settings</h1>
-    <p>Connect your own cloud account using delegated identity, reserve a bounded indexing budget and request NFT publication after artifact verification.</p>
+    <p>Connect cloud infrastructure with delegated access, configure budgets and request optional NFT publication review.</p>
   </div>
   <p id="computeNotice" class="context-hint" role="status" aria-live="polite">Sign in to manage your account. Cloud execution and on-chain mint submission require separate operator integration.</p>
+  <div class="compute-tabs" role="navigation" aria-label="Compute configuration subsections">
+    <button type="button" data-compute-scroll="computeProviders">Provider accounts</button>
+    <button type="button" data-compute-scroll="computeBudget">Budgets</button>
+    <button type="button" data-compute-scroll="computeJobs">Quotes &amp; reservations</button>
+    <button type="button" data-compute-scroll="computeNfts">NFT review</button>
+  </div>
+  <section class="surface panel-pad" id="computeProviders" aria-labelledby="computeProvidersTitle">
+    <div class="panel-heading">
+      <div><div class="eyebrow">01 · CONNECT YOUR CLOUD</div><h2 id="computeProvidersTitle">Choose a compute provider</h2></div>
+      <button id="computeRefresh" type="button" class="button button-outline button-sm">Refresh status</button>
+    </div>
+    <p class="context-hint">Use your provider's console to delegate limited access. ECAI never asks you for AWS access keys, Google service-account JSON or wallet private keys. Saving details or opening a console does not launch compute.</p>
+
+    <div class="compute-provider-choices" aria-label="Select cloud provider">
+      <button type="button" class="compute-provider-choice" id="computeChooseAws" data-compute-provider-choice="aws_batch" aria-controls="computeAwsPanel" aria-pressed="true">
+        <span class="compute-choice-top"><strong>AWS Batch</strong><span class="compute-choice-arrow" aria-hidden="true">↗</span></span>
+        <span class="compute-choice-desc">Existing AWS account · IAM role · Batch queue</span>
+        <span id="computeAwsStatus" class="compute-status" aria-live="polite">Not configured</span>
+      </button>
+      <button type="button" class="compute-provider-choice" id="computeChooseGcp" data-compute-provider-choice="cloud_run" aria-controls="computeGcpPanel" aria-pressed="false">
+        <span class="compute-choice-top"><strong>Google Cloud Run Jobs</strong><span class="compute-choice-arrow" aria-hidden="true">↗</span></span>
+        <span class="compute-choice-desc">Existing GCP project · workload identity · Cloud Run job</span>
+        <span id="computeGcpStatus" class="compute-status" aria-live="polite">Not configured</span>
+      </button>
+    </div>
+
+    <ol class="compute-steps" aria-label="Provider connection steps">
+      <li class="compute-step" id="computeStepChoose"><span class="compute-step-number">1</span><span>Choose provider</span></li>
+      <li class="compute-step" id="computeStepAuthorize"><span class="compute-step-number">2</span><span>Delegate access</span></li>
+      <li class="compute-step" id="computeStepVerify"><span class="compute-step-number">3</span><span>Verify identity</span></li>
+    </ol>
+
+    <div id="computeAwsPanel" class="compute-connection-panel" aria-labelledby="computeAwsTitle">
+      <div class="compute-connection-heading"><h3 id="computeAwsTitle">Connect AWS Batch</h3><p id="computeAwsGuideStatus" class="context-hint" role="status" aria-live="polite">Start by preparing your account-specific external ID.</p></div>
+      <div class="compute-guidance-grid">
+        <div class="compute-guidance-card">
+          <h4><span class="compute-mini-step">1</span> Prepare your AWS trust ID</h4>
+          <p class="context-hint">Generate a stable ID before you create the role. It stays the same after you save or update the AWS connection.</p>
+          <div class="inline-actions wrap-actions">
+            <button id="computePrepareAws" type="button" class="button button-primary">Generate setup ID</button>
+            <button id="computeCopyExternalId" type="button" class="button button-outline button-sm" disabled>Copy external ID</button>
+          </div>
+          <div class="compute-meta">AWS external ID: <code id="computeAwsExternalId">Generate setup ID to continue</code></div>
+        </div>
+        <div class="compute-guidance-card">
+          <h4><span class="compute-mini-step">2</span> Authorize ECAI in AWS</h4>
+          <p class="context-hint">Create a cross-account IAM role with a <strong>custom trust policy</strong> restricted to your ECAI node's IAM principal and the external ID. Grant only required Batch/S3 permissions.</p>
+          <div class="compute-meta">Coordinator IAM principal: <code id="computeAwsPrincipal">Waiting for node operator configuration</code></div>
+          <p id="computeAwsPolicyHelp" class="context-hint">Copyable policy will be available once your node operator configures its coordinator role ARN.</p>
+          <div class="inline-actions wrap-actions">
+            <a class="button button-outline" href="https://console.aws.amazon.com/iam/home#/roles/create" target="_blank" rel="noopener noreferrer">Open AWS IAM ↗</a>
+            <button id="computeCopyTrustPolicy" type="button" class="button button-outline" disabled>Copy trust policy</button>
+          </div>
+          <div class="compute-support-links">
+            <a id="computeAwsBatchLink" href="https://console.aws.amazon.com/batch/home" target="_blank" rel="noopener noreferrer">AWS Batch ↗</a>
+            <a href="https://s3.console.aws.amazon.com/s3/home" target="_blank" rel="noopener noreferrer">S3 buckets ↗</a>
+            <a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_create_for-custom.html" target="_blank" rel="noopener noreferrer">Role setup guide ↗</a>
+          </div>
+        </div>
+      </div>
+      <details class="compute-resource-details" id="computeAwsResources">
+        <summary><span class="compute-mini-step">3</span> Enter your existing AWS resources <span class="compute-summary-hint">Role ARN, region, queue, job and S3 bucket</span></summary>
+        <form id="computeAwsForm" class="stack-form compute-resources-form">
+          <div class="compute-form-grid compute-fields-two">
+            <label>Cross-account role ARN<input name="role_arn" autocomplete="off" required placeholder="arn:aws:iam::123456789012:role/EcaiIndexer"></label>
+            <label>AWS region<input name="region" required placeholder="ap-southeast-2"></label>
+            <label>Batch queue<input name="job_queue" required placeholder="ecai-index-spot"></label>
+            <label>Job definition<input name="job_definition" required placeholder="ecai-index-job"></label>
+            <label>Staging S3 bucket<input name="bucket" required placeholder="ecai-index-artifacts"></label>
+          </div>
+          <div class="inline-actions wrap-actions">
+            <button type="submit" class="button button-primary">Save AWS connection</button>
+            <button id="computeVerifyAws" type="button" class="button button-outline" disabled>Verify IAM role access</button>
+          </div>
+          <p class="context-hint">Identity verification uses the ECAI server's AWS credentials and calls STS AssumeRole. This does not prove Batch SubmitJob permissions or dispatch a job.</p>
+        </form>
+      </details>
+    </div>
+
+    <div id="computeGcpPanel" class="compute-connection-panel" aria-labelledby="computeGcpTitle" hidden>
+      <div class="compute-connection-heading"><h3 id="computeGcpTitle">Connect Google Cloud Run Jobs</h3><p id="computeGcpGuideStatus" class="context-hint" role="status" aria-live="polite">Use an existing Google Cloud project and workload identity.</p></div>
+      <div class="compute-guidance-grid">
+        <div class="compute-guidance-card">
+          <h4><span class="compute-mini-step">1</span> Open your Google Cloud project</h4>
+          <p class="context-hint">Select your project in Google Cloud. Create or choose an existing Cloud Run job with a pinned container image and a staging GCS bucket.</p>
+          <label class="compute-project-field">Google Cloud project ID (for direct console links)<input form="computeGcpForm" name="project_id" required autocomplete="off" placeholder="my-gcp-project"></label>
+          <div class="inline-actions wrap-actions">
+            <a id="computeGcpConsoleLink" class="button button-outline" href="https://console.cloud.google.com/run/jobs" target="_blank" rel="noopener noreferrer">Open Cloud Run Jobs ↗</a>
+            <a id="computeGcpBucketsLink" class="button button-outline" href="https://console.cloud.google.com/storage/browser" target="_blank" rel="noopener noreferrer">GCS buckets ↗</a>
+          </div>
+        </div>
+        <div class="compute-guidance-card">
+          <h4><span class="compute-mini-step">2</span> Delegate workload identity</h4>
+          <p class="context-hint">Your node operator must configure workload identity federation or node-managed short-lived credentials. Set least-privilege Cloud Run and storage IAM permissions; do not upload a JSON key.</p>
+          <div class="inline-actions wrap-actions">
+            <a id="computeGcpWifLink" class="button button-outline" href="https://console.cloud.google.com/iam-admin/workload-identity-pools" target="_blank" rel="noopener noreferrer">Workload identity pools ↗</a>
+            <a id="computeGcpServiceAccountsLink" class="button button-outline" href="https://console.cloud.google.com/iam-admin/serviceaccounts" target="_blank" rel="noopener noreferrer">Service accounts ↗</a>
+          </div>
+          <div class="compute-support-links"><a href="https://docs.cloud.google.com/iam/docs/workload-identity-federation-with-other-providers" target="_blank" rel="noopener noreferrer">Federation setup guide ↗</a></div>
+        </div>
+      </div>
+      <details class="compute-resource-details" id="computeGcpResources">
+        <summary><span class="compute-mini-step">3</span> Enter your existing Google Cloud resources <span class="compute-summary-hint">Project, region, job, bucket and service account</span></summary>
+        <form id="computeGcpForm" class="stack-form compute-resources-form">
+          <div class="compute-form-grid compute-fields-two">
+            <label>Region<input name="region" required placeholder="australia-southeast1"></label>
+            <label>Pre-deployed Cloud Run job<input name="job" required placeholder="ecai-shard"></label>
+            <label>Staging GCS bucket<input name="bucket" required placeholder="ecai-index-artifacts"></label>
+            <label>Worker service account<input name="service_account" required placeholder="ecai-index@project.iam.gserviceaccount.com"></label>
+          </div>
+          <div class="inline-actions wrap-actions">
+            <button type="submit" class="button button-primary">Save GCP connection</button>
+            <button id="computeVerifyGcp" type="button" class="button button-outline" disabled>Verify Cloud Run visibility</button>
+          </div>
+          <p class="context-hint">Verification reads the job using the node's gcloud identity. It does not prove permission to run jobs or authorize spending.</p>
+        </form>
+      </details>
+    </div>
+    <div class="compute-next-row">
+      <span id="computeConnectionFootnote" class="context-hint" role="status">Choose a provider, delegate access and verify the configured identity.</span>
+      <button id="computeNextBudget" type="button" class="button button-primary" disabled>Continue to budgets →</button>
+    </div>
+  </section>
+  <section class="surface panel-pad" id="computeBudget" aria-labelledby="computeBudgetTitle">
+    <div class="panel-heading"><div><div class="eyebrow">02 · POLICY</div><h2 id="computeBudgetTitle">Spending limits</h2></div><span id="computeMonth" class="context-hint">UTC month</span></div>
   <div class="compute-metrics" aria-label="Compute budget accounting">
     <article class="surface panel-pad"><div class="eyebrow">MONTHLY COMPUTE LIMIT</div><strong id="computeBudgetLimit">$0.00</strong><span>USD · per account</span></article>
     <article class="surface panel-pad"><div class="eyebrow">RESERVED</div><strong id="computeBudgetReserved">$0.00</strong><span>Allocation requests, not provider charges</span></article>
     <article class="surface panel-pad"><div class="eyebrow">UNRESERVED</div><strong id="computeBudgetAvailable">$0.00</strong><span>Available admission allowance</span></article>
     <article class="surface panel-pad"><div class="eyebrow">CLOUD BILLED</div><strong id="computeBudgetBilled">Not connected</strong><span>Actual billing reconciliation pending</span></article>
   </div>
-  <div class="compute-tabs" role="navigation" aria-label="Compute configuration subsections">
-    <button type="button" data-compute-scroll="computeProviders">Provider accounts</button>
-    <button type="button" data-compute-scroll="computeBudget">Budgets</button>
-    <button type="button" data-compute-scroll="computeJobs">Remote reservations</button>
-    <button type="button" data-compute-scroll="computeNfts">NFT publication</button>
-  </div>
-  <section class="surface panel-pad" id="computeProviders" aria-labelledby="computeProvidersTitle">
-    <div class="panel-heading"><div><div class="eyebrow">01 · CONNECT AN ACCOUNT</div><h2 id="computeProvidersTitle">Compute providers</h2></div><button id="computeRefresh" type="button" class="button button-outline button-sm">Refresh</button></div>
-    <p class="context-hint">No AWS access keys, GCP JSON keys or wallet private keys are accepted. Configure the ECAI node's federation identity and delegate least-privilege access in your cloud account. A successful identity check is not a compute launch test.</p>
-    <div class="compute-two-column">
-      <form id="computeAwsForm" class="stack-form compute-subcard">
-        <div class="compute-heading"><h3>AWS Batch</h3><span id="computeAwsStatus" class="compute-status">Not configured</span></div>
-        <label>Cross-account role ARN<input name="role_arn" autocomplete="off" required placeholder="arn:aws:iam::123456789012:role/EcaiIndexer"></label>
-        <label>AWS region<input name="region" required placeholder="ap-southeast-2"></label>
-        <label>Batch queue<input name="job_queue" required placeholder="ecai-index-spot"></label>
-        <label>Job definition<input name="job_definition" required placeholder="ecai-index-job"></label>
-        <label>Staging S3 bucket<input name="bucket" required placeholder="ecai-index-artifacts"></label>
-        <div class="compute-meta">Trust policy external ID: <code id="computeAwsExternalId">Generated when connection is saved</code></div>
-        <div class="inline-actions"><button type="submit" class="button button-primary">Save AWS connection</button><button id="computeVerifyAws" type="button" class="button button-outline">Test identity</button></div>
-      </form>
-      <form id="computeGcpForm" class="stack-form compute-subcard">
-        <div class="compute-heading"><h3>Google Cloud Run Jobs</h3><span id="computeGcpStatus" class="compute-status">Not configured</span></div>
-        <label>Project ID<input name="project_id" required placeholder="my-gcp-project"></label>
-        <label>Region<input name="region" required placeholder="australia-southeast1"></label>
-        <label>Pre-deployed Cloud Run job<input name="job" required placeholder="ecai-shard"></label>
-        <label>Staging GCS bucket<input name="bucket" required placeholder="ecai-index-artifacts"></label>
-        <label>Worker service account<input name="service_account" required placeholder="ecai-index@project.iam.gserviceaccount.com"></label>
-        <p class="context-hint">Use Workload Identity Federation or node-managed credentials for the coordinator. The job runs under the delegated service identity.</p>
-        <div class="inline-actions"><button type="submit" class="button button-primary">Save GCP connection</button><button id="computeVerifyGcp" type="button" class="button button-outline">Test identity</button></div>
-      </form>
-    </div>
-  </section>
-  <section class="surface panel-pad" id="computeBudget" aria-labelledby="computeBudgetTitle">
-    <div class="panel-heading"><div><div class="eyebrow">02 · POLICY</div><h2 id="computeBudgetTitle">Spending limits</h2></div><span id="computeMonth" class="context-hint">UTC month</span></div>
     <form id="computePolicyForm" class="stack-form">
       <label class="compute-check"><input type="checkbox" name="enabled"> Enable remote indexing budget reservations (default off; no cloud dispatch until integrated)</label>
       <div class="compute-form-grid">

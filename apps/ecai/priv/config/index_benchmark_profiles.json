@@ -1,0 +1,241 @@
+{
+  "schema": "ecai-index-benchmark-profiles/v1",
+  "note": "Resource envelopes, not vendor instance recommendations, measured capacities, price guarantees or deployment definitions. Cloud settings reserve only; external dispatch remains pending.",
+  "comparison": "Use the same RECORDS override, source bytes, corpus_sha256, source policy, storage type and fresh directory for cross-hardware comparisons.",
+  "profiles": [
+    {
+      "name": "smoke",
+      "logical_cpus": 1,
+      "memory_gib": 1,
+      "batch_docs": 16,
+      "flush_interval_ms": 2000,
+      "fixture_documents": 64,
+      "source_bytes": 2048,
+      "shard_limits": {
+        "max_shard_bytes": 1048576,
+        "max_line_bytes": 1048576,
+        "max_lines_per_shard": 1000,
+        "max_files_per_job": 1,
+        "max_shards": 4096
+      },
+      "scheduler_argument": "+S 1:1",
+      "index_jobs_max_concurrency": 1,
+      "monetary_side_effects": false,
+      "quote_only_examples": [
+        {
+          "provider": "aws_batch",
+          "vcpus": 1,
+          "memory_mb": 1024,
+          "max_seconds": 3600,
+          "max_attempts": 1,
+          "source_job_id": "REPLACE_WITH_OWN_ELIGIBLE_JOB_ID"
+        },
+        {
+          "provider": "cloud_run",
+          "vcpus": 1,
+          "memory_mb": 1024,
+          "max_seconds": 3600,
+          "max_attempts": 1,
+          "source_job_id": "REPLACE_WITH_OWN_ELIGIBLE_JOB_ID"
+        }
+      ]
+    },
+    {
+      "name": "edge-2g",
+      "logical_cpus": 2,
+      "memory_gib": 2,
+      "batch_docs": 64,
+      "flush_interval_ms": 2000,
+      "fixture_documents": 4096,
+      "source_bytes": 2048,
+      "shard_limits": {
+        "max_shard_bytes": 2097152,
+        "max_line_bytes": 2097152,
+        "max_lines_per_shard": 1000,
+        "max_files_per_job": 1,
+        "max_shards": 4096
+      },
+      "scheduler_argument": "+S 2:2",
+      "index_jobs_max_concurrency": 1,
+      "monetary_side_effects": false,
+      "quote_only_examples": [
+        {
+          "provider": "aws_batch",
+          "vcpus": 2,
+          "memory_mb": 2048,
+          "max_seconds": 3600,
+          "max_attempts": 1,
+          "source_job_id": "REPLACE_WITH_OWN_ELIGIBLE_JOB_ID"
+        },
+        {
+          "provider": "cloud_run",
+          "vcpus": 2,
+          "memory_mb": 2048,
+          "max_seconds": 3600,
+          "max_attempts": 1,
+          "source_job_id": "REPLACE_WITH_OWN_ELIGIBLE_JOB_ID"
+        }
+      ]
+    },
+    {
+      "name": "small-4g",
+      "logical_cpus": 2,
+      "memory_gib": 4,
+      "batch_docs": 128,
+      "flush_interval_ms": 2000,
+      "fixture_documents": 4096,
+      "source_bytes": 2048,
+      "shard_limits": {
+        "max_shard_bytes": 4194304,
+        "max_line_bytes": 2097152,
+        "max_lines_per_shard": 1000,
+        "max_files_per_job": 1,
+        "max_shards": 4096
+      },
+      "scheduler_argument": "+S 2:2",
+      "index_jobs_max_concurrency": 1,
+      "monetary_side_effects": false,
+      "quote_only_examples": [
+        {
+          "provider": "aws_batch",
+          "vcpus": 2,
+          "memory_mb": 4096,
+          "max_seconds": 3600,
+          "max_attempts": 1,
+          "source_job_id": "REPLACE_WITH_OWN_ELIGIBLE_JOB_ID"
+        },
+        {
+          "provider": "cloud_run",
+          "vcpus": 2,
+          "memory_mb": 4096,
+          "max_seconds": 3600,
+          "max_attempts": 1,
+          "source_job_id": "REPLACE_WITH_OWN_ELIGIBLE_JOB_ID"
+        }
+      ]
+    },
+    {
+      "name": "medium-8g",
+      "logical_cpus": 4,
+      "memory_gib": 8,
+      "batch_docs": 500,
+      "flush_interval_ms": 2000,
+      "fixture_documents": 4096,
+      "source_bytes": 2048,
+      "shard_limits": {
+        "max_shard_bytes": 8388608,
+        "max_line_bytes": 2097152,
+        "max_lines_per_shard": 1000,
+        "max_files_per_job": 1,
+        "max_shards": 4096
+      },
+      "scheduler_argument": "+S 4:4",
+      "index_jobs_max_concurrency": 1,
+      "monetary_side_effects": false,
+      "quote_only_examples": [
+        {
+          "provider": "aws_batch",
+          "vcpus": 4,
+          "memory_mb": 8192,
+          "max_seconds": 3600,
+          "max_attempts": 1,
+          "source_job_id": "REPLACE_WITH_OWN_ELIGIBLE_JOB_ID"
+        },
+        {
+          "provider": "cloud_run",
+          "vcpus": 4,
+          "memory_mb": 8192,
+          "max_seconds": 3600,
+          "max_attempts": 1,
+          "source_job_id": "REPLACE_WITH_OWN_ELIGIBLE_JOB_ID"
+        }
+      ]
+    },
+    {
+      "name": "large-16g",
+      "logical_cpus": 8,
+      "memory_gib": 16,
+      "batch_docs": 1000,
+      "flush_interval_ms": 2000,
+      "fixture_documents": 4096,
+      "source_bytes": 2048,
+      "shard_limits": {
+        "max_shard_bytes": 16777216,
+        "max_line_bytes": 2097152,
+        "max_lines_per_shard": 1000,
+        "max_files_per_job": 1,
+        "max_shards": 4096
+      },
+      "scheduler_argument": "+S 8:8",
+      "index_jobs_max_concurrency": 1,
+      "monetary_side_effects": false,
+      "quote_only_examples": [
+        {
+          "provider": "aws_batch",
+          "vcpus": 8,
+          "memory_mb": 16384,
+          "max_seconds": 3600,
+          "max_attempts": 1,
+          "source_job_id": "REPLACE_WITH_OWN_ELIGIBLE_JOB_ID"
+        },
+        {
+          "provider": "cloud_run",
+          "vcpus": 8,
+          "memory_mb": 16384,
+          "max_seconds": 3600,
+          "max_attempts": 1,
+          "source_job_id": "REPLACE_WITH_OWN_ELIGIBLE_JOB_ID"
+        }
+      ]
+    },
+    {
+      "name": "xlarge-32g",
+      "logical_cpus": 16,
+      "memory_gib": 32,
+      "batch_docs": 2000,
+      "flush_interval_ms": 2000,
+      "fixture_documents": 4096,
+      "source_bytes": 2048,
+      "shard_limits": {
+        "max_shard_bytes": 33554432,
+        "max_line_bytes": 2097152,
+        "max_lines_per_shard": 1000,
+        "max_files_per_job": 1,
+        "max_shards": 4096
+      },
+      "scheduler_argument": "+S 16:16",
+      "index_jobs_max_concurrency": 1,
+      "monetary_side_effects": false,
+      "quote_only_examples": [
+        {
+          "provider": "aws_batch",
+          "vcpus": 16,
+          "memory_mb": 32768,
+          "max_seconds": 3600,
+          "max_attempts": 1,
+          "source_job_id": "REPLACE_WITH_OWN_ELIGIBLE_JOB_ID"
+        }
+      ]
+    },
+    {
+      "name": "workstation-128g",
+      "logical_cpus": 32,
+      "memory_gib": 128,
+      "batch_docs": 5000,
+      "flush_interval_ms": 2000,
+      "fixture_documents": 4096,
+      "source_bytes": 2048,
+      "shard_limits": {
+        "max_shard_bytes": 67108864,
+        "max_line_bytes": 2097152,
+        "max_lines_per_shard": 1000,
+        "max_files_per_job": 1,
+        "max_shards": 4096
+      },
+      "scheduler_argument": "+S 32:32",
+      "index_jobs_max_concurrency": 1,
+      "monetary_side_effects": false,
+      "quote_only_examples": []
+    }
+  ]
+}

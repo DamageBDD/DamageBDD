@@ -53,6 +53,7 @@ init([]) ->
     Reconciler = ecai_patch_reconciler:child_spec(#{}),
     Core = [
         Store,
+        ecai_model_internals:child_spec(),
         OllamaPool,
         PatchSup,
         Learner,

@@ -7,6 +7,7 @@
     snapshot/1,
     put_policy/2,
     put_provider/3,
+    prepare_provider/2,
     provider/2,
     mark_verified/3,
     quote/1,
@@ -33,6 +34,8 @@ snapshot(Owner) -> gen_server:call(?MODULE, {snapshot, Owner}, 30000).
 put_policy(Owner, Policy) -> gen_server:call(?MODULE, {policy, Owner, Policy}, 30000).
 put_provider(Owner, Provider, Config) ->
     gen_server:call(?MODULE, {provider, Owner, Provider, Config}, 30000).
+prepare_provider(Owner, Provider) ->
+    gen_server:call(?MODULE, {prepare_provider, Owner, Provider}, 30000).
 provider(Owner, Provider) -> gen_server:call(?MODULE, {get_provider, Owner, Provider}, 30000).
 mark_verified(Owner, Provider, Digest) ->
     gen_server:call(?MODULE, {verified, Owner, Provider, Digest}, 30000).
@@ -90,6 +93,21 @@ handle_call({policy, Owner, Input}, _From, State) ->
         Error ->
             reply(Error, State)
     end;
+%% Prepare a stable, account-scoped external ID before the customer creates
+%% an AWS role. This does not configure a provider or grant cloud access.
+handle_call({prepare_provider, Owner, <<"aws_batch">>}, _From, State) ->
+    T = State#st.table,
+    Account = account(T, Owner),
+    Providers = maps:get(<<"providers">>, Account, #{}),
+    Setup = maps:get(<<"provider_setup">>, Account, #{}),
+    Saved = maps:get(<<"aws_batch">>, Providers, #{}),
+    External = provider_external_id(Saved, Setup),
+    Updated = Account#{
+        <<"provider_setup">> => Setup#{<<"aws_batch_external_id">> => External}
+    },
+    reply(save(T, {account, Owner}, Updated, {ok, #{<<"external_id">> => External}}), State);
+handle_call({prepare_provider, _Owner, _Name}, _From, State) ->
+    reply({error, unsupported_provider}, State);
 handle_call({provider, Owner, Name, Input}, _From, State) ->
     T = State#st.table,
     Conf = account(T, Owner),
@@ -98,12 +116,11 @@ handle_call({provider, Owner, Name, Input}, _From, State) ->
         {ok, Config} ->
             %% Preserve a non-secret external id for an existing AWS connection.
             Prev = maps:get(Name, Ps, #{}),
+            Setup = maps:get(<<"provider_setup">>, Conf, #{}),
             External =
                 case Name of
                     <<"aws_batch">> ->
-                        maps:get(
-                            <<"external_id">>, Prev, binary:encode_hex(crypto:strong_rand_bytes(24))
-                        );
+                        provider_external_id(Prev, Setup);
                     _ ->
                         undefined
                 end,
@@ -285,6 +302,35 @@ save(T, Key, Value, Response) ->
             {error, {write_failed, Error}}
     end.
 
+new_external_id() -> binary:encode_hex(crypto:strong_rand_bytes(24)).
+provider_external_id(Provider, Setup) ->
+    case maps:find(<<"external_id">>, Provider) of
+        {ok, External} -> External;
+        error ->
+            case maps:find(<<"aws_batch_external_id">>, Setup) of
+                {ok, Prepared} -> Prepared;
+                error -> new_external_id()
+            end
+    end.
+
+%% This is a nonsecret identifier used in a trust policy, not a credential.
+%% The operator explicitly configures the IAM *role* whose AWS credentials
+%% are used by the ECAI coordinator; never suggest trusting an AWS wildcard.
+coordinator_principal() ->
+    Value = application:get_env(ecai, compute_aws_coordinator_role_arn, undefined),
+    Role =
+        case Value of
+            Bin when is_binary(Bin) -> Bin;
+            Str when is_list(Str) ->
+                try unicode:characters_to_binary(Str)
+                catch _:_ -> <<>> end;
+            _ -> <<>>
+        end,
+    case text_ok(Role, <<"^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9_+=,.@/-]+$">>) of
+        true -> Role;
+        false -> null
+    end.
+
 account(T, Owner) ->
     case dets:lookup(T, {account, Owner}) of
         [{{account, Owner}, Value}] -> Value;
@@ -327,6 +373,8 @@ account_snapshot(T, Owner, Account) ->
         T
     ),
     Account#{
+        <<"provider_setup">> => maps:get(<<"provider_setup">>, Account, #{}),
+        <<"connection_hints">> => #{<<"aws_coordinator_role_arn">> => coordinator_principal()},
         <<"period_utc">> => month_utc(),
         <<"reserved_compute_cents">> => maps:get(compute, Totals),
         <<"reserved_mint_cents">> => maps:get(mint, Totals),

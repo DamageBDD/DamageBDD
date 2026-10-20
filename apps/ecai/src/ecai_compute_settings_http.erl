@@ -9,6 +9,7 @@ trails() ->
         trail("/ecai/compute/eligible-sources", sources, get),
         trail("/ecai/compute/policy", policy, post),
         trail("/ecai/compute/providers/:provider", provider, post),
+        trail("/ecai/compute/providers/:provider/prepare", prepare, post),
         trail("/ecai/compute/providers/:provider/verify", verify, post),
         trail("/ecai/compute/quote", quote, post),
         trail("/ecai/compute/reservations", reserve, post),
@@ -117,6 +118,14 @@ handle(policy, Owner, Body, Req, State) ->
 handle(provider, Owner, Body, Req, State) ->
     Name = cowboy_req:binding(provider, Req),
     result(ecai_compute_settings:put_provider(Owner, Name, Body), Req, State);
+handle(prepare, Owner, Body, Req, State) ->
+    %% Requires an explicit bearer token; no cookie-only mutation allowed.
+    %% No key material, IAM privilege or cloud deployment is created here.
+    case map_size(Body) of
+        0 -> result(ecai_compute_settings:prepare_provider(
+                 Owner, cowboy_req:binding(provider, Req)), Req, State);
+        _ -> respond(Req, State, 400, #{ok => false, error => unexpected_fields})
+    end;
 handle(verify, Owner, Body, Req, State) ->
     case map_size(Body) of
         0 -> verify_provider(Owner, cowboy_req:binding(provider, Req), Req, State);

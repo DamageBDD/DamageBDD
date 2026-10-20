@@ -108,6 +108,7 @@ get_trails() ->
             ecai_compute_settings_http,
             ecai_private_http,
             ecai_wikimedia_http,
+            ecai_knowledge_http,
             ecai_yelp_admin,
             ecai_dashboard,
             ecai_chat_http_handler

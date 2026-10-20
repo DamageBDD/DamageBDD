@@ -255,7 +255,9 @@ infer_reply(SessionID, UserID, Query0, History0, ProjectInstructions0,
     DiskContext =
         case
             ecai_otp_compat:catch_value(fun() ->
-                ecai_ollama_rag:retrieve_sources("ecai_index", Query, TopK)
+                ecai_knowledge:context(
+                    case SelfStore of false -> UserID; _ -> undefined end,
+                    Query, TopK)
             end)
         of
             Sources when is_list(Sources) -> Sources;

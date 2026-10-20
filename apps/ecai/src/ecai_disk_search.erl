@@ -7,14 +7,15 @@
 
 term_postings(BaseDir, HotTab, Term) ->
     ok = ecai_private_store:assert_public(BaseDir),
-    case ecai_hot_terms:get(HotTab, Term) of
+    Segs = ecai_disk_manifest:list_segments(BaseDir),
+    CacheKey = {filename:absname(BaseDir), crypto:hash(sha256, term_to_binary(Segs)), Term},
+    case ecai_hot_terms:get(HotTab, CacheKey) of
         {ok, Docs} ->
             Docs;
         not_found ->
-            Segs = ecai_disk_manifest:list_segments(BaseDir),
             Docs = merge(Segs, Term, []),
             case length(Docs) >= 30 of
-                true -> ecai_hot_terms:put(HotTab, Term, Docs);
+                true -> ecai_hot_terms:put(HotTab, CacheKey, Docs);
                 false -> ok
             end,
             Docs

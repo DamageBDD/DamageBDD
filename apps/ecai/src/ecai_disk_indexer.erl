@@ -2,6 +2,7 @@
 
 -export([
     new/1,
+    new/2,
     index_private/4,
     add_doc/3,
     add_records/2,
@@ -18,7 +19,9 @@
     batch = #{},
     batch_docs = 0,
     %% Tune: batch size controls RAM.
-    max_docs = 50000
+    max_docs = 50000,
+    flush_interval_ms = 2000,
+    last_flush_ms = 0
 }).
 
 %% Private callers use an explicitly authorised, ciphertext-only path.
@@ -26,13 +29,24 @@ index_private(Corpus, Principal, BatchId, Records) ->
     ecai_private_index:index(Corpus, Principal, BatchId, Records).
 
 new(BaseDir) ->
+    new(BaseDir, #{max_docs => application:get_env(ecai, disk_index_batch_docs, 1000),
+                   flush_interval_ms => application:get_env(ecai, disk_index_flush_interval_ms, 2000)}).
+
+new(BaseDir, Opts) when is_map(Opts) ->
+    MaxDocs = maps:get(max_docs, Opts, 1000),
+    FlushMs = maps:get(flush_interval_ms, Opts, 2000),
+    true = is_integer(MaxDocs) andalso MaxDocs > 0 andalso MaxDocs =< 50000,
+    true = is_integer(FlushMs) andalso FlushMs >= 0 andalso FlushMs =< 60000,
     ok = ecai_private_store:assert_public(BaseDir),
     ok = filelib:ensure_dir(filename:join(BaseDir, "x")),
     {ok, Tab} = ecai_disk_docstore:open(BaseDir),
     #st{
         base_dir = BaseDir,
         docstore_tab = Tab,
-        seg_no = next_seg_no(BaseDir)
+        seg_no = next_seg_no(BaseDir),
+        max_docs = MaxDocs,
+        flush_interval_ms = FlushMs,
+        last_flush_ms = erlang:monotonic_time(millisecond)
     }.
 
 add_records(State0, Records) when is_list(Records) ->
@@ -57,6 +71,7 @@ add_doc(
     Terms = ecai_terms:terms_from_record(Record),
     Meta = maps:with(
         [
+            source_blob,
             cid,
             title,
             heading,
@@ -99,7 +114,8 @@ add_doc(
     ),
     Count1 = Count0 + 1,
     State1 = State0#st{batch = Batch1, batch_docs = Count1},
-    case Count1 >= MaxDocs of
+    Due = erlang:monotonic_time(millisecond) - State0#st.last_flush_ms >= State0#st.flush_interval_ms,
+    case Count1 >= MaxDocs orelse Due of
         true -> flush(State1);
         false -> State1
     end;
@@ -128,7 +144,8 @@ flush(
     State#st{
         seg_no = SegmentNo + 1,
         batch = #{},
-        batch_docs = 0
+        batch_docs = 0,
+        last_flush_ms = erlang:monotonic_time(millisecond)
     }.
 
 close(State = #st{docstore_tab = Docstore}) ->

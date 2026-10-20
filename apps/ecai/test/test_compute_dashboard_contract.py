@@ -6,6 +6,8 @@ Run without Erlang or DamageBDD test environment:
 from html.parser import HTMLParser
 from pathlib import Path
 import re
+import shutil
+import subprocess
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -80,6 +82,49 @@ class ComputeDashboardContract(unittest.TestCase):
         self.assertIn('eligible_source(Job, Owner)', self.http)
         self.assertIn('maps:get(<<"owner">>, Spec, undefined) =:= Owner', self.http)
         self.assertIn('data-ecai-managed', self.fragment)
+
+    def test_guided_provider_handoff_contract(self):
+        # The browser can prepare a per-account AWS external ID before a role
+        # exists, but cannot mint permissions or execute a remote job.
+        for element_id in ['computeChooseAws', 'computeChooseGcp',
+                           'computeAwsPanel', 'computeGcpPanel',
+                           'computePrepareAws', 'computeCopyExternalId',
+                           'computeCopyTrustPolicy', 'computeAwsPrincipal',
+                           'computeAwsResources', 'computeGcpResources',
+                           'computeGcpConsoleLink', 'computeGcpWifLink',
+                           'computeNextBudget']:
+            self.assertIn(element_id, self.compute.ids)
+        self.assertIn('data-compute-provider-choice="aws_batch"', self.fragment)
+        self.assertIn('data-compute-provider-choice="cloud_run"', self.fragment)
+        self.assertIn('form="computeGcpForm" name="project_id"', self.fragment)
+        for url in ['https://console.aws.amazon.com/iam/',
+                    'https://console.cloud.google.com/run/jobs',
+                    'https://console.cloud.google.com/iam-admin/workload-identity-pools']:
+            self.assertIn(url, self.fragment)
+        self.assertIn('target="_blank" rel="noopener noreferrer"', self.fragment)
+        self.assertIn('/ecai/compute/providers/:provider/prepare', self.http)
+        self.assertIn('prepare_provider/2', self.server)
+        self.assertIn('handle_call({prepare_provider, Owner, <<"aws_batch">>}', self.server)
+        self.assertIn('provider_external_id(Prev, Setup)', self.server)
+        self.assertIn('<<"aws_coordinator_role_arn">> => coordinator_principal()', self.server)
+        self.assertIn('explicit_bearer_required', self.http)
+        self.assertIn("'sts:ExternalId'", self.js)
+        self.assertIn('validAwsPrincipal(principal)', self.js)
+        self.assertIn('encodeURIComponent(project)', self.js)
+        self.assertIn('https://console.cloud.google.com/', self.js)
+        self.assertNotIn('cloud.google.com/${project}', self.js)
+        self.assertNotIn('Principal: {AWS: "*"}', self.js)
+        self.assertNotIn('aws_secret_access_key', self.fragment)
+        self.assertNotIn('private_key', self.fragment)
+
+    @unittest.skipUnless(shutil.which('node'), 'Node.js not installed')
+    def test_provider_js_onboarding_smoke(self):
+        test_js = ROOT / 'test/test_compute_provider_onboarding.js'
+        self.assertTrue(test_js.is_file())
+        result = subprocess.run(['node', str(test_js)], capture_output=True,
+                                text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('PASS', result.stdout)
 
     def test_safe_state_and_no_implicit_billing_or_mint(self):
         for predicate in ['<<"remote_enabled">> => false',

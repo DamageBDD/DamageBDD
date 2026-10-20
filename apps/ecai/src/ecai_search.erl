@@ -25,6 +25,8 @@
 
     % (Ctx, QueryMap, Limit) -> {Results, ProofHeaders}
     search/3,
+    search/4,
+    source/2,
     % (Ctx, TermBin) -> #{df:=..., root:=..., tag:=...}
     info_term/2,
     % (Ctx) -> [#{tag:=Bin, root:=Hex, df:=Int}]
@@ -333,6 +335,13 @@ index_text(Ctx, DocIdBin, FieldBin, TextBin, CapN) ->
             Toks = lists:sublist(ecai_tokenizer:tokens(TextBin), CapN),
             Terms = [term_key(FieldBin, T) || T <- Toks],
             Touched = add_terms(Ctx, Terms, DocInt),
+            %% Additional full-text terms must be removed on a later upsert.
+            case ets:lookup(Ctx#ctx.rec_tab, DocIdBin) of
+                [{DocIdBin, Stored}] ->
+                    All = lists:usort(maps:get(terms, Stored, []) ++ Terms),
+                    true = ets:insert(Ctx#ctx.rec_tab, {DocIdBin, Stored#{terms => All}});
+                [] -> ok
+            end,
             recompute_roots(Ctx, Touched),
             ok
     end.
@@ -362,6 +371,11 @@ index_text(Ctx, DocIdBin, FieldBin, TextBin, CapN) ->
 %%   Results = [#{doc_id=>binary(), score=>float(), record=>map(), preview=>binary()}]
 %% ================================================================
 search(Ctx = #ctx{}, QueryMap, Limit0) ->
+    search(Ctx, QueryMap, Limit0, #{include_proofs => true}).
+
+%% Real-time consumers can skip expensive proof generation. A final artifact
+%% still finalizes roots; a preview is never represented as a verified release.
+search(Ctx = #ctx{}, QueryMap, Limit0, Opts) when is_map(Opts) ->
     Limit =
         case Limit0 of
             I when is_integer(I), I > 0 -> I;
@@ -385,9 +399,24 @@ search(Ctx = #ctx{}, QueryMap, Limit0) ->
     Results = [enrich_int(Ctx, DocInt, Score) || {DocInt, Score} <- TopInts],
 
     %% 5) light proof headers for the terms used (df + postings root + tag)
-    Proofs = proof_headers(Ctx, Terms),
+    Proofs = case maps:get(include_proofs, Opts, true) of
+        true -> proof_headers(Ctx, Terms);
+        false -> []
+    end,
 
     {Results, Proofs}.
+
+source(Ctx, DocId) when is_binary(DocId) ->
+    case lookup_record(Ctx, DocId) of
+        Record when map_size(Record) =:= 0 -> {error, source_not_found};
+        Record ->
+            case ecai_source_retrieval:from_record(Record) of
+                {ok, Source} ->
+                    {ok, Source#{doc_id => DocId,
+                        provenance => maps:with([title, url, link, license, ecai_source], Record)}};
+                Error -> Error
+            end
+    end.
 
 %% Convert internal doc-int -> {doc_id, record, preview}
 enrich_int(Ctx, DocInt, Score) ->
