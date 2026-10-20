@@ -62,7 +62,7 @@ for(const item of document.querySelectorAll('#consoleNav [data-view]')){
  item.classList.toggle('is-active',selected);
  if(selected)item.setAttribute('aria-current','page');else item.removeAttribute('aria-current');
 }
-const crumb=document.querySelector('.breadcrumb strong');if(crumb)crumb.textContent='Compute & NFTs';
+const crumb=document.querySelector('.breadcrumb strong');if(crumb)crumb.textContent='Compute';
 window.__signedIn=true;window.__loginRequests=0;window.__toasts=[];
 if(window.EcaiComputeSettings){
  window.EcaiComputeSettings.init({
@@ -294,6 +294,50 @@ class ComputeBrowserTests(unittest.TestCase):
             self.assertGreaterEqual(page.evaluate(CONTRAST, selector)['ratio'], 4.5, selector)
         page.locator('#computeAwsResources').evaluate('(el)=>el.open=false')
 
+    def test_compute_tabs_switch_without_mutations(self):
+        page = self.page('dark')
+        self.assertEqual(page.locator('[role="tablist"][aria-label="Compute configuration"] [role="tab"]').count(), 3)
+        self.assertEqual(page.locator('#computeNfts').count(), 0)
+        self.assertTrue(page.locator('#computeProviders').is_visible())
+        self.assertTrue(page.locator('#computeBudget').is_hidden())
+        self.assertTrue(page.locator('#computeJobs').is_hidden())
+        self.assertTrue(page.locator('#computeAwsBlocked').is_visible())
+        page.locator('#computeProvidersTab').focus()
+        page.keyboard.press('ArrowRight')
+        self.assertTrue(page.locator('#computeBudget').is_visible())
+        self.assertTrue(page.locator('#computeProviders').is_hidden())
+        self.assertEqual(page.locator('#computeBudgetTab').get_attribute('aria-selected'), 'true')
+        page.keyboard.press('End')
+        self.assertTrue(page.locator('#computeJobs').is_visible())
+        page.keyboard.press('Home')
+        page.locator('#computeNextBudget').click()
+        self.assertTrue(page.locator('#computeBudget').is_visible())
+        page.evaluate('window.EcaiComputeSettings.setSourceJob("test-source")')
+        self.assertTrue(page.locator('#computeJobs').is_visible())
+        self.assertEqual(page.locator('#computeJobForm [name="source_job_id"]').input_value(), 'test-source')
+        self.assertEqual(self.server.posts, [])
+        self.assertNotIn(('GET', '/ecai/compute/mintable'), self.server.requests)
+
+    def test_compute_budget_posts_only_compute_fields(self):
+        page = self.page()
+        page.evaluate("""() => {window.__budgetPosts=[];
+            const prior=window.fetch;
+            window.fetch=async(path,opts={})=>{
+                if(path==='/ecai/compute/budget'){
+                    window.__budgetPosts.push(JSON.parse(opts.body));
+                    return new Response(JSON.stringify({ok:true,data:{}}),{status:200});
+                }
+                return prior(path,opts);
+            };}""")
+        page.locator('#computeBudgetTab').click()
+        page.locator('#computePolicyForm [name="enabled"]').check()
+        page.locator('#computePolicyForm [name="monthly"]').fill('50.25')
+        page.locator('#computePolicyForm [name="per_job"]').fill('5.00')
+        page.locator('#computePolicyForm [type="submit"]').click()
+        page.wait_for_function('window.__budgetPosts.length===1')
+        self.assertEqual(page.evaluate('window.__budgetPosts[0]'),
+            {'remote_enabled':True, 'monthly_cents':5025, 'per_job_cents':500})
+
     def test_versioned_http_assets_and_ready_marker(self):
         page = self.page()
         self.assertEqual(page.locator('#computePanel').get_attribute('data-compute-assets'), 'ready')
@@ -350,7 +394,7 @@ class ComputeBrowserTests(unittest.TestCase):
 
     def test_provider_keyboard_selection_prepare_save_verify(self):
         page = self.page('dark')
-        self.assertTrue(page.locator('#computeNextBudget').is_disabled())
+        self.assertTrue(page.locator('#computeNextBudget').is_enabled())
         page.locator('#computeChooseGcp').focus()
         page.keyboard.press('Enter')
         self.assertEqual(page.locator('#computeChooseGcp').get_attribute('aria-pressed'), 'true')
@@ -372,9 +416,9 @@ class ComputeBrowserTests(unittest.TestCase):
             page.locator(f'#computeAwsForm [name="{name}"]').fill(value)
         page.locator('#computeAwsForm [type="submit"]').click()
         page.wait_for_function('!document.getElementById("computeVerifyAws").disabled')
-        self.assertTrue(page.locator('#computeNextBudget').is_disabled())
+        self.assertTrue(page.locator('#computeNextBudget').is_enabled())
         page.locator('#computeVerifyAws').click()
-        page.wait_for_function('!document.getElementById("computeNextBudget").disabled')
+        page.wait_for_function('document.getElementById("computeAwsStatus").textContent==="Identity verified"')
         self.assertEqual(page.locator('#computeAwsStatus').inner_text(), 'Identity verified')
         page.locator('#computeChooseGcp').click()
         page.locator('input[form="computeGcpForm"]').fill('ecai-demo-123')

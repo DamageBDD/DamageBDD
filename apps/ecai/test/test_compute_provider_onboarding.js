@@ -58,10 +58,8 @@ const $ = (id) => {
 for (const [form, names] of Object.entries({
   computeAwsForm: ['role_arn', 'region', 'job_queue', 'job_definition', 'bucket'],
   computeGcpForm: ['project_id', 'region', 'job', 'bucket', 'service_account'],
-  computePolicyForm: ['enabled', 'monthly', 'per_job', 'mint_monthly'],
-  computeMintPolicyForm: ['enabled', 'recipient'],
-  computeJobForm: ['source_job_id', 'provider', 'vcpus', 'memory_mb', 'max_seconds', 'max_attempts'],
-  computeMintForm: ['job_id', 'fee']
+  computePolicyForm: ['enabled', 'monthly', 'per_job'],
+  computeJobForm: ['source_job_id', 'provider', 'vcpus', 'memory_mb', 'max_seconds', 'max_attempts']
 })) {
   $(form).submitButton = new Element(`${form}-save`);
   for (const name of names) $(form).formFields.set(name, new Element(`${form}-${name}`));
@@ -170,7 +168,7 @@ const wait = async () => {
   $('computeAwsForm').fire('submit');
   await wait();
   assert.equal($('computeVerifyAws').disabled, false);
-  assert.equal($('computeNextBudget').disabled, true);
+  assert.equal($('computeNextBudget').disabled, false);
   $('computeVerifyAws').fire('click');
   await wait();
   assert.equal($('computeNextBudget').disabled, false);

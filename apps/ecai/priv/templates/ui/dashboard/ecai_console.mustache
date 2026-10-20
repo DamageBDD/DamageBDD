@@ -9,18 +9,19 @@
   <title>{{brand_name}} · Control plane</title>
   {{#has_brand_favicon}}<link rel="icon" href="{{brand_favicon}}">{{/has_brand_favicon}}
   <link rel="stylesheet" href="/static/css/ecai-model-internals.css?v=model-internals-v1">
-  <link rel="stylesheet" href="/static/css/ecai-console.css?v=personality-conversations-v1">
+  <link rel="stylesheet" href="/static/css/ecai-console.css?v=personality-conversations-v1-knowledge-v2&index-mint=index-mint-v1">
   <link rel="stylesheet" href="/static/css/ecai-personalities.css?v=personalities-v1">
   <link rel="stylesheet" href="/static/css/ecai-eval.css?v=eval-v1">
   <link rel="stylesheet" href="/static/css/ecai-math-paths.css?v=math-samples-explorer-v2">
   <link rel="stylesheet" href="/static/css/ecai-video.css">
   <link rel="stylesheet" href="/static/css/ecai-market-maker.css">
   <link rel="stylesheet" href="/ecai/auth-assets/css/auth.css">
-  <link rel="stylesheet" href="/static/css/ecai-auth.css">
-  <link rel="stylesheet" href="/static/css/ecai-quick-index.css?v=quick-index-v2">
+  <link rel="stylesheet" href="/static/css/ecai-auth.css?v=auth-colours-v1">
+  <link rel="stylesheet" href="/static/css/ecai-quick-index.css?v=quick-index-v2&index-mint=index-mint-v1">
   <link rel="stylesheet" href="/static/css/ecai-index-pool.css">
-  <link rel="stylesheet" href="/static/css/ecai-compute-settings.css?v=compute-provider-ui-v2">
+  <link rel="stylesheet" href="/static/css/ecai-compute-settings.css?v=compute-only-v1">
   <link rel="stylesheet" href="/static/css/ecai-keys.css">
+  <link rel="stylesheet" href="/static/css/ecai-index-mint-settings.css?v=index-mint-settings-v1">
   <link rel="stylesheet" href="/static/css/ecai-knowledge-workspace.css?v=knowledge-v2">
   <link rel="stylesheet" href="/api/themes/css?app=ecai">
 </head>
@@ -43,7 +44,7 @@
         <button type="button" data-view="chat" class="nav-link"><span class="nav-icon" aria-hidden="true">▤</span>Conversation</button>
         <button type="button" data-view="video" class="nav-link"><span class="nav-icon" aria-hidden="true">▸</span>Video Studio</button>
         <button type="button" data-view="indexing" class="nav-link"><span class="nav-icon" aria-hidden="true">▦</span>Index jobs</button>
-        <button type="button" data-view="compute" class="nav-link"><span class="nav-icon" aria-hidden="true">⌁</span>Compute &amp; NFTs</button>
+        <button type="button" data-view="compute" class="nav-link"><span class="nav-icon" aria-hidden="true">⌁</span>Compute</button>
         <button type="button" data-view="keys" class="nav-link"><span class="nav-icon" aria-hidden="true">⌑</span>Keys</button>
         <button type="button" data-view="network" class="nav-link" id="indexPoolNav" hidden><span class="nav-icon" aria-hidden="true">ϟ</span>Funded indexing</button>
         <button type="button" data-view="wikimedia" class="nav-link"><span class="nav-icon" aria-hidden="true">◎</span>Wikimedia</button>
@@ -313,8 +314,16 @@
         </section>
 
         <section class="view" data-panel="indexing" data-ecai-managed aria-labelledby="indexTitle" hidden>
-          <div class="page-intro page-intro-actions"><div><div class="eyebrow">DURABLE PIPELINE</div><h1 id="indexTitle">Index jobs</h1><p>Enqueue curated sources, inspect persisted jobs and follow execution events.</p></div><div class="inline-actions wrap-actions"><button type="button" class="button button-outline" id="indexOpenCompute">Compute budget &amp; NFT settings ↗</button><a class="button button-outline" href="/indexer/advanced">Advanced builder ↗</a></div></div>
+          <div class="page-intro page-intro-actions"><div><div class="eyebrow">DURABLE PIPELINE</div><h1 id="indexTitle">Index jobs</h1><p>Enqueue curated sources, inspect persisted jobs and follow execution events.</p></div><div class="inline-actions wrap-actions"><button type="button" class="button button-outline" id="indexOpenCompute">Compute settings →</button><a class="button button-outline" href="/indexer/advanced">Advanced builder ↗</a></div></div>
           <div class="three-stats"><div class="surface mini-stat"><span>Running</span><strong id="queueRunning">—</strong></div><div class="surface mini-stat"><span>Queued</span><strong id="queueQueued">—</strong></div><div class="surface mini-stat"><span>Concurrency</span><strong id="queueWorkers">—</strong></div></div>
+          <section class="surface panel-pad index-samples" aria-labelledby="indexSampleTitle">
+            <div class="panel-heading"><div><div class="eyebrow">START SMALL · PUBLIC TEST DATA</div><h2 id="indexSampleTitle">Try the complete indexing flow</h2></div><span class="status-tag">3 synthetic records</span></div>
+            <p>Use the bundled JSONL file to test inspection, queueing, live progress, search and source retrieval. No external source download is needed. Quick Index still requires the node's IPFS service and index worker.</p>
+            <ol class="sample-flow"><li><strong>Load &amp; inspect</strong><span>Review the detected JSONL structure.</span></li><li><strong>Index</strong><span>Confirm using Add to index queue.</span></li><li><strong>Follow the job</strong><span>Open Execution history for live events.</span></li><li><strong>Search &amp; retrieve</strong><span>Find orbital orchard and open its source.</span></li></ol>
+            <div class="sample-actions"><button id="indexSampleLoad" type="button" class="button button-primary">Load 3-record sample</button><a class="button button-outline" href="/static/samples/knowledge-smoke.jsonl" download="knowledge-smoke.jsonl">Download JSONL</a><button type="button" class="button button-outline" data-sample-query="orbital orchard">Search sample ↗</button></div>
+            <p id="indexSampleStatus" class="sample-status" role="status" aria-live="polite">Loading only selects and inspects the sample. Queueing is a separate explicit action.</p>
+            <details class="sample-preview"><summary>What is in the sample?</summary><p>Orbital orchard — irrigation check; Kinetic lighthouse — battery check; Cedar observatory — sensor check. These are synthetic public records. Do not use private documents in this public test flow.</p></details>
+          </section>
           <section class="surface panel-pad quick-index-card" id="quickIndexCard" aria-labelledby="quickIndexTitle">
             <div class="panel-heading">
               <div><div class="eyebrow">QUICK INDEX</div><h2 id="quickIndexTitle">Add knowledge from anywhere</h2></div>
@@ -346,11 +355,14 @@
 
             <div class="quick-index-actions">
               <button type="button" class="button button-outline" id="quickIndexInspect">Detect structure</button>
-              <button type="button" class="button button-primary" id="quickIndexQueue" disabled>Index detected source ↗</button>
-              <span class="quick-index-status" id="quickIndexStatus" role="status" aria-live="polite">Ready</span>
+              <span class="quick-index-status" id="quickIndexStatus" role="status" aria-live="polite">Inspect a source to review the plan.</span>
             </div>
 
             <div class="quick-index-analysis" id="quickIndexAnalysis" aria-live="polite"><p class="quick-index-empty">Choose a source, then detect its structure before indexing.</p></div>
+            <div class="quick-index-actions">
+              <button type="button" class="button button-primary" id="quickIndexQueue" aria-describedby="quickIndexStatus" disabled>Add to index queue</button>
+              <button type="button" class="button button-outline" id="quickIndexViewJob" hidden>View job</button>
+            </div>
             <div class="quick-index-public-note"><span aria-hidden="true">ⓘ</span><span><strong>Searchable/public pipeline:</strong> file and URL bytes are content-addressed in this node's IPFS store before the existing <code>ipfs_cid → searchable_disk</code> job runs. Use Knowledge &amp; privacy instead for confidential corpora.</span></div>
           </section>
           <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">LARGE DATASETS</div><h2>Wikimedia presets</h2></div><button type="button" id="reloadPresets" class="text-button">Reload presets ↻</button></div><div id="indexPresets" class="preset-grid"><div class="empty-state">Sign in to load available presets.</div></div></section>
@@ -365,6 +377,24 @@
             <p class="context-hint">Open any job for progress, checkpoints, artifacts and live events. Tracking starts automatically and stops when you close it or switch jobs.</p>
             <div id="indexJobList" class="index-job-list" aria-label="Indexing jobs"><div class="empty-state">Sign in to inspect jobs.</div></div>
           </section>
+          <details id="indexMintSettings" class="surface panel-pad index-mint-settings" data-ecai-managed>
+            <summary><strong>Mint preferences &amp; review requests</strong><span>For completed index artifacts</span></summary>
+            <p class="context-hint">Set account-wide review preferences here. Choose copies and metadata using the Mint button on a job. These settings and review requests do not submit a blockchain transaction.</p>
+            <p id="indexMintSettingsStatus" class="index-mint-settings-status" role="status" aria-live="polite">Open to load your mint preferences.</p>
+            <form id="indexMintPolicyForm" class="stack-form">
+              <fieldset id="indexMintPolicyFields" disabled>
+                <label class="index-mint-check"><input name="enabled" type="checkbox"> Allow manually requested mint reviews</label>
+                <div class="index-mint-policy-grid">
+                  <label>Default recipient (Æternity public address)<input name="recipient" autocomplete="off" spellcheck="false" maxlength="103" placeholder="ak_…"></label>
+                  <label>Monthly mint fee reservation limit (USD)<input name="monthly" type="number" min="0" max="1000000" step="0.01" value="0" required></label>
+                </div>
+                <p class="context-hint">The recipient is checked against each job's request. Setting an address is not a wallet connection. The monthly limit applies to fee reservations, not a guaranteed on-chain fee.</p>
+                <button id="indexMintPolicySave" type="submit" class="button button-primary button-sm">Save mint preferences</button>
+              </fieldset>
+            </form>
+            <div class="index-mint-settings-heading"><h3>Recent review requests</h3><button type="button" id="indexMintSettingsRefresh" class="button button-outline button-sm">Refresh</button></div>
+            <div id="indexMintRequestList" class="index-mint-request-list"><p class="context-hint">Open to load requests for this account.</p></div>
+          </details>
           <details class="surface expandable"><summary>Enqueue custom job specification <span class="expand-arrow">⌄</span></summary><div class="details-content"><p class="context-hint">Use the existing <a href="/indexer/advanced">advanced builder</a> to generate a spec, or submit a validated <code>ecai-index-job/v1</code> JSON specification here.</p><form id="customJobForm"><label for="indexCustomSpec">Job specification</label><textarea class="code-input" id="indexCustomSpec" rows="10" spellcheck="false" required>{
   "schema": "ecai-index-job/v1",
   "kind": "wikimedia_visibility",
@@ -378,6 +408,12 @@
         <section class="view" data-panel="wikimedia" data-ecai-managed aria-labelledby="wikiTitle" hidden>
           <div class="page-intro"><div class="eyebrow">WIKIMEDIA · DURABLE INDEXING</div><h1 id="wikiTitle">Choose what to index</h1><p>Pick one or more server-approved datasets, or configure an exact release and month window. Review the selection before it joins the index queue.</p></div>
 
+          <section class="surface panel-pad index-samples" aria-labelledby="wikiSampleTitle">
+            <div class="panel-heading"><div><div class="eyebrow">BUNDLED PIPELINE TEST</div><h2 id="wikiSampleTitle">Wikimedia smoke sample</h2></div><span class="status-tag">4 input articles → top 3 selected</span></div>
+            <p>The local fixture includes Quantum mechanics, Classical mechanics, Physique quantique and a low-visibility Noise article. The smoke preset selects the top three and exercises download, ranking, indexing and finalization without an external Wikimedia download.</p>
+            <div class="sample-actions"><button type="button" id="wikiSampleCheck" class="button button-outline">Check sample service</button><button type="button" id="wikiSampleSelect" class="button button-primary">Select only smoke preset</button><button type="button" class="button button-outline" data-sample-query="Quantum mechanics">Search sample ↗</button><a class="text-button" href="/ecai/wikimedia/sample/catalog" target="_blank" rel="noopener noreferrer">View catalog ↗</a></div>
+            <p id="wikiSampleStatus" class="sample-status" role="status" aria-live="polite">Select the smoke preset, add it to the queue below, then open View job. Search becomes available as records are indexed; previews are not final artifact proofs.</p>
+          </section>
           <section class="surface panel-pad wiki-picker-surface" aria-labelledby="wikiPresetTitle">
             <div class="panel-heading"><div><div class="eyebrow">01 · QUICK QUEUE</div><h2 id="wikiPresetTitle">Pick Wikimedia projects</h2></div><button type="button" id="wikiReloadProjects" class="button button-outline button-sm">Refresh projects</button></div>
             <p class="context-hint">These presets are configured and validated by this ECAI node. Each selection becomes a separate durable indexing job.</p>
@@ -676,10 +712,11 @@
 
   {{{browser_auth_modal}}}
   <script src="/ecai/auth-assets/js/micromodal.min.js"></script>
-  <script type="module" src="/static/js/ecai-quick-index.js?v=quick-index-v2"></script>
+  <script type="module" src="/static/js/ecai-quick-index.js?v=quick-index-v2&index-mint=index-mint-v1"></script>
   <script type="module" src="/static/js/ecai-index-pool.js"></script>
-  <script type="module" src="/static/js/ecai-compute-settings.js?v=compute-provider-ui-v2"></script>
+  <script type="module" src="/static/js/ecai-compute-settings.js?v=compute-only-v1"></script>
   <script type="module" src="/static/js/ecai-keys.js"></script>
-  <script type="module" src="/static/js/ecai-console.js?v=model-internals-v1-personality-conversations-v1-personalities-v1-video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-explorer-v2-eval-v1-source-retrieval-v1-knowledge-v2"></script>
+  <script type="module" src="/static/js/ecai-index-mint-settings.js?v=index-mint-settings-v1"></script>
+  <script type="module" src="/static/js/ecai-console.js?v=model-internals-v1-personality-conversations-v1-personalities-v1-video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-explorer-v2-eval-v1-source-retrieval-v1-knowledge-v2-compute-only-v1&index-mint=index-mint-v1"></script>
 </body>
 </html>

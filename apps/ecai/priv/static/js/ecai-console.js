@@ -1,3 +1,5 @@
+import {initKnowledgeSearch} from "/static/js/ecai-knowledge-search.js?v=knowledge-v2";
+import {initIndexSamples} from "/static/js/ecai-index-samples.js?v=samples-v1";
 import {initModelInternals} from "/static/js/ecai-model-internals.js?v=model-internals-v1";
 import {initPersonalities} from "/static/js/ecai-personalities.js?v=personalities-v1";
 import {initEvaluation} from "/static/js/ecai-eval.js?v=eval-v1";
@@ -113,12 +115,14 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     { group: "Code administration", method: "POST", path: "/ecai/admin/code/reviews/:id/publish", params: ["id"], description: "Two-stage approval gate: publish verified commit to the configured review branch.", body: { patch_sha256: "<review SHA-256>", revision: 2, confirm: "push reviewed branch" }, confirm: "Create the configured remote review branch?" },
     { group: "Funded indexing", method: "GET", path: "/ecai/admin/index-pool/status", description: "Funded jobs, registered nodes, plans and read-only budget accounting." },
     { group: "Funded indexing", method: "POST", path: "/ecai/admin/index-pool/nodes", description: "Enroll an operator-allowlisted private-cluster node with a Lightning identity proof.", body: {} },
-    { group: "Compute & NFTs", method: "GET", path: "/ecai/compute/settings", description: "Managed-account provider and budget settings; cloud dispatch not active." },
-    { group: "Compute & NFTs", method: "GET", path: "/ecai/compute/eligible-sources", description: "Owned shard index jobs suitable for bounded remote reservation." },
-    { group: "Compute & NFTs", method: "GET", path: "/ecai/compute/mintable", description: "Completed verified index artifacts eligible for NFT review." },
-    { group: "Compute & NFTs", method: "POST", path: "/ecai/compute/policy", description: "Save compute and NFT reservation limits. Does not launch compute or mint.", body: { budget: {remote_enabled: false, monthly_cents: 0, per_job_cents: 0, mint_monthly_cents: 0}, mint: {enabled: false, recipient: "", chain: "aeternity"}} },
-    { group: "Compute & NFTs", method: "POST", path: "/ecai/compute/quote", description: "Quote operator-defined upper estimate for a supported owned source job.", body: {source_job_id:"",provider:"cloud_run",vcpus:1,memory_mb:2048,max_seconds:1800,max_attempts:1} },
-    { group: "Compute & NFTs", method: "POST", path: "/ecai/compute/reservations", description: "Reserve monthly allowance after provider identity check. No job submission.", body: {source_job_id:"",provider:"cloud_run",vcpus:1,memory_mb:2048,max_seconds:1800,max_attempts:1}, key: true },
+    { group: "Compute", method: "GET", path: "/ecai/compute/settings", description: "Managed-account provider and budget settings; cloud dispatch not active." },
+    { group: "Compute", method: "GET", path: "/ecai/compute/eligible-sources", description: "Owned shard index jobs suitable for bounded remote reservation." },
+    { group: "Index jobs", method: "GET", path: "/ecai/compute/mintable", description: "Completed verified index artifacts eligible for NFT review." },
+    { group: "Account policy (legacy)", method: "POST", path: "/ecai/compute/policy", description: "Save compute and NFT reservation limits. Does not launch compute or mint.", body: { budget: {remote_enabled: false, monthly_cents: 0, per_job_cents: 0, mint_monthly_cents: 0}, mint: {enabled: false, recipient: "", chain: "aeternity"}} },
+    { group: "Compute", method: "POST", path: "/ecai/compute/budget", description: "Update compute limits only; preserve mint policy. No cloud dispatch.", body: {remote_enabled:false,monthly_cents:0,per_job_cents:0} },
+    { group: "Index jobs", method: "POST", path: "/ecai/compute/mint-policy", description: "Update index-artifact mint preferences only; preserve compute limits. Does not mint.", body: {enabled:false,recipient:"",chain:"aeternity",monthly_cents:0} },
+    { group: "Compute", method: "POST", path: "/ecai/compute/quote", description: "Quote operator-defined upper estimate for a supported owned source job.", body: {source_job_id:"",provider:"cloud_run",vcpus:1,memory_mb:2048,max_seconds:1800,max_attempts:1} },
+    { group: "Compute", method: "POST", path: "/ecai/compute/reservations", description: "Reserve monthly allowance after provider identity check. No job submission.", body: {source_job_id:"",provider:"cloud_run",vcpus:1,memory_mb:2048,max_seconds:1800,max_attempts:1}, key: true },
     { group: "Funded indexing", method: "POST", path: "/ecai/admin/index-pool/prepare", description: "Prepare bounded segments from a stopped or completed local source job.", body: {} },
     { group: "Funded indexing", method: "POST", path: "/ecai/admin/index-pool/channels", description: "Refresh advisory CLN channel observations. Does not open channels.", body: {} },
     { group: "Funded indexing", method: "POST", path: "/ecai/admin/index-pool/quote", description: "Calculate a fixed source-byte weighted reward split.", body: {} },
@@ -149,7 +153,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     ask: { question: "What is known about this topic?", destination: "local" }
   };
   const marketExamples = { claim: { miner_ak: "ak_..." }, submit: { miner_ak: "ak_...", attestation: "attestation", evidence_ref: "" }, pay: { admin_ak: "ak_..." } };
-  const VIEW_NAMES = { personalities: "AI personalities", evaluation: "LLM evaluation", math: "Mathematical paths", overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing", compute: "Compute & NFTs", keys: "Keys" };
+  const VIEW_NAMES = { personalities: "AI personalities", evaluation: "LLM evaluation", math: "Mathematical paths", overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing", compute: "Compute", keys: "Keys" };
   let mathPaths = null;
   let evaluation = null;
   let personalities = null;
@@ -435,6 +439,161 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     checkpointGrid.append(artifact);
     host.append(checkpointGrid);
   }
+  function mintReviewReady(job) {
+    return job?.state === "ready_to_mint" && job?.artifact?.ready_to_mint === true;
+  }
+  function mintReviewMessage(entry, message, bad = false) {
+    entry.mintMessage.textContent = message;
+    entry.mintMessage.classList.toggle("is-error", bad);
+  }
+  function createMintReviewForm(entry) {
+    const box = element("section", "job-mint-panel");
+    box.hidden = true;
+    const heading = element("div", "job-mint-heading");
+    heading.append(element("h3", "", "Mint an index artifact"));
+    const close = element("button", "button button-outline button-sm", "Close");
+    close.type = "button";
+    close.addEventListener("click", () => { box.hidden = true; entry.mint.focus(); });
+    heading.append(close);
+    box.append(heading,
+      element("p", "context-hint", "Choose copies and descriptive metadata, then queue a mint review. No token is minted and no blockchain transaction is signed or submitted here."));
+    const info = element("p", "job-mint-message");
+    info.setAttribute("role", "status"); info.setAttribute("aria-live", "polite");
+    box.append(info);
+    const form = element("form", "job-mint-form");
+    const fields = element("fieldset", "job-mint-fields");
+    fields.append(element("legend", "sr-only", "Mint review details"));
+    const grid = element("div", "job-mint-grid");
+    const inputs = {};
+    function field(host, label, name, value, options = {}) {
+      const wrap = element("label", "job-mint-field");
+      wrap.append(element("span", "", label));
+      const input = element(options.type === "textarea" ? "textarea" : "input");
+      input.name = name;
+      if (options.type !== "textarea") input.type = options.type || "text";
+      else input.rows = options.rows || 3;
+      for (const key of ["required", "min", "max", "step", "maxLength", "placeholder"])
+        if (options[key] !== undefined) input[key] = options[key];
+      input.value = value;
+      wrap.append(input); host.append(wrap); inputs[name] = input;
+      return input;
+    }
+    field(grid, "Number of copies", "copies", "1", {type:"number", min:"1", max:"1000", step:"1", required:true});
+    field(grid, "Total fee reservation cap (USD cents)", "fee_cap_cents", "1", {type:"number", min:"1", max:"100000000", step:"1", required:true});
+    fields.append(grid);
+    field(fields, "Recipient account", "recipient", "", {required:true, maxLength:128, placeholder:"ak_… as configured in Mint preferences"});
+    field(fields, "Title", "title", `${jobTitle(entry.job)} artifact`, {required:true, maxLength:256});
+    field(fields, "Collection", "collection", "ECAI Knowledge Artifacts", {maxLength:256});
+    field(fields, "Description", "description", `ECAI index artifact for ${jobTitle(entry.job)}.`, {type:"textarea", rows:3, maxLength:4096});
+    field(fields, "Tags (comma separated, up to 24)", "tags", "", {maxLength:1560});
+    field(fields, "External URL (optional)", "external_url", "", {type:"url", maxLength:2048, placeholder:"https://example.org/artifact"});
+    field(fields, "License or rights statement", "license", "", {maxLength:256, placeholder:"Use the source's actual license"});
+    field(fields, "Creator note (included in review metadata)", "creator_note", "", {type:"textarea", maxLength:2048});
+    fields.append(element("p", "job-mint-hint", "The fee cap is for the entire request, not per copy. Copy count is a requested edition size, not an enforced supply limit. Metadata does not replace the artifact's hashes or grant rights to its source."));
+    const actions = element("div", "job-mint-actions");
+    const submit = element("button", "button button-primary button-sm", "Queue mint review"); submit.type = "submit";
+    const policy = element("button", "button button-outline button-sm", "Mint preferences"); policy.type = "button";
+    policy.addEventListener("click", () => window.EcaiIndexMintSettings?.open?.());
+    actions.append(submit, policy); fields.append(actions); form.append(fields); box.append(form);
+    form.addEventListener("submit", event => { event.preventDefault(); void submitJobMintReview(entry); });
+    entry.mintBox = box; entry.mintForm = form; entry.mintFields = fields; entry.mintInputs = inputs;
+    entry.mintSubmit = submit; entry.mintMessage = info;
+    entry.mintHost.append(box);
+  }
+  async function openJobMintReview(entry) {
+    if (!managedSession()) { openLogin("Managed email sign-in is required for mint review."); return; }
+    if (entry.mintLoading || entry.mintBusy) return;
+    if (entry.mintBox && !entry.mintBox.hidden) { entry.mintInputs.copies.focus(); return; }
+    if (!entry.mintBox) createMintReviewForm(entry);
+    entry.mintBox.hidden = false; entry.mintLoading = true; entry.mintFields.disabled = true;
+    mintReviewMessage(entry, "Checking artifact readiness and account mint policy…");
+    const epoch = state.authEpoch;
+    try {
+      const [detail, settingsResult] = await Promise.all([
+        request(`/ecai/index-jobs/${encodeURIComponent(entry.id)}`), request("/ecai/compute/settings")
+      ]);
+      expectSuccess(detail); expectSuccess(settingsResult);
+      if (epoch !== state.authEpoch || !entry.item.isConnected) return;
+      if (!detail.job) throw new Error("Job detail was not returned.");
+      entry.job = mergeIndexRecord(entry.job, detail.job);
+      const settings = settingsResult.data || {};
+      const existing = (settings.mint_requests || []).find(r => r.job_id === entry.id);
+      const requested = existing?.requested_metadata || existing?.metadata?.requested_metadata || {};
+      if (!entry.mintLoaded) {
+        entry.mintInputs.recipient.value = existing?.recipient || settings.settings?.mint?.recipient || settings.mint?.recipient || "";
+        if (existing) {
+          entry.mintInputs.copies.value = existing.copies || 1;
+          entry.mintInputs.fee_cap_cents.value = existing.fee_cap_cents;
+          for (const [name, value] of Object.entries(requested))
+            if (entry.mintInputs[name]) entry.mintInputs[name].value = name === "tags" ? value.join(", ") : String(value);
+        }
+        entry.mintLoaded = true;
+      }
+      entry.mintReceipt = existing || null;
+      entry.mintAllowed = mintReviewReady(entry.job) && !existing;
+      if (existing) mintReviewMessage(entry, `Review already queued for ${existing.copies || 1} copies · ${existing.status}. No chain transaction is reported by this review service.`);
+      else if (!mintReviewReady(entry.job)) mintReviewMessage(entry,
+        "This job is completed but not mint-ready. Indexing completion alone is not enough: the backend must finalize a mintable artifact. No review has been queued.", true);
+      else mintReviewMessage(entry,
+        `Mint-ready artifact · ${entry.job.artifact.manifest_sha256 || entry.id}. Mint policy, recipient and available budget are checked again by the server.`);
+    } catch (error) {
+      entry.mintAllowed = false;
+      if (epoch === state.authEpoch) mintReviewMessage(entry, showError(error), true);
+    } finally {
+      entry.mintLoading = false;
+      entry.mintFields.disabled = !!entry.mintReceipt;
+      entry.mintSubmit.disabled = !entry.mintAllowed;
+    }
+    entry.mintBox.scrollIntoView({block: "nearest", behavior: "smooth"});
+    if (!entry.mintReceipt) entry.mintInputs.copies.focus({preventScroll:true});
+  }
+  async function submitJobMintReview(entry) {
+    if (entry.mintBusy || !entry.mintAllowed || !entry.mintForm.reportValidity()) return;
+    if (!managedSession()) { openLogin("Managed email sign-in is required for mint review."); return; }
+    try {
+      const values = Object.fromEntries(new FormData(entry.mintForm));
+      const integer = (name, min, max) => {
+        if (!/^\d+$/.test(values[name] || "")) throw new Error(`Invalid ${name}: use a whole number.`);
+        const n = Number(values[name]);
+        if (!Number.isSafeInteger(n) || n < min || n > max) throw new Error(`Invalid ${name}: expected ${min}–${max}.`);
+        return n;
+      };
+      const copies = integer("copies", 1, 1000);
+      const fee = integer("fee_cap_cents", 1, 100000000);
+      const metadata = {};
+      const limits = {title:256, collection:256, description:4096, external_url:2048, license:256, creator_note:2048};
+      for (const [name, limit] of Object.entries(limits)) {
+        const value = String(values[name] || "").trim();
+        if (new TextEncoder().encode(value).length > limit) throw new Error(`${name} exceeds ${limit} UTF-8 bytes.`);
+        if (value) metadata[name] = value;
+      }
+      const tags = String(values.tags || "").split(",").map(s => s.trim()).filter(Boolean);
+      if (tags.length > 24 || tags.some(t => new TextEncoder().encode(t).length > 64)) throw new Error("Use at most 24 tags, each at most 64 UTF-8 bytes.");
+      if (tags.length) metadata.tags = tags;
+      if (metadata.external_url) {
+        const u = new URL(metadata.external_url);
+        if (!["https:","http:"].includes(u.protocol) || u.username || u.password) throw new Error("Use an HTTP(S) external URL without credentials.");
+      }
+      if (!window.confirm(`Queue review for ${copies} copies of ${metadata.title || entry.id}? Total fee reservation cap: US$${(fee/100).toFixed(2)}. No blockchain transaction will be sent.`)) return;
+      entry.mintBusy = true; entry.mintFields.disabled = true;
+      const epoch = state.authEpoch;
+      const result = expectSuccess(await request("/ecai/compute/mint-requests", {
+        method: "POST", body: {job_id:entry.id, recipient:values.recipient.trim(), fee_cap_cents:fee, copies, metadata, confirm:"queue mint review"}
+      }));
+      if (!result.data?.job_id) throw new Error("The server did not confirm a review request. Retry the same details to reconcile.");
+      if (epoch !== state.authEpoch) return;
+      entry.mintReceipt = result.data; entry.mintAllowed = false;
+      mintReviewMessage(entry, `Mint review queued · ${copies} copies · ${result.data.status}. No blockchain transaction submitted.`);
+      toast("Mint review queued; no blockchain transaction submitted.");
+      void window.EcaiIndexMintSettings?.refresh?.();
+    } catch (error) {
+      mintReviewMessage(entry, showError(error), true);
+    } finally {
+      entry.mintBusy = false;
+      entry.mintFields.disabled = !!entry.mintReceipt;
+      entry.mintSubmit.disabled = !entry.mintAllowed;
+    }
+  }
   function put(id, value) { const node = $(id); if (node) node.textContent = pretty(value); }
   function showError(error) {
     if (error?.status === 402) return "HTTP 402: access/payment challenge. Verify the DamageBDD session and the node's L402 policy; no payment was made.";
@@ -468,7 +627,8 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
   function managedSession() { return state.authenticated && state.sessionMode === "custodial"; }
   const WALLET_PUBLIC_REQUESTS = new Set([
     "GET /ecai/auth/session", "GET /ecai/chat", "POST /ecai/chat",
-    "POST /ecai/search", "GET /yelp/status", "GET /ecai/personalities"
+    "POST /ecai/search", "POST /ecai/knowledge/search", "POST /ecai/knowledge/source",
+    "GET /yelp/status", "GET /ecai/personalities"
   ]);
   function walletRequestAllowed(path, method = "GET") {
     const pathname = new URL(path, location.origin).pathname;
@@ -699,6 +859,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     personalities?.setVisible(view === "personalities");
     videoStudio?.setVisible(view === "video");
     marketMaker?.setVisible(view === "market-maker");
+    knowledgeSearch.setVisible(view === "search");
     if (previous === "indexing" && view !== "indexing") stopStream();
     if (view !== "overview") refreshView().catch((error) => toast(showError(error), true));
   }
@@ -780,6 +941,9 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
       return undefined;
     }
   }
+  document.addEventListener("ecai:view-index-job", ({detail}) => {
+    if (typeof detail?.id === "string" && managedSession()) void task(() => selectIndexJob(detail.id));
+  });
   document.addEventListener("ecai:quick-index-queued", ({detail}) => {
     void task(async () => {
       await refreshJobs();
@@ -787,82 +951,24 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
       toast("Quick Index job queued");
     });
   });
-  let knowledgeRefreshTimer = null;
-  let knowledgeSearchBusy = false;
-  document.addEventListener("ecai:identity-changed", () => {
-    clearTimeout(knowledgeRefreshTimer);
-    $("searchResults")?.replaceChildren();
-    put("searchStatus", "Identity changed. Run the search again.");
-    put("searchProofs", "No retrieval status for this session.");
-  });
-  async function search(event) {
-    event.preventDefault();
-    const q = $("searchQuery").value.trim();
-    const limit = Math.min(100, Math.max(1, Number($("searchLimit").value) || 10));
-    if (!q) return;
-    if (knowledgeSearchBusy) return;
-    clearTimeout(knowledgeRefreshTimer);
-    knowledgeSearchBusy = true;
-    const searchAuthEpoch = state.authEpoch;
-    put("searchStatus", "Searching published segments and live builds…");
-    const results = $("searchResults"); results.replaceChildren();
-    await task(async () => {
-      const data = expectSuccess(await request("/ecai/knowledge/search", { method: "POST", body: { q, limit } }));
-      if (state.authEpoch !== searchAuthEpoch) return;
-      const items = Array.isArray(data.results) ? data.results : [];
-      if (!items.length) results.append(element("div", "empty-state", "No matching records. Try a broader term."));
-      for (const result of items) {
-        const card = element("article", "result-card");
-        const title = result?.preview || result?.record?.name || result?.record?.title || result?.doc_id || "Knowledge record";
-        card.append(element("strong", "", title));
-        const context = result?.record?.description || result?.record?.text || result?.record?.category;
-        if (context) card.append(element("p", "", String(context).slice(0, 450)));
-        const meta = element("div", "result-meta");
-        if (result?.doc_id) meta.append(element("span", "", `ID: ${result.doc_id}`));
-        if (Number.isFinite(result?.score)) meta.append(element("span", "", `Score: ${result.score.toFixed(3)}`));
-        if (result?.record?.city) meta.append(element("span", "", result.record.city));
-        meta.append(element("span", "", result.live ? "Live / partial build" : "Published snapshot"));
-        if (result.index) meta.append(element("span", "", result.index));
-        const sourceInfo = result?.record?.source_retrieval;
-        meta.append(element("span", "", sourceInfo?.complete ? "Complete retained representation" : "Excerpt / completeness unknown"));
-        card.append(meta);
-        if (result.source_ref) {
-          const resolve = element("button", "button", "Retrieve source");
-          resolve.type = "button";
-          resolve.addEventListener("click", () => void task(async () => {
-            clearTimeout(knowledgeRefreshTimer);
-            if ($("searchLiveRefresh")) $("searchLiveRefresh").checked = false;
-            resolve.disabled = true;
-            try {
-              const source = expectSuccess(await request("/ecai/knowledge/source", {
-                method: "POST", body: { source_ref: result.source_ref }
-              }));
-              if (state.authEpoch !== searchAuthEpoch) return;
-              const details = element("details", "expandable"); details.open = true;
-              details.append(element("summary", "", `${source.complete ? "Complete" : "Partial"} · ${source.representation || "stored text"} · ${source.integrity || "unverified"}`));
-              details.append(element("pre", "code-display", String(source.text || "").slice(0, 64000)));
-              if (String(source.text || "").length > 64000) details.append(element("p", "context-hint", "The endpoint returned the full source; this viewer shows the first 64,000 characters."));
-              card.append(details);
-            } finally { resolve.disabled = false; }
-          }));
-          card.append(resolve);
-        }
-        results.append(card);
-      }
-      put("searchStatus", `${items.length} result${items.length === 1 ? "" : "s"} returned${data.partial ? " · Some backends unavailable" : ""}`);
-      put("searchProofs", { ranking: data.ranking, consistency: data.consistency, backends: data.backends,
-        note: "Live previews omit Merkle proofs. Use a finalized artifact for release verification." });
-    }, "searchStatus");
-    knowledgeSearchBusy = false;
-    if ($("searchLiveRefresh")?.checked && state.authEpoch === searchAuthEpoch) {
-      knowledgeRefreshTimer = setTimeout(() => {
-        const panel = document.querySelector('[data-panel="search"]');
-        if (panel && !panel.hidden && $("searchQuery").value.trim() === q && $("searchLiveRefresh")?.checked) {
-          void search({ preventDefault() {} });
-        }
-      }, 3000);
+  const knowledgeSearch = initKnowledgeSearch({ request, showError, authEpoch: () => state.authEpoch });
+  initIndexSamples({
+    request, showError, authEpoch: () => state.authEpoch, managedSession,
+    goSearch: (query) => { navigate("search"); void knowledgeSearch.setQuery(query); },
+    async selectWikiSmoke() {
+      if (!managedSession()) { openLogin("Sign in with a managed account to test indexing."); return false; }
+      await refreshWikiProjects(true);
+      if (!state.presets.some((preset) => preset.id === "laptop-smoke"))
+        throw new Error("The node did not advertise the laptop-smoke preset. Update the node's Wikimedia preset module.");
+      state.wikiSelectedPresets.clear();
+      state.wikiSelectedPresets.add("laptop-smoke");
+      $("wikiPresetSearch").value = "";
+      renderWikiProjects();
+      put("wikiPickerStatus", "Only the 3-record smoke preset is selected. Add it to the queue below, then follow the job.");
+      $("wikiQueueSelected").focus();
+      return true;
     }
-  }
+  });
   function chatProject(projectId) {
     return state.chatProjects.find((project) => String(project.id) === String(projectId || ""));
   }
@@ -1409,8 +1515,10 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     refresh.type = "button";
     const artifact = element("button", "button button-outline button-sm", "Artifact");
     artifact.type = "button";
+    const mint = element("button", "button button-primary button-sm", "Mint…");
+    mint.type = "button"; mint.title = "Choose copies and metadata for mint review";
     const actions = element("div", "table-actions index-job-actions");
-    controls.append(refresh, artifact, actions);
+    controls.append(refresh, artifact, mint, actions);
     toolbar.append(tracking, controls);
     const layout = element("div", "index-job-layout");
     const inspector = element("div", "job-inspector");
@@ -1425,14 +1533,17 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     const rawSummary = element("summary", "", "Raw job JSON");
     const rawPre = element("pre", "code-display", "No detail loaded.");
     raw.append(rawSummary, rawPre);
-    expanded.append(toolbar, layout, raw);
+    // Keep the form outside the inspector: progress polling must not erase edits.
+    const mintHost = element("div", "job-mint-host");
+    expanded.append(toolbar, mintHost, layout, raw);
     item.append(summary, expanded);
-    const entry = { id, job, item, summary, tracking, actions, inspector, log, rawPre, artifact,
+    const entry = { id, job, item, summary, tracking, actions, inspector, log, rawPre, artifact, mint, mintHost,
       runtimeAtPerformance: performance.now(), runtimeSample: job.runtime?.sampled_at_ms,
       events: [], lastSeq: null, historyComplete: false, streamBlocked: false };
     item.addEventListener("toggle", () => onJobToggle(entry));
     refresh.addEventListener("click", () => task(() => loadIndexJobDetail(entry)));
     artifact.addEventListener("click", () => task(() => loadArtifact(entry.id)));
+    mint.addEventListener("click", () => void openJobMintReview(entry));
     return entry;
   }
   function renderJobSummary(entry) {
@@ -1488,6 +1599,12 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     entry.rawPre.textContent = pretty(entry.job);
     renderJobActions(entry);
     entry.artifact.disabled = !entry.job.artifact && !["completed", "ready_to_mint", "minted"].includes(entry.job.state);
+    entry.mint.hidden = !["completed", "ready_to_mint", "minted"].includes(entry.job.state);
+    entry.mint.disabled = entry.job.state === "minted";
+    entry.mint.textContent = entry.job.state === "minted" ? "Minted" : "Mint…";
+    if (entry.mintSubmit && !entry.mintBusy && !mintReviewReady(entry.job)) {
+      entry.mintAllowed = false; entry.mintSubmit.disabled = true;
+    }
   }
   function renderJobs() {
     const parent = $("indexJobList");
@@ -3233,6 +3350,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     }
     switch (state.view) {
       case "overview": await refreshOverview(); break;
+      case "search": await knowledgeSearch.run(); break;
       case "chat": await refreshChatWorkspace(); break;
       case "indexing": await refreshIndexing(); break;
       case "wikimedia": await refreshWikiProjects(); break;
@@ -3268,7 +3386,6 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     $("walletManagedLogin").addEventListener("click", () => openLogin("Use managed email sign-in for indexing, private data and node administration."));
     document.addEventListener("auth:changed", syncBrowserSession);
     $("logoutBtn").addEventListener("click", () => task(logout));
-    $("searchForm").addEventListener("submit", search);
     $("chatForm").addEventListener("submit", sendChat);
     $("chatPrompt").addEventListener("keydown", (event) => {
       if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); $("chatForm").requestSubmit(); }
@@ -3393,7 +3510,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     $("apiCopyResponse").addEventListener("click", copyResponse);
     window.addEventListener("hashchange", () => navigate(location.hash.slice(1)));
     window.addEventListener("beforeunload", () => {
-      stopStream(); disconnectSocket(); videoStudio?.dispose(); marketMaker?.dispose(); mathPaths?.dispose(); evaluation?.dispose(); personalities?.dispose(); clearInterval(state.poller);
+      knowledgeSearch.dispose(); stopStream(); disconnectSocket(); videoStudio?.dispose(); marketMaker?.dispose(); mathPaths?.dispose(); evaluation?.dispose(); personalities?.dispose(); clearInterval(state.poller);
       clearInterval(state.telemetryPoller); clearInterval(state.clockTicker);
     });
     document.addEventListener("visibilitychange", () => {

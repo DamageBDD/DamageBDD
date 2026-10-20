@@ -1,11 +1,32 @@
-/* ECAI account compute policy and manual NFT review; no cloud keys in browser. */
+/* ECAI cloud connections and compute reservations; no cloud keys in browser. */
 (() => {
   'use strict';
-  const assetVersion = 'compute-provider-ui-v2';
+  const assetVersion = 'compute-only-v1';
   const $ = (id) => document.getElementById(id);
   let api, toast, openLogin, currentToken, state = null, quoted = null, requestKey = null;
   let ready = false;
   let activeProvider = 'aws_batch';
+  function selectSection(id, focus = false) {
+    const tabs = [...document.querySelectorAll('[data-compute-section]')];
+    if (!tabs.some(tab => tab.dataset.computeSection === id)) return;
+    for (const tab of tabs) {
+      const active = tab.dataset.computeSection === id;
+      tab.setAttribute('aria-selected', String(active));
+      tab.tabIndex = active ? 0 : -1;
+      $(tab.dataset.computeSection).hidden = !active;
+      if (active && focus) tab.focus();
+    }
+  }
+  function sectionKey(event, tab) {
+    const tabs = [...document.querySelectorAll('[data-compute-section]')];
+    const i = tabs.indexOf(tab);
+    const next = {ArrowRight: (i + 1) % tabs.length,
+      ArrowLeft: (i + tabs.length - 1) % tabs.length,
+      Home: 0, End: tabs.length - 1}[event.key];
+    if (next === undefined) return;
+    event.preventDefault();
+    selectSection(tabs[next].dataset.computeSection, true);
+  }
   const money = (cents) => Number.isSafeInteger(cents) ?
     (cents / 100).toLocaleString(undefined, {style: 'currency', currency: 'USD'}) : 'Not reconciled';
   const label = (id, value) => { const el = $(id); if (el) el.textContent = String(value); };
@@ -109,14 +130,15 @@
     $('computeCopyTrustPolicy').disabled = !awsTrustPolicy();
     $('computeVerifyAws').disabled = !aws;
     $('computeVerifyGcp').disabled = !gcp;
-    const verified = aws?.status === 'identity_verified' || gcp?.status === 'identity_verified';
-    $('computeNextBudget').disabled = !verified;
+    // Viewing/configuring a budget is not authorization to reserve or run work.
+    $('computeNextBudget').disabled = false;
   }
   function renderConnectionGuide() {
     const aws = state?.providers?.aws_batch;
     const gcp = state?.providers?.cloud_run;
     const principal = state?.connection_hints?.aws_coordinator_role_arn;
     const external = awsExternalId();
+    $('computeAwsBlocked').hidden = !state || validAwsPrincipal(principal);
     label('computeAwsExternalId', external || 'Generate setup ID to continue');
     label('computeAwsPrincipal', validAwsPrincipal(principal) ? principal :
       'Not configured on this ECAI node');
@@ -183,29 +205,23 @@
   }
   function fillSettings() {
     const budget = state?.budget || {};
-    const mint = state?.mint || {};
     const compute = state?.reserved_compute_cents || 0;
-    const mintReserved = state?.reserved_mint_cents || 0;
     label('computeBudgetLimit', money(budget.monthly_cents ?? 0));
     label('computeBudgetReserved', money(compute));
     label('computeBudgetAvailable', money(Math.max(0, (budget.monthly_cents || 0) - compute)));
     label('computeBudgetBilled', money(state?.actual_billed_cents));
     label('computeMonth', `Budget month: ${state?.period_utc || '—'} UTC`);
-    label('computeNotice', `Compute: ${money(compute)} reserved · NFTs: ${money(mintReserved)} reserved · dispatch and chain submission not active`);
+    label('computeNotice', `${money(compute)} reserved · ${money(Math.max(0, (budget.monthly_cents || 0) - compute))} unreserved · ${state?.period_utc || '—'} UTC`);
     const bf = $('computePolicyForm').elements;
     bf.namedItem('enabled').checked = budget.remote_enabled === true;
     bf.namedItem('monthly').value = usdInput(budget.monthly_cents);
     bf.namedItem('per_job').value = usdInput(budget.per_job_cents);
-    bf.namedItem('mint_monthly').value = usdInput(budget.mint_monthly_cents);
-    $('computeMintPolicyForm').elements.namedItem('enabled').checked = mint.enabled === true;
-    $('computeMintPolicyForm').elements.namedItem('recipient').value = mint.recipient || '';
     const aws = providerStatus('aws_batch', 'computeAwsStatus');
     setInputs($('computeAwsForm'), aws);
     const gcp = providerStatus('cloud_run', 'computeGcpStatus');
     setInputs($('computeGcpForm'), gcp);
     renderConnectionGuide();
     renderReservations();
-    renderMints();
   }
   function renderReservations() {
     const host = $('computeReservations'); host.replaceChildren();
@@ -230,26 +246,13 @@
       host.append(row);
     }
   }
-  function renderMints() {
-    const host = $('computeMintRequests'); host.replaceChildren();
-    const entries = state?.mint_requests || [];
-    if (!entries.length) { host.append(el('div', 'empty-state', 'No pending mint-review requests.')); return; }
-    for (const r of entries) {
-      const row = el('div', 'compute-row');
-      const copy = el('div');
-      copy.append(el('strong', '', `Artifact ${r.job_id || '—'} · ${r.status}`),
-        el('small', '', `Recipient ${r.recipient || '—'} · fee cap ${money(r.fee_cap_cents)} · manifest ${r.manifest_sha256 || '—'}`));
-      row.append(copy); host.append(row);
-    }
-  }
   async function refresh() {
     if (!ready) return;
     try {
       state = await call('/ecai/compute/settings');
       fillSettings();
       // Ancillary job lists must not break provider onboarding/status updates.
-      const results = await Promise.allSettled([loadMintable(), loadSources()]);
-      if (results[1].status === 'rejected') label('computeSourceCount', 'Source jobs unavailable');
+      await loadSources().catch(() => label('computeSourceCount', 'Source jobs unavailable'));
     } catch (error) {
       label('computeNotice', error?.status === 401 ? 'Sign in using DamageBDD to manage compute settings.' : errText(error));
       if (error?.status !== 401) toast?.(errText(error), true);
@@ -280,23 +283,18 @@
   }
   function currentPolicy() {
     const bf = $('computePolicyForm').elements;
-    const mf = $('computeMintPolicyForm').elements;
-    return {
-      budget: {remote_enabled: bf.namedItem('enabled').checked,
-        monthly_cents: cents(bf.namedItem('monthly').value),
-        per_job_cents: cents(bf.namedItem('per_job').value),
-        mint_monthly_cents: cents(bf.namedItem('mint_monthly').value)},
-      mint: {enabled: mf.namedItem('enabled').checked, chain: 'aeternity',
-        recipient: mf.namedItem('recipient').value.trim()}
-    };
+    // Domain-scoped write: the server preserves mint policy atomically.
+    return {remote_enabled: bf.namedItem('enabled').checked,
+      monthly_cents: cents(bf.namedItem('monthly').value),
+      per_job_cents: cents(bf.namedItem('per_job').value)};
   }
   async function savePolicy(event) {
     event.preventDefault();
     const button = event.currentTarget.querySelector('[type="submit"]');
     await withBusy(button, async () => {
       const policy = currentPolicy();
-      await call('/ecai/compute/policy', {method: 'POST', body: policy});
-      toast?.('Budget and mint policy saved.');
+      await call('/ecai/compute/budget', {method: 'POST', body: policy});
+      toast?.('Compute budget saved.');
       await refresh();
     });
   }
@@ -354,34 +352,8 @@
     if (field && typeof id === 'string') {
       field.value = id;
       resetQuote();
+      selectSection('computeJobs');
     }
-  }
-  async function loadMintable() {
-    const jobs = await call('/ecai/compute/mintable');
-    const select = $('computeMintJob');
-    const selected = select.value;
-    select.replaceChildren();
-    const empty = el('option', '', 'Select a ready-to-mint artifact'); empty.value = ''; select.append(empty);
-    for (const item of jobs) {
-      const option = el('option', '', `${item.label || 'Index'} · ${item.id}`);
-      option.value = item.id; select.append(option);
-    }
-    if (jobs.some((j) => j.id === selected)) select.value = selected;
-  }
-  async function mintJob(ev) {
-    ev.preventDefault();
-    const button = $('computeMintRequestBtn');
-    await withBusy(button, async () => {
-      const jobId = $('computeMintJob').value;
-      const recipient = $('computeMintPolicyForm').elements.namedItem('recipient').value.trim();
-      const fee = cents($('computeMintForm').elements.namedItem('fee').value);
-      if (!jobId) throw new Error('Choose a verified artifact first.');
-      if (!window.confirm(`Request review of NFT mint for ${jobId}? Fee reservation cap ${money(fee)}. NO blockchain transaction will be sent.`)) return;
-      await call('/ecai/compute/mint-requests', {method: 'POST',
-        body: {job_id: jobId, recipient, fee_cap_cents: fee, confirm: 'queue mint review'}});
-      toast?.('Mint review requested; wallet signature and submission are still required.');
-      await refresh();
-    });
   }
   // A persistent message also catches an old/missing controller: only this
   // controller may dismiss it, after matching the template AND loaded CSS.
@@ -402,9 +374,11 @@
     ({request: api, toast, openLogin, currentToken} = apiHooks);
     ready = true;
     $('computeRefresh').addEventListener('click', () => void refresh());
-    for (const tab of document.querySelectorAll('[data-compute-scroll]')) {
-      tab.addEventListener('click', () => $(tab.dataset.computeScroll)?.scrollIntoView({behavior: 'smooth'}));
+    for (const tab of document.querySelectorAll('[data-compute-section]')) {
+      tab.addEventListener('click', () => selectSection(tab.dataset.computeSection));
+      tab.addEventListener('keydown', event => sectionKey(event, tab));
     }
+    selectSection('computeProviders');
     for (const choice of document.querySelectorAll('[data-compute-provider-choice]')) {
       choice.addEventListener('click', () => selectProvider(choice.dataset.computeProviderChoice));
     }
@@ -416,27 +390,24 @@
     $('computeCopyTrustPolicy').addEventListener('click', () =>
       void copyText(awsTrustPolicy(), 'IAM trust policy').catch(fail));
     $('computeNextBudget').addEventListener('click', () =>
-      $('computeBudget').scrollIntoView({behavior: 'smooth'}));
+      selectSection('computeBudget', true));
     $('computeAwsForm').addEventListener('submit', (e) => void saveProvider(e, 'aws_batch'));
     $('computeGcpForm').addEventListener('submit', (e) => void saveProvider(e, 'cloud_run'));
     $('computeVerifyAws').addEventListener('click', () => void verifyProvider('aws_batch', $('computeVerifyAws')));
     $('computeVerifyGcp').addEventListener('click', () => void verifyProvider('cloud_run', $('computeVerifyGcp')));
     $('computePolicyForm').addEventListener('submit', (e) => void savePolicy(e));
-    $('computeMintPolicyForm').addEventListener('submit', (e) => void savePolicy(e));
     $('computeJobForm').addEventListener('input', resetQuote);
     $('computeJobForm').addEventListener('change', resetQuote);
     $('computeQuoteBtn').addEventListener('click', () => void quoteJob());
     $('computeJobForm').addEventListener('submit', (e) => void reserveJob(e));
-    $('computeLoadMintable').addEventListener('click', () => void loadMintable().catch(fail));
     $('computeLoadSources').addEventListener('click', () => void loadSources().catch(fail));
-    $('computeMintForm').addEventListener('submit', (e) => void mintJob(e));
     selectProvider(activeProvider);
     checkAssets();
   }
   function clear() {
     state = null; quoted = null; requestKey = null;
     for (const id of ['computeAwsForm', 'computeGcpForm', 'computePolicyForm',
-                      'computeMintPolicyForm', 'computeMintForm', 'computeJobForm']) {
+                      'computeJobForm']) {
       const form = $(id); if (form) form.reset();
     }
     label('computeBudgetLimit', money(0)); label('computeBudgetReserved', money(0));
@@ -448,10 +419,8 @@
     label('computeAwsGuideStatus', 'Prepare an external ID before configuring IAM trust.');
     label('computeGcpGuideStatus', 'Use your existing GCP project and workload identity.');
     label('computeConnectionFootnote', 'Choose a provider and verify identity before enabling a budget.');
-    label('computeNotice', 'Sign in to manage your compute and mint settings.');
+    label('computeNotice', 'Sign in to manage compute connections and reservation limits.');
     if ($('computeReservations')) $('computeReservations').replaceChildren();
-    if ($('computeMintRequests')) $('computeMintRequests').replaceChildren();
-    if ($('computeMintJob')) $('computeMintJob').replaceChildren(el('option', '', 'Sign in to load eligible artifacts'));
     if ($('computeSourceOptions')) $('computeSourceOptions').replaceChildren();
     label('computeSourceCount', 'Sign in to load eligible sources');
     if ($('computeReserveBtn')) $('computeReserveBtn').disabled = true;
@@ -464,10 +433,11 @@
     }
     if ($('computeCopyExternalId')) $('computeCopyExternalId').disabled = true;
     if ($('computeCopyTrustPolicy')) $('computeCopyTrustPolicy').disabled = true;
-    if ($('computeNextBudget')) $('computeNextBudget').disabled = true;
+    if ($('computeNextBudget')) $('computeNextBudget').disabled = false;
+    selectSection('computeProviders');
     $('computeAwsResources').open = false;
     $('computeGcpResources').open = false;
     selectProvider('aws_batch');
   }
-  window.EcaiComputeSettings = {init, refresh, clear, setSourceJob, assetVersion};
+  window.EcaiComputeSettings = {init, refresh, clear, setSourceJob, selectSection, assetVersion};
 })();

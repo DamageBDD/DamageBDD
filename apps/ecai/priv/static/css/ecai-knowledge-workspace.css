@@ -1,0 +1,138 @@
+/* Search, Wikimedia and index jobs share neutral + semantic theme tokens.
+ * Loaded after feature CSS; no forced light surfaces or blanket !important. */
+:root, body { color-scheme: var(--ecai-color-scheme, light); }
+.console-sidebar { color: var(--nav-ink, #ebf0fc); }
+.console-sidebar :is(.nav-link,.subtle-link,.brand-caption,.sidebar-label,.node-mark) { color: var(--nav-muted, #aab7d0); }
+.console-sidebar .nav-link:is(:hover,.is-active) { color: var(--nav-ink, #ffffff); background: var(--nav-active-bg, #2c3c68); }
+.console-sidebar .nav-link.is-active { box-shadow: inset 3px 0 0 var(--accent); }
+.console-sidebar .nav-icon { color: inherit; }
+.console-topbar .icon-button:hover { background: var(--surface-2); }
+
+:is([data-panel="search"],[data-panel="indexing"],[data-panel="wikimedia"]) { color: var(--ink); }
+:is([data-panel="search"],[data-panel="indexing"],[data-panel="wikimedia"]) .surface { background: var(--paper); color: var(--ink); border-color: var(--line); }
+:is([data-panel="search"],[data-panel="indexing"],[data-panel="wikimedia"]) .panel-heading { flex-wrap: wrap; }
+:is([data-panel="search"],[data-panel="indexing"],[data-panel="wikimedia"]) .panel-heading h2 { color: var(--ink); font-size: 18px; }
+:is([data-panel="indexing"],[data-panel="wikimedia"]) :is(.context-hint,.preset-card p,.wiki-project-description) { font-size: 13px; line-height: 1.65; }
+:is([data-panel="search"],[data-panel="indexing"],[data-panel="wikimedia"]) .status-tag { background: var(--surface-2); border-color: var(--line); color: var(--ink); white-space: normal; }
+:is([data-panel="indexing"],[data-panel="wikimedia"]) .button { white-space: normal; }
+:is([data-panel="indexing"],[data-panel="wikimedia"]) .button:disabled { opacity: 1; color: var(--ink); border-color: var(--line); background: var(--surface-2); }
+
+/* One search field, one count, one explicit submit; Enter never waits for debounce. */
+.knowledge-search-surface .search-form { display: grid; grid-template-columns: minmax(0,1fr) 90px auto; gap: 12px; align-items: end; }
+.knowledge-query-field { position: relative; min-width: 0; }
+.knowledge-query-field input[type="search"] { width: 100%; height: 46px; padding: 10px 42px; font-size: 16px; }
+.knowledge-query-field input::-webkit-search-cancel-button { display: none; }
+.knowledge-query-field .search-leading { top: 50%; left: 13px; transform: translateY(-50%); line-height: 1; color: var(--muted); }
+.knowledge-search-clear { position: absolute; right: 5px; top: 5px; width: 36px; height: 36px; border: 0; border-radius: 7px; font-size: 24px; background: transparent; color: var(--muted); }
+.knowledge-search-clear:hover { background: var(--surface-2); color: var(--ink); }
+.knowledge-search-surface .search-form :is(.compact-field input,.button) { min-height: 46px; }
+.knowledge-search-options { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 14px; }
+.knowledge-search-options p { margin: 0; font-size: 12px; }
+.knowledge-search-options .checkbox-label { font-size: 12px; color: var(--muted); }
+.knowledge-search-status { color: var(--muted); font-size: 13px; line-height: 1.6; margin: 16px 0 0; min-height: 22px; overflow-wrap: anywhere; }
+.knowledge-search-warning { color: var(--ink); background: var(--surface-2); border: 1px solid var(--border-strong); border-left: 3px solid var(--warning); border-radius: 8px; padding: 10px 12px; margin: 12px 0 0; font-size: 13px; }
+.knowledge-search-surface .result-stack { gap: 0; padding-top: 14px; }
+.knowledge-result { background: var(--paper); color: var(--ink); border: 0; border-top: 1px solid var(--line); border-radius: 0; padding: 22px 0; min-width: 0; }
+.knowledge-result .result-meta { display: flex; flex-wrap: wrap; gap: 5px 12px; color: var(--muted); font-size: 12px; line-height: 1.6; margin-bottom: 7px; overflow-wrap: anywhere; }
+.knowledge-source-kind { font-weight: 650; }
+.knowledge-result .knowledge-result-title { font-size: 20px; font-weight: 650; line-height: 1.45; margin: 0 0 7px; letter-spacing: -.02em; overflow-wrap: anywhere; }
+.knowledge-title-action { border: 0; margin: 0; padding: 0; font: inherit; text-align: left; color: var(--link); background: transparent; cursor: pointer; }
+.knowledge-title-action:hover { text-decoration: underline; text-underline-offset: 3px; }
+.knowledge-title-action:disabled { opacity: 1; cursor: progress; }
+.knowledge-result p.knowledge-result-snippet { margin: 0 0 8px; color: var(--ink); font-size: 14px; line-height: 1.75; max-width: 85ch; overflow-wrap: anywhere; }
+.knowledge-result p.knowledge-result-hint { font-size: 12px; line-height: 1.65; color: var(--muted); margin: 0 0 12px; }
+.knowledge-result mark { background: var(--accent-soft); color: inherit; border-radius: 2px; font-weight: 700; }
+.knowledge-result-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.knowledge-source-status { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.knowledge-source-status.is-error { color: var(--danger); }
+.knowledge-technical { margin-top: 12px; font-size: 12px; }
+.knowledge-technical > summary { color: var(--muted); cursor: pointer; padding: 3px 0; }
+.knowledge-metadata { display: grid; grid-template-columns: max-content minmax(0,1fr); gap: 7px 16px; padding: 12px; background: var(--surface-2); border-radius: 9px; }
+.knowledge-metadata dt { color: var(--ink); }
+.knowledge-metadata dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; font-family: ui-monospace,monospace; }
+.knowledge-source { margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); overflow: hidden; }
+.knowledge-source > summary { padding: 12px; cursor: pointer; overflow-wrap: anywhere; color: var(--ink); font-size: 13px; }
+.knowledge-source .code-display { margin: 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; font-size: 13px; }
+.knowledge-source .context-hint { margin: 0; padding: 12px; }
+
+/* Explicit test fixtures stay visible above both workflows. */
+.index-samples { border-left: 3px solid var(--accent); }
+.index-samples > p { font-size: 14px; line-height: 1.7; }
+.sample-flow { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); list-style: none; counter-reset: sample-step; gap: 12px; margin: 20px 0; padding: 0; }
+.sample-flow li { counter-increment: sample-step; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); min-width: 0; }
+.sample-flow li::before { content: "0" counter(sample-step); display: block; margin-bottom: 10px; color: var(--link); font-size: 12px; font-weight: 750; }
+.sample-flow strong { display: block; font-size: 13px; color: var(--ink); }
+.sample-flow span { display: block; color: var(--ink); font-size: 12px; line-height: 1.6; margin-top: 5px; }
+.sample-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.index-samples p.sample-status { margin: 14px 0 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.index-samples p.sample-status.is-error { color: var(--danger); }
+.sample-preview { margin-top: 14px; font-size: 13px; }
+.sample-preview summary { cursor: pointer; color: var(--link); }
+.sample-preview p { line-height: 1.7; margin: 10px 0 0; }
+
+/* Wikimedia cards and custom plan no longer mix light-only cards with dark ink. */
+.wiki-project-card { background: var(--surface-2); border-color: var(--line); color: var(--ink); }
+.wiki-project-card:hover { border-color: var(--focus); }
+.wiki-project-card.is-selected { background: var(--accent-soft); border-color: var(--focus); box-shadow: inset 0 0 0 1px var(--focus); }
+.wiki-project-card:focus-within { outline-color: var(--focus); }
+.wiki-project-card-copy strong { font-size: 14px; color: var(--ink); }
+.wiki-project-card-copy small, .wiki-project-description { color: var(--ink); }
+.wiki-project-active { background: var(--surface-2); border-color: var(--warning); color: var(--ink); }
+.wiki-picker-footer { border-color: var(--line); }
+.wiki-picker-notice { color: var(--muted); font-size: 13px; }
+.wiki-queue-result { color: var(--ink); background: var(--surface-2); border-color: var(--success); overflow-wrap: anywhere; }
+.wiki-queue-result.is-error { color: var(--ink); background: var(--surface-2); border-color: var(--danger); }
+.wiki-source-choice-head > label, .wiki-field-label { color: var(--ink); }
+.wiki-field-label small { color: var(--muted); }
+.wiki-month-choice { background: var(--paper); color: var(--ink); border-color: var(--line); }
+.wiki-month-choice.is-selected { background: var(--accent-soft); color: var(--ink); border-color: var(--focus); }
+.wiki-plan-card { background: var(--surface-2); border-color: var(--line); }
+.wiki-plan-summary-line { border-color: var(--line); }
+.wiki-plan-summary-line span { color: var(--muted); }
+.wiki-plan-summary-line strong { color: var(--ink); }
+.wiki-plan-warning, .wiki-plan-approved { color: var(--ink); background: var(--paper); border-color: var(--warning); }
+.wiki-plan-approved { border-color: var(--success); }
+
+/* Index jobs: presets, stats, expanded progress, checkpoints and event feed. */
+.preset-card, .index-job-item, .index-job-feed, .job-stat-card, .job-stage-card, .job-checkpoint-card, .job-runtime-stat { background: var(--paper); border-color: var(--line); color: var(--ink); }
+.preset-card h3 { font-size: 14px; color: var(--ink); }
+.preset-card small, .index-job-trailing small, .index-job-chevron, .index-job-tracking, .index-job-raw > summary { color: var(--muted); }
+.index-job-id { color: var(--link); }
+.index-job-item[open] { border-color: var(--focus); }
+.index-job-summary:hover, .index-job-expanded, .job-inspector, .job-runtime-panel { background: var(--surface-2); border-color: var(--line); }
+.job-stage-card.is-done { background: var(--surface-2); border-color: var(--success); }
+.job-stage-card.is-active { border-color: var(--focus); }
+.job-stage-dot { background: var(--border-strong); }
+.job-stage-card.is-done .job-stage-dot { background: var(--success); }
+.job-stage-card.is-active .job-stage-dot { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+.job-pill, .progress-meta-pill { color: var(--ink); background: var(--surface-2); border-color: var(--line); }
+.progress-track { background: var(--line); }
+.progress-fill { background: var(--accent); }
+.table-actions button { background: var(--paper); color: var(--ink); border-color: var(--line); }
+:is([data-panel="indexing"],[data-panel="wikimedia"]) .status-tag:is(.state-failed,.state-canceled) { border-color: var(--danger); }
+:is([data-panel="indexing"],[data-panel="wikimedia"]) .status-tag:is(.state-running,.state-completed,.state-minted) { border-color: var(--success); }
+:is([data-panel="indexing"],[data-panel="wikimedia"]) .status-tag:is(.state-queued,.state-paused) { border-color: var(--warning); }
+.quick-index-kicker { color: var(--ink); }
+.quick-index-tab:focus-visible, .quick-index-drop:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+.quick-index-tab:is(:hover,.is-active) { background: var(--accent-soft); color: var(--ink); }
+.quick-index-drop { border-color: var(--border-strong); }
+.quick-index-drop-icon { flex: 0 0 2.8rem; color: var(--ink); }
+.quick-index-drop-copy { min-width: 0; overflow-wrap: anywhere; }
+.quick-index-pane input { font-size: 16px; }
+.quick-index-overview-flow b { color: var(--link); }
+
+@media(max-width:1100px) { .sample-flow { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media(max-width:620px) {
+  .knowledge-search-surface .search-form { grid-template-columns: minmax(0,1fr) auto; }
+  .knowledge-query-field { grid-column: 1 / -1; }
+  .knowledge-search-surface .compact-field { max-width: none; }
+  .knowledge-result .knowledge-result-title { font-size: 18px; }
+  .knowledge-metadata { grid-template-columns: minmax(0,1fr); gap: 3px; }
+  .knowledge-metadata dd { margin-bottom: 10px; }
+  .sample-actions > .button { flex: 1 1 100%; }
+  .sample-flow { grid-template-columns: minmax(0,1fr); }
+  .quick-index-card .panel-heading { align-items: flex-start; }
+  .preset-grid { grid-template-columns: minmax(0,1fr); }
+  #wikiSearchForm { flex-wrap: wrap; }
+  #wikiSearchForm > input { flex-basis: 100%; }
+}

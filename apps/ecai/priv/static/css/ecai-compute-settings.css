@@ -2,7 +2,7 @@
    theme variables must not put pale text on a hard-coded white card.
    Keep this marker in sync with the template, controller and asset URLs. */
 [data-panel="compute"] {
-  --compute-ui-version: compute-provider-ui-v2;
+  --compute-ui-version: compute-only-v1;
   --compute-canvas: #f5f7fb;
   --compute-surface: #ffffff;
   --compute-subtle: #f1f4fa;
@@ -78,7 +78,7 @@
   color-scheme: light;
 }
 
-/* Compute onboarding, reservations and NFT review. No external dependencies. */
+/* Compute onboarding and reservations. No external dependencies. */
 
 [data-panel="compute"].is-visible { display: grid; }
 [data-panel="compute"] > :is(.page-intro, .context-hint, .panel-pad) { margin-bottom: 0; }
@@ -257,3 +257,17 @@
   .topbar-actions { min-width: 0; flex: 1 1 auto; overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-width: thin; }
   .topbar-actions > * { flex-shrink: 0; }
 }
+
+/* Compute-only workspace: real panels, plus explicit unavailable prerequisites. */
+[data-panel="compute"] :is([role="tabpanel"], .compute-blocker)[hidden] { display: none !important; }
+[data-panel="compute"] .compute-tabs [aria-selected="true"] { background: var(--compute-selected); border-color: var(--compute-accent); font-weight: 700; }
+[data-panel="compute"] .compute-mode-notice, [data-panel="compute"] .compute-blocker {
+  border: 1px solid var(--compute-line); border-left: 3px solid var(--compute-warning);
+  border-radius: 10px; padding: .9rem 1rem; background: var(--compute-warning-bg);
+  color: var(--compute-ink); display: grid; gap: .35rem; line-height: 1.5; font-size: .875rem;
+}
+[data-panel="compute"] .compute-blocker { margin-bottom: 1rem; }
+[data-panel="compute"] .compute-blocker p { margin: 0; }
+[data-panel="compute"] [role="tabpanel"] { min-width: 0; scroll-margin-top: 5rem; }
+[data-panel="compute"] .compute-guidance-grid { align-items: start; }
+[data-panel="compute"] .compute-blocker :is(p,code) { overflow-wrap: anywhere; white-space: normal; }

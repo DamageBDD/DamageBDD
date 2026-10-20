@@ -6,6 +6,8 @@
     start_link/0, start_link/1,
     snapshot/1,
     put_policy/2,
+    put_compute_budget/2,
+    put_mint_policy/2,
     put_provider/3,
     prepare_provider/2,
     provider/2,
@@ -13,7 +15,8 @@
     quote/1,
     reserve/3,
     cancel_reservation/2,
-    request_mint/5
+    request_mint/5,
+    validate_mint_options/2
 ]).
 -export([
     init/1,
@@ -32,6 +35,10 @@ start_link() -> start_link(#{}).
 start_link(Opts) -> gen_server:start_link({local, ?MODULE}, ?MODULE, Opts, []).
 snapshot(Owner) -> gen_server:call(?MODULE, {snapshot, Owner}, 30000).
 put_policy(Owner, Policy) -> gen_server:call(?MODULE, {policy, Owner, Policy}, 30000).
+put_compute_budget(Owner, Budget) ->
+    gen_server:call(?MODULE, {compute_budget, Owner, Budget}, 30000).
+put_mint_policy(Owner, Policy) ->
+    gen_server:call(?MODULE, {mint_policy, Owner, Policy}, 30000).
 put_provider(Owner, Provider, Config) ->
     gen_server:call(?MODULE, {provider, Owner, Provider, Config}, 30000).
 prepare_provider(Owner, Provider) ->
@@ -42,8 +49,58 @@ mark_verified(Owner, Provider, Digest) ->
 quote(Spec) -> quote_spec(Spec).
 reserve(Owner, Key, Spec) -> gen_server:call(?MODULE, {reserve, Owner, Key, Spec}, 30000).
 cancel_reservation(Owner, Id) -> gen_server:call(?MODULE, {cancel, Owner, Id}, 30000).
-request_mint(Owner, JobId, Metadata, Recipient, FeeCapCents) ->
-    gen_server:call(?MODULE, {mint, Owner, JobId, Metadata, Recipient, FeeCapCents}, 30000).
+request_mint(Owner, JobId, Metadata, Recipient, FeeCapCents) when is_map(Metadata) ->
+    case validate_mint_options(
+        maps:get(<<"requested_copies">>, Metadata, 1),
+        maps:get(<<"requested_metadata">>, Metadata, #{})
+    ) of
+        {ok, Copies, Requested} ->
+            Normalized = Metadata#{<<"requested_copies">> => Copies, <<"requested_metadata">> => Requested},
+            gen_server:call(?MODULE, {mint, Owner, JobId, Normalized, Recipient, FeeCapCents}, 30000);
+        Error -> Error
+    end;
+request_mint(_, _, _, _, _) -> {error, invalid_mint_metadata}.
+
+%% This limit bounds a review request; it is not a contract-enforced edition cap.
+validate_mint_options(Copies, _) when not is_integer(Copies); Copies < 1; Copies > 1000 ->
+    {error, invalid_mint_copies};
+validate_mint_options(Copies, Fields) when is_map(Fields) ->
+    Limits = #{<<"title">> => 256, <<"description">> => 4096,
+        <<"collection">> => 256, <<"external_url">> => 2048,
+        <<"license">> => 256, <<"creator_note">> => 2048, <<"tags">> => 64},
+    Valid = maps:fold(fun(K, V, Acc) ->
+        Acc andalso maps:is_key(K, Limits) andalso valid_mint_field(K, V, Limits)
+    end, true, Fields),
+    case Valid of
+        true -> {ok, Copies, Fields};
+        false -> {error, invalid_mint_metadata}
+    end;
+validate_mint_options(_, _) -> {error, invalid_mint_metadata}.
+
+valid_mint_field(<<"tags">>, Tags, _) when is_list(Tags), length(Tags) =< 24 ->
+    lists:all(fun(T) -> valid_mint_text(T, 64) end, Tags);
+valid_mint_field(<<"tags">>, _, _) -> false;
+valid_mint_field(<<"external_url">>, Value, _) ->
+    valid_mint_text(Value, 2048) andalso valid_mint_url(Value);
+valid_mint_field(Key, Value, Limits) ->
+    valid_mint_text(Value, maps:get(Key, Limits)).
+
+valid_mint_text(Value, Limit) when is_binary(Value), byte_size(Value) =< Limit ->
+    try unicode:characters_to_binary(Value, utf8, utf8) of
+        Value -> binary:match(Value, <<0>>) =:= nomatch;
+        _ -> false
+    catch _:_ -> false end;
+valid_mint_text(_, _) -> false.
+
+valid_mint_url(<<>>) -> true;
+valid_mint_url(Value) ->
+    try uri_string:parse(Value) of
+        #{scheme := Scheme, host := Host} = Uri ->
+            (Scheme =:= <<"https">> orelse Scheme =:= <<"http">>) andalso
+            is_binary(Host) andalso byte_size(Host) > 0 andalso
+            not maps:is_key(userinfo, Uri);
+        _ -> false
+    catch _:_ -> false end.
 
 init(Opts) ->
     DefaultPath = filename:join(ecai_paths:index_state_dir(), "compute_settings.dets"),
@@ -71,6 +128,34 @@ handle_call({get_provider, Owner, Name}, _From, State) ->
         {ok, Value} -> reply({ok, Value}, State);
         error -> reply({error, not_configured}, State)
     end;
+%% Merge only the selected policy domain inside the serialized store process.
+%% Never echo an old browser snapshot of the other domain back into the store.
+handle_call({compute_budget, Owner, Input}, From, State) when is_map(Input) ->
+    Keys = [<<"remote_enabled">>, <<"monthly_cents">>, <<"per_job_cents">>],
+    case lists:sort(maps:keys(Input)) =:= lists:sort(Keys) of
+        false -> reply({error, invalid_compute_budget}, State);
+        true ->
+            Old = account(State#st.table, Owner),
+            Budget = maps:merge(maps:get(<<"budget">>, Old), Input),
+            handle_call({policy, Owner, #{<<"budget">> => Budget,
+                <<"mint">> => maps:get(<<"mint">>, Old)}}, From, State)
+    end;
+handle_call({compute_budget, _, _}, _From, State) ->
+    reply({error, invalid_compute_budget}, State);
+handle_call({mint_policy, Owner, Input}, From, State) when is_map(Input) ->
+    Keys = [<<"enabled">>, <<"recipient">>, <<"chain">>, <<"monthly_cents">>],
+    case lists:sort(maps:keys(Input)) =:= lists:sort(Keys) of
+        false -> reply({error, invalid_mint_policy}, State);
+        true ->
+            Old = account(State#st.table, Owner),
+            Budget = (maps:get(<<"budget">>, Old))#{
+                <<"mint_monthly_cents">> => maps:get(<<"monthly_cents">>, Input)},
+            Mint = maps:without([<<"monthly_cents">>], Input),
+            handle_call({policy, Owner, #{<<"budget">> => Budget,
+                <<"mint">> => Mint}}, From, State)
+    end;
+handle_call({mint_policy, _, _}, _From, State) ->
+    reply({error, invalid_mint_policy}, State);
 handle_call({policy, Owner, Input}, _From, State) ->
     T = State#st.table,
     Old = account(T, Owner),
@@ -255,7 +340,7 @@ handle_call({mint, Owner, JobId, Metadata, Recipient, FeeCap}, _From, State) ->
     case dets:lookup(T, Key) of
         [{Key, E}] ->
             case
-                maps:get(<<"manifest_sha256">>, E) =:= Sha andalso
+                same_mint_metadata(maps:get(<<"metadata">>, E, #{}), Metadata) andalso
                     maps:get(<<"recipient">>, E) =:= Recipient andalso
                     maps:get(<<"fee_cap_cents">>, E) =:= FeeCap
             of
@@ -273,6 +358,9 @@ handle_call({mint, Owner, JobId, Metadata, Recipient, FeeCap}, _From, State) ->
                         <<"recipient">> => Recipient,
                         <<"manifest_sha256">> => Sha,
                         <<"metadata">> => Metadata,
+                        <<"copies">> => maps:get(<<"requested_copies">>, Metadata, 1),
+                        <<"requested_metadata">> => maps:get(<<"requested_metadata">>, Metadata, #{}),
+                        %% One total cap for this request, NOT a per-copy charge.
                         <<"fee_cap_cents">> => FeeCap,
                         <<"month">> => month_utc(),
                         <<"created_at_ms">> => erlang:system_time(millisecond)
@@ -604,3 +692,8 @@ mint_check(Mint, Sha, Recipient, Fee, Budget, Current) ->
                 true -> ok
             end
     end.
+
+%% Older requests have implicit one-copy/empty descriptive metadata defaults.
+same_mint_metadata(Old, New) ->
+    Old#{<<"requested_copies">> => maps:get(<<"requested_copies">>, Old, 1),
+         <<"requested_metadata">> => maps:get(<<"requested_metadata">>, Old, #{})} =:= New.

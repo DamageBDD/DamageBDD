@@ -119,7 +119,11 @@ css(App, M) when is_binary(App), is_map(M) ->
         {<<"accent">>, Accent}, {<<"background">>, BG}, {<<"surface">>, Surface},
         {<<"text">>, Text}
     ],
-    Lines = [[<<"--">>, K, <<":">>, V, <<";">>] || {K, V} <- Vars],
+    AppVars = case App of
+        <<"ecai">> -> ecai_vars(BG, Surface, Text, Muted, Accent, Border);
+        _ -> []
+    end,
+    Lines = [[<<"--">>, K, <<":">>, V, <<";">>] || {K, V} <- Vars ++ AppVars],
     %% Make background/surfaces participate in existing hardcoded shells.
     Extra = case App of
         <<"damage">> -> <<".damage-dashboard .dashboard-sidebar,.damage-dashboard .dashboard-topbar{background:var(--damage-surface)}.damage-dashboard .dashboard-main{background:var(--damage-bg)}">>;
@@ -128,3 +132,55 @@ css(App, M) when is_binary(App), is_map(M) ->
         _ -> <<>>
     end,
     iolist_to_binary([<<":root,body{">>, Lines, <<"}\n">>, Extra, <<"\n">>]).
+
+%% ECAI's legacy palette used --paper/--canvas while the theme supplied only
+%% --surface/--background. Remap both halves; derive readable interactive text.
+ecai_vars(BG, Surface, Text, Muted, Accent, Border) ->
+    Ink = readable(Text, Surface),
+    SoftText = readable(Muted, Surface),
+    [
+        {<<"canvas">>, BG}, {<<"paper">>, Surface}, {<<"ink">>, Ink},
+        {<<"text">>, Ink}, {<<"muted">>, SoftText},
+        {<<"navy">>, Surface}, {<<"navy-soft">>, BG},
+        {<<"nav-ink">>, Ink}, {<<"nav-muted">>, SoftText},
+        {<<"blue">>, Accent}, {<<"blue-strong">>, Accent},
+        {<<"on-accent">>, contrast_text(Accent)},
+        {<<"link">>, readable(Accent, Surface)}, {<<"focus">>, readable(Accent, Surface)},
+        {<<"border">>, Border}, {<<"border-strong">>, SoftText},
+        {<<"surface-2">>, <<"color-mix(in srgb,", Surface/binary, " 94%,", Ink/binary, ")">>},
+        {<<"accent-soft">>, <<"color-mix(in srgb,", Accent/binary, " 12%,", Surface/binary, ")">>},
+        {<<"sky">>, <<"color-mix(in srgb,", Accent/binary, " 12%,", Surface/binary, ")">>},
+        {<<"nav-active-bg">>, <<"color-mix(in srgb,", Accent/binary, " 12%,", Surface/binary, ")">>},
+        {<<"success">>, semantic(<<"#21805d">>, <<"#91d99c">>, Surface)},
+        {<<"danger">>, semantic(<<"#b4324e">>, <<"#ff9eae">>, Surface)},
+        {<<"warning">>, semantic(<<"#84621d">>, <<"#ffd392">>, Surface)},
+        {<<"ecai-color-scheme">>, case luminance(Surface) < 0.179 of true -> <<"dark">>; false -> <<"light">> end}
+    ].
+
+semantic(Dark, Light, Background) ->
+    case contrast_ratio(Dark, Background) >= 4.5 of
+        true -> Dark;
+        false -> readable(Light, Background)
+    end.
+
+readable(Foreground, Background) ->
+    case contrast_ratio(Foreground, Background) >= 4.5 of
+        true -> Foreground;
+        false -> contrast_text(Background)
+    end.
+contrast_text(Background) ->
+    case contrast_ratio(<<"#000000">>, Background) >= contrast_ratio(<<"#ffffff">>, Background) of
+        true -> <<"#000000">>;
+        false -> <<"#ffffff">>
+    end.
+contrast_ratio(A, B) ->
+    LA = luminance(A), LB = luminance(B),
+    (max(LA, LB) + 0.05) / (min(LA, LB) + 0.05).
+luminance(<<"#", R:2/binary, G:2/binary, B:2/binary>>) ->
+    0.2126 * linear_channel(R) + 0.7152 * linear_channel(G) + 0.0722 * linear_channel(B).
+linear_channel(Hex) ->
+    V = binary_to_integer(Hex, 16) / 255,
+    case V =< 0.04045 of
+        true -> V / 12.92;
+        false -> math:pow((V + 0.055) / 1.055, 2.4)
+    end.

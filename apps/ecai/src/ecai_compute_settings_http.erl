@@ -8,6 +8,8 @@ trails() ->
         trail("/ecai/compute/settings", settings, get),
         trail("/ecai/compute/eligible-sources", sources, get),
         trail("/ecai/compute/policy", policy, post),
+        trail("/ecai/compute/budget", compute_budget, post),
+        trail("/ecai/compute/mint-policy", mint_policy, post),
         trail("/ecai/compute/providers/:provider", provider, post),
         trail("/ecai/compute/providers/:provider/prepare", prepare, post),
         trail("/ecai/compute/providers/:provider/verify", verify, post),
@@ -113,6 +115,12 @@ handle(sources, Owner, _B, Req, State) ->
         _ ->
             result({error, index_jobs_unavailable}, Req, State)
     end;
+%% The legacy full-policy endpoint remains for existing API clients. The two
+%% workspaces use domain-scoped writes, with unchanged bearer/owner checks.
+handle(compute_budget, Owner, Body, Req, State) ->
+    result(ecai_compute_settings:put_compute_budget(Owner, Body), Req, State);
+handle(mint_policy, Owner, Body, Req, State) ->
+    result(ecai_compute_settings:put_mint_policy(Owner, Body), Req, State);
 handle(policy, Owner, Body, Req, State) ->
     result(ecai_compute_settings:put_policy(Owner, Body), Req, State);
 handle(provider, Owner, Body, Req, State) ->
@@ -193,7 +201,8 @@ handle(mint, Owner, Body, Req, State) ->
         _ ->
             case
                 allowed_keys(Body, [
-                    <<"job_id">>, <<"recipient">>, <<"fee_cap_cents">>, <<"confirm">>
+                    <<"job_id">>, <<"recipient">>, <<"fee_cap_cents">>, <<"confirm">>,
+                    <<"copies">>, <<"metadata">>
                 ]) andalso
                     maps:get(<<"confirm">>, Body, <<>>) =:= <<"queue mint review">> andalso
                     is_binary(JobId) andalso is_binary(Recipient)
@@ -211,7 +220,11 @@ handle(mint, Owner, Body, Req, State) ->
                                         {ok, Metadata} ->
                                             result(
                                                 ecai_compute_settings:request_mint(
-                                                    Owner, JobId, Metadata, Recipient, Fee
+                                                    Owner, JobId,
+                                                    Metadata#{
+                                                        <<"requested_copies">> => maps:get(<<"copies">>, Body, 1),
+                                                        <<"requested_metadata">> => maps:get(<<"metadata">>, Body, #{})
+                                                    }, Recipient, Fee
                                                 ),
                                                 Req,
                                                 State

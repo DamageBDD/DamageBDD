@@ -144,6 +144,19 @@ settings_and_reservations({_Pid, Path}) ->
         2
     ),
     ?assertEqual(<<"awaiting_wallet_signature">>, maps:get(<<"status">>, M1)),
+    ?assertEqual(1, maps:get(<<"copies">>, M1)),
+    %% A retry of the same review does not reserve its cap twice.
+    {ok, M1} = ecai_compute_settings:request_mint(Owner, <<"ready_job">>, Metadata, Recipient, 2),
+    ?assertEqual(
+        {error, mint_request_conflict},
+        ecai_compute_settings:request_mint(Owner, <<"ready_job">>,
+            Metadata#{<<"requested_copies">> => 3}, Recipient, 2)
+    ),
+    ?assertEqual(
+        {error, mint_request_conflict},
+        ecai_compute_settings:request_mint(Owner, <<"ready_job">>,
+            Metadata#{<<"requested_metadata">> => #{<<"title">> => <<"Changed title">>}}, Recipient, 2)
+    ),
     ?assertEqual(
         {error, mint_request_conflict},
         ecai_compute_settings:request_mint(Owner, <<"ready_job">>, Metadata, Recipient, 1)
@@ -210,3 +223,22 @@ cleanup({_Pid, Path}) ->
     _ = file:delete(Path ++ ".TMP"),
     application:unset_env(ecai, compute_price_upper_bounds),
     application:unset_env(ecai, compute_aws_coordinator_role_arn).
+
+
+mint_copy_validation_test() ->
+    ?assertEqual({ok, 3, #{}}, ecai_compute_settings:validate_mint_options(3, #{})),
+    lists:foreach(fun(Copies) ->
+        ?assertEqual({error, invalid_mint_copies}, ecai_compute_settings:validate_mint_options(Copies, #{}))
+    end, [0, -1, 1001, 1.5, <<"3">>, null]).
+
+mint_metadata_validation_test() ->
+    Metadata = #{<<"title">> => <<"Knowledge edition">>, <<"tags">> => [<<"ecai">>],
+        <<"external_url">> => <<"https://example.org/artifact">>},
+    ?assertEqual({ok, 5, Metadata}, ecai_compute_settings:validate_mint_options(5, Metadata)),
+    lists:foreach(fun(Invalid) ->
+        ?assertEqual({error, invalid_mint_metadata}, ecai_compute_settings:validate_mint_options(1, Invalid))
+    end, [null, [], #{<<"manifest_sha256">> => <<"override">>},
+          #{<<"title">> => binary:copy(<<"a">>, 257)}, #{<<"tags">> => lists:duplicate(25, <<"x">>)},
+          #{<<"external_url">> => <<"javascript:alert(1)">>},
+          #{<<"external_url">> => <<"https://user:password@example.org/">>},
+          #{<<"description">> => <<255>>}]).

@@ -16,6 +16,7 @@
 -export([
     start_link/0,
     start_link/1,
+    start_link_registered/1,
     child_spec/0,
     child_spec/1,
     start_supervised/1,
@@ -70,7 +71,7 @@ child_spec(Opts) when is_map(Opts) ->
     Start =
         case map_size(Opts) of
             0 -> {?MODULE, start_link, []};
-            _ -> {?MODULE, start_link, [Opts]}
+            _ -> {?MODULE, start_link_registered, [Opts]}
         end,
     #{
         id => ?MODULE,
@@ -110,12 +111,13 @@ start_supervised(Supervisor, Opts) when is_map(Opts) ->
 start_supervised(_Supervisor, _Opts) ->
     {error, badarg}.
 
-supervisor_owns_child(Supervisor, _Pid) ->
+supervisor_owns_child(Supervisor, Pid) ->
     try supervisor:which_children(Supervisor) of
         Children ->
             lists:any(
                 fun
-                    ({?MODULE, _Pid0, worker, _Modules}) -> true;
+                    ({?MODULE, ChildPid, worker, _Modules}) ->
+                        ChildPid =:= Pid andalso whereis(?MODULE) =:= Pid;
                     (_) -> false
                 end,
                 Children
@@ -123,6 +125,14 @@ supervisor_owns_child(Supervisor, _Pid) ->
     catch
         exit:_Reason -> false
     end.
+
+%% Production child specs must register the name used by status/0 and
+%% catalog_path/0, including the sample path's explicit #{port => 0} options.
+-spec start_link_registered(map()) -> {ok, pid()} | {error, term()}.
+start_link_registered(Opts) when is_map(Opts) ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, Opts, []);
+start_link_registered(_Opts) ->
+    {error, badarg}.
 
 %% start_link/1 is useful for isolated EUnit fixtures. It deliberately does not
 %% register the process, allowing multiple independent servers in one VM.

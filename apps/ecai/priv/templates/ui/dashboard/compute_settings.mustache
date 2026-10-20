@@ -1,32 +1,35 @@
-<section id="computePanel" class="view" data-compute-ui-version="compute-provider-ui-v2" data-panel="compute" data-ecai-managed aria-labelledby="computeTitle" hidden>
+<section id="computePanel" class="view" data-compute-ui-version="compute-only-v1" data-panel="compute" data-ecai-managed aria-labelledby="computeTitle" hidden>
   <div class="page-intro">
-    <div class="eyebrow">ACCOUNT SETTINGS · COMPUTE · PUBLICATION</div>
-    <h1 id="computeTitle">Compute &amp; NFT settings</h1>
-    <p>Connect cloud infrastructure with delegated access, configure budgets and request optional NFT publication review.</p>
+    <div class="eyebrow">ACCOUNT SETTINGS · CLOUD COMPUTE</div>
+    <h1 id="computeTitle">Compute</h1>
+    <p>Connect a cloud provider, set compute limits and reserve capacity for eligible index jobs.</p>
   </div>
-  <p id="computeNotice" class="context-hint" role="status" aria-live="polite">Sign in to manage your account. Cloud execution and on-chain mint submission require separate operator integration.</p>
+  <p id="computeNotice" class="context-hint" role="status" aria-live="polite">Sign in to manage compute connections and reservation limits.</p>
   <p id="computeAssetNotice" class="context-hint compute-asset-notice" role="status" aria-live="polite">Loading cloud setup… If this message remains, reload the dashboard. A cached or missing dashboard asset may be preventing setup from initializing.</p>
-  <div class="compute-tabs" role="navigation" aria-label="Compute configuration subsections">
-    <button type="button" data-compute-scroll="computeProviders">Provider accounts</button>
-    <button type="button" data-compute-scroll="computeBudget">Budgets</button>
-    <button type="button" data-compute-scroll="computeJobs">Quotes &amp; reservations</button>
-    <button type="button" data-compute-scroll="computeNfts">NFT review</button>
+  <aside class="compute-mode-notice" aria-label="Remote execution availability">
+    <strong>Setup &amp; reservations only</strong>
+    <span>This dashboard does not launch cloud jobs. Saving a connection, setting a limit or reserving budget does not submit work to your provider.</span>
+  </aside>
+  <div class="compute-tabs" role="tablist" aria-label="Compute configuration">
+    <button id="computeProvidersTab" type="button" role="tab" aria-controls="computeProviders" aria-selected="true" data-compute-section="computeProviders">Providers</button>
+    <button id="computeBudgetTab" type="button" role="tab" aria-controls="computeBudget" aria-selected="false" tabindex="-1" data-compute-section="computeBudget">Budgets</button>
+    <button id="computeJobsTab" type="button" role="tab" aria-controls="computeJobs" aria-selected="false" tabindex="-1" data-compute-section="computeJobs">Reservations</button>
   </div>
-  <section class="surface panel-pad" id="computeProviders" aria-labelledby="computeProvidersTitle">
+  <section class="surface panel-pad" id="computeProviders" role="tabpanel" aria-labelledby="computeProvidersTab" tabindex="0">
     <div class="panel-heading">
       <div><div class="eyebrow">01 · CONNECT YOUR CLOUD</div><h2 id="computeProvidersTitle">Choose a compute provider</h2></div>
       <button id="computeRefresh" type="button" class="button button-outline button-sm">Refresh status</button>
     </div>
-    <p class="context-hint">Use your provider's console to delegate limited access. ECAI never asks you for AWS access keys, Google service-account JSON or wallet private keys. Saving details or opening a console does not launch compute.</p>
+    <p class="context-hint">Use your provider's console to delegate limited access. ECAI never asks you for AWS access keys, Google service-account JSON. Saving details or opening a console does not launch compute.</p>
 
     <div class="compute-provider-choices" aria-label="Select cloud provider">
       <button type="button" class="compute-provider-choice" id="computeChooseAws" data-compute-provider-choice="aws_batch" aria-controls="computeAwsPanel" aria-pressed="true">
-        <span class="compute-choice-top"><strong>AWS Batch</strong><span class="compute-choice-arrow" aria-hidden="true">↗</span></span>
+        <span class="compute-choice-top"><strong>AWS Batch</strong><span class="compute-choice-arrow" aria-hidden="true">›</span></span>
         <span class="compute-choice-desc">Existing AWS account · IAM role · Batch queue</span>
         <span id="computeAwsStatus" class="compute-status" aria-live="polite">Not configured</span>
       </button>
       <button type="button" class="compute-provider-choice" id="computeChooseGcp" data-compute-provider-choice="cloud_run" aria-controls="computeGcpPanel" aria-pressed="false">
-        <span class="compute-choice-top"><strong>Google Cloud Run Jobs</strong><span class="compute-choice-arrow" aria-hidden="true">↗</span></span>
+        <span class="compute-choice-top"><strong>Google Cloud Run Jobs</strong><span class="compute-choice-arrow" aria-hidden="true">›</span></span>
         <span class="compute-choice-desc">Existing GCP project · workload identity · Cloud Run job</span>
         <span id="computeGcpStatus" class="compute-status" aria-live="polite">Not configured</span>
       </button>
@@ -40,6 +43,10 @@
 
     <div id="computeAwsPanel" class="compute-connection-panel" aria-labelledby="computeAwsTitle">
       <div class="compute-connection-heading"><h3 id="computeAwsTitle">Connect AWS Batch</h3><p id="computeAwsGuideStatus" class="context-hint" role="status" aria-live="polite">Start by preparing your account-specific external ID.</p></div>
+      <div id="computeAwsBlocked" class="compute-blocker" role="status" hidden>
+        <strong>Waiting for node operator setup</strong>
+        <p>This node has not configured its coordinator IAM role. You can prepare a setup ID, but copying a safe trust policy requires <code>compute_aws_coordinator_role_arn</code>. Your AWS account cannot fix that node setting.</p>
+      </div>
       <div class="compute-guidance-grid">
         <div class="compute-guidance-card">
           <h4><span class="compute-mini-step">1</span> Prepare your AWS trust ID</h4>
@@ -126,10 +133,10 @@
     </div>
     <div class="compute-next-row">
       <span id="computeConnectionFootnote" class="context-hint" role="status">Choose a provider, delegate access and verify the configured identity.</span>
-      <button id="computeNextBudget" type="button" class="button button-primary" disabled>Continue to budgets →</button>
+      <button id="computeNextBudget" type="button" class="button button-outline">Configure budgets →</button>
     </div>
   </section>
-  <section class="surface panel-pad" id="computeBudget" aria-labelledby="computeBudgetTitle">
+  <section class="surface panel-pad" id="computeBudget" role="tabpanel" aria-labelledby="computeBudgetTab" tabindex="0" hidden>
     <div class="panel-heading"><div><div class="eyebrow">02 · POLICY</div><h2 id="computeBudgetTitle">Spending limits</h2></div><span id="computeMonth" class="context-hint">UTC month</span></div>
   <div class="compute-metrics" aria-label="Compute budget accounting">
     <article class="surface panel-pad"><div class="eyebrow">MONTHLY COMPUTE LIMIT</div><strong id="computeBudgetLimit">$0.00</strong><span>USD · per account</span></article>
@@ -142,13 +149,12 @@
       <div class="compute-form-grid">
         <label>Monthly indexing reservation limit (USD)<input name="monthly" type="number" min="0" max="1000000" step="0.01" value="0" required></label>
         <label>Maximum per indexing job (USD)<input name="per_job" type="number" min="0" max="1000000" step="0.01" value="0" required></label>
-        <label>Monthly NFT fee reservation limit (USD)<input name="mint_monthly" type="number" min="0" max="1000000" step="0.01" value="0" required></label>
       </div>
-      <div class="inline-actions"><button type="submit" class="button button-primary">Save budget policy</button><span class="context-hint">USD values are converted to integer cents on the server.</span></div>
+      <div class="inline-actions"><button type="submit" class="button button-primary">Save budget policy</button><span class="context-hint">USD amounts are stored as integer cents.</span></div>
     </form>
     <p class="context-hint">These are admission and reservation limits, <strong>not</strong> hard caps on your cloud provider's invoices. Configure provider billing alerts, job timeouts, quotas and spend limits independently. No billing reconciliation is active yet.</p>
   </section>
-  <section class="surface panel-pad" id="computeJobs" aria-labelledby="computeJobsTitle">
+  <section class="surface panel-pad" id="computeJobs" role="tabpanel" aria-labelledby="computeJobsTab" tabindex="0" hidden>
     <div class="panel-heading"><div><div class="eyebrow">03 · ESTIMATE &amp; RESERVE</div><h2 id="computeJobsTitle">Remote index work</h2></div></div>
     <p class="context-hint">Only a node-approved <code>shard_search</code> Wikipedia/Yelp source job can be quoted. A reservation does not start a remote container; queue-dispatch integration is a separate step.</p>
     <form id="computeJobForm" class="stack-form">
@@ -162,27 +168,10 @@
         <label>Maximum runtime (seconds)<input name="max_seconds" type="number" min="30" max="86400" value="1800" required></label>
         <label>Maximum attempts<input name="max_attempts" type="number" min="1" max="3" value="1" required></label>
       </div>
-      <div class="inline-actions"><button id="computeQuoteBtn" type="button" class="button button-outline">Estimate maximum charge</button><button id="computeReserveBtn" type="submit" class="button button-primary" disabled>Reserve compute budget</button></div>
+      <div class="inline-actions"><button id="computeQuoteBtn" type="button" class="button button-outline">Estimate reservation</button><button id="computeReserveBtn" type="submit" class="button button-primary" disabled>Reserve compute budget</button></div>
       <div id="computeQuoteStatus" class="compute-quote" role="status" aria-live="polite">A server-side upper-bound price schedule must be configured by the node operator.</div>
     </form>
     <div class="panel-heading"><h3>Reservations</h3></div>
     <div id="computeReservations" class="compute-rows"><div class="empty-state">No reservations.</div></div>
-  </section>
-  <section class="surface panel-pad" id="computeNfts" aria-labelledby="computeNftsTitle">
-    <div class="panel-heading"><div><div class="eyebrow">04 · PUBLISH WITH CONSENT</div><h2 id="computeNftsTitle">NFT minting</h2></div></div>
-    <p class="context-hint">Only completed, verified artifacts with publishable NFT metadata are eligible. Requesting a mint stores a pending approval record; <strong>no on-chain transaction is submitted</strong> by this settings module.</p>
-    <form id="computeMintPolicyForm" class="stack-form">
-      <label class="compute-check"><input type="checkbox" name="enabled"> Allow manually requested mint-review intents (automatic minting remains off)</label>
-      <label>Recipient Æternity wallet (public address only)<input name="recipient" autocomplete="off" spellcheck="false" placeholder="ak_…"></label>
-      <p class="context-hint">A recipient address is not a wallet connection or proof of ownership. External wallet signing will be required at the mint stage.</p>
-      <div class="inline-actions"><button type="submit" class="button button-outline">Save mint preferences</button></div>
-    </form>
-    <form id="computeMintForm" class="stack-form">
-      <label>Eligible index artifact<select id="computeMintJob" name="job_id"><option value="">Select a mintable job</option></select></label>
-      <label>Fee reservation ceiling (USD)<input name="fee" type="number" min="0.01" max="1000000" step="0.01" value="1.00" required></label>
-      <div class="inline-actions"><button id="computeMintRequestBtn" type="submit" class="button button-primary">Request mint review</button><button id="computeLoadMintable" type="button" class="button button-outline">Reload eligible artifacts</button></div>
-    </form>
-    <div class="panel-heading"><h3>Mint requests</h3></div>
-    <div id="computeMintRequests" class="compute-rows"><div class="empty-state">No mint requests.</div></div>
   </section>
 </section>
