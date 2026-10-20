@@ -6,7 +6,8 @@
     [
         {description, "An OTP application that provides a graphical shell."},
         {vsn, "0.1.0"},
-        {registered, [erm_sup, gtknode4_sup, gtknode4, gtknode4_port, gtkgs]},
+        {registered, [erm_sup, gtknode4_sup, gtknode4, gtknode4_port, gtkgs,
+                      erm_voice_events, erm_voice_widget]},
         {mod, {erm_app, []}},
         {
             applications,

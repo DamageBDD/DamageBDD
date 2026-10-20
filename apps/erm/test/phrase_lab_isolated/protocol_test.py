@@ -26,6 +26,7 @@ class Peer:
         self.p = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.PIPE, env=env)
         self.buffer = bytearray()
+        self.meters = []
     def send(self, body):
         self.p.stdin.write(struct.pack('>I', len(body)) + body)
         self.p.stdin.flush()
@@ -38,6 +39,11 @@ class Peer:
                 if len(self.buffer) >= 4 + size:
                     result = bytes(self.buffer[4:4+size])
                     del self.buffer[:4+size]
+                    if result[:1] == b'L' and len(result) == 14:
+                        meter = struct.unpack('>QfB', result[1:])
+                        assert math.isfinite(meter[1]) and -200 <= meter[1] <= 10 and meter[2] in (0, 1)
+                        self.meters.append(meter)
+                        continue
                     return result
             remaining = until - time.monotonic()
             if remaining <= 0 or not select.select([self.p.stdout], [], [], remaining)[0]:
@@ -155,6 +161,7 @@ def duplex_capture():
         p.send(b'S'+struct.pack('>Q', epoch*2))
         assert p.read() == b'K'+struct.pack('>Q', epoch)
         begin = p.read(); assert begin[:1] == b'B'
+        assert any(e == epoch for e, _, _ in p.meters), 'no lab capture meter'
         result = p.read(); assert result[:1] == b'Q'
         size, = struct.unpack_from('>I', result, 1)
         rec, synth = result[5:5+size], result[5+size:]

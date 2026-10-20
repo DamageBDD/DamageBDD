@@ -43,6 +43,22 @@ profile_test() ->
 
 gates_test_() -> {foreach, fun setup/0, fun cleanup/1, [
     fun(_) -> fun() ->
+        {ok,_}=erm_voice_events:ensure_started(),listen(),
+        {Port,E,_,_}=context(),
+        emit(Port,<<"L",E:64,-24.0:32/float,1>>),_=erm_phrase_voice:status(),
+        ?assertMatch(#{phase:=listening,level:=0.6,speech:=true},meter_state()),
+        emit(Port,<<"L",(E-1):64,0.0:32/float,1>>),_=erm_phrase_voice:status(),
+        ?assertMatch(#{level:=0.6},meter_state()),
+        ok=erm_phrase_voice:pause(),
+        emit(Port,<<"L",E:64,0.0:32/float,1>>),_=erm_phrase_voice:status(),
+        ?assertMatch(#{phase:=muted,level:=0.0},meter_state()),
+        ?assertMatch(#{ready:=true,paused:=true},erm_phrase_voice:status()),
+        ok=erm_phrase_voice:resume(),listen(),{_,NewE,_,_}=context(),
+        persistent_term:put({erm_tts,suppress_until},erlang:monotonic_time(millisecond)+100000),
+        emit(Port,<<"L",NewE:64,0.0:32/float,1>>),_=erm_phrase_voice:status(),
+        ?assertMatch(#{level:=0.0},meter_state()),no_command()
+    end end,
+    fun(_) -> fun() ->
         listen(),inject(0,[1.0,0.0],1500,1),no_command(),
         ?assertMatch(#{last:=#{outcome:=observed}},erm_phrase_voice:status())
     end end,
@@ -127,3 +143,8 @@ inject(Reason,V,Ms,Offset) ->
     {P,E,Rev,Id}=context(),emit(P,<<"B",E:64,Id:64>>),
     emit(P,packet(E,Id,Rev,Reason,V,Ms,Offset)),emit(P,<<"F">>),_=erm_phrase_voice:status(),ok.
 no_command() -> receive {command,T}->error({unexpected_command,T}) after 30->ok end.
+
+meter_state() ->
+    P=whereis(erm_phrase_voice),
+    [D]=[Data || #{producer:=Producer,channel:=input,data:=Data}<-erm_voice_events:snapshot(),Producer=:=P],
+    D.

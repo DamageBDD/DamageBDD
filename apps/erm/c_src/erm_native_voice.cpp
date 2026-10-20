@@ -73,7 +73,7 @@ static const SherpaOnnxVoiceActivityDetector* create_vad(const char*model,const 
   return vad;
 }
 static void audio_loop(int fd,const char*model,const SherpaOnnxVoiceActivityDetector*vad,AudioConfig current){
-  uint64_t previous=gate.load(),id=0,sealed=UINT64_MAX;size_t active_samples=0;bool discard=false;
+  uint64_t previous=gate.load(),id=0,sealed=UINT64_MAX;size_t active_samples=0;bool discard=false;unsigned meter_frames=0;
   for(;;){unsigned char raw[1024];if(!transfer(fd,raw,sizeof(raw),false)){send_packet("Ecapture_closed");_Exit(1);}
     uint64_t g;bool one_shot,embedding_only,synthesis;AudioConfig requested;
     {std::lock_guard<std::mutex> lock(config_mu);requested=desired_audio;g=gate.load();one_shot=one_shot_gate==g;embedding_only=embedding_only_gate==g;synthesis=synthesis_gate==g;}
@@ -91,6 +91,13 @@ static void audio_loop(int fd,const char*model,const SherpaOnnxVoiceActivityDete
     float pcm[512];for(int i=0;i<512;++i){int16_t v=int16_t(uint16_t(raw[2*i])|(uint16_t(raw[2*i+1])<<8));pcm[i]=erm_voice_audio::apply_gain(float(v)/32768.f,factor);}
     SherpaOnnxVoiceActivityDetectorAcceptWaveform(vad,pcm,512);
     bool speech=SherpaOnnxVoiceActivityDetectorDetected(vad)!=0;
+    // 15.6 Hz measured microphone energy; epoch prevents stale gated audio.
+    if (++meter_frames % 2 == 0) {
+      auto levels=erm_voice_audio::levels(pcm,512);
+      uint32_t bits;memcpy(&bits,&levels.rms_dbfs,4);
+      std::string meter="L";number(meter,g>>1,8);number(meter,bits,4);
+      number(meter,speech?1:0,1);send_packet(meter);
+    }
     if(speech)active_samples+=512;else active_samples=0;
     if(active_samples>size_t(max_ms)*16&&!discard){discard=true;diagnostic("utterance_too_long");}
     while(!SherpaOnnxVoiceActivityDetectorEmpty(vad)){

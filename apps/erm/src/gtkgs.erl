@@ -44,6 +44,7 @@
     create/4,
     create_tree/2,
     config/2,
+    motion/3,
     read/2,
     destroy/1,
     message_dialog/3,
@@ -212,6 +213,10 @@ create_tree(Parent, Tree) when is_list(Tree) ->
 config(Object, Options) ->
     Server = server_for(Object),
     gen_server:call(Server, {config, self(), Object, normalize_options(Options)}, infinity).
+
+%% Owner resolution stays inside gtkgs; callers cannot bypass it with native IDs.
+motion(Object, Action, Payload) ->
+    gen_server:call(server_for(Object), {motion, self(), Object, Action, Payload}, infinity).
 
 -spec read(object_key(), atom() | tuple()) -> term().
 read(Object, Key) ->
@@ -437,6 +442,13 @@ handle_call({remove_stylesheet, _Owner, Name0}, _From, State0) ->
     case safe_remove_stylesheet(Name0, State0) of
         {ok, State} -> {reply, ok, State};
         {error, Reason} -> {reply, {error, Reason}, State0}
+    end;
+handle_call({motion, Owner, Ref, Action, Payload}, _From, State) ->
+    case resolve_object(Owner, Ref, State) of
+        {ok, Object} ->
+            {reply, safe_backend_call({motion, Object#object.native_id, Action, Payload},
+                                      State#state.backend_timeout), State};
+        Error -> {reply, Error, State}
     end;
 handle_call({inspect, Owner, Ref}, _From, State) ->
     case resolve_object(Owner, Ref, State) of
@@ -1386,6 +1398,8 @@ validate_type(Type) when
     Type =:= scale;
     Type =:= picture;
     Type =:= scrolled;
+    Type =:= motion;
+    Type =:= voice_meter;
     Type =:= map
 ->
     ok;
@@ -1403,6 +1417,7 @@ validate_name(Owner, Name, #state{names = Names}) when is_atom(Name) ->
 is_container(window) -> true;
 is_container(frame) -> true;
 is_container(scrolled) -> true;
+is_container(motion) -> true;
 is_container(_) -> false.
 
 native_type(window) -> window;
@@ -1415,6 +1430,8 @@ native_type(listbox) -> list_view;
 native_type(scale) -> scale;
 native_type(picture) -> picture;
 native_type(scrolled) -> scrolled_box;
+native_type(motion) -> motion;
+native_type(voice_meter) -> voice_meter;
 native_type(map) -> map.
 
 %% Refuse unsupported native widgets before allocating logical state. This is

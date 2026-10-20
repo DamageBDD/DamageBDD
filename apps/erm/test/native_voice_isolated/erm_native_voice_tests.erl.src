@@ -806,3 +806,17 @@ rapid_enrolment_test_() -> {foreach, fun setup_v3/0, fun cleanup_tuning/1, [
         ?assertEqual(undefined,persistent_term:get({erm_native_voice,guidance},undefined))
     end end
 ]}.
+
+%% Real native capture code, deterministic PCM supplied only at the SDK boundary.
+native_meter_test() ->
+    P=native_worker([]),
+    try
+        receive {P,{data,<<"R",2:16,4>>}}->ok after 2000->error(no_ready) end,
+        true=port_command(P,<<"M",2:64>>),
+        receive {P,{data,<<"L",1:64,Db:32/float,Speech>>}} ->
+            ?assert(abs(Db+12.0412)<0.01),?assert(Speech=:=0 orelse Speech=:=1)
+        after 2000->error(no_measured_meter) end,
+        true=port_command(P,<<"M",5:64>>),
+        receive {P,{data,<<"L",2:64,_/binary>>}}->error(muted_meter)
+        after 180->ok end
+    after try port_close(P) catch error:badarg->ok end end.

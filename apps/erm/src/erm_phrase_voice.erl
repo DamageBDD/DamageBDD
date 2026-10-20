@@ -110,6 +110,7 @@ handle_call({lab_capture, Ref}, {Owner, _}, S = #st{phase = ready, busy = false,
         true ->
             Next = close_gate(S), E = Next#st.epoch+1,
             send(Next, <<"S", (E bsl 1):64>>),
+            voice_event(input, #{phase=>listening,level=>0.0,speech=>false}),
             {reply, ok, Next#st{epoch = E, armed = true,
                 lab = L#{waiting => true, deadline => now_ms()+15000}}};
         false -> {reply, {error, tts_or_echo_guard}, S}
@@ -189,9 +190,25 @@ packet(<<"C", Epoch:64>>, S = #st{phase = configuring, config_epoch = Epoch}) ->
     ready(S#st{config_ack = true});
 packet(<<"L", Rev:64>>, S = #st{phase = configuring, revision = Rev}) ->
     ready(S#st{profile_ack = true});
+%% Meter packets have a different length from the existing profile-load ack.
+%% Accept delayed telemetry harmlessly; publish only the current open gate.
+packet(<<"L", E:64, Db:32/float, Speech>>, S) when Db >= -200, Db =< 10, Speech =< 1 ->
+    case S#st.phase =:= ready andalso E =:= S#st.epoch andalso
+         S#st.armed andalso not suppressed() of
+        true -> voice_event(input, #{phase=>listening,
+            level=>max(0.0,min(1.0,(Db+60)/60)),speech=>Speech=:=1});
+        false -> ok
+    end,
+    S;
 packet(<<"B", E:64, Id:64>>, S = #st{phase = Phase, busy = false, last_id = Last})
     when (Phase =:= ready orelse Phase =:= configuring), Id > Last ->
     true = E =/= S#st.epoch orelse S#st.armed,
+    case Phase =:= ready andalso E =:= S#st.epoch andalso not suppressed() of
+        true ->
+            voice_event(input, #{phase=>muted,level=>0.0,speech=>false}),
+            voice_event(work, #{phase=>processing});
+        false -> ok
+    end,
     Armed = S#st.armed andalso E =/= S#st.epoch,
     %% A cancelled epoch can finish on the worker. Track its F but never accept P.
     Next = S#st{busy = true, inflight = {E, Id}, last_id = Id, received = false, armed = Armed},
@@ -230,6 +247,7 @@ packet(<<"P", _/binary>> = Data, S = #st{busy = true, received = false, inflight
         false -> Next#st{last = {rejected, stale_muted_or_reconfigured}}
     end;
 packet(<<"F">>, S = #st{busy = true}) ->
+    voice_event(work, #{phase=>idle}),
     Next = S#st{busy = false, inflight = undefined, received = false},
     case S#st.phase of ready -> maybe_arm(clear_timer(Next)); _ -> Next end;
 packet(<<"D", D/binary>>, S) when byte_size(D) =< 256 ->
@@ -355,12 +373,16 @@ close_gate(S = #st{port = P}) ->
         true -> try port_command(P, <<"M", ((E bsl 1) bor 1):64>>) catch error:_ -> ok end;
         false -> ok
     end,
+    voice_event(input, #{phase=>muted,level=>0.0,speech=>false}),
+    voice_event(work, #{phase=>idle}),
     S#st{epoch = E, armed = false}.
 maybe_arm(S = #st{phase = ready, busy = false, armed = false, paused = false, lab = undefined}) ->
     case not suppressed() andalso now_ms() >= S#st.next_arm of
         true ->
             E = S#st.epoch+1,
-            try send(S, <<"P", (E bsl 1):64>>), S#st{epoch = E, armed = true}
+            try send(S, <<"P", (E bsl 1):64>>),
+                voice_event(input, #{phase=>listening,level=>0.0,speech=>false}),
+                S#st{epoch = E, armed = true}
             catch C:R -> failed({arm_failed, C, R}, S) end;
         false -> S
     end;
@@ -375,6 +397,7 @@ failed(Reason, S0) ->
     Next = clear_timer(close_gate(S)),
     case S#st.port of P when is_port(P) -> try port_close(P) catch error:_ -> ok end; _ -> ok end,
     cancel_timer(S#st.retry),
+    voice_event(input, #{phase=>error,level=>0.0,speech=>false}),
     logger:warning("phrase backend stopped: ~p", [Reason]),
     Next#st{port = undefined, phase = disconnected, busy = false, armed = false,
         inflight = undefined, received = false, enrol = undefined, error = Reason,
@@ -396,6 +419,9 @@ terminate(_, S) ->
     cancel_timer(S#st.poll), cancel_timer(S#st.retry), cancel_timer(S#st.timer),
     case S#st.port of P when is_port(P) -> try port_close(P) catch error:_ -> ok end; _ -> ok end, ok.
 code_change(_, _, _) -> {error, restart_required}.
+
+voice_event(Channel, Data) ->
+    try erm_voice_events:publish(?MODULE, Channel, Data) catch error:undef -> ok end.
 
 protocol(S) -> case maps:get(lab_enabled, S#st.opts) of true -> 6; false -> 5 end.
 lab_snapshot(S) ->

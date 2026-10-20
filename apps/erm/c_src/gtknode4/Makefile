@@ -12,7 +12,7 @@ SHUMATE_CFLAGS  ?= $(shell pkg-config --silence-errors --cflags shumate-1.0)
 SHUMATE_LIBS    ?= $(shell pkg-config --silence-errors --libs shumate-1.0)
 
 CFLAGS  := -O2 -Wall -Wextra -pthread $(GTK_CFLAGS) -I$(ERL_EI_INC)
-LDFLAGS := $(GTK_LIBS) $(X11_LIBS) -L$(ERL_EI_LIB) -lei -pthread
+LDFLAGS := $(GTK_LIBS) $(X11_LIBS) -L$(ERL_EI_LIB) -lei -pthread -lm
 PRIV_BIN := ../../priv/bin
 INSTALLED_TARGET := $(PRIV_BIN)/gtknode4
 
@@ -31,10 +31,13 @@ endif
 # added protocol capability such as libshumate maps.
 all: gtknode4 install
 
-gtknode4: gtknode4.o
-	$(CC) gtknode4.o $(LDFLAGS) -o $@
+gtknode4: gtknode4.o gtknode4_motion.o
+	$(CC) gtknode4.o gtknode4_motion.o $(LDFLAGS) -o $@
 
-gtknode4.o: gtknode4.c gtknode4.h
+gtknode4_motion.o: gtknode4_motion.c gtknode4_motion.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+gtknode4.o: gtknode4.c gtknode4.h gtknode4_motion.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 install: gtknode4
@@ -43,4 +46,4 @@ install: gtknode4
 	mv -f $(INSTALLED_TARGET).new $(INSTALLED_TARGET)
 
 clean:
-	rm -f gtknode4 gtknode4.o $(INSTALLED_TARGET).new
+	rm -f gtknode4 gtknode4.o gtknode4_motion.o $(INSTALLED_TARGET).new

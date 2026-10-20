@@ -366,10 +366,22 @@ handle_info({P, {data, <<"R", Dim:16>>}}, S = #st{port = P, ready = false}) when
                 extra = (S#st.extra)#{protocol => 1, acoustic_config => unavailable}
             })
         )};
+handle_info({P, {data, <<"L", E:64, Db:32/float, Speech>>}},
+            S = #st{port=P, ready=true}) when Db >= -200, Db =< 10, Speech =< 1 ->
+    case E =:= S#st.epoch andalso not S#st.muted andalso not suppressed() of
+        true -> voice_event(input, #{phase=>listening, level=>max(0.0,min(1.0,(Db+60)/60)),
+                                     speech=>Speech=:=1});
+        false -> ok
+    end,
+    {noreply,S};
 handle_info({P, {data, <<"B", Epoch:64, Id:64>>}}, S = #st{port = P, ready = true, opts = O}) ->
+    case Epoch =:= S#st.epoch andalso not S#st.muted andalso not suppressed() of
+        true -> voice_event(work, #{phase=>processing}); false -> ok
+    end,
     {noreply,
         arm(maps:get(inference_timeout_ms, O), detection_end(Epoch, Id, S#st{processing = true}))};
 handle_info({P, {data, <<"F">>}}, S = #st{port = P, ready = true}) ->
+    voice_event(work, #{phase=>idle}),
     {noreply, clear_timer(S#st{processing = false})};
 handle_info({P, {data, <<"D", Reason/binary>>}}, S = #st{port = P}) ->
     logger:debug("native voice: ~ts", [Reason]),
@@ -713,6 +725,7 @@ dispatch(#{id := Id}, Score, S = #st{opts = #{observe_only := true}}) ->
     logger:debug("native speaker observation id=~p score=~p", [Id, Score]),
     S#st{last = #{id => Id, verification => Score, dispatch => observe_only}};
 dispatch(#{text := Text, id := Id}, Score, S = #st{opts = O}) ->
+    voice_event(input, #{text=>Text}),
     case maps:get(debug_utterances, O) of
         true -> logger:debug("native utterance id=~p speaker_score=~p text=~ts", [Id, Score, Text]);
         false -> ok
@@ -815,6 +828,9 @@ bump(S = #st{port = P, epoch = E, muted = M, ready = true}) ->
         end,
     try
         true = port_command(P, <<Command, B:64>>),
+        voice_event(input, #{phase=>case M orelse Closed of true->muted; false->listening end,
+                             level=>0.0, speech=>false}),
+        voice_event(work, #{phase=>idle}),
         S#st{epoch = Epoch}
     catch
         _:_ -> failed(port_closed, S)
@@ -830,6 +846,8 @@ clear_timer(S = #st{timer = T}) ->
     erlang:cancel_timer(T),
     S#st{timer = undefined}.
 failed(R, S) ->
+    voice_event(input, #{phase=>error,level=>0.0}),
+    voice_event(work, #{phase=>idle}),
     clear_guidance(),
     case maps:get(tuner, S#st.extra, undefined) of
         #{pid := Tuner} = T ->
@@ -1200,3 +1218,7 @@ default_binary() ->
         {error, _} -> "/nonexistent/erm_native_voice";
         D -> filename:join(D, "erm_native_voice")
     end.
+
+%% Observability is optional in standalone/isolated voice VMs.
+voice_event(Channel, Data) ->
+    try erm_voice_events:publish(?MODULE, Channel, Data) catch error:undef -> ok end.

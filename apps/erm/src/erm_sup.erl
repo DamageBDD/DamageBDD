@@ -70,7 +70,7 @@ init([]) ->
                         MediaSpecs = media_specs(),
                         LegacySpecs = legacy_specs(),
                         OptionalSpecs = [optional_services_child_spec()],
-                        MediaSpecs ++ erm_tts:child_specs() ++ whisper_child_specs() ++ LegacySpecs ++
+                        [erm_voice_events:child_spec()] ++ MediaSpecs ++ erm_tts:child_specs() ++ whisper_child_specs() ++ LegacySpecs ++
                             OptionalSpecs
                 end,
 

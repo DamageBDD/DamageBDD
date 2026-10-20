@@ -17,6 +17,7 @@ done
 # are external boundaries only, not replacements for recognition policy.
 erlc -o "$TMP" "$ERM/src/erm_native_voice.erl"
 erlc -Werror -o "$TMP" "$ERM/src/erm_phrase_codec.erl" "$ERM/src/erm_phrase_voice.erl" \
+    "$ERM/src/erm_voice_events.erl" \
     "$ERM/src/erm_phrase_lab.erl" "$ERM/src/erm_phrase_lab_native.erl" \
     "$ERM/src/erm_phrase_lab_store.erl" "$ERM/src/erm_phrase_lab_metrics.erl" "$TMP"/*.erl
 erl +S 2 -noshell -pa "$TMP" -eval \

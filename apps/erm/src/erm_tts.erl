@@ -303,7 +303,13 @@ handle_info({P, {data, <<"R">>}}, S = #st{port = P, ready = false}) ->
         clear_timer(S#st{
             ready = true, error = undefined, opts = (S#st.opts)#{cue_protocol => false}
         })};
+handle_info({P, {data, <<"P">>}}, S = #st{port=P,busy=true}) ->
+    voice_event(#{phase=>speaking}), {noreply,S};
+handle_info({P, {data, <<"L", Level:32/float>>}}, S = #st{port=P,busy=true})
+  when Level >= 0, Level =< 1 ->
+    voice_event(#{phase=>speaking,level=>Level}), {noreply,S};
 handle_info({P, {data, <<"D">>}}, S = #st{port = P, current = {cue, _, _, _}}) ->
+    voice_event(#{phase=>idle,level=>0.0}),
     cue_result(ok, S),
     %% Keep speech replay and the existing speech echo guard unchanged.
     {noreply, clear_timer(S#st{busy = false, current = undefined})};
@@ -313,6 +319,7 @@ handle_info(
 ) ->
     {noreply, disconnect(cue_owner_down, S)};
 handle_info({P, {data, <<"D">>}}, S = #st{port = P, busy = true, parts = []}) ->
+    voice_event(#{phase=>idle,level=>0.0}),
     gate(tail(S), S),
     {noreply, clear_timer(S#st{busy = false, last_response = S#st.current, current = undefined})};
 handle_info({P, {data, <<"D">>}}, S = #st{port = P, busy = true, parts = [Next | Rest]}) ->
@@ -380,6 +387,7 @@ enqueue(Text, S) ->
             {Error, S}
     end.
 send(Text, S = #st{port = P, opts = O}) ->
+    voice_event(#{phase=>synthesizing,level=>0.0,text=>Text}),
     logger:debug("tts speaking chunk volume=~p voice=~p: ~tp", [
         S#st.speech_volume, maps:get(voice, O), Text
     ]),
@@ -438,6 +446,7 @@ cancel_retry(T) ->
 retry(S = #st{retry = undefined}) -> S#st{retry = erlang:send_after(5000, self(), connect)};
 retry(S) -> S.
 disconnect(Reason, S) ->
+    voice_event(#{phase=>case Reason of cancelled->idle; _->error end,level=>0.0}),
     cue_result({error, Reason}, S),
     logger:debug("tts backend disconnected: ~tp", [Reason]),
     case S#st.busy of
@@ -657,3 +666,6 @@ reload_options(Overrides, O) ->
         throw:unknown_voice -> {error, unknown_voice};
         _:_ -> {error, invalid_tts_configuration}
     end.
+
+voice_event(Data) ->
+    try erm_voice_events:publish(?MODULE, output, Data) catch error:undef -> ok end.

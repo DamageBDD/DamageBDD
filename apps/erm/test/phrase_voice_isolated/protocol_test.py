@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real native worker, fake external SDK/capture. No microphone accuracy claims."""
 import os
+import math
 import select
 import struct
 import subprocess
@@ -26,18 +27,25 @@ class Peer:
             'unused-vad', 'unused-speaker', capture, 'default', 'en', '2', '700', '8000'],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
         self.buffer = bytearray()
+        self.meters = []
         assert self.read() == b'R\0\2' + bytes([5 if phrases else 4])
     def send(self, packet):
         self.p.stdin.write(struct.pack('>I', len(packet)) + packet)
         self.p.stdin.flush()
-    def read(self, timeout=2):
+    def read(self, timeout=2, include_meter=False):
         deadline=time.monotonic()+timeout
         while True:
             if len(self.buffer)>=4:
                 size=struct.unpack_from('>I',self.buffer)[0]
                 assert size<=1048576
                 if len(self.buffer)>=4+size:
-                    out=bytes(self.buffer[4:4+size]);del self.buffer[:4+size];return out
+                    out=bytes(self.buffer[4:4+size]);del self.buffer[:4+size]
+                    if out[:1]==b'L' and len(out)==14:
+                        meter=struct.unpack('>QfB',out[1:])
+                        assert math.isfinite(meter[1]) and -200<=meter[1]<=10 and meter[2] in (0,1)
+                        self.meters.append(meter)
+                        if not include_meter:continue
+                    return out
             left=deadline-time.monotonic()
             if left<=0 or not select.select([self.p.stdout],[],[],left)[0]:
                 raise TimeoutError('no native packet')
@@ -46,7 +54,7 @@ class Peer:
                 raise RuntimeError(('native EOF',self.p.poll(),self.p.stderr.read()))
             self.buffer.extend(data)
     def quiet(self):
-        try: msg=self.read(.12)
+        try: msg=self.read(.12,include_meter=True)
         except TimeoutError: return
         raise AssertionError(('unexpected packet',msg[:40]))
     def close(self):
@@ -62,11 +70,13 @@ def load(peer, revision=1, records=()):
     assert peer.read()==b'L'+struct.pack('>Q',revision)
 
 def frame(peer, epoch):
+    before=len(peer.meters)
     peer.send(b'P'+struct.pack('>Q',epoch*2))
     begin=peer.read();assert begin[:1]==b'B' and struct.unpack_from('>Q',begin,1)[0]==epoch
     audio=peer.read();assert audio[:1]==b'P'
     assert struct.unpack_from('>QQ',audio,1)==struct.unpack_from('>QQ',begin,1)
     assert peer.read()==b'F'
+    assert any(e==epoch for e,_,_ in peer.meters[before:]), 'no current-epoch meter'
     return audio
 
 def parse(audio):

@@ -1,4 +1,5 @@
 #include "gtknode4.h"
+#include "gtknode4_motion.h"
 
 #include <errno.h>
 #include <poll.h>
@@ -45,6 +46,8 @@ typedef struct {
   char *placeholder;
   char *orientation;
   char *css_class;
+  char *classes;
+  char *remove_class;
   char *wm_class;
   char *wm_instance;
   char *window_role;
@@ -182,6 +185,8 @@ static void gn4_options_clear(Gn4Options *opts) {
   g_free(opts->placeholder);
   g_free(opts->orientation);
   g_free(opts->css_class);
+  g_free(opts->classes);
+  g_free(opts->remove_class);
   g_free(opts->wm_class);
   g_free(opts->wm_instance);
   g_free(opts->window_role);
@@ -316,6 +321,8 @@ static gboolean gn4_decode_options(const char *buf, int *idx,
     GN4_STRING_OPTION("placeholder", placeholder)
     GN4_STRING_OPTION("orientation", orientation)
     GN4_STRING_OPTION("class", css_class)
+    GN4_STRING_OPTION("classes", classes)
+    GN4_STRING_OPTION("remove_class", remove_class)
     GN4_STRING_OPTION("wm_class", wm_class)
     GN4_STRING_OPTION("wm_instance", wm_instance)
     GN4_STRING_OPTION("window_role", window_role)
@@ -537,6 +544,17 @@ static void gn4_event_send(Gn4Widget *entry, ei_x_buff *event) {
 static void gn4_send_empty_event(Gn4Widget *entry, const char *name) {
   ei_x_buff event;
   gn4_event_begin(entry, &event, name, 0);
+  gn4_event_send(entry, &event);
+}
+
+static void gn4_motion_finished(GtkWidget *widget, long id, const char *status, gpointer data) {
+  (void)widget;
+  Gn4Widget *entry = data;
+  if (entry->destroying) return;
+  ei_x_buff event;
+  gn4_event_begin(entry, &event, "motion_finished", 2);
+  ei_x_encode_atom(&event, "animation_id"); ei_x_encode_long(&event, id);
+  ei_x_encode_atom(&event, "status"); ei_x_encode_atom(&event, status);
   gn4_event_send(entry, &event);
 }
 
@@ -1114,6 +1132,22 @@ static gboolean gn4_apply_options(Gn4Widget *entry, Gn4Options *opts) {
     gtk_widget_set_tooltip_text(widget, opts->tooltip);
   if (opts->placeholder && GTK_IS_ENTRY(target))
     gtk_entry_set_placeholder_text(GTK_ENTRY(target), opts->placeholder);
+  if (opts->classes) {
+    gtk_widget_set_css_classes(widget, NULL);
+    gn4_apply_css_classes(widget, opts->classes);
+    if (target != widget) {
+      gtk_widget_set_css_classes(target, NULL);
+      gn4_apply_css_classes(target, opts->classes);
+    }
+  }
+  if (opts->remove_class) {
+    char **classes = g_strsplit_set(opts->remove_class, " \t\r\n", -1);
+    for (int n = 0; classes[n]; n++) if (classes[n][0]) {
+      gtk_widget_remove_css_class(widget, classes[n]);
+      if (target != widget) gtk_widget_remove_css_class(target, classes[n]);
+    }
+    g_strfreev(classes);
+  }
   if (opts->css_class) {
     gn4_apply_css_classes(widget, opts->css_class);
     if (target != widget)
@@ -1252,6 +1286,8 @@ static gboolean gn4_attach_widget(Gn4State *st, Gn4Widget *entry) {
     gtk_window_set_child(GTK_WINDOW(parent->widget), entry->widget);
     return TRUE;
   }
+  if (GN4_IS_MOTION(parent->widget))
+    return gn4_motion_child(parent->widget, entry->widget);
   if (GTK_IS_BOX(parent->signal_widget)) {
     gtk_box_append(GTK_BOX(parent->signal_widget), entry->widget);
     return TRUE;
@@ -1274,6 +1310,9 @@ static Gn4Widget *gn4_create_widget(Gn4State *st, long id, const char *type,
   } else if (strcmp(type, "box") == 0) {
     widget = gtk_box_new(gn4_orientation(opts->orientation),
                          opts->has_spacing ? opts->spacing : 0);
+    signal_widget = widget;
+  } else if (strcmp(type, "motion") == 0 || strcmp(type, "voice_meter") == 0) {
+    widget = gn4_motion_new(strcmp(type, "voice_meter") == 0);
     signal_widget = widget;
   } else if (strcmp(type, "button") == 0) {
     widget = gtk_button_new_with_label(opts->label ? opts->label : "");
@@ -1359,6 +1398,8 @@ static Gn4Widget *gn4_create_widget(Gn4State *st, long id, const char *type,
     return NULL;
   }
 
+  if (GN4_IS_MOTION(widget))
+    g_signal_connect(widget, "motion-finished", G_CALLBACK(gn4_motion_finished), entry);
   if (GTK_IS_BUTTON(signal_widget))
     g_signal_connect(signal_widget, "clicked", G_CALLBACK(gn4_on_button_clicked),
                      entry);
@@ -1430,6 +1471,8 @@ static gboolean gn4_detach_widget(Gn4State *st, Gn4Widget *entry) {
       gtk_window_set_child(GTK_WINDOW(parent_widget), NULL);
       return TRUE;
     }
+  } else if (GN4_IS_MOTION(parent_widget)) {
+    return gn4_motion_child(parent_widget, NULL);
   } else if (GTK_IS_BOX(parent_widget)) {
     gtk_box_remove(GTK_BOX(parent_widget), widget);
     return TRUE;
@@ -1595,6 +1638,27 @@ static void gn4_handle_tuple_command(Gn4State *st, const char *buf, int *idx,
   Gn4Options opts;
   char *type = NULL;
   char *key = NULL;
+
+  if (strcmp(command, "motion") == 0 && arity == 4) {
+    char *action = NULL;
+    if (ei_decode_long(buf, idx, &id) < 0 || !(action = gn4_decode_string(buf, idx))) {
+      if (reply) gn4_send_reply_error(st, ref, "badarg");
+    } else if (!(entry = gn4_widget_lookup(st, id))) {
+      if (reply) gn4_send_reply_error(st, ref, "widget_not_found");
+    } else {
+      ei_x_buff result;
+      ei_x_new_with_version(&result);
+      ei_x_encode_tuple_header(&result, 4);
+      ei_x_encode_atom(&result, "gtknode4"); ei_x_encode_atom(&result, "reply");
+      if (reply) ei_x_encode_ref(&result, (erlang_ref *)ref);
+      else ei_x_encode_atom(&result, "undefined");
+      gn4_motion_command(entry->widget, action, buf, idx, &result);
+      if (reply) ei_reg_send(&st->ec, st->dist_fd, st->peer_regname, result.buff, result.index);
+      ei_x_free(&result);
+    }
+    g_free(action);
+    return;
+  }
 
   if (strcmp(command, "create") == 0 && arity == 5) {
     gn4_options_init(&opts);
@@ -1989,11 +2053,11 @@ gboolean gn4_send_hello(Gn4State *st) {
 #ifdef HAVE_LIBSHUMATE
   const char *widgets[] = {"window", "box", "button", "label",
                            "entry", "text_view", "list_view", "scale",
-                           "picture", "scrolled_box", "map"};
+                           "picture", "scrolled_box", "motion", "voice_meter", "map"};
 #else
   const char *widgets[] = {"window", "box", "button", "label",
                            "entry", "text_view", "list_view", "scale",
-                           "picture", "scrolled_box"};
+                           "picture", "scrolled_box", "motion", "voice_meter"};
 #endif
   const int widget_count = (int)(sizeof(widgets) / sizeof(widgets[0]));
   int i;
@@ -2005,7 +2069,8 @@ gboolean gn4_send_hello(Gn4State *st) {
   ei_x_encode_tuple_header(&hello, 2);
   ei_x_encode_atom(&hello, st->register_name);
   ei_x_encode_atom(&hello, st->node_name);
-  ei_x_encode_map_header(&hello, 8);
+  ei_x_encode_map_header(&hello, 9);
+  ei_x_encode_atom(&hello, "motion"); ei_x_encode_long(&hello, 1);
   ei_x_encode_atom(&hello, "protocol");
   ei_x_encode_long(&hello, GN4_PROTOCOL_VERSION);
   ei_x_encode_atom(&hello, "widgets");
