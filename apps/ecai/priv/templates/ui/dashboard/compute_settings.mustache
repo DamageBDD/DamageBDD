@@ -1,10 +1,11 @@
-<section class="view" data-panel="compute" data-ecai-managed aria-labelledby="computeTitle" hidden>
+<section id="computePanel" class="view" data-compute-ui-version="compute-provider-ui-v2" data-panel="compute" data-ecai-managed aria-labelledby="computeTitle" hidden>
   <div class="page-intro">
     <div class="eyebrow">ACCOUNT SETTINGS · COMPUTE · PUBLICATION</div>
     <h1 id="computeTitle">Compute &amp; NFT settings</h1>
     <p>Connect cloud infrastructure with delegated access, configure budgets and request optional NFT publication review.</p>
   </div>
   <p id="computeNotice" class="context-hint" role="status" aria-live="polite">Sign in to manage your account. Cloud execution and on-chain mint submission require separate operator integration.</p>
+  <p id="computeAssetNotice" class="context-hint compute-asset-notice" role="status" aria-live="polite">Loading cloud setup… If this message remains, reload the dashboard. A cached or missing dashboard asset may be preventing setup from initializing.</p>
   <div class="compute-tabs" role="navigation" aria-label="Compute configuration subsections">
     <button type="button" data-compute-scroll="computeProviders">Provider accounts</button>
     <button type="button" data-compute-scroll="computeBudget">Budgets</button>

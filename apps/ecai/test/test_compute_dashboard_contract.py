@@ -68,6 +68,21 @@ class ComputeDashboardContract(unittest.TestCase):
         literals = set(re.findall(r"\$\(['\"]([^'\"]+)['\"]\)", self.js))
         self.assertFalse(literals - all_ids, sorted(literals - all_ids))
 
+    def test_compute_asset_versions_match_and_theme_is_scoped(self):
+        version = re.search(r'data-compute-ui-version="([^"]+)"', self.fragment)[1]
+        css = source('priv/static/css/ecai-compute-settings.css')
+        for extension, directory in [('css', 'css'), ('js', 'js')]:
+            self.assertIn(f'/static/{directory}/ecai-compute-settings.{extension}?v={version}', self.shell)
+        self.assertIn(f"const assetVersion = '{version}'", self.js)
+        self.assertIn(f'--compute-ui-version: {version};', css)
+        self.assertIn('computeAssetNotice', self.fragment)
+        self.assertIn('checkAssets();', self.js)
+        self.assertIn('prefers-color-scheme: dark', css)
+        self.assertIn('--compute-surface:', css)
+        self.assertIn('--compute-ink:', css)
+        self.assertNotIn('var(--panel, #fff)', css)
+        self.assertNotIn('var(--text-muted,', css)
+
     def test_routes_and_browser_contract(self):
         for path in ['/ecai/compute/settings','/ecai/compute/eligible-sources',
                      '/ecai/compute/mintable','/ecai/compute/policy',

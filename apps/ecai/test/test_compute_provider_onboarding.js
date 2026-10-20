@@ -77,8 +77,10 @@ const dom = {
   execCommand: () => true
 };
 const clipboard = [];
+const assetVersion = html.match(/data-compute-ui-version="([^"]+)"/)[1];
+$('computePanel').dataset.computeUiVersion = assetVersion;
 const sandbox = {
-  window: {confirm: () => true}, document: dom,
+  window: {confirm: () => true, getComputedStyle: () => ({getPropertyValue: () => assetVersion})}, document: dom,
   crypto: webcrypto,
   navigator: {clipboard: {writeText: async (value) => clipboard.push(value)}},
   FormData: class {
@@ -119,6 +121,9 @@ const wait = async () => {
 };
 (async () => {
   sandbox.window.EcaiComputeSettings.init({request, toast() {}, openLogin() {}, currentToken: () => 'valid-demo-token'});
+  assert.equal(sandbox.window.EcaiComputeSettings.assetVersion, assetVersion);
+  assert.equal($('computePanel').dataset.computeAssets, 'ready');
+  assert.equal($('computeAssetNotice').hidden, true);
   assert.equal($('computeAwsPanel').hidden, false);
   assert.equal($('computeGcpPanel').hidden, true);
   assert.equal($('computeChooseAws').getAttribute('aria-pressed'), 'true');

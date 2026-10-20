@@ -1,6 +1,7 @@
 /* ECAI account compute policy and manual NFT review; no cloud keys in browser. */
 (() => {
   'use strict';
+  const assetVersion = 'compute-provider-ui-v2';
   const $ = (id) => document.getElementById(id);
   let api, toast, openLogin, currentToken, state = null, quoted = null, requestKey = null;
   let ready = false;
@@ -382,6 +383,20 @@
       await refresh();
     });
   }
+  // A persistent message also catches an old/missing controller: only this
+  // controller may dismiss it, after matching the template AND loaded CSS.
+  // Keep this separate from computeNotice, which API refreshes overwrite.
+  function checkAssets() {
+    const panel = $('computePanel');
+    const notice = $('computeAssetNotice');
+    if (!panel || !notice) return;
+    const cssVersion = window.getComputedStyle?.(panel)
+      .getPropertyValue('--compute-ui-version').trim();
+    const matches = panel.dataset.computeUiVersion === assetVersion && cssVersion === assetVersion;
+    notice.hidden = matches;
+    panel.dataset.computeAssets = matches ? 'ready' : 'mismatch';
+    if (!matches) notice.textContent = 'Cloud setup assets are missing or out of date. Reload the dashboard. If this persists, ask the node operator to deploy matching dashboard HTML, CSS and JavaScript to the running node’s static directory.';
+  }
   function init(apiHooks) {
     if (ready || !$('computePolicyForm')) return;
     ({request: api, toast, openLogin, currentToken} = apiHooks);
@@ -416,6 +431,7 @@
     $('computeLoadSources').addEventListener('click', () => void loadSources().catch(fail));
     $('computeMintForm').addEventListener('submit', (e) => void mintJob(e));
     selectProvider(activeProvider);
+    checkAssets();
   }
   function clear() {
     state = null; quoted = null; requestKey = null;
@@ -453,5 +469,5 @@
     $('computeGcpResources').open = false;
     selectProvider('aws_batch');
   }
-  window.EcaiComputeSettings = {init, refresh, clear, setSourceJob};
+  window.EcaiComputeSettings = {init, refresh, clear, setSourceJob, assetVersion};
 })();
