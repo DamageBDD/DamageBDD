@@ -1,4 +1,4 @@
-%% Build the Linux native voice worker with ordinary `rebar3 compile`.
+%% Build the Linux native voice worker and phrase lab with ordinary `rebar3 compile`.
 %% CONFIG retains any other per-app settings added to rebar.config.
 Enabled = case os:getenv("ERM_NATIVE_VOICE") of
     false -> true;
@@ -12,7 +12,7 @@ VoiceConfig = case os:type() =:= {unix, linux} andalso Enabled of
         Additions = [
             {pre_hooks, [{compile, "sh scripts/build_native_voice.sh"}]},
             {post_hooks, [{clean, "sh scripts/build_native_voice.sh clean"}]},
-            {artifacts, ["priv/erm_native_voice"]}
+            {artifacts, ["priv/erm_native_voice", "priv/erm_phrase_lab"]}
         ],
         lists:foldl(fun({Key, Values}, Acc) ->
             Existing = proplists:get_value(Key, Acc, []),

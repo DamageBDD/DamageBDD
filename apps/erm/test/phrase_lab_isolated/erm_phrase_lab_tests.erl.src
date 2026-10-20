@@ -1,0 +1,108 @@
+-module(erm_phrase_lab_tests).
+-include_lib("eunit/include/eunit.hrl").
+model()->Frame= <<0.05:32/float-big,140.0:32/float-big,0.9:32/float-big,0:512>>,
+    <<"ELS1",24000:32,150:16,(binary:copy(Frame,150))/binary>>.
+sample(N)->#{ms=>1500,frames=>2,features=> << <<(float(N)/100):32/float-big>> || _<-lists:seq(1,26) >>}.
+row(N,Split)->S=sample(N),#{origin=>human,expected=>stop_music,split=>Split,sample=>S,
+    model=>case Split of train->model();_-> <<>> end,speaker_ok=>true,created_at=>1,
+    id=>erm_phrase_codec:fingerprint(S)}.
+model_test()->
+    M=model(),?assertEqual(ok,erm_phrase_lab_store:validate_model(M)),
+    ?assertMatch({error,_},erm_phrase_lab_store:validate_model(<<M/binary,0>>)),
+    ?assertMatch({error,_},erm_phrase_lab_store:validate_model(<<"ELS1",24000:32,151:16>>)).
+provenance_test()->
+    R=row(1,train),{ok,[R]}=erm_phrase_lab_store:insert(R,[]),
+    ?assertMatch({error,_},erm_phrase_lab_store:insert(R#{origin=>synthetic},[])),
+    ?assertMatch({error,_},erm_phrase_lab_store:insert(R#{speaker_ok=>false},[])),
+    ?assertMatch({error,_},erm_phrase_lab_store:insert(row(1,test),[R])),
+    ?assertMatch({ok,_},erm_phrase_lab_store:insert(row(2,test),[R])),
+    ?assertMatch({ok,_},erm_phrase_lab_store:insert((row(3,validation))#{speaker_ok=>false},[R])).
+store_test()->
+    Dir=temp_dir(),Path=filename:join(Dir,"test.elab"),Binding=crypto:hash(sha256,<<"fixture">>),
+    try
+        Rows=[row(1,train),row(2,test)],ok=erm_phrase_lab_store:save(Path,Binding,Rows),
+        ?assertEqual({ok,Rows},erm_phrase_lab_store:load(Path,Binding)),
+        ?assertMatch({error,_},erm_phrase_lab_store:load(Path,crypto:hash(sha256,<<"other">>))),
+        ok=file:change_mode(Path,8#644),?assertMatch({error,_},erm_phrase_lab_store:load(Path,Binding)),
+        ok=file:delete(Path),ok=file:make_symlink("target",Path),
+        ?assertMatch({error,_},erm_phrase_lab_store:save(Path,Binding,Rows))
+    after file:del_dir_r(Dir) end.
+metric_row(A,Prediction,Distance,Gap,Speaker)->#{expected=>A,speaker_ok=>Speaker,
+    result=>#{reason=>0,action=>Prediction,distance=>Distance,margin=>Gap}}.
+empty_metrics_test()->
+    #{content:=M}=erm_phrase_lab_metrics:summary([],0.35,0.08),
+    ?assertEqual(not_evaluated,maps:get(false_activation_rate,M)),
+    ?assertMatch(#{status:=insufficient_human_validation},erm_phrase_lab_metrics:recommend([],[stop_music],
+        #{max_distance=>0.35,min_margin=>0.08})).
+metrics_keep_speaker_separate_test()->
+    Rows=[metric_row(unknown,stop_music,0.1,0.3,false),metric_row(stop_music,stop_music,0.1,0.3,true)],
+    #{content:=C,with_speaker_gate:=G}=erm_phrase_lab_metrics:summary(Rows,0.35,0.08),
+    ?assertEqual(1,maps:get(false_activations,C)),?assertEqual(0,maps:get(false_activations,G)).
+calibration_test()->
+    Rows=lists:duplicate(2,metric_row(stop_music,stop_music,0.12,0.3,true))++
+        lists:duplicate(5,metric_row(unknown,stop_music,0.30,0.3,true)),
+    R=erm_phrase_lab_metrics:recommend(Rows,[stop_music],#{max_distance=>0.35,min_margin=>0.08}),
+    ?assertEqual(proposal_only,maps:get(status,R)),
+    ?assertEqual(0,maps:get(false_activations,maps:get(content,maps:get(proposed,R)))).
+lease_test_()->{foreach,fun setup/0,fun cleanup/1,[
+    fun(_)->fun()->
+        {ok,Ref,_}=erm_phrase_voice:lab_begin(),
+        ?assertMatch({error,_},erm_phrase_voice:observe_only(false)),
+        ?assertMatch({error,_},erm_phrase_voice:resume()),
+        ok=erm_phrase_voice:lab_end(Ref),
+        ?assertMatch(#{paused:=true,observe_only:=true,lab_reserved:=false},erm_phrase_voice:status())
+    end end,
+    fun(_)->fun()->
+        Parent=self(),Owner=spawn(fun()->{ok,Ref,_}=erm_phrase_voice:lab_begin(),Parent!{owner,Ref},receive stop->ok end end),
+        receive {owner,_}->ok after 1000->error(no_owner) end,
+        exit(Owner,kill),wait(fun()->maps:get(lab_reserved,erm_phrase_voice:status())=:=false end,100),
+        ?assertMatch(#{paused:=true,observe_only:=true},erm_phrase_voice:status())
+    end end,
+    fun(_)->fun()->
+        persistent_term:put(phrase_test_parent,self()),
+        {ok,Ref,_}=erm_phrase_voice:lab_begin(),ok=erm_phrase_voice:lab_capture(Ref),
+        receive {erm_phrase_lab,Ref,armed}->ok after 1000->error(not_armed) end,
+        {P,E,Rev,Id}=context(),emit(P,<<"B",E:64,Id:64>>),
+        Packet=packet(E,Id,Rev),Model=model(),
+        emit(P,<<"Q",(byte_size(Packet)):32,Packet/binary,Model/binary>>),emit(P,<<"F">>),
+        receive {erm_phrase_lab,Ref,{sample,#{verification:={ok,_},synthesis:=Model}}}->ok
+            after 1000->error(no_duplex_sample) end,
+        receive {command,_}->error(lab_dispatched) after 50->ok end,
+        ok=erm_phrase_voice:lab_end(Ref)
+    end end,
+    fun(_)->fun()->
+        persistent_term:put(phrase_test_parent,self()),
+        {ok,Ref,_}=erm_phrase_voice:lab_begin(),ok=erm_phrase_voice:lab_capture(Ref),
+        receive {erm_phrase_lab,Ref,armed}->ok after 1000->error(not_armed) end,
+        {P,E,Rev,Id}=context(),emit(P,<<"B",E:64,Id:64>>),emit(P,packet(E,Id,Rev)),emit(P,<<"F">>),
+        _=erm_phrase_voice:status(),receive {command,_}->error(lab_dispatched) after 50->ok end,
+        ok=erm_phrase_voice:lab_end(Ref)
+    end end
+]}.
+packet(E,Id,Rev)->F=maps:get(features,sample(10)),
+    <<"P",E:64,Id:64,1500:32,2:16,-20.0:32/float-big,-10.0:32/float-big,
+      0.0:32/float-big,0.0:32/float-big,1.0:32/float-big,0.0:32/float-big,
+      Rev:64,0:8,1:8,0.1:32/float-big,0.3:32/float-big,1:8,2:16,13:8,F/binary>>.
+context()->S=sys:get_state(erm_phrase_voice),{element(6,S),element(12,S),element(11,S),element(17,S)+1}.
+emit(P,D)->erm_phrase_voice!{P,{data,D}}.
+setup()->
+    persistent_term:erase({erm_tts,suppress_until}),
+    Dir=temp_dir(),Model=filename:join(Dir,"speaker.onnx"),Owner=filename:join(Dir,"owner.profile"),
+    ok=file:write_file(Model,<<"fixture model">>),Hash=erm_phrase_codec:model_hash(Model),
+    Profile=#{version=>1,label=><<"test">>,model_hash=>Hash,embedding=>[1.0,0.0]},
+    ok=file:write_file(Owner,term_to_binary(Profile)),ok=file:change_mode(Owner,8#600),
+    Binding=crypto:hash(sha256,term_to_binary({erm_phrase_mfcc_v1,Profile,"default",<<"bob">>},[deterministic])),
+    Path=filename:join(Dir,"commands.eph"),Samples=[(sample(N))#{action=>stop_music}||N<-[1,2,3]],
+    ok=erm_phrase_codec:save_profile(Path,Binding,Samples),Peer=os:getenv("PHRASE_TEST_PEER"),
+    Options=#{native=>#{binary=>Peer,speaker_model=>Model,vad_model=>Model,arecord=>Peer,profile_file=>Owner,speaker_threshold=>0.8},
+        phrases=>#{profile_file=>Path,lab_enabled=>true},trigger_phrases=>["bob"]},
+    {ok,Pid}=erm_phrase_voice:start_link(Options),unlink(Pid),
+    wait(fun()->maps:get(ready,erm_phrase_voice:status()) end,100),{Pid,Dir}.
+cleanup({Pid,Dir})->
+    try gen_server:stop(Pid) catch exit:_->ok end,
+    persistent_term:erase({erm_tts,suppress_until}),persistent_term:erase(phrase_test_parent),file:del_dir_r(Dir).
+temp_dir()->
+    Dir=filename:join(os:getenv("PHRASE_TEST_TMP"),binary_to_list(binary:encode_hex(crypto:strong_rand_bytes(8)))),
+    ok=file:make_dir(Dir),ok=file:change_mode(Dir,8#700),Dir.
+wait(_,0)->error(wait_timeout);
+wait(F,N)->case F() of true->ok;false->timer:sleep(10),wait(F,N-1) end.

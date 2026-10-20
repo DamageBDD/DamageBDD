@@ -1,6 +1,8 @@
 // Managed native Whisper + Silero VAD + speaker embeddings. Linux, packet-4.
 #include <whisper.h>
 #include "erm_voice_audio.h"
+#include "erm_phrase_features.h"
+#include "erm_phrase_synth.h"
 #include <sherpa-onnx/c-api/c-api.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -20,6 +22,9 @@
 #include <memory>
 #include <cerrno>
 static int protocol_fd;
+static bool phrases_only = false, phrases_lab = false;
+static std::mutex phrase_mu;
+static erm_phrase::Profile phrase_profile;
 static std::mutex output_mu, job_mu;
 static std::condition_variable job_cv;
 static std::atomic<uint64_t> gate{1}; // low bit: muted; remaining bits: epoch
@@ -31,8 +36,9 @@ struct AudioConfig {
 static std::mutex config_mu;
 static AudioConfig desired_audio;
 static uint64_t one_shot_gate=UINT64_MAX; // guarded by config_mu; inference keeps its epoch
+static uint64_t synthesis_gate=UINT64_MAX; // explicit lab capture only
 static uint64_t embedding_only_gate=UINT64_MAX; // enrolment needs no transcript
-struct Job {uint64_t gate_value=0,id=0;std::vector<float> pcm;float gain_db=0;bool embedding_only=false;};
+struct Job {uint64_t gate_value=0,id=0;std::vector<float> pcm;float gain_db=0;bool embedding_only=false;bool synthesis=false;};
 static Job pending;
 static bool available=false, working=false;
 static bool transfer(int fd,void *data,size_t n,bool writing) {
@@ -69,8 +75,8 @@ static const SherpaOnnxVoiceActivityDetector* create_vad(const char*model,const 
 static void audio_loop(int fd,const char*model,const SherpaOnnxVoiceActivityDetector*vad,AudioConfig current){
   uint64_t previous=gate.load(),id=0,sealed=UINT64_MAX;size_t active_samples=0;bool discard=false;
   for(;;){unsigned char raw[1024];if(!transfer(fd,raw,sizeof(raw),false)){send_packet("Ecapture_closed");_Exit(1);}
-    uint64_t g;bool one_shot,embedding_only;AudioConfig requested;
-    {std::lock_guard<std::mutex> lock(config_mu);requested=desired_audio;g=gate.load();one_shot=one_shot_gate==g;embedding_only=embedding_only_gate==g;}
+    uint64_t g;bool one_shot,embedding_only,synthesis;AudioConfig requested;
+    {std::lock_guard<std::mutex> lock(config_mu);requested=desired_audio;g=gate.load();one_shot=one_shot_gate==g;embedding_only=embedding_only_gate==g;synthesis=synthesis_gate==g;}
     if(requested.revision!=current.revision){
       const auto *replacement=create_vad(model,requested);
       SherpaOnnxDestroyVoiceActivityDetector(vad);vad=replacement;current=requested;
@@ -78,7 +84,8 @@ static void audio_loop(int fd,const char*model,const SherpaOnnxVoiceActivityDete
       std::string ack="C";number(ack,current.epoch,8);send_packet(ack);
     }
     const int max_ms=current.max_ms;
-    if(g!=previous){SherpaOnnxVoiceActivityDetectorReset(vad);previous=g;active_samples=0;discard=false;}
+    if(g!=previous){SherpaOnnxVoiceActivityDetectorReset(vad);previous=g;active_samples=0;discard=false;
+      if(synthesis&&!(g&1)){std::string ack="K";number(ack,g>>1,8);send_packet(ack);}}
     if((g&1)||sealed==g)continue;
     float factor=std::pow(10.f,current.gain_db/20.f);
     float pcm[512];for(int i=0;i<512;++i){int16_t v=int16_t(uint16_t(raw[2*i])|(uint16_t(raw[2*i+1])<<8));pcm[i]=erm_voice_audio::apply_gain(float(v)/32768.f,factor);}
@@ -91,7 +98,7 @@ static void audio_loop(int fd,const char*model,const SherpaOnnxVoiceActivityDete
       if(segment){
         if(sealed!=g&&!discard&&segment->n>0&&segment->n<=max_ms*16&&gate.load()==g){
           std::lock_guard<std::mutex> lock(job_mu);
-          if(!available&&!working){pending={g,++id,std::vector<float>(segment->samples,segment->samples+segment->n),current.gain_db,embedding_only};available=true;
+          if(!available&&!working){pending={g,++id,std::vector<float>(segment->samples,segment->samples+segment->n),current.gain_db,embedding_only,synthesis};available=true;
             // Seal capture before B is sent: feedback cannot enter this sample
             // or a second job. Only a new epoch can reopen the microphone.
             if(one_shot)sealed=g;
@@ -107,8 +114,13 @@ static void audio_loop(int fd,const char*model,const SherpaOnnxVoiceActivityDete
 }
 static void engine(char**argv){
   const int threads=positive(argv[7],1,32),silence=positive(argv[8],200,2000),max_ms=positive(argv[9],2000,15000);
-  auto wp=whisper_context_default_params();wp.use_gpu=false;
-  auto *ctx=whisper_init_from_file_with_params(argv[1],wp);if(!ctx)throw std::runtime_error("whisper_model_load");
+  whisper_context *ctx = nullptr;
+  // The explicit phrase-only invocation never opens a Whisper model.
+  if (!phrases_only) {
+    auto wp=whisper_context_default_params();wp.use_gpu=false;
+    ctx=whisper_init_from_file_with_params(argv[1],wp);
+    if(!ctx)throw std::runtime_error("whisper_model_load");
+  }
   AudioConfig initial;
   initial.silence_ms=silence;initial.max_ms=max_ms;
   {std::lock_guard<std::mutex> lock(config_mu);desired_audio=initial;}
@@ -119,7 +131,7 @@ static void engine(char**argv){
   int audio_fd=capture(argv[4],argv[5]);
   std::thread([=]{try{audio_loop(audio_fd,argv[2],vad,initial);}
     catch(const std::exception&e){send_packet(std::string("E")+e.what());_Exit(1);}}).detach();
-  std::string ready="R";number(ready,dim,2);number(ready,4,1);send_packet(ready);
+  std::string ready="R";number(ready,dim,2);number(ready,phrases_lab ? 6 : (phrases_only ? 5 : 4),1);send_packet(ready);
   for(;;){Job job;{std::unique_lock<std::mutex> lock(job_mu);job_cv.wait(lock,[]{return available;});job=std::move(pending);available=false;working=true;}
     std::string begin="B";number(begin,job.gate_value>>1,8);number(begin,job.id,8);send_packet(begin);
     if(gate.load()==job.gate_value){
@@ -132,6 +144,27 @@ static void engine(char**argv){
         if(v){embedding.assign(v,v+dim);SherpaOnnxSpeakerEmbeddingExtractorDestroyEmbedding(v);}
       }
       SherpaOnnxDestroyOnlineStream(stream);
+      if (phrases_only) {
+        const auto features = erm_phrase::extract(job.pcm);
+        erm_phrase::Profile snapshot;
+        { std::lock_guard<std::mutex> lock(phrase_mu); snapshot = phrase_profile; }
+        const auto match = erm_phrase::classify(snapshot, features, uint32_t(job.pcm.size()/16));
+        std::string msg="P";
+        number(msg,job.gate_value>>1,8);number(msg,job.id,8);
+        number(msg,job.pcm.size()/16,4);number(msg,embedding.size(),2);
+        const auto levels=erm_voice_audio::levels(job.pcm.data(),job.pcm.size());
+        for(float v:{levels.rms_dbfs,levels.peak_dbfs,levels.clipped_fraction,job.gain_db}) erm_phrase::put_float(msg,v);
+        for(float v:embedding) erm_phrase::put_float(msg,v);
+        number(msg,snapshot.revision,8);number(msg,match.reason,1);number(msg,match.action,1);
+        erm_phrase::put_float(msg,match.distance);erm_phrase::put_float(msg,match.margin);
+        number(msg,erm_phrase::feature_version,1);number(msg,features.size(),2);number(msg,erm_phrase::dimensions,1);
+        for(const auto &frame:features) for(float v:frame) erm_phrase::put_float(msg,v);
+        // A mute/cancel/configuration transition invalidates the entire result.
+        if(gate.load()==job.gate_value) { if(job.synthesis){
+            const auto model=erm_phrase_synth::encode(erm_phrase_synth::analyse(job.pcm));
+            if(gate.load()==job.gate_value){std::string q="Q";number(q,msg.size(),4);q+=msg;q+=model;send_packet(q);}
+          }else send_packet(msg); }
+      } else {
       std::string text;
       // The enrolment validator only needs an embedding and acoustic levels.
       // Pin this mode to the immutable job, just like its capture epoch.
@@ -152,35 +185,53 @@ static void engine(char**argv){
         }
         for(float v:embedding){if(!std::isfinite(v))throw std::runtime_error("invalid_embedding");uint32_t bits;memcpy(&bits,&v,4);number(msg,bits,4);}msg+=text;send_packet(msg);
       }
+      }
     }
-    send_packet("F");
     {std::lock_guard<std::mutex> lock(job_mu);working=false;}
+    send_packet("F");
   }
 }
 int main(int argc,char**argv){
   if(argc!=10)return 2;
+  phrases_lab = std::strcmp(argv[1], "--phrases-lab") == 0;
+  phrases_only = phrases_lab || std::strcmp(argv[1], "--phrases-only") == 0;
   protocol_fd=fcntl(1,F_DUPFD_CLOEXEC,3);if(protocol_fd<0)return 2;
   dup2(2,1); // native library diagnostics go to stderr, never protocol stdout
   std::thread([&]{try{engine(argv);}catch(const std::exception&e){send_packet(std::string("E")+e.what());_Exit(1);}catch(...){send_packet("Enative_exception");_Exit(1);}}).detach();
   for(;;){char h[4];if(!transfer(0,h,4,false))_Exit(0);size_t n=integer(h,4);
-    if(n!=9&&n!=29)_Exit(2);
-    char command[29];if(!transfer(0,command,n,false))_Exit(0);
-    if(n==9&&(command[0]=='M'||command[0]=='T'||command[0]=='E')){
+    if(n!=9&&n!=29&&!(phrases_only&&n>=19&&n<=1048576))_Exit(2);
+    std::string packet(n, '\0');if(!transfer(0,packet.data(),n,false))_Exit(0);
+    const char *command=packet.data();
+    if(phrases_only&&command[0]=='L') {
+      try {
+        auto next=erm_phrase::decode_profile(packet);
+        const uint64_t revision=next.revision;
+        {std::lock_guard<std::mutex> lock(phrase_mu);phrase_profile=std::move(next);}
+        std::string ack="L";number(ack,revision,8);send_packet(ack);
+      } catch(const std::exception &e) {send_packet(std::string("E")+e.what());_Exit(2);}
+      continue;
+    }
+    if(n==9&&(command[0]=='M'||command[0]=='T'||command[0]=='E'||command[0]=='P'||command[0]=='S')){
+      if((command[0]=='S'&&(!phrases_lab||(integer(command+1,8)&1))) ||
+         (!phrases_only&&command[0]=='P') || (phrases_only&&(command[0]=='T'||command[0]=='E')) ||
+         (phrases_only&&command[0]=='M'&&!(integer(command+1,8)&1)))_Exit(2);
       std::lock_guard<std::mutex> lock(config_mu);
       uint64_t value=integer(command+1,8);
-      one_shot_gate=command[0]=='T'||command[0]=='E'?value:UINT64_MAX;
+      one_shot_gate=command[0]=='T'||command[0]=='E'||command[0]=='P'||command[0]=='S'?value:UINT64_MAX;
+      synthesis_gate=command[0]=='S'?value:UINT64_MAX;
       embedding_only_gate=command[0]=='E'?value:UINT64_MAX;gate.store(value);continue;
     }
     if(n!=29||command[0]!='C')_Exit(2);
+    if(phrases_only&&!(integer(command+1,8)&1))_Exit(2);
     auto read_float=[](const char*p){uint32_t b=uint32_t(integer(p,4));float v;memcpy(&v,&b,4);return v;};
     AudioConfig next;next.gain_db=read_float(command+9);next.threshold=read_float(command+13);
     next.silence_ms=int(integer(command+17,4));next.min_speech_ms=int(integer(command+21,4));next.max_ms=int(integer(command+25,4));
     if(!std::isfinite(next.gain_db)||next.gain_db < -24||next.gain_db > 12 ||
        !std::isfinite(next.threshold)||next.threshold < .05f||next.threshold > .95f ||
        next.silence_ms<200||next.silence_ms>2000||next.min_speech_ms<100||next.min_speech_ms>2000 ||
-       next.max_ms<2000||next.max_ms>15000||next.min_speech_ms>=next.max_ms)_Exit(2);
+       next.max_ms<2000||next.max_ms>(phrases_only?8000:15000)||next.min_speech_ms>=next.max_ms)_Exit(2);
     std::lock_guard<std::mutex> lock(config_mu);
     next.revision=desired_audio.revision+1;next.epoch=integer(command+1,8)>>1;
-    desired_audio=next;one_shot_gate=UINT64_MAX;embedding_only_gate=UINT64_MAX;gate.store(integer(command+1,8));
+    desired_audio=next;synthesis_gate=UINT64_MAX;one_shot_gate=UINT64_MAX;embedding_only_gate=UINT64_MAX;gate.store(integer(command+1,8));
   }
 }

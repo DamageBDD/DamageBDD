@@ -1,0 +1,8 @@
+-module(erm_voice_intent).
+-export([parse/1]).
+parse(<<"stop">>) -> {ok,#{action=>stop}};
+parse(<<"pause">>) -> {ok,#{action=>pause}};
+parse(<<"play">>) -> {ok,#{action=>play}};
+parse(<<"next">>) -> {ok,#{action=>next}};
+parse(<<"previous">>) -> {ok,#{action=>previous}};
+parse(_) -> unknown.

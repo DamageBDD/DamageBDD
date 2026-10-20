@@ -1,0 +1,129 @@
+-module(erm_phrase_tests).
+-include_lib("eunit/include/eunit.hrl").
+
+sample(A, Offset) -> #{action => A, ms => 1500+Offset, frames => 2,
+    features => << <<(float(Offset)/100):32/float-big>> || _ <- lists:seq(1,26) >>}.
+samples() -> [sample(stop_music,N) || N <- [1,2,3]].
+packet(E, Id, Rev, Reason, V, Ms, Offset) ->
+    Emb = << <<X:32/float-big>> || X <- V >>,
+    F = maps:get(features, sample(stop_music,Offset)),
+    <<"P", E:64, Id:64, Ms:32, (length(V)):16,
+        -20.0:32/float-big, -10.0:32/float-big, 0.0:32/float-big, 0.0:32/float-big,
+        Emb/binary, Rev:64, Reason:8, 1:8, 0.1:32/float-big, 0.3:32/float-big,
+        1:8, 2:16, 13:8, F/binary>>.
+
+codec_test() ->
+    ?assertEqual(5,length(erm_phrase_codec:actions())),
+    ?assertError(bad_phrase_action,erm_phrase_codec:action_id(delete_files)),
+    ?assertEqual(<<"stop">>,erm_phrase_codec:command(stop_music)),
+    ?assertEqual(ok,erm_phrase_codec:validate_samples(samples())),
+    ?assertMatch({error,_},erm_phrase_codec:validate_samples([sample(stop_music,1)])),
+    P = packet(2,3,4,0,[1.0,0.0],1500,1),
+    ?assertMatch({ok,#{revision:=4,result:=#{action:=stop_music,reason:=matched}}},erm_phrase_codec:decode(P)),
+    ?assertMatch({error,_},erm_phrase_codec:decode(<<P/binary,0>>)),
+    ?assertMatch({error,_},erm_phrase_codec:decode(binary:part(P,0,30))),
+    ?assertMatch({error,_},erm_phrase_codec:decode(packet(2,3,4,9,[1.0,0.0],1500,1))),
+    B = erm_phrase_codec:encode_profile(4,0.35,0.08,samples()),
+    ?assertMatch(<<"L",4:64,_/binary>>,B).
+
+profile_test() ->
+    Dir=temp_dir(),Path=filename:join(Dir,"commands.eph"),Hash=crypto:hash(sha256,<<"binding">>),
+    try
+        ok=erm_phrase_codec:save_profile(Path,Hash,samples()),
+        ?assertEqual({ok,samples()},erm_phrase_codec:read_profile(Path,Hash)),
+        ?assertMatch({error,_},erm_phrase_codec:read_profile(Path,crypto:hash(sha256,<<"other">>))),
+        {ok,B}=file:read_file(Path),ok=file:write_file(Path,<<B/binary,0>>),
+        ?assertMatch({error,_},erm_phrase_codec:read_profile(Path,Hash)),
+        ok=erm_phrase_codec:save_profile(Path,Hash,samples()),
+        ok=file:change_mode(Path,8#644),
+        ?assertMatch({error,_},erm_phrase_codec:read_profile(Path,Hash)),
+        ok=file:delete(Path),ok=file:make_symlink("target",Path),
+        ?assertMatch({error,_},erm_phrase_codec:save_profile(Path,Hash,samples()))
+    after file:del_dir_r(Dir) end.
+
+gates_test_() -> {foreach, fun setup/0, fun cleanup/1, [
+    fun(_) -> fun() ->
+        listen(),inject(0,[1.0,0.0],1500,1),no_command(),
+        ?assertMatch(#{last:=#{outcome:=observed}},erm_phrase_voice:status())
+    end end,
+    fun(_) -> fun() ->
+        persistent_term:put(phrase_test_parent,self()),ok=erm_phrase_voice:observe_only(false),listen(),
+        inject(0,[1.0,0.0],1500,1),
+        receive {command,<<"stop">>} -> ok after 1000 -> error(no_dispatch) end
+    end end,
+    fun(_) -> fun() ->
+        persistent_term:put(phrase_test_parent,self()),ok=erm_phrase_voice:observe_only(false),listen(),
+        inject(0,[0.0,1.0],1500,1),no_command(),
+        ?assertMatch(#{last:={rejected,{speaker_below_threshold,_}}},erm_phrase_voice:status())
+    end end,
+    fun(_) -> fun() ->
+        ok=erm_phrase_voice:observe_only(false),listen(),inject(0,[1.0,0.0],200,1),no_command(),
+        ?assertMatch(#{last:={rejected,short_poor_quality_or_missing_embedding}},erm_phrase_voice:status())
+    end end,
+    fun(_) -> fun() ->
+        ok=erm_phrase_voice:observe_only(false),listen(),inject(3,[1.0,0.0],1500,1),no_command(),
+        ?assertMatch(#{last:=#{outcome:=rejected,reason:=ambiguous}},erm_phrase_voice:status())
+    end end,
+    fun(_) -> fun() ->
+        listen(),{Port,E,Rev,Id}=context(),
+        emit(Port,<<"B",E:64,Id:64>>),_=erm_phrase_voice:status(),
+        ok=erm_phrase_voice:observe_only(false),
+        emit(Port,packet(E,Id,Rev,0,[1.0,0.0],1500,1)),emit(Port,<<"F">>),
+        _=erm_phrase_voice:status(),no_command(),
+        ?assertMatch(#{last:={rejected,stale_muted_or_reconfigured}},erm_phrase_voice:status())
+    end end,
+    fun(_) -> fun() ->
+        ok=erm_phrase_voice:observe_only(false),listen(),
+        persistent_term:put({erm_tts,suppress_until},erlang:monotonic_time(millisecond)+100000),
+        inject(0,[1.0,0.0],1500,1),no_command()
+    end end,
+    fun(_) -> fun() ->
+        listen(),{ok,_}=erm_phrase_voice:enrol(stop_music,3),listen(),
+        inject(1,[1.0,0.0],1510,10),listen(),
+        inject(1,[1.0,0.0],1511,11),listen(),
+        inject(1,[1.0,0.0],1512,12),wait(fun() ->
+            case erm_phrase_voice:status() of #{ready:=true,revision:=2}->true;_->false end end,100),
+        ?assertMatch(#{enrolment:=undefined,observe_only:=true,templates:=#{stop_music:=3}},erm_phrase_voice:status()),no_command()
+    end end,
+    fun(_) -> fun() ->
+        listen(),{ok,_}=erm_phrase_voice:enrol(stop_music,3),listen(),
+        inject(1,[1.0,0.0],1510,10),listen(),inject(1,[1.0,0.0],1510,10),
+        ?assertMatch(#{enrolment:=#{collected:=1},last:=#{reason:=duplicate_sample}},erm_phrase_voice:status()),
+        ok=erm_phrase_voice:cancel_enrol(),
+        ?assertMatch(#{templates:=#{stop_music:=3},revision:=1,enrolment:=undefined},erm_phrase_voice:status()),no_command()
+    end end,
+    fun(_) -> fun() ->
+        listen(),{Port,_,_,_}=context(),emit(Port,<<"bad-packet">>),_=erm_phrase_voice:status(),
+        ?assertMatch(#{ready:=false,phase:=disconnected},erm_phrase_voice:status()),no_command()
+    end end
+]}.
+setup() ->
+    persistent_term:erase({erm_tts,suppress_until}),
+    Dir=temp_dir(),Model=filename:join(Dir,"speaker.onnx"),Owner=filename:join(Dir,"owner.profile"),
+    ok=file:write_file(Model,<<"test model, never loaded by fake peer">>),
+    Hash=erm_phrase_codec:model_hash(Model),
+    Profile=#{version=>1,label=><<"test">>,model_hash=>Hash,embedding=>[1.0,0.0]},
+    ok=file:write_file(Owner,term_to_binary(Profile)),ok=file:change_mode(Owner,8#600),
+    Binding=crypto:hash(sha256,term_to_binary({erm_phrase_mfcc_v1,Profile,"default",<<"bob">>},[deterministic])),
+    Path=filename:join(Dir,"commands.eph"),ok=erm_phrase_codec:save_profile(Path,Binding,samples()),
+    Peer=os:getenv("PHRASE_TEST_PEER"),
+    O=#{native=>#{binary=>Peer,speaker_model=>Model,vad_model=>Model,arecord=>Peer,
+        profile_file=>Owner,speaker_threshold=>0.8},phrases=>#{profile_file=>Path},trigger_phrases=>["bob"]},
+    {ok,Pid}=erm_phrase_voice:start_link(O),unlink(Pid),{Pid,Dir}.
+cleanup({Pid,Dir}) ->
+    try gen_server:stop(Pid) catch exit:_ -> ok end,
+    persistent_term:erase({erm_tts,suppress_until}),persistent_term:erase(phrase_test_parent),
+    file:del_dir_r(Dir).
+temp_dir() ->
+    D=filename:join(os:getenv("PHRASE_TEST_TMP"),binary_to_list(binary:encode_hex(crypto:strong_rand_bytes(8)))),
+    ok=file:make_dir(D),ok=file:change_mode(D,8#700),D.
+listen() -> persistent_term:put(phrase_test_parent,self()), wait(fun() -> maps:get(listening,erm_phrase_voice:status()) end,100).
+wait(_,0) -> error(wait_timeout);
+wait(F,N) -> case F() of true->ok;false->timer:sleep(10),wait(F,N-1) end.
+%% These indices are the private record layout in this patch only. No production API.
+context() -> S=sys:get_state(erm_phrase_voice),{element(6,S),element(12,S),element(11,S),element(17,S)+1}.
+emit(P,D) -> erm_phrase_voice ! {P,{data,D}}.
+inject(Reason,V,Ms,Offset) ->
+    {P,E,Rev,Id}=context(),emit(P,<<"B",E:64,Id:64>>),
+    emit(P,packet(E,Id,Rev,Reason,V,Ms,Offset)),emit(P,<<"F">>),_=erm_phrase_voice:status(),ok.
+no_command() -> receive {command,T}->error({unexpected_command,T}) after 30->ok end.

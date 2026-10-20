@@ -1,0 +1,11 @@
+CXX ?= c++
+CXXFLAGS ?= -O2 -Wall -Wextra
+TARGET ?= ../priv/erm_phrase_lab
+.PHONY: all clean
+all: $(TARGET)
+$(TARGET): erm_phrase_lab_port.cpp erm_phrase_synth.h erm_phrase_features.h erm_voice_audio.h Makefile.phrase_lab
+	mkdir -p "$(dir $(TARGET))"
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -std=c++17 -pthread "$<" $(LDFLAGS) -o "$@.tmp"
+	mv -f "$@.tmp" "$@"
+clean:
+	rm -f "$(TARGET)" "$(TARGET).tmp"

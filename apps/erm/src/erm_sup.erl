@@ -619,6 +619,19 @@ whisper_child_specs(true, #{backend := native} = Opts) ->
                 modules => [erm_native_voice]
             }
         ];
+whisper_child_specs(true, #{backend := phrases} = Opts) ->
+    %% Exclusive capture backend: do not start Whisper/native capture alongside it.
+    native_model_pull_specs() ++ voice_child_specs(Opts) ++
+        [
+            #{
+                id => erm_phrase_voice,
+                start => {erm_phrase_voice, start_link, [Opts]},
+                restart => permanent,
+                shutdown => 5000,
+                type => worker,
+                modules => [erm_phrase_voice]
+            }
+        ];
 whisper_child_specs(true, Opts) ->
     case whisper_trigger_srv:availability(Opts) of
         {ok, Runtime} ->
