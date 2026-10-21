@@ -14,18 +14,14 @@
 ]).
 
 -define(NEXT_KEY, '$next_id').
--define(CREATOR_TABLE, ecai_disk_docstore_creator).
 
 open(BaseDir0) ->
     try
         BaseDir = path_list(BaseDir0),
         ok = ecai_private_store:assert_public(BaseDir),
         ok = filelib:ensure_dir(filename:join(BaseDir, "docstore/x")),
-        Path = filename:join([BaseDir, "docstore", "ecai_docstore.dets"]),
-        case ensure_table_file(Path) of
-            ok -> open_existing(Path);
-            {error, _Reason} = Error -> Error
-        end
+        Path = filename:absname(filename:join([BaseDir, "docstore", "ecai_docstore.dets"])),
+        open_shared(Path)
     catch
         error:badarg -> {error, invalid_base_dir}
     end.
@@ -76,10 +72,21 @@ next_id(Tab) ->
         error:Reason -> {error, {next_id_failed, Reason}}
     end.
 
-open_existing(Path) ->
-    %% open_file/1 returns an anonymous table reference and therefore avoids
-    %% allocating one permanent VM atom for every operator-selected BaseDir.
-    case dets:open_file(Path) of
+%% A document store has ONE DETS table per configured absolute path on this
+%% node. open_file/1 creates a new anonymous table on every call; it does not
+%% join a writer already using the file. Reopening that file independently
+%% while the writer has buffered changes can lose metadata or counter updates.
+%%
+%% DETS names are terms, not necessarily atoms. The tuple avoids an unbounded
+%% atom per index while open_file/2 gives each caller a reference-counted open
+%% on the same table (including nested opens by the same process). A search's
+%% close/1 therefore releases only its own open, not the writer's table.
+%%
+%% Use the same configured path for all access, and one BEAM node per store.
+%% This does not implement a cross-VM lock or resolve filesystem path aliases.
+open_shared(Path) ->
+    Name = {?MODULE, Path},
+    case dets:open_file(Name, [{file, Path}, {type, set}, {repair, true}]) of
         {ok, Tab} ->
             case ensure_next(Tab) of
                 ok ->
@@ -92,49 +99,17 @@ open_existing(Path) ->
             Error
     end.
 
-ensure_table_file(Path) ->
-    case filelib:is_regular(Path) of
-        true ->
-            ok;
-        false ->
-            LockId = {{?MODULE, create_table_file}, self()},
-            case global:trans(LockId, fun() -> create_table_file_if_missing(Path) end) of
-                aborted -> {error, docstore_create_lock_aborted};
-                Result -> Result
-            end
-    end.
-
-create_table_file_if_missing(Path) ->
-    case filelib:is_regular(Path) of
-        true ->
-            ok;
-        false ->
-            case
-                dets:open_file(?CREATOR_TABLE, [
-                    {file, Path},
-                    {type, set},
-                    {repair, true}
-                ])
-            of
-                {ok, Tab} ->
-                    try
-                        case ensure_next(Tab) of
-                            ok -> dets:sync(Tab);
-                            {error, _Reason} = Error -> Error
-                        end
-                    after
-                        _ = dets:close(Tab)
-                    end;
-                {error, _Reason} = Error ->
-                    Error
-            end
-    end.
-
 ensure_next(Tab) ->
-    case dets:lookup(Tab, ?NEXT_KEY) of
-        [] -> dets:insert(Tab, {?NEXT_KEY, 1});
-        [{?NEXT_KEY, Next}] when is_integer(Next), Next > 0 -> ok;
-        Other -> {error, {invalid_next_id_record, Other}}
+    %% Concurrent first opens must not overwrite a counter that another
+    %% caller has already advanced. DETS performs this insert atomically.
+    case dets:insert_new(Tab, {?NEXT_KEY, 1}) of
+        true -> ok;
+        false ->
+            case dets:lookup(Tab, ?NEXT_KEY) of
+                [{?NEXT_KEY, Next}] when is_integer(Next), Next > 0 -> ok;
+                Other -> {error, {invalid_next_id_record, Other}}
+            end;
+        {error, _Reason} = Error -> Error
     end.
 
 path_list(Bin) when is_binary(Bin), byte_size(Bin) > 0 ->
