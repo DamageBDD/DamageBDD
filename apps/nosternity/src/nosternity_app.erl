@@ -40,6 +40,7 @@ routes() ->
         true ->
             nosternity_dashboard:routes() ++ Base ++
                 nosternity_auth_http:trails() ++ nosternity_dashboard_api:trails() ++
+                nosternity_voice_http:trails() ++
                 nosternity_damage_http:trails() ++ damage_browser_auth_http:trails(nosternity)
     end.
 

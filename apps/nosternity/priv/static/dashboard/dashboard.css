@@ -3,3 +3,12 @@
 
 /* Operator branding: long names wrap without displacing navigation. */
 .node-logo{width:36px;height:36px;object-fit:contain;flex-shrink:0}.node-name{min-width:0;overflow-wrap:anywhere}.brand .logo,.brand .beta{flex-shrink:0}.intro>div:first-child{min-width:0}#title,#subtitle{overflow-wrap:anywhere}.logo span,nav button.active,h1 em,.orbit span,.cardicon{color:var(--green)}.tabs .active{color:var(--green);border-bottom-color:var(--green)}button:focus-visible,a:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline-color:var(--green)}
+
+/* Voice notes share the composer and never publish automatically. */
+.voice-note{margin:18px 0;padding:16px;border:1px solid var(--line,#d7ddd5);border-radius:14px;background:var(--paper,#f5f6f0)}
+.voice-note [hidden]{display:none!important}.voice-settings{display:grid;grid-template-columns:2fr 1fr;gap:12px}
+.voice-note label{display:block;font-size:13px}.voice-note select{width:100%;margin-top:6px}.voice-note .voice-cleanup{display:flex;align-items:center;gap:8px;margin:12px 0}
+.voice-cleanup input{width:auto}.voice-controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.voice-ptt{touch-action:none;user-select:none;-webkit-user-select:none}
+.voice-ptt[aria-pressed=true]{background:#953b35;color:white;box-shadow:0 0 0 4px #953b3520}.voice-note output{font-variant-numeric:tabular-nums}.voice-note meter{width:70px}
+.voice-note audio{width:100%;margin:8px 0}.voice-note textarea{margin:8px 0}.voice-note details p{white-space:pre-wrap;overflow-wrap:anywhere}.voice-note [data-voice=status]{font-size:13px;overflow-wrap:anywhere}
+@media(max-width:600px){.voice-settings{grid-template-columns:1fr}.voice-controls button{min-height:44px}}

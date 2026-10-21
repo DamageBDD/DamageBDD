@@ -7,7 +7,7 @@ import {finalizeEvent, getPublicKey, verifyEvent} from 'nostr-tools/pure';
 
 const templates=new URL('../../priv/templates/ui/dashboard/',import.meta.url);
 const part=async name=>readFile(new URL(name+'.mustache',templates),'utf8');
-const fragments=Object.fromEntries(await Promise.all(['page','sidebar','header','hero','feed','footer','auth','analytics','wallet','signer'].map(async name=>[name,await part(name)])));
+const fragments=Object.fromEntries(await Promise.all(['page','sidebar','header','hero','feed','footer','auth','analytics','wallet','signer','voice-note'].map(async name=>[name,await part(name)])));
 const html=fragments.page.replace(/\{\{\{(\w+)\}\}\}/g,(_,name)=>fragments[name]);
 const bundle=await readFile(new URL('../../priv/static/dashboard/dashboard.js',import.meta.url),'utf8');
 const secret=new Uint8Array(32);secret[31]=9;
@@ -17,7 +17,7 @@ const note=finalizeEvent({kind:1,content:'<img src=x onerror=alert(1)> A signed 
 async function until(fn){for(let i=0;i<100;i++){if(fn())return;await new Promise(r=>setTimeout(r,5));}assert.fail('UI condition timed out');}
 async function fixture(branding={}){
  const dom=new JSDOM(html,{url:origin+'/dashboard',runScripts:'outside-only',pretendToBeVisual:true});
- const w=dom.window, calls=[];let session=null, saved={...preferences}, signatures=0;
+ const w=dom.window, calls=[];w.HTMLMediaElement.prototype.pause=function(){};w.HTMLMediaElement.prototype.load=function(){};let session=null, saved={...preferences}, signatures=0;
  Object.assign(w.document.body.dataset,{nodeName:'Nosternity',nodeTitle:'Nosternity Search',nodeDescription:'The open network',...branding});
  w.document.title=w.document.body.dataset.nodeTitle;
  w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};w.HTMLDialogElement.prototype.close=function(){this.open=false;};
@@ -29,6 +29,7 @@ async function fixture(branding={}){
   calls.push({path,options});const body=options.body?JSON.parse(options.body):{};
   if(path.startsWith('/dashboard/fragments/'))return response(fragments[path.split('/').pop()]);
   assert.equal(options.credentials,'same-origin');assert.equal(options.headers['X-Nosternity-Auth'],'1');
+  if(path==='/api/nosternity/voice/options')return response({enabled:false,cleanup_enabled:false,max_duration_ms:30000,max_audio_bytes:2097152});
   if(path==='/api/nosternity/auth/options')return response({origin,primary:'nostr'});
   if(path==='/accounts/session')return response({error:'unauthorized'},401);
   if(path==='/api/nosternity/auth/session')return session?response(session):response({error:'unauthorized'},401);

@@ -53,7 +53,8 @@ render(Part) ->
             <<"auth">>,
             <<"analytics">>,
             <<"wallet">>,
-            <<"signer">>
+            <<"signer">>,
+            <<"voice-note">>
         ])
     of
         true -> {ok, template(binary_to_list(Part), #{})};
@@ -77,6 +78,7 @@ headers() ->
         <<"referrer-policy">> => <<"no-referrer">>,
         <<"x-content-type-options">> => <<"nosniff">>,
         <<"x-frame-options">> => <<"DENY">>,
+        <<"permissions-policy">> => <<"microphone=(self), on-device-speech-recognition=(self)">>,
         <<"content-security-policy">> => content_security_policy()
     }.
 
@@ -90,7 +92,7 @@ content_security_policy() ->
     iolist_to_binary([
         <<"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:">>,
         [[<<" ">>, Origin] || Origin <- Origins],
-        <<"; connect-src 'self' wss:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'">>
+        <<"; media-src 'self' blob:; connect-src 'self' wss:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'">>
     ]).
 
 %% Permit only the configured image origins, never arbitrary header text from

@@ -1,3 +1,4 @@
+import { mountVoiceNote } from './voice-note.js';
 import { escapeHTML as esc, validPubkey } from './core.js';
 import { Wallet, connectBunker, verifyEvent, deadline } from './connections.js';
 import { npubEncode, decode } from 'nostr-tools/nip19';
@@ -9,6 +10,7 @@ const brand = {name:document.body.dataset.nodeName || 'Nosternity',
  description:document.body.dataset.nodeDescription || ''};
 const state = { page:'explore', scope:'global', query:'', kind:'all', session:null, damage:null,
   signer:null, signerType:'', wallet:null, balance:null, events:[], account:null, epoch:0 };
+let voiceWidget=null;
 let dialogEpoch=0, pollTimer, toastTimer, pendingProof=null, authBusy=false;
 // Keep cookie-setting requests serialized with account switches and dialog closure.
 async function authenticating(fn){if(authBusy)throw Error('Wait for the current sign-in to finish.');authBusy=true;try{return await fn();}finally{authBusy=false;}}
@@ -28,7 +30,7 @@ async function api(path,body,extra={}) {
 }
 function toast(message){$('#toast').textContent=message;$('#toast').style.display='block';clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').style.display='none',7000);}
 function fail(error){const text=error?.message||'This request could not be completed.';if($('#modal').open)$('#modalError').textContent=text;else toast(text);}
-function close(){if(authBusy)return;dialogEpoch++;clearTimeout(pollTimer);if(pendingProof?.provider!==state.signer)pendingProof?.provider.close?.();pendingProof=null;$('#modal').close();$('#modalBody').replaceChildren();}
+function close(){if(authBusy)return;voiceWidget?.destroy();voiceWidget=null;dialogEpoch++;clearTimeout(pollTimer);if(pendingProof?.provider!==state.signer)pendingProof?.provider.close?.();pendingProof=null;$('#modal').close();$('#modalBody').replaceChildren();}
 function modal(html){close();$('#modalBody').innerHTML=html;$('#modalError').textContent='';$('#modal').showModal();return dialogEpoch;}
 function short(key){return key?key.slice(0,8)+'…'+key.slice(-6):'Not connected';}
 function intent(){return $('#authIntent')?.value||'login';}
@@ -119,7 +121,11 @@ function requireDamage(){if(!state.damage||state.damage.mode!=='custodial')throw
 async function sessions(){requireDamage();const r=await api('/api/nwc/sessions',{});modal('<h2>DamageBDD wallet connections</h2>'+(r.sessions||[]).map(s=>'<div class="setting"><span class="mono">'+esc(short(s.client_pubkey))+'</span><button data-action="revoke" data-key="'+esc(s.client_pubkey)+'" '+(s.revoked?'disabled':'')+'>'+(s.revoked?'Revoked':'Revoke')+'</button></div>').join(''));}
 const actions={close,login:authDialog,nostrLogin,bunker,signProof,lightning,damageLogin,filters,nwc,balance,sessions,
  refresh:()=>navigate(state.page),
- compose:async()=>{await ensureSigner();modal('<h2>What’s on your mind?</h2><form id="composeForm"><label for="note">Public note</label><textarea id="note" maxlength="16000" required></textarea><button class="dark">Sign & publish</button></form>');},
+ compose:async()=>{await ensureSigner();const epoch=dialogEpoch;const voice=await fragment('voice-note');if(epoch!==dialogEpoch)return;
+  modal('<h2>What’s on your mind?</h2><form id="composeForm"><label for="note">Public note</label><textarea id="note" maxlength="16000" required></textarea><div id="voiceNote">'+voice+'</div><button type="submit" class="dark">Sign & publish</button></form>');
+  voiceWidget=mountVoiceNote($('#voiceNote'),{onInsert:text=>{const note=$('#note');const value=[note.value.trimEnd(),text].filter(Boolean).join('\n\n');
+    if(new TextEncoder().encode(value).length>16000)throw Error('The note would exceed 16,000 bytes. Shorten the transcript first.');
+    note.value=value;note.dispatchEvent(new Event('input',{bubbles:true}));note.focus();}});},
  profile:async()=>{await ensureSigner();const r=await api('/api/nostr/search',{filters:[{kinds:[0],authors:[state.session.subject],limit:1}]});let p={};try{p=JSON.parse(r.results[0]?.event.content||'{}');}catch{}modal('<h2>Your Nostr profile</h2><p>Updates are public signed profile events.</p><form id="profileForm"><label for="name">Display name</label><input id="name" maxlength="100" value="'+esc(p.name||'')+'"><label for="about">About you</label><textarea id="about" maxlength="2000">'+esc(p.about||'')+'</textarea><button class="dark">Sign & update profile</button></form>');$('#profileForm')._profile=p;},
  follow:async()=>{await ensureSigner();modal('<h2>Follow someone</h2><form id="followForm"><label for="followKey">Nostr public key or npub</label><input id="followKey" required><p>This updates your contact list from the latest kind-3 event on this relay. Connect the relay holding your full list before adding people.</p><button class="dark">Review contact list</button></form>');},
  bookmark:async el=>{const ids=prefs().bookmarks;await savePrefs({...prefs(),bookmarks:ids.includes(el.dataset.id)?ids.filter(x=>x!==el.dataset.id):[el.dataset.id,...ids].slice(0,100)});await navigate(state.page);},
@@ -141,7 +147,7 @@ const forms={
   if(mode!=='login'){modal('<h2>Check your email</h2><p>'+esc(r.message||'Continue using the confirmation or recovery link sent by DamageBDD.')+'</p><button class="dark" data-action="damageLogin">Back to sign in</button>');return;}
   state.damage=r;if(!state.session)state.session=await authenticating(()=>api('/api/nosternity/auth/damage',{intent:form.dataset.intent}));close();await restore();await navigate('settings');toast('DamageBDD connected.');},
  filtersForm:async()=>{const p={...prefs(),spam:$('#spam').checked,duplicates:$('#duplicates').checked,words:$('#words').value.split(',').map(s=>s.trim()).filter(Boolean)};await savePrefs(p);close();await navigate(state.page);},
- composeForm:async()=>{const text=$('#note').value.trim();if(!text||new TextEncoder().encode(text).length>16000)throw Error('Enter 1–16,000 bytes of text.');await publish(1,text);close();await navigate('account');toast('Note accepted by this relay.');},
+ composeForm:async()=>{if(voiceWidget?.busy)throw Error('Finish or discard your voice recording before publishing.');const text=$('#note').value.trim();if(!text||new TextEncoder().encode(text).length>16000)throw Error('Enter 1–16,000 bytes of text.');await publish(1,text);close();await navigate('account');toast('Note accepted by this relay.');},
  profileForm:async form=>{const p={...form._profile,name:$('#name').value.trim(),about:$('#about').value.trim()};await publish(0,JSON.stringify(p));close();toast('Profile update accepted by this relay.');},
  followForm:async()=>{const key=publicKey($('#followKey').value);const r=await api('/api/nostr/search',{filters:[{kinds:[3],authors:[state.session.subject],limit:1}]});const prev=r.results[0]?.event;const tags=prev?.tags||[];if(tags.some(t=>t[0]==='p'&&t[1]===key))throw Error('Already following this key on this relay.');if(tags.length>=255)throw Error('Contact list is at this relay’s tag limit.');const next=[...tags,['p',key]];modal('<h2>Update your contact list?</h2><p>Preserves '+tags.filter(t=>t[0]==='p').length+' contacts from this relay and adds:</p><p class="mono">'+esc(npubEncode(key))+'</p><form id="confirmFollow"><button class="dark">Sign & publish contact list</button></form>');$('#confirmFollow')._event={tags:next,content:prev?.content||''};},
  confirmFollow:async form=>{await publish(3,form._event.content,form._event.tags);close();state.scope='following';await navigate('explore');},
