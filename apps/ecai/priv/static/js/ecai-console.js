@@ -1,3 +1,4 @@
+import "/static/js/ecai-console-settings.js?v=sidebar-settings-v1";
 import {initKnowledgeSearch} from "/static/js/ecai-knowledge-search.js?v=knowledge-v2";
 import {initIndexSamples} from "/static/js/ecai-index-samples.js?v=samples-v1";
 import {initModelInternals} from "/static/js/ecai-model-internals.js?v=model-internals-v1";
@@ -153,7 +154,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     ask: { question: "What is known about this topic?", destination: "local" }
   };
   const marketExamples = { claim: { miner_ak: "ak_..." }, submit: { miner_ak: "ak_...", attestation: "attestation", evidence_ref: "" }, pay: { admin_ak: "ak_..." } };
-  const VIEW_NAMES = { personalities: "AI personalities", evaluation: "LLM evaluation", math: "Mathematical paths", overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing", compute: "Compute", keys: "Keys" };
+  const VIEW_NAMES = { account: "Account settings", "node-settings": "Node settings", personalities: "AI personalities", evaluation: "LLM evaluation", math: "Mathematical paths", overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing", compute: "Compute", keys: "API keys" };
   let mathPaths = null;
   let evaluation = null;
   let personalities = null;
@@ -761,6 +762,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     // privileged API probe. Never infer a role from login success alone.
     if (newlyAuthenticated) state.adminProbeSequence++;
     applyConsoleCapabilities();
+    window.EcaiConsoleSettings?.refresh();
   }
   function openLogin(message = "", mode = "login") {
     initAuthUI();
@@ -853,6 +855,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     if (location.hash !== `#${fragment}`) history.replaceState(null, "", `#${fragment}`);
     modelInternals?.setVisible(internalsVisible);
     closeNav();
+    window.EcaiConsoleSettings?.navigated(view, previous);
     window.EcaiIndexPool?.setVisible(view === "network");
     mathPaths?.setVisible(view === "math");
     evaluation?.setVisible(view === "evaluation");
@@ -884,7 +887,6 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     }
     const online = state.services.chat === "online";
     put("metricChat", online ? "Online" : statusText(state.services.chat));
-    put("topbarRuntime", online ? "Chat endpoint responding" : "Some services may be unavailable");
     $("sidebarStatusDot").classList.toggle("online", online);
     put("sidebarNodeState", online ? "ECAI responding" : "Check node services");
   }
@@ -2626,6 +2628,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     $("codeAdminNav").hidden = !(state.authenticated && (state.nodeAdmin || state.codeAdmin));
     $("indexPoolNav").hidden = !(state.authenticated && state.nodeAdmin);
     window.EcaiIndexPool?.setSession(state.authenticated, state.nodeAdmin);
+    window.EcaiConsoleSettings?.refresh();
     modelInternals?.accessChanged();
   }
   function setCodeActionsEnabled(allowed) {
@@ -3344,6 +3347,11 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
   }
 
   async function refreshView() {
+    // Settings launchers are read-only and available even in guest/wallet sessions.
+    if (["account", "node-settings"].includes(state.view)) {
+      window.EcaiConsoleSettings?.refresh();
+      return;
+    }
     if (state.sessionMode === "wallet" && !["overview", "search", "chat", "api", "math", "personalities"].includes(state.view)) {
       applyConsoleCapabilities();
       return;
@@ -3543,7 +3551,13 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
       });
     });
     initAuthUI();
-    bindEvents(); resetChat(); fillPrivateExample(); updateMarketActionExample();
+    bindEvents();
+    window.EcaiConsoleSettings?.init({navigate, openLogin, session: () => ({
+      authenticated: state.authenticated, mode: state.sessionMode, identity: state.email,
+      address: state.authenticated ? TokenManager.getAddress() : "",
+      nodeAdmin: state.nodeAdmin, codeAdmin: state.codeAdmin, codeEnabled: state.codeFeatureConfigured
+    })});
+    resetChat(); fillPrivateExample(); updateMarketActionExample();
     $("indexIdempotency").value = newKey("ecai-job");
     syncBrowserSession();
     navigate(location.hash.slice(1) || (new URLSearchParams(location.search).has("personality") ? "personalities" : "math"));

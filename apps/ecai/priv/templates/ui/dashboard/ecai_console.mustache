@@ -24,44 +24,59 @@
   <link rel="stylesheet" href="/static/css/ecai-index-mint-settings.css?v=index-mint-settings-v1">
   <link rel="stylesheet" href="/static/css/ecai-knowledge-workspace.css?v=knowledge-v2">
   <link rel="stylesheet" href="/api/themes/css?app=ecai">
+  <link rel="stylesheet" href="/static/css/ecai-sidebar-settings.css?v=sidebar-settings-v1">
 </head>
 <body>
   <div class="console-shell" id="ecaiConsole" data-node-version="{{node_version}}">
     <aside class="console-sidebar" id="consoleSidebar" aria-label="Primary navigation">
       <div class="brand-block">
         {{#has_brand_logo}}<img class="theme-brand-logo" src="{{brand_logo}}" alt="">{{/has_brand_logo}}
-        {{^has_brand_logo}}<div class="brand-symbol" aria-hidden="true">e<span>·</span></div>{{/has_brand_logo}}
+        {{^has_brand_logo}}<div class="brand-symbol" aria-hidden="true">e</div>{{/has_brand_logo}}
         <div><div class="brand-name">{{brand_name}}</div><div class="brand-caption">{{brand_tagline}}</div></div>
         <button class="icon-button sidebar-close" type="button" id="closeNav" aria-label="Close menu">×</button>
       </div>
-      <div class="sidebar-label">WORKSPACE</div>
-      <nav id="consoleNav" class="main-nav" aria-label="ECAI areas">
-        <button type="button" data-view="overview" class="nav-link is-active" aria-current="page"><span class="nav-icon" aria-hidden="true">◫</span>Overview</button>
-        <button type="button" data-view="search" class="nav-link"><span class="nav-icon" aria-hidden="true">⌕</span>Knowledge search</button>
-        <button type="button" data-view="evaluation" class="nav-link"><span class="nav-icon" aria-hidden="true">✓</span>LLM evaluation</button>
-        <button type="button" data-view="math" class="nav-link"><span class="nav-icon" aria-hidden="true">↝</span>Mathematical paths</button>
-        <button type="button" data-view="personalities" class="nav-link"><span class="nav-icon" aria-hidden="true">◉</span>AI personalities</button>
-        <button type="button" data-view="chat" class="nav-link"><span class="nav-icon" aria-hidden="true">▤</span>Conversation</button>
-        <button type="button" data-view="video" class="nav-link"><span class="nav-icon" aria-hidden="true">▸</span>Video Studio</button>
-        <button type="button" data-view="indexing" class="nav-link"><span class="nav-icon" aria-hidden="true">▦</span>Index jobs</button>
-        <button type="button" data-view="compute" class="nav-link"><span class="nav-icon" aria-hidden="true">⌁</span>Compute</button>
-        <button type="button" data-view="keys" class="nav-link"><span class="nav-icon" aria-hidden="true">⌑</span>Keys</button>
-        <button type="button" data-view="network" class="nav-link" id="indexPoolNav" hidden><span class="nav-icon" aria-hidden="true">ϟ</span>Funded indexing</button>
-        <button type="button" data-view="wikimedia" class="nav-link"><span class="nav-icon" aria-hidden="true">◎</span>Wikimedia</button>
-        <button type="button" data-view="knowledge" class="nav-link"><span class="nav-icon" aria-hidden="true">⌘</span>Knowledge &amp; privacy</button>
-        <button type="button" data-view="marketplace" class="nav-link"><span class="nav-icon" aria-hidden="true">◇</span>Marketplace</button>
-        <button type="button" data-view="market-maker" class="nav-link"><span class="nav-icon" aria-hidden="true">◈</span>Market Maker</button>
-        <button type="button" data-view="code" class="nav-link" id="codeAdminNav" hidden><span class="nav-icon" aria-hidden="true">▣</span>Code learning &amp; repair</button>
-        <button type="button" data-view="operations" class="nav-link"><span class="nav-icon" aria-hidden="true">≋</span>Operations</button>
-        <button type="button" data-view="api" class="nav-link"><span class="nav-icon" aria-hidden="true">{ }</span>API explorer</button>
+      <nav id="consoleNav" class="main-nav" aria-label="ECAI areas" data-sidebar-layout="settings-v1">
+        <div class="sidebar-workspace">
+          <div class="sidebar-group" role="group" aria-labelledby="navWorkspaceLabel">
+            <div class="sidebar-label" id="navWorkspaceLabel">WORKSPACE</div>
+            <button type="button" data-view="overview" class="nav-link is-active" aria-current="page"><span class="nav-icon" aria-hidden="true">◫</span>Overview</button>
+            <button type="button" data-view="chat" class="nav-link"><span class="nav-icon" aria-hidden="true">▤</span>Conversation</button>
+            <button type="button" data-view="search" class="nav-link"><span class="nav-icon" aria-hidden="true">⌕</span>Knowledge search</button>
+          </div>
+          <div class="sidebar-group" role="group" aria-labelledby="navKnowledgeLabel">
+            <div class="sidebar-label" id="navKnowledgeLabel">KNOWLEDGE</div>
+            <button type="button" data-view="indexing" class="nav-link"><span class="nav-icon" aria-hidden="true">▦</span>Index jobs</button>
+            <button type="button" data-view="knowledge" class="nav-link"><span class="nav-icon" aria-hidden="true">⌘</span>Knowledge &amp; privacy</button>
+            <button type="button" data-view="wikimedia" class="nav-link"><span class="nav-icon" aria-hidden="true">◎</span>Wikimedia</button>
+          </div>
+          <div class="sidebar-group" role="group" aria-labelledby="navCreateLabel">
+            <div class="sidebar-label" id="navCreateLabel">CREATE</div>
+            <button type="button" data-view="personalities" class="nav-link"><span class="nav-icon" aria-hidden="true">◉</span>AI personalities</button>
+            <button type="button" data-view="video" class="nav-link"><span class="nav-icon" aria-hidden="true">▸</span>Video Studio</button>
+          </div>
+          <details class="sidebar-tools" id="sidebarMoreTools">
+            <summary>More tools</summary>
+            <button type="button" data-view="evaluation" class="nav-link"><span class="nav-icon" aria-hidden="true">✓</span>LLM evaluation</button>
+            <button type="button" data-view="math" class="nav-link"><span class="nav-icon" aria-hidden="true">↝</span>Mathematical paths</button>
+            <button type="button" data-view="marketplace" class="nav-link"><span class="nav-icon" aria-hidden="true">◇</span>Marketplace</button>
+            <button type="button" data-view="market-maker" class="nav-link"><span class="nav-icon" aria-hidden="true">◈</span>Market Maker</button>
+            <button type="button" data-view="network" class="nav-link" id="indexPoolNav" hidden><span class="nav-icon" aria-hidden="true">ϟ</span>Funded indexing</button>
+            <button type="button" data-view="code" class="nav-link" id="codeAdminNav" hidden><span class="nav-icon" aria-hidden="true">▣</span>Code learning &amp; repair</button>
+            <button type="button" data-view="operations" class="nav-link"><span class="nav-icon" aria-hidden="true">≋</span>Operations</button>
+            <button type="button" data-view="api" class="nav-link"><span class="nav-icon" aria-hidden="true">{ }</span>API explorer</button>
+          </details>
+        </div>
+        <div class="sidebar-bottom">
+          <div class="sidebar-group" role="group" aria-labelledby="navSettingsLabel">
+            <div class="sidebar-label" id="navSettingsLabel">SETTINGS</div>
+            <button type="button" class="nav-link" data-view="account"><span class="nav-icon" aria-hidden="true">⚙</span>Account settings</button>
+            <button type="button" data-view="compute" class="nav-link"><span class="nav-icon" aria-hidden="true">⌁</span>Compute</button>
+            <button type="button" data-view="keys" class="nav-link"><span class="nav-icon" aria-hidden="true">⌑</span>API keys</button>
+            <button type="button" class="nav-link" data-view="node-settings"><span class="nav-icon" aria-hidden="true">▣</span>Node settings</button>
+          </div>
+          <button type="button" class="node-mark" data-settings-go="node-settings" aria-label="Open node settings"><span class="node-dot" id="sidebarStatusDot" aria-hidden="true"></span><span id="sidebarNodeState" role="status" aria-live="polite" aria-atomic="true">Node not checked</span><span class="node-version">{{node_version}}</span></button>
+        </div>
       </nav>
-      <div class="sidebar-bottom">
-        <div class="sidebar-label">EXISTING TOOLS</div>
-        <a href="/indexer" class="subtle-link">Simple indexer <span aria-hidden="true">↗</span></a>
-        <a href="/indexer/advanced" class="subtle-link">Advanced indexer <span aria-hidden="true">↗</span></a>
-        <a href="/chat" class="subtle-link">Legacy chat <span aria-hidden="true">↗</span></a>
-        <div class="node-mark"><span class="node-dot" id="sidebarStatusDot"></span><span id="sidebarNodeState">Node not checked</span><span class="node-version">{{node_version}}</span></div>
-      </div>
     </aside>
 
     <div class="console-body">
@@ -71,7 +86,6 @@
           <div class="breadcrumb">ECAI <span aria-hidden="true">/</span> <strong id="viewBreadcrumb">Overview</strong></div>
         </div>
         <div class="topbar-actions">
-          <span class="topbar-runtime" id="topbarRuntime">Connecting to node…</span>
           <button type="button" id="refreshView" class="icon-button refresh-icon" title="Refresh current view" aria-label="Refresh current view">↻</button>
           <span class="topbar-divider" aria-hidden="true"></span>
           <span class="console-session-kind" id="consoleSessionKind"></span>
@@ -113,7 +127,7 @@
               <div class="panel-heading"><div><div class="eyebrow">OPERATIONS</div><h2>Recent index activity</h2></div><button type="button" class="text-button" data-go="indexing">All jobs →</button></div>
               <div id="overviewJobs" class="overview-jobs"><div class="empty-state">Sign in to see current queue activity.</div></div>
             </section>
-            <section class="surface panel-pad">
+            <section class="surface panel-pad" id="overviewServiceSection">
               <div class="panel-heading"><div><div class="eyebrow">SYSTEM</div><h2>Service availability</h2></div><button type="button" id="refreshHealth" class="text-button">Recheck ↻</button></div>
               <div class="service-list" id="overviewServices"><div class="empty-state">Checking connected APIs…</div></div>
               <p class="context-hint">Availability is based on real endpoint responses, not simulated metrics.</p>
@@ -704,6 +718,63 @@
           <div class="page-intro"><div class="eyebrow">REFERENCE &amp; EXECUTION</div><h1 id="apiTitle">API explorer</h1><p>Browse the routes exported by this ECAI node and make authenticated same-origin requests.</p></div>
           <div class="api-explorer"><section class="surface api-list-panel"><label for="apiFilter" class="sr-only">Filter endpoints</label><input id="apiFilter" class="api-filter" type="search" placeholder="⌕  Filter endpoints"><div id="apiRoutes" class="api-route-list" aria-label="API endpoints"></div></section><section class="surface panel-pad api-request-panel"><div class="panel-heading"><div><div class="eyebrow">REQUEST</div><h2 id="apiRequestTitle">Choose an endpoint</h2></div><span class="status-tag" id="apiMethodTag">REST</span></div><p id="apiRequestDescription" class="context-hint">Select a route on the left to inspect its parameters.</p><form id="apiRequestForm" class="stack-form"><div id="apiPathParams"></div><div id="apiQueryParams"></div><div id="apiRequestBodyWrapper" hidden><label for="apiRequestBody">JSON body</label><textarea id="apiRequestBody" class="code-input" rows="9" spellcheck="false"></textarea></div><div class="inline-actions"><button type="submit" id="apiRequestSubmit" class="button button-primary" disabled>Send request ↗</button><button type="button" id="apiCopyResponse" class="button button-outline" disabled>Copy response</button></div></form><div class="form-meta"><span id="apiResponseMeta" role="status">No request sent.</span></div><pre id="apiResponse" class="code-display">Select an endpoint to get started.</pre></section></div>
         </section>
+        <!-- Sidebar settings launchers reuse the existing account and admin handlers. -->
+        <section class="view settings-workspace" data-panel="account" aria-labelledby="accountSettingsTitle" hidden>
+          <div class="page-intro"><div class="eyebrow">SETTINGS · YOUR ACCOUNT</div><h1 id="accountSettingsTitle">Account settings</h1><p>Manage your session and find account-scoped preferences in one place.</p></div>
+          <div class="settings-grid">
+            <section class="settings-card" aria-labelledby="accountSettingsSessionTitle">
+              <h2 id="accountSettingsSessionTitle">Your session</h2>
+              <p id="accountSettingsNotice">Sign in to manage your account settings.</p>
+              <dl><div><dt>Account</dt><dd id="accountSettingsIdentity">Guest access</dd></div><div><dt>Sign-in method</dt><dd id="accountSettingsMode">Not signed in</dd></div><div><dt>Account address</dt><dd id="accountSettingsAddress">Sign in to view your account</dd></div></dl>
+              <div class="settings-actions">
+                <button type="button" class="button button-primary" id="accountSettingsLogin" data-settings-action="login">Sign in</button>
+                <button type="button" class="button button-outline" id="accountSettingsCreate" data-settings-action="signup">Create account</button>
+                <button type="button" class="button button-outline" id="accountSettingsWallet" data-settings-action="wallet">Connect wallet</button>
+                <button type="button" class="button button-outline" id="accountSettingsManagedLogin" data-settings-action="login" hidden>Sign in with email</button>
+                <button type="button" class="button button-outline" id="accountSettingsSwitch" data-settings-action="switch" hidden>Switch account</button>
+                <button type="button" class="button button-outline" id="accountSettingsLogout" data-settings-action="logout" hidden>Sign out</button>
+              </div>
+              <p class="settings-help">Switching accounts replaces this browser session; it does not link accounts. Never enter a wallet seed phrase or private key here.</p>
+            </section>
+            <section class="settings-card" aria-labelledby="accountSettingsPreferencesTitle">
+              <h2 id="accountSettingsPreferencesTitle">Account preferences</h2>
+              <p id="accountSettingsAccess">Managed email sign-in is required for these settings.</p>
+              <div class="settings-links">
+                <button type="button" class="settings-link" data-settings-go="keys" data-settings-managed disabled><strong>API keys</strong><small>Create, rotate and revoke account-scoped API keys.</small></button>
+                <button type="button" class="settings-link" data-settings-go="knowledge" data-settings-managed disabled><strong>Knowledge &amp; privacy</strong><small>Open your private corpus tools and access controls.</small></button>
+                <button type="button" class="settings-link" data-settings-go="compute" data-settings-managed disabled><strong>Compute</strong><small>Cloud connections, budgets and reservations for your account.</small></button>
+                <button type="button" class="settings-link" data-settings-action="mint" data-settings-managed disabled><strong>Mint preferences</strong><small>Open fee allowances and review requests within Index jobs.</small></button>
+              </div>
+            </section>
+          </div>
+        </section>
+        <section class="view settings-workspace" data-panel="node-settings" aria-labelledby="nodeSettingsTitle" hidden>
+          <div class="page-intro"><div class="eyebrow">SETTINGS · THIS NODE</div><h1 id="nodeSettingsTitle">Node settings</h1><p>Find node-wide controls and diagnostics. Account preferences and cloud budgets remain separate.</p></div>
+          <div class="settings-grid">
+            <section class="settings-card" aria-labelledby="nodeSettingsAboutTitle">
+              <h2 id="nodeSettingsAboutTitle">About this node</h2>
+              <dl><div><dt>Node version</dt><dd id="nodeSettingsVersion">Not reported</dd></div></dl>
+              <p id="nodeSettingsAccess">Node-wide changes require a server-authorized administrator.</p>
+              <div class="settings-links">
+                <button type="button" class="settings-link" data-settings-action="diagnostics"><strong>Service diagnostics</strong><small>Inspect individual endpoint checks on Overview.</small></button>
+                <button type="button" class="settings-link" data-settings-go="api"><strong>API explorer</strong><small>Browse the available routes. Submissions remain explicit.</small></button>
+              </div>
+            </section>
+            <section class="settings-card" aria-labelledby="nodeSettingsControlsTitle">
+              <h2 id="nodeSettingsControlsTitle">Administrator controls</h2>
+              <p id="nodeSettingsRestricted">This session does not have administrator access. Sign in with an authorized account to see available node controls.</p>
+              <div id="nodeSettingsCode" hidden>
+                <p id="nodeSettingsCodeNotice">Open the existing runtime settings in Code learning &amp; repair.</p>
+                <div class="settings-links"><button type="button" class="settings-link" data-settings-action="code-settings"><strong>Learning, repositories &amp; review gate</strong><small>Open existing runtime policy; no change is made by opening it.</small></button></div>
+              </div>
+              <div id="nodeSettingsOperations" hidden>
+                <div class="settings-links"><button type="button" class="settings-link" data-settings-go="operations"><strong>Ingestion &amp; runtime</strong><small>Open Operations for loaders, publication steps and socket diagnostics.</small></button></div>
+              </div>
+              <p class="settings-help">Administrator links do not grant permissions. The destination and server recheck access before any change.</p>
+            </section>
+          </div>
+        </section>
+
       </main>
     </div>
     <div id="consoleToast" class="console-toast" role="status" aria-live="polite" hidden></div>
@@ -717,6 +788,6 @@
   <script type="module" src="/static/js/ecai-compute-settings.js?v=compute-only-v1"></script>
   <script type="module" src="/static/js/ecai-keys.js"></script>
   <script type="module" src="/static/js/ecai-index-mint-settings.js?v=index-mint-settings-v1"></script>
-  <script type="module" src="/static/js/ecai-console.js?v=model-internals-v1-personality-conversations-v1-personalities-v1-video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-explorer-v2-eval-v1-source-retrieval-v1-knowledge-v2-compute-only-v1&index-mint=index-mint-v1"></script>
+  <script type="module" src="/static/js/ecai-console.js?v=model-internals-v1-personality-conversations-v1-personalities-v1-video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-explorer-v2-eval-v1-source-retrieval-v1-knowledge-v2-compute-only-v1&index-mint=index-mint-v1-sidebar-settings-v1"></script>
 </body>
 </html>
