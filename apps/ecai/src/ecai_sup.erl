@@ -259,7 +259,10 @@ maybe_compute_specs() ->
                     shutdown => 30000,
                     type => worker,
                     modules => [ecai_compute_settings]
-                }
+                },
+                #{id => ecai_aws_setup_sup, start => {ecai_aws_setup_sup, start_link, []},
+                  restart => permanent, shutdown => infinity, type => supervisor,
+                  modules => [ecai_aws_setup_sup]}
             ];
         false ->
             [];

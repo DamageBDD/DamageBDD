@@ -44,6 +44,10 @@
             %% Safe default: account settings enabled, but remote spending and mint
             %% requests are both disabled until each account explicitly opts in.
             {compute_settings_enabled, true},
+            %% AWS credential intake is opt-in; configure the HTTPS origin,
+            %% workload identity and reviewed digest-pinned image before enabling.
+            {aws_setup_enabled, false},
+            {aws_setup_probe_enabled, false},
             %% Native Ollama-compatible inference gateway. Authentication stays
             %% enabled by default even though the ECAI listener defaults to loopback.
             {ollama_api_enabled, true},

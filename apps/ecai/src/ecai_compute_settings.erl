@@ -10,6 +10,7 @@
     put_mint_policy/2,
     put_provider/3,
     prepare_provider/2,
+    import_aws_provider/4, remove_aws_provider/2,
     provider/2,
     mark_verified/3,
     quote/1,
@@ -44,6 +45,12 @@ put_provider(Owner, Provider, Config) ->
 prepare_provider(Owner, Provider) ->
     gen_server:call(?MODULE, {prepare_provider, Owner, Provider}, 30000).
 provider(Owner, Provider) -> gen_server:call(?MODULE, {get_provider, Owner, Provider}, 30000).
+%% Atomic compare-and-swap for stack import/removal; never overwrite edits made
+%% after a deployment plan was reviewed, or change account budget/mint policy.
+import_aws_provider(Owner, Expected, Config, External) ->
+    gen_server:call(?MODULE, {import_aws_provider, Owner, Expected, Config, External}, 30000).
+remove_aws_provider(Owner, Expected) ->
+    gen_server:call(?MODULE, {remove_aws_provider, Owner, Expected}, 30000).
 mark_verified(Owner, Provider, Digest) ->
     gen_server:call(?MODULE, {verified, Owner, Provider, Digest}, 30000).
 quote(Spec) -> quote_spec(Spec).
@@ -193,6 +200,25 @@ handle_call({prepare_provider, Owner, <<"aws_batch">>}, _From, State) ->
     reply(save(T, {account, Owner}, Updated, {ok, #{<<"external_id">> => External}}), State);
 handle_call({prepare_provider, _Owner, _Name}, _From, State) ->
     reply({error, unsupported_provider}, State);
+handle_call({import_aws_provider, Owner, Expected, Config, External}, From, State) ->
+    Account = account(State#st.table, Owner),
+    Previous = maps:get(<<"aws_batch">>, maps:get(<<"providers">>, Account), absent),
+    Setup = maps:get(<<"provider_setup">>, Account, #{}),
+    Saved = case Previous of absent -> #{}; _ -> Previous end,
+    case ecai_aws_setup:fingerprint(Previous) =:= Expected andalso
+            provider_external_id(Saved, Setup) =:= External of
+        true -> handle_call({provider, Owner, <<"aws_batch">>, Config}, From, State);
+        false -> reply({error, provider_changed_since_plan}, State)
+    end;
+handle_call({remove_aws_provider, Owner, Expected}, _From, State) ->
+    Account = account(State#st.table, Owner),
+    Providers = maps:get(<<"providers">>, Account),
+    Previous = maps:get(<<"aws_batch">>, Providers, absent),
+    case ecai_aws_setup:fingerprint(Previous) =:= Expected of
+        true -> reply(save(State#st.table, {account, Owner},
+            Account#{<<"providers">> := maps:remove(<<"aws_batch">>, Providers)}, {ok, removed}), State);
+        false -> reply({ok, unchanged}, State)
+    end;
 handle_call({provider, Owner, Name, Input}, _From, State) ->
     T = State#st.table,
     Conf = account(T, Owner),
@@ -543,10 +569,9 @@ validate_provider(<<"aws_batch">>, Input) when is_map(Input) ->
             text_ok(Arn, <<"^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9_+=,.@/-]+$">>) andalso
             lengths(Input, Fields) andalso
             text_ok(maps:get(<<"region">>, Input, <<>>), <<"^[a-z0-9-]+$">>) andalso
-            lists:all(
-                fun(K) -> text_ok(maps:get(K, Input, <<>>), <<"^[A-Za-z0-9._/-]+$">>) end,
-                [<<"job_queue">>, <<"job_definition">>]
-            ) andalso
+            text_ok(maps:get(<<"job_queue">>, Input, <<>>), <<"^[A-Za-z0-9._/-]+$">>) andalso
+            %% Automatic imports pin the exact approved definition revision.
+            text_ok(maps:get(<<"job_definition">>, Input, <<>>), <<"^[A-Za-z0-9._/-]+(:[1-9][0-9]*)?$">>) andalso
             text_ok(maps:get(<<"bucket">>, Input, <<>>), <<"^[a-z0-9.-]+$">>)
     of
         true -> {ok, Input};

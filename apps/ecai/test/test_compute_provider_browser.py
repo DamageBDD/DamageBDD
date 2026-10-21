@@ -276,6 +276,9 @@ class ComputeBrowserTests(unittest.TestCase):
         else:
             page.goto(self.origin + '/dashboard#compute')
         page.wait_for_function('window.__computeFixtureReady === true')
+        # This suite exercises the preserved manual provider path. Automatic
+        # setup has a separate suite, including the initially closed wrapper.
+        page.locator('#computeAwsManual').evaluate('(el)=>el.open=true')
         return page
 
     def assert_readable(self, page):
@@ -345,7 +348,8 @@ class ComputeBrowserTests(unittest.TestCase):
         self.assertEqual(page.locator('#computeAwsExternalId').inner_text(), 'Generate setup ID to continue')
         self.assertEqual(page.evaluate('window.EcaiComputeSettings.assetVersion'), VERSION)
         for ext, folder in [('css', 'css'), ('js', 'js')]:
-            url = f'/static/{folder}/ecai-compute-settings.{ext}?v={VERSION}'
+            url = re.search(r'/static/' + folder + r'/ecai-compute-settings\.' + ext + r'\?[^"<>]+', SHELL)[0]
+            self.assertEqual(parse_qs(urlsplit(url).query)['v'], [VERSION])
             self.assertIn(('GET', url), self.server.requests)
             self.assertNotIn(('GET', url.split('?')[0]), self.server.requests)
         self.assertEqual(page.locator('#computeChooseAws').evaluate('(el)=>getComputedStyle(el).display'), 'grid')

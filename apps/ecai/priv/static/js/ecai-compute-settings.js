@@ -247,6 +247,7 @@
     }
   }
   async function refresh() {
+    void window.EcaiAwsSetup?.refresh();
     if (!ready) return;
     try {
       state = await call('/ecai/compute/settings');
@@ -373,6 +374,7 @@
     if (ready || !$('computePolicyForm')) return;
     ({request: api, toast, openLogin, currentToken} = apiHooks);
     ready = true;
+    window.EcaiAwsSetup?.init(apiHooks);
     $('computeRefresh').addEventListener('click', () => void refresh());
     for (const tab of document.querySelectorAll('[data-compute-section]')) {
       tab.addEventListener('click', () => selectSection(tab.dataset.computeSection));
@@ -405,6 +407,7 @@
     checkAssets();
   }
   function clear() {
+    window.EcaiAwsSetup?.clear();
     state = null; quoted = null; requestKey = null;
     for (const id of ['computeAwsForm', 'computeGcpForm', 'computePolicyForm',
                       'computeJobForm']) {

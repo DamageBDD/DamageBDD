@@ -1,0 +1,2 @@
+# Pin in the node's virtual environment. Upgrade through reviewed dependency updates.
+boto3==1.43.18

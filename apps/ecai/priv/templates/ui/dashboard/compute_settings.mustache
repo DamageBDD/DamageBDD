@@ -8,7 +8,7 @@
   <p id="computeAssetNotice" class="context-hint compute-asset-notice" role="status" aria-live="polite">Loading cloud setup… If this message remains, reload the dashboard. A cached or missing dashboard asset may be preventing setup from initializing.</p>
   <aside class="compute-mode-notice" aria-label="Remote execution availability">
     <strong>Setup &amp; reservations only</strong>
-    <span>This dashboard does not launch cloud jobs. Saving a connection, setting a limit or reserving budget does not submit work to your provider.</span>
+    <span>Ordinary indexing reservations do not dispatch work. Automatic AWS setup can create chargeable infrastructure and, with separate approval, run a synthetic verification job.</span>
   </aside>
   <div class="compute-tabs" role="tablist" aria-label="Compute configuration">
     <button id="computeProvidersTab" type="button" role="tab" aria-controls="computeProviders" aria-selected="true" data-compute-section="computeProviders">Providers</button>
@@ -20,7 +20,7 @@
       <div><div class="eyebrow">01 · CONNECT YOUR CLOUD</div><h2 id="computeProvidersTitle">Choose a compute provider</h2></div>
       <button id="computeRefresh" type="button" class="button button-outline button-sm">Refresh status</button>
     </div>
-    <p class="context-hint">Use your provider's console to delegate limited access. ECAI never asks you for AWS access keys, Google service-account JSON. Saving details or opening a console does not launch compute.</p>
+    <p class="context-hint">Choose automatic AWS provisioning or delegate an existing environment manually. Only the dedicated automatic setup form accepts AWS credentials, for a temporary session; provider settings never store them.</p>
 
     <div class="compute-provider-choices" aria-label="Select cloud provider">
       <button type="button" class="compute-provider-choice" id="computeChooseAws" data-compute-provider-choice="aws_batch" aria-controls="computeAwsPanel" aria-pressed="true">
@@ -42,6 +42,64 @@
     </ol>
 
     <div id="computeAwsPanel" class="compute-connection-panel" aria-labelledby="computeAwsTitle">
+      <section id="awsSetupPanel" class="aws-setup" aria-labelledby="awsSetupTitle">
+        <div class="aws-setup-heading"><div><div class="eyebrow">AUTOMATIC SETUP</div><h3 id="awsSetupTitle">Connect once. Create your AWS environment.</h3></div><span class="status-tag">CloudFormation · CPU / Fargate</span></div>
+        <p class="context-hint">ECAI generates the trust ID, network, private bucket, scoped IAM roles, queue and job definitions. Review the exact plan before approving AWS resource creation.</p>
+        <div id="awsSetupBlockers" class="aws-setup-warning" role="status">Checking node prerequisites…</div>
+        <ol class="aws-setup-steps" aria-label="Automatic setup stages"><li>1 · Connect AWS</li><li>2 · Review plan</li><li>3 · Create &amp; verify</li></ol>
+        <div class="aws-setup-columns">
+          <section class="aws-setup-card">
+            <h4>1. Authorize this setup session</h4>
+            <form id="awsSetupConnectForm" class="stack-form" autocomplete="off">
+              <fieldset id="awsSetupCredentialFields" disabled>
+                <label>Region<select id="awsSetupRegion" name="region" required><option value="">Choose a supported region</option></select></label>
+                <label>Access key ID<input id="awsSetupAccessKey" name="access_key_id" autocomplete="off" spellcheck="false" autocapitalize="none" maxlength="20" pattern="(AKIA|ASIA)[A-Z0-9]{16}" required placeholder="Temporary AWS credentials preferred"></label>
+                <label>Secret access key<input id="awsSetupSecretKey" name="secret_access_key" type="password" autocomplete="off" spellcheck="false" autocapitalize="none" required maxlength="128"></label>
+                <label>Session token <small>Required for temporary ASIA… credentials</small><input id="awsSetupSessionToken" name="session_token" type="password" autocomplete="off" spellcheck="false" maxlength="8192"></label>
+                <button class="button button-primary" id="awsSetupConnect" type="submit">Check AWS account</button>
+              </fieldset>
+            </form>
+            <p class="context-hint">Use a setup-authorized IAM identity, never root keys. Credentials remain in a short-lived setup process, not your provider settings. Identity confirmation alone does not verify provisioning permissions.</p>
+            <div id="awsSetupIdentity" class="aws-setup-facts" role="status">Not connected.</div>
+            <button id="awsSetupDisconnect" type="button" class="button button-outline button-sm" disabled>Discard setup credentials</button>
+          </section>
+          <section class="aws-setup-card">
+            <h4>2. Choose capacity and review</h4>
+            <form id="awsSetupPlanForm" class="stack-form">
+              <fieldset id="awsSetupPlanFields" disabled>
+                <label>CPU profile<select id="awsSetupProfile"><option value="cpu-small">Small · 1 vCPU / 2 GiB</option><option value="cpu-medium">Medium · 2 vCPU / 4 GiB</option></select></label>
+                <label>Total compute capacity<select id="awsSetupCapacity"><option value="1">1 vCPU</option><option value="2">2 vCPUs</option><option value="4">4 vCPUs</option><option value="8">8 vCPUs</option></select></label>
+                <div class="aws-setup-grid"><label>Job timeout (seconds)<input id="awsSetupTimeout" type="number" value="900" min="300" max="3600" step="1" required></label><label>Log retention<select id="awsSetupLogDays"><option value="7">7 days</option><option value="14" selected>14 days</option><option value="30">30 days</option></select></label></div>
+                <button id="awsSetupPlan" type="submit" class="button button-outline">Generate deployment plan</button>
+              </fieldset>
+            </form>
+            <p class="context-hint">No resources are created during planning. The approved image comes from node configuration. Network: dedicated public subnets, no inbound worker access, outbound HTTPS, no NAT gateway.</p>
+            <p class="context-hint">Existing account policies stay unchanged. Storage, logs, networking and separately approved diagnostic jobs can incur AWS charges outside the indexing reservation ledger.</p>
+            <button id="awsSetupBudgets" type="button" class="button button-outline button-sm">Open indexing budgets →</button>
+          </section>
+        </div>
+        <p id="awsSetupNotice" class="aws-setup-notice" role="status" aria-live="polite"></p>
+        <div class="aws-setup-history"><label>Setup history<select id="awsSetupHistory"><option value="">No setup operations</option></select></label><button id="awsSetupRefresh" type="button" class="button button-outline button-sm">Refresh</button></div>
+        <section id="awsSetupOperation" class="aws-setup-operation" hidden aria-labelledby="awsSetupOperationTitle">
+          <div class="aws-setup-heading"><h4 id="awsSetupOperationTitle">3. Review, create and verify</h4><span id="awsSetupOperationState" class="status-tag"></span></div>
+          <div id="awsSetupPlanSummary" class="aws-setup-facts"></div>
+          <div id="awsSetupWarnings" class="aws-setup-warning"></div>
+          <details class="aws-setup-details"><summary>Resources &amp; immutable deployment evidence</summary><p id="awsSetupPlanHash" class="mono"></p><div id="awsSetupResourceList"></div><button id="awsSetupDownloadTemplate" type="button" class="button button-outline button-sm">Download CloudFormation template</button></details>
+          <div id="awsSetupApproval" class="aws-setup-approval">
+            <label class="aws-setup-check"><input id="awsSetupAcknowledge" type="checkbox"> I authorize creation of the listed IAM and AWS resources and understand they can incur charges. This is not an AWS invoice cap.</label>
+            <label id="awsSetupReplaceLabel" class="aws-setup-check" hidden><input id="awsSetupReplace" type="checkbox"> Replace my current AWS provider connection only if it has not changed since this plan.</label>
+            <button id="awsSetupDeploy" type="button" class="button button-primary" disabled>Create AWS environment</button>
+          </div>
+          <div class="aws-setup-actions"><button id="awsSetupDiscard" type="button" class="button button-outline" disabled>Discard unused plan</button><button id="awsSetupReconcile" type="button" class="button button-outline" disabled>Reconcile deployment</button><button id="awsSetupVerify" type="button" class="button button-outline" disabled>Verify runtime access</button><a id="awsSetupCloudConsole" class="button button-outline" target="_blank" rel="noopener noreferrer" hidden>Open AWS stack ↗</a></div>
+          <p id="awsSetupRuntime" class="aws-setup-notice" role="status"></p>
+          <details class="aws-setup-details"><summary>Optional paid verification job</summary><p class="context-hint">Runs one synthetic S3 read/write job using the runtime role: 1 vCPU, 2 GiB, one attempt and a 300-second running timeout. Queue time is separate. AWS compute, IP and storage charges apply outside indexing reservations. Passing this test does not enable a production index dispatcher.</p><label class="aws-setup-check"><input id="awsSetupProbeConsent" type="checkbox"> I authorize this chargeable diagnostic job in my AWS account.</label><div class="aws-setup-actions"><button id="awsSetupProbe" type="button" class="button button-outline" disabled>Run paid verification job</button><button id="awsSetupProbeStatus" type="button" class="button button-outline" disabled>Reconcile verification job</button></div><p id="awsSetupProbeState" class="context-hint" role="status">Not requested.</p></details>
+          <details class="aws-setup-details"><summary>Remove environment · retain stored artifacts</summary><p class="context-hint">Reconnect AWS setup credentials for this account and region first. Deletion removes the stack's compute, network, roles and logs. The private S3 bucket and its TLS-only policy are retained; stored data may continue to incur charges. Any active or uncertain verification job must be reconciled first.</p><label>Type the stack name to confirm<input id="awsSetupDeleteName" autocomplete="off" spellcheck="false"></label><label class="aws-setup-check"><input id="awsSetupRetain" type="checkbox"> Retain stored artifacts and their ongoing storage charges.</label><button id="awsSetupDelete" type="button" class="button button-outline danger-outline" disabled>Remove AWS environment</button></details>
+          <details class="aws-setup-details" open><summary>Deployment events</summary><div id="awsSetupEvents" class="aws-setup-events" role="log" aria-live="polite"></div></details>
+        </section>
+      </section>
+      <details id="computeAwsManual" class="compute-resource-details">
+        <summary>Use existing AWS resources · manual setup</summary>
+
       <div class="compute-connection-heading"><h3 id="computeAwsTitle">Connect AWS Batch</h3><p id="computeAwsGuideStatus" class="context-hint" role="status" aria-live="polite">Start by preparing your account-specific external ID.</p></div>
       <div id="computeAwsBlocked" class="compute-blocker" role="status" hidden>
         <strong>Waiting for node operator setup</strong>
@@ -89,6 +147,7 @@
           </div>
           <p class="context-hint">Identity verification uses the ECAI server's AWS credentials and calls STS AssumeRole. This does not prove Batch SubmitJob permissions or dispatch a job.</p>
         </form>
+      </details>
       </details>
     </div>
 
