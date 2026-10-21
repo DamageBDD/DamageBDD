@@ -1,0 +1,167 @@
+-module(erm_voice_debug_tests).
+-include_lib("eunit/include/eunit.hrl").
+
+debug_test_()->{foreach,fun setup/0,fun cleanup/1,[
+    fun replay_rejected_enrolment/1,fun automatic_human_takes/1,
+    fun playback_failure/1,fun no_completed_segment/1,fun history_bound/1]}.
+render_cancel_test_()->{foreach,fun setup_held_renderer/0,fun cleanup/1,
+    [fun(C)->{timeout,10,fun()->cancel_inflight(C,Action,rendering) end} end || Action<-[cancel,restart,delete]]}.
+playback_cancel_test_()->{foreach,fun setup/0,fun cleanup/1,
+    [fun(C)->{timeout,10,fun()->cancel_inflight(C,Action,playing) end} end || Action<-[cancel,restart,delete]]}.
+
+setup()->setup(real).
+setup_held_renderer()->setup(held).
+setup(Mode)->
+    os:unsetenv("PHRASE_LAB_PLAYER_PID"),os:unsetenv("PHRASE_LAB_PLAYER_FAIL"),
+    Backend={_,Dir}=erm_phrase_lab_tests:setup(0.7),
+    {Binary,Player}=case Mode of
+        real->{os:getenv("PHRASE_TEST_LAB"),os:getenv("PHRASE_TEST_PLAYER")};
+        held->
+            Script=filename:join(Dir,"hold-render.py"),Marker=filename:join(Dir,"renderer.pid"),
+            %% External process fixture only: wait for port EOF without a
+            %% response, so cancellation can be tested during native rendering.
+            ok=file:write_file(Script,<<"#!/usr/bin/env python3\nimport os,sys\ns=sys.stdin.buffer\nh=s.read(4)\nif len(h)==4:\n s.read(int.from_bytes(h,'big'))\n with open(sys.argv[1],'w') as f: f.write(str(os.getpid()))\n s.read(1)\n">>),
+            ok=file:change_mode(Script,8#700),{Script,Marker}
+    end,
+    {ok,Lab}=erm_phrase_lab:start_link(#{binary=>Binary,player=>Player,
+        corpus_file=>filename:join(Dir,"debug.elab")}),unlink(Lab),
+    {Backend,Lab}.
+cleanup({Backend,Lab})->
+    catch gen_server:stop(Lab),
+    os:unsetenv("PHRASE_LAB_PLAYER_PID"),os:unsetenv("PHRASE_LAB_PLAYER_FAIL"),
+    erm_phrase_lab_tests:cleanup(Backend).
+
+replay_rejected_enrolment({{_,Dir},_})->{timeout,15,fun()->
+    ?assertMatch(#{playback:=#{autoplay:=false,phase:=idle,available:=false}},status()),
+    {ok,_}=erm_phrase_lab:enrol_voice("Replay draft",3),
+    take(record_voice,#{offset=>201}),
+    ?assertMatch(#{playback:=#{phase:=idle,available:=true},enrolment:=#{collected:=1}},status()),
+    Marker=filename:join(Dir,"player.pid"),true=os:putenv("PHRASE_LAB_PLAYER_PID",Marker),
+    ok=erm_phrase_lab:set_autoplay(true),
+    take(record_voice,#{offset=>202,embedding=>[0.654,math:sqrt(1-0.654*0.654)]}),
+    wait_phase(playing),wait(fun()->filelib:is_regular(Marker) end),
+    Playing=status(),Last=maps:get(last,Playing),Diagnostic=maps:get(diagnostics,Playing),
+    ?assertMatch(#{capture:=#{ready:=false,playback_active:=true},
+        enrolment:=#{collected:=1,rejected:=1},
+        last:=#{outcome:=voice_sample_rejected},
+        playback:=#{source:=lossy_lpc_resynthesis,autoplay:=true}},Playing),
+    ?assertEqual({error,playback_active},erm_phrase_lab:record_voice()),
+    ?assertMatch(#{paused:=true,observe_only:=true},erm_phrase_voice:status()),
+    ok=erm_phrase_lab:stop_playback(),wait_phase(stopped),
+    ?assertEqual(Last,maps:get(last,status())),
+    ?assert(maps:get(echo_guard_remaining_ms,maps:get(capture,status()))>0),
+    wait_player_exit(Marker),
+    ok=erm_phrase_lab:replay(),wait_phase(playing),
+    ?assertEqual(Diagnostic,maps:get(diagnostics,status())),
+    ?assertEqual(#{},maps:get(corpus,status())),
+    ok=erm_phrase_lab:stop_playback(),wait_player_exit(Marker),
+    ?assertEqual(1,length([ok||#{event:=render_started}<-maps:get(trace,status())])),
+    [ok=erm_phrase_lab:set_autoplay(N rem 2=:=0)||N<-lists:seq(1,130)],
+    Trace=maps:get(trace,status()),?assertEqual(100,length(Trace)),
+    ?assertEqual(lists:sort([N||#{seq:=N}<-Trace]),[N||#{seq:=N}<-Trace]),
+    ?assert(lists:all(fun(#{detail:=T})->length(unicode:characters_to_list(T))=<320 end,Trace)),
+    ?assertEqual(2,length(maps:get(history,status()))),
+    ok=erm_phrase_lab:clear_trace(),?assertEqual([],maps:get(trace,status())),
+    ?assertEqual(Diagnostic,maps:get(diagnostics,status()))
+end}.
+
+automatic_human_takes(_)->{timeout,30,fun()->
+    ok=erm_phrase_lab:set_autoplay(true),
+    take(verify,#{offset=>211,embedding=>[0.51,math:sqrt(1-0.51*0.51)]}),
+    wait_event(playback_completed),
+    ?assertMatch(#{last:=#{outcome:=voice_verified,check:=#{accepted:=false}},
+        playback:=#{available:=true,phase:=idle},corpus:=C} when map_size(C)=:=0,status()),
+    wait_echo(),
+    take(record,#{offset=>212,ms=>600}),wait_completed(2),
+    ?assertMatch(#{last:=#{outcome:=human_sample_rejected,reason:=audio_too_short}},status()),
+    wait_echo(),
+    take(record,#{offset=>213}),wait_completed(3),
+    ?assertMatch(#{last:=#{outcome:=human_sample_saved},corpus:=#{{train,stop_music}:=1}},status()),
+    ?assertEqual(3,length(maps:get(history,status()))),
+    ?assert(lists:all(fun(H)->maps:keys(H)--[id,kind,expected,outcome,reason,audio_ms,accepted,
+        speaker_score,candidate_score,threshold,profile_min_score]=:=[] end,maps:get(history,status())))
+end}.
+
+playback_failure(_)->fun()->
+    true=os:putenv("PHRASE_LAB_PLAYER_FAIL","1"),ok=erm_phrase_lab:set_autoplay(true),
+    {ok,_}=erm_phrase_lab:enrol_voice("Failure preserves draft",3),
+    take(record_voice,#{offset=>221}),wait_phase(failed),
+    ?assertMatch(#{last:=#{outcome:=voice_sample_accepted},enrolment:=#{collected:=1},
+        playback:=#{available:=true,error:=_}},status()),
+    ?assert(maps:get(echo_guard_remaining_ms,maps:get(capture,status()))>0)
+end.
+
+no_completed_segment({_,Lab})->fun()->
+    ok=erm_phrase_lab:set_autoplay(true),
+    {ok,_}=erm_phrase_lab:enrol_voice("No segment",3),
+    {ok,_}=erm_phrase_lab:record_voice(),wait_listening(),
+    Ref=element(3,sys:get_state(Lab)),
+    Port=element(6,sys:get_state(erm_phrase_voice)),
+    erm_phrase_voice!{Port,{data,<<"Dutterance_too_long">>}},
+    wait(fun()->lists:any(fun(#{event:=capture_progress,detail:=T})->
+        binary:match(T,<<"utterance_too_long">>)=/=nomatch;(_)->false end,maps:get(trace,status())) end),
+    ?assertEqual(listening,maps:get(phase,status())),
+    Lab!{erm_phrase_lab,Ref,{error,capture_timeout_or_tts}},
+    ?assertMatch(#{phase:=idle,enrolment:=#{collected:=0},
+        last:=#{outcome:=capture_failed},playback:=#{phase:=failed,available:=false},
+        diagnostics:=#{audio_available:=false}},status()),
+    ?assertEqual({error,no_audio_available},erm_phrase_lab:replay()),
+    ?assert(lists:any(fun(#{event:=E})->E=:=capture_progress end,maps:get(trace,status())))
+end.
+
+history_bound(_)->fun()->
+    [take(verify,#{offset=>N})||N<-lists:seq(240,260)],
+    S=status(),History=maps:get(history,S),?assertEqual(20,length(History)),
+    ?assertEqual(maps:get(id,lists:last(History)),maps:get(id,maps:get(diagnostics,S))),
+    ?assertEqual(#{},maps:get(corpus,S)),
+    ?assert(lists:any(fun(#{event:=capture_progress,detail:=T})->
+        binary:match(T,<<"inference_started">>)=/=nomatch;(_)->false end,maps:get(trace,S)))
+end.
+
+cancel_inflight({{_,Dir},Lab},Action,Stage)->
+    Marker=filename:join(Dir,case Stage of rendering->"renderer.pid";playing->"player.pid" end),
+    case Stage of playing->true=os:putenv("PHRASE_LAB_PLAYER_PID",Marker);rendering->ok end,
+    ok=erm_phrase_lab:set_autoplay(true),
+    DraftId=case Action of
+        delete->take(verify,#{offset=>231}),undefined;
+        _->{ok,#{enrolment_id:=D}}=erm_phrase_lab:enrol_voice("Cancel rendering",3),
+            take(record_voice,#{offset=>231}),D
+    end,
+    wait_phase(Stage),
+    wait(fun()->filelib:is_regular(Marker) end),
+    #{tag:=Tag}=element(19,sys:get_state(Lab)),
+    case Action of
+        cancel->ok=erm_phrase_lab:cancel();
+        restart->{ok,#{enrolment_id:=NewId}}=erm_phrase_lab:restart_voice(DraftId),?assert(NewId=/=DraftId);
+        delete->{ok,_}=erm_phrase_lab:delete_voice(<<"configured">>)
+    end,
+    wait_player_exit(Marker),
+    Before=maps:get(playback,status()),
+    %% A completed response queued by the cancelled worker cannot restart
+    %% playback or restore the previous human sample after reset/deletion.
+    Lab!{voice_playback,Tag,{ok,#{wav=><<"stale">>,ms=>1500}}},
+    ?assertEqual(Before,maps:get(playback,status())),
+    ?assertEqual(undefined,element(19,sys:get_state(Lab))),
+    ?assert(maps:get(echo_guard_remaining_ms,maps:get(capture,status()))>0),
+    case Action of
+        restart->?assertMatch(#{enrolment:=#{collected:=0,rejected:=0}},status());
+        delete->?assertEqual(undefined,maps:get(active_voice,maps:get(profiles,status())));
+        cancel->?assertEqual(undefined,maps:get(enrolment,status()))
+    end.
+
+take(record_voice,Input)->{ok,_}=erm_phrase_lab:record_voice(),complete(Input);
+take(verify,Input)->{ok,_}=erm_phrase_lab:verify(stop_music),complete(Input);
+take(record,Input)->{ok,_}=erm_phrase_lab:record(stop_music,train),complete(Input).
+complete(Input)->wait_listening(),erm_phrase_lab_tests:complete_capture(Input).
+status()->erm_phrase_lab:status().
+wait_listening()->wait(fun()->maps:get(phase,status())=:=listening end).
+wait_phase(P)->wait(fun()->maps:get(phase,maps:get(playback,status()))=:=P end).
+wait_event(E)->wait(fun()->lists:any(fun(#{event:=X})->X=:=E end,maps:get(trace,status())) end).
+wait_completed(N)->wait(fun()->length([ok||#{event:=playback_completed}<-maps:get(trace,status())])=:=N end).
+wait_echo()->wait(fun()->maps:get(echo_guard_remaining_ms,maps:get(capture,status()))=:=0 end,900).
+wait_player_exit(Marker)->
+    {ok,Pid}=file:read_file(Marker),
+    wait(fun()->not filelib:is_dir("/proc/"++binary_to_list(Pid)) end).
+wait(F)->wait(F,300).
+wait(_,0)->error(wait_timeout);
+wait(F,N)->case F() of true->ok;false->timer:sleep(10),wait(F,N-1) end.

@@ -12,6 +12,7 @@ erlc -Werror -pa "$MOTION_TEST_TMP" -o "$MOTION_TEST_TMP" \
     apps/erm/src/gtknode4_port.erl apps/erm/src/gtknode4_sup.erl \
     apps/erm/src/erm_display.erl apps/erm/src/erm_log.erl apps/erm/src/erm_otp_compat.erl \
     apps/erm/src/erm_voice_events.erl apps/erm/src/erm_voice_widget.erl \
+    apps/erm/src/erm_voice_training.erl apps/erm/src/erm_voice_profiles.erl apps/erm/src/erm_phrase_codec.erl \
     apps/ecai/src/ecai_voice_ui.erl apps/erm/test/gtkgs_motion_tests.erl
 if [ "${MOTION_USE_DISPLAY:-0}" = 1 ]; then
     set -- env
@@ -20,4 +21,5 @@ else
 fi
 "$@" GSK_RENDERER=cairo G_DEBUG=fatal-criticals \
     erl +S 2 -sname "motion_test_$$@localhost" -setcookie motion_test -noshell -pa "$MOTION_TEST_TMP" \
+    -kernel net_ticktime 4 \
     -eval 'case eunit:test(gtkgs_motion_tests,[verbose]) of ok->halt(0);_->halt(1) end.'

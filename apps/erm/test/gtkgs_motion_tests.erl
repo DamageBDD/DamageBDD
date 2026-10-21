@@ -111,9 +111,64 @@ native() ->
             {ok,_}=gtkgs_motion:animate(Child,#{x=>100},#{duration=>5000}),
             ok=gtkgs:destroy(Win)
         end,lists:seq(1,20)),
+        heartbeat_liveness(),
+        readonly_editor_and_scroll(),
         widget(),
         ?assertMatch(#{ready:=true},gtknode4:status())
     after catch erm_voice_widget:stop(), exit(Sup,shutdown) end.
+
+readonly_editor_and_scroll() ->
+    Window=gtkgs:create(window,gtkgs:server(),[{width,480},{height,260}]),
+    try
+        Scroll=gtkgs:create(scrolled,Window,[{hscroll,automatic},{vscroll,always}]),
+        Editor=gtkgs:create(editor,Scroll,[{text,"Speaker rejected\nPhrase matched"},
+            {editable,false},{wrap,true},{width,800}]),
+        ok=gtkgs:config(Window,{show,true}),
+        ?assertEqual(automatic,gtkgs:read(Scroll,hscroll)),
+        ?assertEqual(always,gtkgs:read(Scroll,vscroll)),
+        ?assertEqual(false,gtkgs:read(Editor,editable)),
+        ?assertEqual(true,gtkgs:read(Editor,enabled)),
+        ?assertEqual(<<"Speaker rejected\nPhrase matched">>,gtkgs:read(Editor,text)),
+        %% A read-only log remains programmatically refreshable and selectable.
+        ok=gtkgs:config(Editor,{text,"A later diagnostic"}),
+        ?assertEqual(<<"A later diagnostic">>,gtkgs:read(Editor,text)),
+        ok=gtkgs:config(Scroll,{hscroll,never}),
+        ?assertEqual(never,gtkgs:read(Scroll,hscroll)),
+        ?assertEqual(always,gtkgs:read(Scroll,vscroll)),
+        ?assertMatch({error,{config_failed,error,{invalid_scroll_policy,hscroll,bogus},_}},
+            gtkgs:config(Scroll,{hscroll,bogus})),
+        ?assertMatch({error,{config_failed,error,{invalid_editable,1},_}},
+            gtkgs:config(Editor,{editable,1})),
+        ?assertEqual(never,gtkgs:read(Scroll,hscroll)),
+        ?assertEqual(false,gtkgs:read(Editor,editable)),
+        ok=gtkgs:config(Editor,{editable,true}),
+        ?assertEqual(true,gtkgs:read(Editor,editable))
+    after gtkgs:destroy(Window) end.
+
+heartbeat_liveness() ->
+    %% The runner uses a four-second net_ticktime. Leave the C-node rendering
+    %% autonomously for more than two intervals, with no application messages
+    %% that could conceal a missing distribution tick response.
+    #{os_pid:=Before,cnode_node:=Node}=gtknode4_port:status(),
+    Controller=whereis(gtknode4),
+    true=erlang:monitor_node(Node,true),
+    Win=gtkgs:create(window,gtkgs:server(),[{width,260},{height,260}]),
+    Meter=gtkgs:create(voice_meter,Win,[]),
+    try
+        ok=gtkgs:config(Win,{show,true}),
+        ok=gtkgs_motion:set(Meter,#{mood=>2}),
+        ok=gtkgs:sync(1000),
+        timer:sleep(9000),
+        receive {nodedown,Node}->error(cnode_lost_during_animation) after 0->ok end,
+        ?assertEqual(Controller,whereis(gtknode4)),
+        ?assertMatch(#{os_pid:=Before,alive:=true},gtknode4_port:status()),
+        ok=gtkgs:sync(1000),
+        ?assertMatch({ok,#{mood:=2.0}},gtkgs_motion:inspect(Meter))
+    after
+        erlang:monitor_node(Node,false),
+        gtkgs:destroy(Win)
+    end.
+
 widget() ->
     {Path,_}=pcm_fixture(),
     {ok,_}=erm_voice_widget:start(#{sources=>[ecai_voice_session],show_text=>false}),

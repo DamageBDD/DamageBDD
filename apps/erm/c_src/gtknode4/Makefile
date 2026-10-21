@@ -37,7 +37,7 @@ gtknode4: gtknode4.o gtknode4_motion.o
 gtknode4_motion.o: gtknode4_motion.c gtknode4_motion.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
-gtknode4.o: gtknode4.c gtknode4.h gtknode4_motion.h
+gtknode4.o: gtknode4.c gtknode4.h gtknode4_motion.h erm_voice_notes_keys.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 install: gtknode4

@@ -32,7 +32,7 @@ typedef struct {
 gboolean gn4_parse_args(Gn4State *st, int argc, char **argv);
 gboolean gn4_init_erlang(Gn4State *st);
 gboolean gn4_init_gtk(Gn4State *st, int *argc, char ***argv);
-void gn4_main_loop(Gn4State *st);
+gboolean gn4_main_loop(Gn4State *st);
 void gn4_cleanup(Gn4State *st);
 
 gboolean gn4_poll_erlang(Gn4State *st);

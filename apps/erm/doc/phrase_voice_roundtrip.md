@@ -154,6 +154,62 @@ needed allowlisted actions: `pause_music`, `play_music`, `next_track`,
 No recognition result is used as its own training label. Phrase identity is the
 human-supplied label; speaker verification cannot establish what was said.
 
+### Diagnose a rejected recording
+
+The recording response includes `min_speaker_ms` and `max_segment_ms` alongside
+the complete `say` prompt. These are limits for the captured VAD segment;
+waiting longer before or after speaking does not guarantee a longer segment.
+
+After a rejected training take, `erm_phrase_lab:status()` now retains:
+
+```erlang
+%% Illustrative values, not measurements from your microphone:
+#{last => #{outcome => human_sample_rejected,
+            reason => audio_too_short,
+            verification => {error, audio_too_short},
+            check => #{accepted => false, audio_ms => 640, frames => 62,
+                       quality => #{rms_dbfs => -24.0, clipped_fraction => 0.0},
+                       thresholds => #{min_speaker_ms => 1200}}}}.
+```
+
+Other reasons identify quiet audio, clipping, missing phrase features, missing
+or invalid speaker embeddings, mismatched embedding dimensions, or a speaker
+score below the configured threshold. When computed, `speaker_score` is included
+with its threshold. `erm_phrase_voice:status()` also retains the latest lab check.
+The status measurements exclude embeddings, MFCC features and synthesis data.
+The voice widget displays a short rejection message when it observes
+`erm_phrase_lab` events (the default `sources => all` includes them).
+
+For a short take, repeat the complete prompt as one naturally connected phrase
+at a measured pace. For quiet or clipped audio, check microphone placement and
+gain. For a failed speaker match, check the selected device and enrolled speaker
+profile. The diagnostics patch does not change acceptance thresholds.
+
+Training with fewer than three accepted human takes returns
+`insufficient_training_samples` with accepted/minimum/maximum counts. Cycle and
+sweep with no source at the requested index return `missing_training_sample`
+with the available count. Neither operation creates missing training data.
+Only proceed after status shows accepted recordings in the training corpus.
+
+After applying the diagnostics patch and compiling, the two updated modules
+can be reloaded without restarting native capture: their process record layouts
+and native protocol are unchanged. Stop the lab first to release its lease:
+
+```erlang
+erm_phrase_lab:stop().
+l(erm_phrase_voice).
+l(erm_phrase_lab).
+erm_phrase_voice:pause().
+erm_phrase_lab:start().
+erm_phrase_lab:status().
+%% Wait for capture.echo_guard_remaining_ms=0, ready=true and processing=false.
+erm_phrase_lab:record(stop_music, train).
+%% Wait for listening, speak the returned prompt, then inspect status again.
+```
+
+Old rejected recordings cannot be diagnosed retroactively: their verification
+details were discarded. Record a fresh take after loading the patch.
+
 ## Keep independent human evaluation data
 
 Record new takes in `validation` and `test`, never copies of training samples:

@@ -4,7 +4,7 @@
 -behaviour(gen_server).
 -export([start_link/1, status/0, enrol/2, cancel_enrol/0,
     observe_only/1, pause/0, resume/0, forget/1,
-    lab_begin/0, lab_capture/1, lab_cancel/1, lab_end/1, lab_train/2]).
+    lab_begin/0, lab_capture/1, lab_cancel/1, lab_end/1, lab_train/2, lab_profile/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 -record(st, {opts, speaker, binding, samples = [], port = undefined,
     phase = disconnected, config_ack = false, profile_ack = false,
@@ -28,6 +28,7 @@ lab_begin() -> gen_server:call(?MODULE, lab_begin, 5000).
 lab_capture(Ref) -> gen_server:call(?MODULE, {lab_capture, Ref}, 5000).
 lab_cancel(Ref) -> gen_server:call(?MODULE, {lab_cancel, Ref}, 5000).
 lab_end(Ref) -> gen_server:call(?MODULE, {lab_end, Ref}, 5000).
+lab_profile(Ref, Request) -> gen_server:call(?MODULE, {lab_profile, Ref, Request}, 10000).
 lab_train(Ref, Samples) -> gen_server:call(?MODULE, {lab_train, Ref, Samples}, 10000).
 
 init(Options) ->
@@ -38,13 +39,13 @@ init(Options) ->
         lists:foreach(fun(Name) -> undefined = whereis(Name) end,
             [erm_native_voice, whisper_trigger_srv]),
         Hash = erm_phrase_codec:model_hash(maps:get(speaker_model, O)),
-        {ok, Speaker} = erm_phrase_codec:load_speaker(maps:get(speaker_profile, O), Hash),
-        Binding = crypto:hash(sha256, term_to_binary({erm_phrase_mfcc_v1,
-            Speaker, maps:get(device, O), maps:get(wake, O)}, [deterministic])),
-        {ok, Samples} = erm_phrase_codec:read_profile(maps:get(profile_file, O), Binding),
+        Store=erm_voice_profiles:open(O,Hash),
+        #{profile:=Profile,binding:=Binding,path:=Path,samples:=Samples,wake:=Wake}=erm_voice_profiles:resolve(Store),
+        Speaker=case Profile of undefined->[];_->maps:get(embedding,Profile) end,
+        O1=O#{profile_store=>Store,profile_file=>Path,wake=>Wake},
         self() ! connect,
-        {ok, #st{opts = O, speaker = maps:get(embedding, Speaker), binding = Binding,
-            samples = Samples, observe = maps:get(observe_only, O), next_arm = now_ms(),
+        {ok, #st{opts = O1, speaker = Speaker, binding = Binding, samples = Samples,
+            observe = maps:get(observe_only, O1), paused = Speaker=:=[], next_arm = now_ms(),
             poll = erlang:send_after(100, self(), poll)}}
     catch C:R -> {stop, {phrase_voice_startup, C, R}} end.
 
@@ -56,7 +57,9 @@ handle_call(status, _, S) ->
                 say => erm_phrase_codec:prompt(A, maps:get(wake, S#st.opts)),
                 remaining_ms => max(0, D-now_ms())}
     end,
-    {reply, #{backend => phrases, required_protocol => protocol(S), lab_reserved => S#st.lab =/= undefined,
+    {reply, #{backend => phrases, profiles => erm_voice_profiles:public(maps:get(profile_store,S#st.opts)),
+        enrolled => S#st.speaker=/=[], lab_enabled => maps:get(lab_enabled,S#st.opts),
+        required_protocol => protocol(S), lab_reserved => S#st.lab =/= undefined,
         native_protocol => case S#st.phase of ready -> protocol(S); configuring -> protocol(S); _ -> undefined end,
         ready => S#st.phase =:= ready, phase => S#st.phase,
         listening => S#st.armed andalso not suppressed(), processing => S#st.busy,
@@ -121,13 +124,17 @@ handle_call({lab_end, Ref}, {Owner, _}, S = #st{lab = #{owner := Owner, ref := R
     {reply, ok, release_lab(S)};
 handle_call({lab_train, Ref, Samples}, {Owner, _}, S = #st{phase = ready, busy = false,
     lab = #{owner := Owner, ref := Ref, waiting := false}}) ->
-    case erm_phrase_codec:validate_samples(Samples) of
+    case S#st.speaker=/=[] andalso erm_phrase_codec:validate_samples(Samples) of
         ok -> case save_samples(Samples, S) of
             {ok, Next} -> {reply, {ok, lab_snapshot(Next)}, Next};
             {error, Why, Next} -> {reply, {error, Why}, Next}
         end;
+        false -> {reply, {error,not_enrolled}, S};
         Error -> {reply, Error, S}
     end;
+handle_call({lab_profile, Ref, Request}, {Owner, _}, S = #st{phase = ready, busy = false,
+    lab = #{owner := Owner, ref := Ref, waiting := false}}) ->
+    profile_request(Request,S);
 handle_call(_, _, S) -> {reply, {error, unsupported_or_busy}, S}.
 handle_cast(_, S) -> {noreply, S}.
 
@@ -173,7 +180,7 @@ handle_info(poll, S0) ->
     {noreply, (maybe_arm(expire_lab(S2)))#st{poll = erlang:send_after(100, self(), poll)}};
 handle_info(_, S) -> {noreply, S}.
 
-packet(<<"R", Dim:16, Protocol:8>>, S = #st{phase = starting, speaker = V}) when Dim =:= length(V) ->
+packet(<<"R", Dim:16, Protocol:8>>, S = #st{phase = starting, speaker = V}) when Dim>0, Dim=<4096, (V=:=[] orelse Dim=:=length(V)) ->
     true = Protocol =:= protocol(S),
     O = S#st.opts,
     Muted = close_gate(S), Epoch = Muted#st.epoch, Gate = (Epoch bsl 1) bor 1,
@@ -182,7 +189,7 @@ packet(<<"R", Dim:16, Protocol:8>>, S = #st{phase = starting, speaker = V}) when
         (maps:get(silence_ms, O)):32, (maps:get(min_speech_ms, O)):32,
         (maps:get(max_segment_ms, O)):32>>),
     send_profile(Muted),
-    arm_timer(10000, Muted#st{phase = configuring, config_epoch = Epoch,
+    arm_timer(10000, Muted#st{opts=O#{embedding_dimension=>Dim},phase = configuring, config_epoch = Epoch,
         config_ack = false, profile_ack = false});
 packet(<<"R", Dim:16, Protocol:8>>, _S) ->
     error({unsupported_native_protocol_or_speaker_dimension, Protocol, Dim});
@@ -206,7 +213,8 @@ packet(<<"B", E:64, Id:64>>, S = #st{phase = Phase, busy = false, last_id = Last
     case Phase =:= ready andalso E =:= S#st.epoch andalso not suppressed() of
         true ->
             voice_event(input, #{phase=>muted,level=>0.0,speech=>false}),
-            voice_event(work, #{phase=>processing});
+            voice_event(work, #{phase=>processing}),
+            lab_diagnostic(inference_started,S);
         false -> ok
     end,
     Armed = S#st.armed andalso E =/= S#st.epoch,
@@ -231,9 +239,11 @@ packet(<<"Q", Size:32, Tail/binary>>, S = #st{busy = true, received = false,
     case E =:= S#st.epoch andalso maps:get(revision, U) =:= S#st.revision
         andalso S#st.phase =:= ready andalso maps:get(waiting, L) andalso not suppressed() of
         true ->
+            Check = verification_check(U, S),
             maps:get(owner, L) ! {erm_phrase_lab, maps:get(ref, L),
-                {sample, U#{synthesis => Model, verification => verified(U, S)}}},
-            Next#st{lab = L#{waiting => false}, last = #{outcome => lab_only}};
+                {sample, U#{synthesis => Model, verification => verification_result(Check),
+                            check => Check}}},
+            Next#st{lab = L#{waiting => false}, last = #{outcome => lab_only, check => Check}};
         false -> Next#st{last = {rejected, stale_lab_capture}}
     end;
 packet(<<"Q", _/binary>>, S = #st{busy = true, received = false}) ->
@@ -251,9 +261,20 @@ packet(<<"F">>, S = #st{busy = true}) ->
     Next = S#st{busy = false, inflight = undefined, received = false},
     case S#st.phase of ready -> maybe_arm(clear_timer(Next)); _ -> Next end;
 packet(<<"D", D/binary>>, S) when byte_size(D) =< 256 ->
+    %% D packets have no epoch. Forward only named native diagnostics while
+    %% an owned capture is waiting; never expose arbitrary native text in UI.
+    case D of
+        <<"utterance_too_long">>->lab_diagnostic(utterance_too_long,S);
+        <<"utterance_dropped_busy">>->lab_diagnostic(utterance_dropped_busy,S);
+        _->ok
+    end,
     S#st{last = {native_diagnostic, D}};
 packet(<<"E", E/binary>>, _S) when byte_size(E) =< 256 -> error({native, E});
 packet(_, _) -> error(unexpected_native_packet).
+
+lab_diagnostic(Code,#st{lab=#{owner:=Owner,ref:=Ref,waiting:=true}})->
+    Owner!{erm_phrase_lab,Ref,{diagnostic,Code}},ok;
+lab_diagnostic(_,_) -> ok.
 
 ready(S = #st{config_ack = true, profile_ack = true}) ->
     Next = clear_timer(S#st{phase = ready, error = undefined}),
@@ -276,20 +297,42 @@ accept(U, S) ->
         {error, Reason} -> S#st{last = {rejected, Reason}}
     end.
 
-verified(#{embedding := V, ms := Ms, quality := Q, sample := #{frames := Frames}}, S) ->
+verified(U, S) -> verification_result(verification_check(U, S)).
+
+verification_result(#{accepted := true, speaker_score := Score}) -> {ok, Score};
+verification_result(#{reason := speaker_below_threshold, speaker_score := Score}) ->
+    {error, {speaker_below_threshold, Score}};
+verification_result(#{reason := Reason}) -> {error, Reason}.
+
+%% Numeric diagnostics only: never copy embeddings, features or synthesis data
+%% into status, logs or UI events. The acceptance gates and order are unchanged.
+verification_check(#{embedding := V, ms := Ms, quality := Q,
+                     sample := #{frames := Frames}}, S) ->
     O = S#st.opts,
-    try
-        true = Ms >= maps:get(min_speaker_ms, O) andalso Frames > 0,
-        true = maps:get(rms_dbfs, Q) >= maps:get(min_rms_dbfs, O),
-        true = maps:get(clipped_fraction, Q) =< maps:get(max_clipped_fraction, O),
-        true = length(V) =:= length(S#st.speaker),
-        {ok, Normal} = erm_native_voice:normalise(V),
-        Score = erm_native_voice:score(Normal, S#st.speaker),
-        case Score >= maps:get(speaker_threshold, O) of
-            true -> {ok, Score};
-            false -> {error, {speaker_below_threshold, Score}}
-        end
-    catch _:_ -> {error, short_poor_quality_or_missing_embedding} end.
+    Check = #{accepted => false, audio_ms => Ms, frames => Frames,
+        quality => maps:with([rms_dbfs, peak_dbfs, clipped_fraction, input_gain_db], Q),
+        thresholds => maps:with([min_speaker_ms, min_rms_dbfs,
+                                max_clipped_fraction, speaker_threshold], O),
+        embedding_dimension => length(V), expected_embedding_dimension => maps:get(embedding_dimension,O,length(S#st.speaker))},
+    Checks = [{not_enrolled,S#st.speaker=/=[]},{audio_too_short, Ms >= maps:get(min_speaker_ms, O)},
+        {no_phrase_features, Frames > 0},
+        {audio_too_quiet, maps:get(rms_dbfs, Q) >= maps:get(min_rms_dbfs, O)},
+        {audio_clipped, maps:get(clipped_fraction, Q) =< maps:get(max_clipped_fraction, O)},
+        {missing_embedding, V =/= []},
+        {embedding_dimension_mismatch, length(V) =:= length(S#st.speaker)}],
+    case [Why || {Why, false} <- Checks] of
+        [Reason | _] -> Check#{reason => Reason};
+        [] ->
+            case erm_native_voice:normalise(V) of
+                {ok, Normal} ->
+                    Score = erm_native_voice:score(Normal, S#st.speaker),
+                    case Score >= maps:get(speaker_threshold, O) of
+                        true -> Check#{accepted => true, reason => verified, speaker_score => Score};
+                        false -> Check#{reason => speaker_below_threshold, speaker_score => Score}
+                    end;
+                {error, _} -> Check#{reason => invalid_embedding}
+            end
+    end.
 
 recognize(#{reason := matched, action := A, distance := D, margin := Gap}, S) ->
     O = S#st.opts,
@@ -376,7 +419,7 @@ close_gate(S = #st{port = P}) ->
     voice_event(input, #{phase=>muted,level=>0.0,speech=>false}),
     voice_event(work, #{phase=>idle}),
     S#st{epoch = E, armed = false}.
-maybe_arm(S = #st{phase = ready, busy = false, armed = false, paused = false, lab = undefined}) ->
+maybe_arm(S = #st{phase = ready, busy = false, armed = false, paused = false, lab = undefined}) when S#st.speaker=/=[] ->
     case not suppressed() andalso now_ms() >= S#st.next_arm of
         true ->
             E = S#st.epoch+1,
@@ -425,10 +468,66 @@ voice_event(Channel, Data) ->
 
 protocol(S) -> case maps:get(lab_enabled, S#st.opts) of true -> 6; false -> 5 end.
 lab_snapshot(S) ->
-    #{binding => S#st.binding, samples => S#st.samples, revision => S#st.revision,
+    Store=maps:get(profile_store,S#st.opts),
+    #{profiles=>erm_voice_profiles:public(Store),
+      legacy_binding=>maps:get(legacy_binding,maps:get(state,Store)),
+      enrolled=>S#st.speaker=/=[],speaker_dimension=>maps:get(embedding_dimension,S#st.opts,0),
+      binding => S#st.binding, samples => S#st.samples, revision => S#st.revision,
       profile_file => maps:get(profile_file, S#st.opts),
       wake => maps:get(wake, S#st.opts),
+      capture_context => capture_context(S#st.opts),
+      thresholds => maps:with([min_speaker_ms, min_rms_dbfs, max_clipped_fraction,
+                              speaker_threshold, enrolment_threshold, max_segment_ms], S#st.opts),
       max_distance => maps:get(max_distance, S#st.opts), min_margin => maps:get(min_margin, S#st.opts)}.
+capture_context(O)->
+    (maps:with([input_gain_db,vad_threshold,silence_ms,min_speech_ms,max_segment_ms],O))#{
+        device=>display_text(maps:get(device,O)),
+        speaker_model=>display_text(filename:basename(maps:get(speaker_model,O))),
+        speaker_dimension=>maps:get(embedding_dimension,O,0)}.
+display_text(Text)->unicode:characters_to_binary(lists:sublist(
+    [case C>=32 andalso C=/=127 of true->C;false->$? end || C<-unicode:characters_to_list(Text)],128)).
+%% Selection is transactional at the manifest boundary. Validate/load before
+%% committing; on a native reload failure retain the committed selection while
+%% reconnecting, with commands still paused.
+profile_request(Request,S)->
+    try
+        Store=maps:get(profile_store,S#st.opts),
+        NextStore=case Request of
+            {select,Id}->erm_voice_profiles:select(Store,Id);
+            {delete,Id}->erm_voice_profiles:remove(Store,Id);
+            {wake,Text}->erm_voice_profiles:wake(Store,Text);
+            {enrol,Label,Vs} when is_list(Vs),length(Vs)>=3,length(Vs)=<10->
+                Dim=maps:get(embedding_dimension,S#st.opts),
+                true=lists:all(fun(V)->is_list(V) andalso length(V)=:=Dim end,Vs),
+                T=maps:get(enrolment_threshold,S#st.opts),
+                {Mean,_}=lists:foldl(fun(V,{_,Old})->
+                    {ok,N}=erm_native_voice:normalise(V),
+                    {accept,M,_}=erm_native_voice:enrolment_check(N,Old,T),{M,Old++[N]}
+                end,{undefined,[]},Vs),
+                erm_voice_profiles:enrol(Store,Label,Mean)
+        end,
+        Resolved=erm_voice_profiles:resolve(NextStore),
+        case maps:get(profile,Resolved) of
+            undefined->ok;
+            #{embedding:=Embedding}->true=length(Embedding)=:=maps:get(embedding_dimension,S#st.opts)
+        end,
+        ok=erm_voice_profiles:commit(NextStore),
+        Cleanup=case Request of {delete,Deleted}->erm_voice_profiles:delete_file(Store,Deleted);_->ok end,
+        case apply_profile(NextStore,Resolved,S) of
+            {reply,{ok,Snapshot},Next}->{reply,{ok,Snapshot#{profile_cleanup=>Cleanup}},Next};
+            Reply->Reply
+        end
+    catch C:R->{reply,{error,{profile_selection,C,R}},S} end.
+apply_profile(Store,#{profile:=P,binding:=B,path:=Path,samples:=Samples,wake:=Wake},S)->
+    Next=close_gate(S),
+    Speaker=case P of undefined->[];_->maps:get(embedding,P) end,
+    Updated=Next#st{opts=(S#st.opts)#{profile_store=>Store,profile_file=>Path,wake=>Wake},
+        speaker=Speaker,binding=B,samples=Samples,revision=S#st.revision+1,
+        phase=configuring,config_ack=true,profile_ack=false,paused=true,observe=true},
+    try send_profile(Updated),
+        {reply,{ok,lab_snapshot(Updated)},arm_timer(10000,Updated)}
+    catch C:R->{reply,{error,{profile_reload,C,R}},failed({profile_reload,C,R},Updated)} end.
+
 release_lab(S = #st{lab = L}) when is_map(L) ->
     erlang:demonitor(maps:get(monitor, L), [flush]),
     close_gate(S#st{lab = undefined, paused = true, observe = true, next_arm = now_ms()+6000});
@@ -455,7 +554,7 @@ options(Input) ->
     Common = maps:merge(#{binary => default_binary(), arecord => "/usr/bin/arecord",
         device => "default", language => "en", threads => 4, silence_ms => 700,
         max_segment_ms => 8000, min_speaker_ms => 1200, input_gain_db => 0.0,
-        vad_threshold => 0.5, min_speech_ms => 250, startup_timeout_ms => 120000,
+        enrolment_threshold => SpeakerThreshold, vad_threshold => 0.5, min_speech_ms => 250, startup_timeout_ms => 120000,
         inference_timeout_ms => 30000}, Native),
     O0 = maps:merge(Common, maps:merge(Defaults, Phrases)),
     O1 = O0#{speaker_profile => Owner, speaker_threshold => SpeakerThreshold,
@@ -464,7 +563,7 @@ options(Input) ->
     O2 = lists:foldl(fun(K, M) -> M#{K => path(maps:get(K, M))} end, O1,
         [binary, arecord, vad_model, speaker_model, profile_file, speaker_profile]),
     Wake0 = case maps:get(trigger_phrases, Top, ["bob"]) of [W] -> W; _ -> error(exactly_one_wake_phrase_required) end,
-    Wake = unicode:characters_to_binary(string:lowercase(string:trim(Wake0))),
+    Wake = erm_voice_profiles:normalise_wake(Wake0),
     true = is_binary(Wake) andalso byte_size(Wake) > 0 andalso byte_size(Wake) =< 64,
     true = is_boolean(maps:get(observe_only, O2)),
     true = is_boolean(maps:get(lab_enabled, O2)),
@@ -475,13 +574,14 @@ options(Input) ->
          {startup_timeout_ms,1000,600000}, {inference_timeout_ms,1000,120000}]),
     lists:foreach(fun({K, Lo, Hi}) -> V = maps:get(K, O2),
         true = is_number(V) andalso V >= Lo andalso V =< Hi end,
-        [{speaker_threshold,0.01,0.99}, {input_gain_db,-24,12}, {vad_threshold,0.05,0.95},
+        [{speaker_threshold,0.01,0.99}, {enrolment_threshold,0.01,0.99}, {input_gain_db,-24,12}, {vad_threshold,0.05,0.95},
          {max_distance,0.01,5}, {min_margin,0.001,5}, {min_rms_dbfs,-80,-10},
          {max_clipped_fraction,0.0,0.10}]),
     true = maps:get(min_speaker_ms, O2) < maps:get(max_segment_ms, O2),
     true = maps:get(min_speech_ms, O2) < maps:get(max_segment_ms, O2),
     Device = text(maps:get(device, O2)), Language = text(maps:get(language, O2)),
-    O2#{wake => Wake, device => Device, language => Language}.
+    O2#{wake => Wake, device => Device, language => Language,
+        enrolment_threshold=>max(SpeakerThreshold,maps:get(enrolment_threshold,O2))}.
 as_map(M) when is_map(M) -> M;
 as_map(L) when is_list(L) -> maps:from_list(L).
 text(V) ->

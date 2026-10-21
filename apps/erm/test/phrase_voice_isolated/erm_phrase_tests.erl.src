@@ -74,7 +74,7 @@ gates_test_() -> {foreach, fun setup/0, fun cleanup/1, [
     end end,
     fun(_) -> fun() ->
         ok=erm_phrase_voice:observe_only(false),listen(),inject(0,[1.0,0.0],200,1),no_command(),
-        ?assertMatch(#{last:={rejected,short_poor_quality_or_missing_embedding}},erm_phrase_voice:status())
+        ?assertMatch(#{last:={rejected,audio_too_short}},erm_phrase_voice:status())
     end end,
     fun(_) -> fun() ->
         ok=erm_phrase_voice:observe_only(false),listen(),inject(3,[1.0,0.0],1500,1),no_command(),

@@ -1,0 +1,66 @@
+-module(erm_voice_diagnostics_tests).
+-include_lib("eunit/include/eunit.hrl").
+
+input()->
+    Frame= <<0.05:32/float-big,140.0:32/float-big,0.9:32/float-big,0:512>>,
+    #{id=>42,ms=>3014,embedding=>[0.51,0.86],
+      quality=>#{rms_dbfs=> -26.0,clipped_fraction=>0.0},
+      sample=>#{frames=>160,features=>binary:copy(<<0.1:32/float-big>>,2080)},
+      synthesis=><<"ELS1",48000:32,300:16,(binary:copy(Frame,300))/binary>>,
+      result=>#{reason=>no_eligible_templates,action=>undefined,distance=>1000.0,margin=>0.0}}.
+limits()->#{min_speaker_ms=>1200,min_rms_dbfs=> -45.0,max_clipped_fraction=>0.02,
+    enrolment_threshold=>0.7,speaker_threshold=>0.7}.
+check()->#{accepted=>false,reason=>enrolment_inconsistent,
+    embedding_dimension=>2,expected_embedding_dimension=>2,thresholds=>limits(),
+    consistency=>#{candidate_score=>0.51,threshold=>0.7,failed_check=>candidate_score,
+        scores=>[0.4,0.5,0.6,0.7]}}.
+context()->#{kind=>voice_enrol,id=>12,outcome=>voice_sample_rejected,check=>check(),
+    snapshot=>#{max_distance=>0.35,min_margin=>0.08,capture_context=>#{device=><<"default">>,
+        speaker_model=><<"speaker.onnx">>,private_file=>"never expose"}}}.
+reported_rejection_test()->
+    D=erm_voice_diagnostics:capture(input(),context()),
+    [Audio,Features,Speaker,Phrase,Store]=maps:get(stages,D),
+    ?assertEqual(pass,maps:get(status,Audio)),?assertEqual(pass,maps:get(status,Features)),
+    ?assertEqual(fail,maps:get(status,Speaker)),?assertEqual(na,maps:get(status,Phrase)),
+    ?assertEqual(fail,maps:get(status,Store)),
+    [Score|_]=maps:get(scores,D),?assertEqual(0.51,maps:get(value,Score)),
+    ?assertEqual(0.7,maps:get(threshold,Score)),?assertNot(maps:get(pass,Score)),
+    ?assertEqual(4,length(maps:get(references,D))),
+    ?assertMatch({_,_},binary:match(maps:get(summary,D),<<"preceding mean">>)),
+    ?assertEqual(#{device=><<"default">>,speaker_model=><<"speaker.onnx">>},maps:get(context,D)).
+bounded_preview_test()->
+    D=erm_voice_diagnostics:capture(input(),context()),
+    ?assertEqual(64,length(maps:get(envelope,D))),
+    ?assert(lists:all(fun(V)->abs(V-0.05)<0.000001 end,maps:get(envelope,D))),
+    ?assertEqual(48,length(maps:get(mfcc,D))),
+    ?assert(lists:all(fun(R)->length(R)=:=13 end,maps:get(mfcc,D))),
+    ?assertEqual([],maps:keys(maps:with([embedding,synthesis,sample,features,wav],D))).
+first_sample_test()->
+    C=(check())#{accepted=>true,reason=>consistent_voice,
+        consistency=>#{candidate_score=>undefined,threshold=>0.7,profile_min_score=>1.0,scores=>[]}},
+    D=erm_voice_diagnostics:capture(input(),(context())#{check=>C,outcome=>voice_sample_accepted}),
+    [_,_,Speaker|_]=maps:get(stages,D),?assertEqual(pass,maps:get(status,Speaker)),
+    ?assertMatch({_,_},binary:match(maps:get(value,Speaker),<<"First reference">>)),
+    ?assertEqual([],maps:get(references,D)).
+quality_failure_does_not_claim_identity_test()->
+    C=maps:remove(consistency,(check())#{reason=>audio_too_short}),
+    D=erm_voice_diagnostics:capture((input())#{ms=>600},(context())#{check=>C}),
+    [Audio,_,Speaker|_]=maps:get(stages,D),
+    ?assertEqual(fail,maps:get(status,Audio)),?assertEqual(na,maps:get(status,Speaker)).
+phrase_and_identity_are_independent_test()->
+    U=(input())#{result=>#{reason=>matched,action=>stop_music,distance=>0.1,margin=>0.3}},
+    C=maps:remove(consistency,(check())#{reason=>speaker_below_threshold,speaker_score=>0.51}),
+    D=erm_voice_diagnostics:capture(U,(context())#{kind=>voice_verify,check=>C,outcome=>voice_verified}),
+    [_,_,Speaker,Phrase,Store]=maps:get(stages,D),
+    ?assertEqual(fail,maps:get(status,Speaker)),?assertEqual(pass,maps:get(status,Phrase)),
+    ?assertEqual(na,maps:get(status,Store)).
+malformed_preview_is_unavailable_test()->
+    U=(input())#{synthesis=><<"ELS1">>,sample=>#{frames=>160,features=><<1,2,3>>}},
+    D=erm_voice_diagnostics:capture(U,context()),
+    ?assertEqual([],maps:get(envelope,D)),?assertEqual([],maps:get(mfcc,D)).
+
+storage_rejection_preserves_identity_test()->
+    C=maps:remove(consistency,(check())#{reason=>duplicate_sample,speaker_score=>0.91}),
+    D=erm_voice_diagnostics:capture(input(),(context())#{kind=>human_record,check=>C,outcome=>human_sample_rejected}),
+    [_,_,Speaker,_,Store]=maps:get(stages,D),
+    ?assertEqual(pass,maps:get(status,Speaker)),?assertEqual(fail,maps:get(status,Store)).

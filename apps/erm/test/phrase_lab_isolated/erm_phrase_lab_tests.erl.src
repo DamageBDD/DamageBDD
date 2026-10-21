@@ -1,4 +1,5 @@
 -module(erm_phrase_lab_tests).
+-export([setup/0,setup/1,cleanup/1,setup_lab/0,cleanup_lab/1,complete_capture/1]).
 -include_lib("eunit/include/eunit.hrl").
 model()->Frame= <<0.05:32/float-big,140.0:32/float-big,0.9:32/float-big,0:512>>,
     <<"ELS1",24000:32,150:16,(binary:copy(Frame,150))/binary>>.
@@ -83,9 +84,385 @@ packet(E,Id,Rev)->F=maps:get(features,sample(10)),
     <<"P",E:64,Id:64,1500:32,2:16,-20.0:32/float-big,-10.0:32/float-big,
       0.0:32/float-big,0.0:32/float-big,1.0:32/float-big,0.0:32/float-big,
       Rev:64,0:8,1:8,0.1:32/float-big,0.3:32/float-big,1:8,2:16,13:8,F/binary>>.
+
+coordinator_test_()->{foreach,fun setup_lab/0,fun cleanup_lab/1,
+    [fun lab_empty_corpus/1,fun lab_accepted_training/1,fun lab_verify/1,
+     fun controller_workflow/1,fun controller_stale_cancel/1,
+     fun wake_profiles/1,fun speaker_profiles/1,fun enrol_cancel/1,fun bootstrap_voice/1,
+     fun enrol_after_wake_training/1,fun delete_voice/1,fun resume_draft/1,
+     fun reenrol_after_failed_verification/1,fun restart_voice_draft/1] ++
+    [fun(Context)->fun()->lab_rejection(Context,Reason,Input) end end || {Reason,Input} <- [
+        {audio_too_short,#{ms=>600}},
+        {audio_too_quiet,#{rms=> -60.0}},
+        {audio_clipped,#{clip=>0.05}},
+        {no_phrase_features,#{frames=>0}},
+        {missing_embedding,#{embedding=>[]}},
+        {embedding_dimension_mismatch,#{embedding=>[1.0]}},
+        {invalid_embedding,#{embedding=>[0.0,0.0]}},
+        {speaker_below_threshold,#{embedding=>[0.0,1.0]}}
+    ]]}.
+
+setup_lab()->
+    Backend=setup(),{_,Dir}=Backend,
+    persistent_term:put(phrase_test_parent,self()),
+    {ok,_}=erm_voice_events:ensure_started(),
+    {ok,Lab}=erm_phrase_lab:start_link(#{corpus_file=>filename:join(Dir,"lab.elab")}),
+    unlink(Lab),{Backend,Lab}.
+cleanup_lab({Backend,Lab})->
+    try gen_server:stop(Lab) catch exit:_->ok end,cleanup(Backend).
+
+wake_profiles({{_,Dir},Lab})->fun()->
+    take(train,#{offset=>51}),take(train,#{offset=>52}),take(train,#{offset=>53}),
+    {ok,_}=erm_phrase_lab:train(stop_music),backend_ready(),
+    {ok,OldBytes}=file:read_file(filename:join(Dir,"commands.eph")),
+    {ok,#{wake:=<<"hey erm">>}}=erm_phrase_lab:set_wake(" Hey erm "),backend_ready(),
+    ?assertMatch(#{corpus:=C,templates:=T,prompts:=#{stop_music:=<<"hey erm stop music">>}}
+        when map_size(C)=:=0 andalso map_size(T)=:=0,erm_phrase_lab:status()),
+    take(train,#{offset=>54}),
+    ?assertMatch({error,_},erm_phrase_lab:set_wake("bad\nword")),
+    ?assertMatch(#{profiles:=#{wake:=<<"hey erm">>}},erm_phrase_lab:status()),
+    {ok,_}=erm_phrase_lab:set_wake("bob"),backend_ready(),
+    ?assertMatch(#{corpus:=#{{train,stop_music}:=3},templates:=#{stop_music:=3}},erm_phrase_lab:status()),
+    ?assertEqual({ok,OldBytes},file:read_file(filename:join(Dir,"commands.eph"))),
+    {ok,_}=erm_phrase_lab:set_wake("hey erm"),backend_ready(),
+    ?assertMatch(#{corpus:=#{{train,stop_music}:=1},templates:=T} when map_size(T)=:=0,erm_phrase_lab:status()),
+    %% A persisted UI choice wins over the original startup default on restart.
+    gen_server:stop(Lab),gen_server:stop(erm_phrase_voice),
+    {ok,New}=erm_phrase_voice:start_link(backend_options(Dir,0.8)),unlink(New),
+    try backend_ready(),
+        ?assertMatch(#{profiles:=#{wake:=<<"hey erm">>},templates:=T} when map_size(T)=:=0,erm_phrase_voice:status())
+    after gen_server:stop(New) end
+end.
+
+speaker_profiles({{_,Dir},_})->fun()->
+    {ok,OldProfile}=file:read_file(filename:join(Dir,"owner.profile")),
+    {ok,#{enrolment_id:=_}}=erm_phrase_lab:enrol_voice("Desk voice",3),
+    voice_take(#{ms=>600,offset=>60,embedding=>[0.0,1.0]}),
+    ?assertMatch(#{enrolment:=#{collected:=0},last:=#{check:=#{reason:=audio_too_short}}},erm_phrase_lab:status()),
+    voice_take(#{offset=>61,embedding=>[0.0,1.0]}),
+    voice_take(#{offset=>62,embedding=>[1.0,0.0]}),
+    ?assertMatch(#{enrolment:=#{collected:=1,rejected:=2},last:=#{check:=#{reason:=enrolment_inconsistent}}},erm_phrase_lab:status()),
+    voice_take(#{offset=>61,embedding=>[0.0,1.0]}),
+    ?assertMatch(#{last:=#{check:=#{reason:=duplicate_sample}}},erm_phrase_lab:status()),
+    voice_take(#{offset=>63,embedding=>[0.0,1.0]}),voice_take(#{offset=>64,embedding=>[0.0,1.0]}),
+    ?assertMatch({error,finish_or_cancel_voice_enrolment},erm_phrase_lab:record(stop_music,train)),
+    ?assertMatch(#{profiles:=#{active_voice:=<<"configured">>}},erm_phrase_lab:status()),
+    {ok,#{active_voice:=Id,voices:=Voices}}=erm_phrase_lab:save_voice(),backend_ready(),
+    ?assert(Id=/=<<"configured">>),?assertEqual(2,length(Voices)),
+    ?assertEqual({ok,OldProfile},file:read_file(filename:join(Dir,"owner.profile"))),
+    ?assertMatch(#{enrolment:=undefined,enrolled:=true,corpus:=C,templates:=T}
+        when map_size(C)=:=0 andalso map_size(T)=:=0,erm_phrase_lab:status()),
+    {ok,_}=erm_phrase_lab:verify(stop_music),wait_listening(),complete_capture(#{embedding=>[0.0,1.0]}),
+    ?assertMatch(#{last:=#{check:=#{accepted:=true}}},erm_phrase_lab:status()),
+    {ok,_}=erm_phrase_lab:select_voice(<<"configured">>),backend_ready(),
+    ?assertMatch(#{templates:=#{stop_music:=3}},erm_phrase_lab:status()),
+    {ok,_}=erm_phrase_lab:verify(stop_music),wait_listening(),complete_capture(#{embedding=>[0.0,1.0]}),
+    ?assertMatch(#{last:=#{check:=#{accepted:=false}}},erm_phrase_lab:status()),
+    ?assertEqual({error,voice_name_already_exists},erm_phrase_lab:enrol_voice("Desk voice",3)),
+    ?assertNot(contains_private_data(erm_phrase_lab:status())),
+    ?assertNot(contains_private_data(erm_phrase_voice:status()))
+end.
+
+enrol_after_wake_training({{_,Dir},_})->fun()->
+    %% Creating a wake-specific corpus used to leave its parent voices/
+    %% directory at 0755, which rejected the subsequent private profile write.
+    {ok,_}=erm_phrase_lab:set_wake("hey erm"),backend_ready(),
+    take(train,#{offset=>110}),
+    Root=filename:join(Dir,"voices"),
+    ok=file:change_mode(Root,8#755), %% Old installation under the usual umask.
+    {ok,_}=erm_phrase_lab:enrol_voice("After wake training",3),
+    [voice_take(#{offset=>N})||N<-[111,112,113]],
+    ?assertMatch({ok,#{voices:=[_,_]}},erm_phrase_lab:save_voice())
+end.
+
+delete_voice({{_,Dir},Lab})->fun()->
+    {ok,_}=erm_phrase_lab:enrol_voice("Delete me",3),
+    [voice_take(#{offset=>N})||N<-[121,122,123]],
+    {ok,#{active_voice:=Id}}=erm_phrase_lab:save_voice(),backend_ready(),
+    File=filename:join([Dir,"voices",binary_to_list(Id)++".speaker"]),
+    ?assert(filelib:is_file(File)),
+    ?assertMatch({error,_},erm_phrase_lab:delete_voice(<<"../owner.profile">>)),
+    ?assert(filelib:is_file(File)),
+    {ok,_}=erm_phrase_lab:delete_voice(Id),backend_ready(),
+    ?assertNot(filelib:is_file(File)),
+    ?assert(filelib:is_file(filename:join(Dir,"owner.profile"))),
+    ?assertMatch(#{enrolled:=false,paused:=true,observe_only:=true,templates:=T}
+        when map_size(T)=:=0,erm_phrase_voice:status()),
+    ?assertMatch({error,_},erm_phrase_lab:select_voice(Id)),
+    {ok,_}=erm_phrase_lab:select_voice(<<"configured">>),backend_ready(),
+    ?assertMatch(#{templates:=#{stop_music:=3}},erm_phrase_voice:status()),
+    {ok,OldTemplates}=file:read_file(filename:join(Dir,"commands.eph")),
+    {ok,_}=erm_phrase_lab:delete_voice(<<"configured">>),backend_ready(),
+    ?assertNot(filelib:is_file(filename:join(Dir,"owner.profile"))),
+    ?assertEqual({ok,OldTemplates},file:read_file(filename:join(Dir,"commands.eph"))),
+    gen_server:stop(Lab),gen_server:stop(erm_phrase_voice),
+    {ok,P}=erm_phrase_voice:start_link(backend_options(Dir,0.8)),unlink(P),
+    try backend_ready(),
+        ?assertMatch(#{enrolled:=false,paused:=true,profiles:=#{voices:=[],active_voice:=undefined}},erm_phrase_voice:status())
+    after gen_server:stop(P) end
+end.
+
+resume_draft(_)->fun()->
+    {ok,#{enrolment_id:=Id}}=erm_phrase_lab:enrol_voice("Shell draft",3),
+    {ok,C}=erm_voice_training:start(self()),
+    try
+        wait(fun()->is_map(maps:get(enrolment,erm_voice_training:status(C))) end,100),
+        ?assertMatch(#{controls:=#{record_voice:=true,discard_voice:=true}},erm_voice_training:status(C)),
+        erm_voice_training:command(C,{record_voice,Id}),wait_listening(),complete_capture(#{offset=>131}),
+        wait(fun()->maps:get(phase,erm_voice_training:status(C))=:=idle end,100),
+        erm_voice_training:command(C,{discard_voice,Id+1}),
+        wait(fun()->maps:get(heading,maps:get(labels,erm_voice_training:status(C)))=:= <<"Request could not complete">> end,100),
+        ?assertMatch(#{enrolment:=#{id:=Id,collected:=1}},erm_phrase_lab:status()),
+        erm_voice_training:command(C,{discard_voice,Id}),
+        wait(fun()->maps:get(enrolment,erm_phrase_lab:status())=:=undefined end,100),
+        %% Preparing a new draft does not need to wait for the capture echo guard.
+        erm_voice_training:command(C,{enrol_voice,"Next draft",3}),
+        wait(fun()->is_map(maps:get(enrolment,erm_phrase_lab:status())) end,100),
+        ?assertMatch(#{controls:=#{record_voice:=false,discard_voice:=true},
+            labels:=#{heading:= <<"Microphone settling">>}},erm_voice_training:status(C))
+    after gen_server:stop(C) end
+end.
+
+reenrol_after_failed_verification({{_,Dir},_})->fun()->
+    {ok,Original}=file:read_file(filename:join(Dir,"owner.profile")),
+    {ok,C}=erm_voice_training:start(self()),
+    try
+        erm_voice_training:command(C,verify),wait_listening(),
+        complete_capture(#{embedding=>[0.5,0.866]}),
+        wait(fun()->case erm_voice_training:status(C) of
+            #{check:=#{reason:=speaker_below_threshold}}->true;_->false end end,100),
+        ?assertMatch({_,_},binary:match(maps:get(enrolment_state,erm_voice_training:status(C)),<<"No enrolment active">>)),
+        erm_voice_training:command(C,{enrol_voice,<<"test">>,5}),
+        wait(fun()->binary:match(maps:get(enrolment_state,erm_voice_training:status(C)),<<"already exists">>)=/=nomatch end,100),
+        ?assertEqual(undefined,maps:get(enrolment,erm_phrase_lab:status())),
+        erm_voice_training:command(C,{re_enrol_voice,<<"configured">>}),
+        wait(fun()->is_map(maps:get(enrolment,erm_phrase_lab:status())) end,100),
+        #{enrolment:=#{id:=Id,label:= <<"test (2)">>}}=erm_phrase_lab:status(),
+        ?assertMatch(#{controls:=#{record_voice:=true,verify:=false}},erm_voice_training:status(C)),
+        erm_voice_training:command(C,{record_voice,Id}),wait_listening(),
+        complete_capture(#{offset=>141,embedding=>[0.5,0.866]}),
+        wait(fun()->case erm_phrase_lab:status() of
+            #{enrolment:=#{collected:=1}}->true;_->false end end,100),
+        ?assertMatch(#{last:=#{check:=#{accepted:=true,consistency:=#{candidate_score:=undefined}}}},erm_phrase_lab:status()),
+        ?assertEqual({ok,Original},file:read_file(filename:join(Dir,"owner.profile")))
+    after gen_server:stop(C) end
+end.
+
+restart_voice_draft({{_,Dir},Lab})->{timeout,15,fun()->
+    {ok,Original}=file:read_file(filename:join(Dir,"owner.profile")),
+    {ok,OriginalPhrases}=file:read_file(filename:join(Dir,"commands.eph")),
+    {ok,#{enrolment_id:=OldId}}=erm_phrase_lab:enrol_voice("Retry draft",3),
+    voice_take(#{offset=>151}),
+    voice_take(#{offset=>152,embedding=>[0.654,math:sqrt(1-0.654*0.654)]}),
+    #{enrolment:=#{collected:=1,rejected:=1},last:=#{check:=#{consistency:=Failed}}}=erm_phrase_lab:status(),
+    ?assertEqual(candidate_score,maps:get(failed_check,Failed)),
+    ?assert(abs(maps:get(candidate_score,Failed)-0.654)<0.000001),
+    Thresholds=maps:get(thresholds,erm_phrase_lab:status()),
+    %% Restart while inference is active. It cancels this owned epoch without
+    %% allowing its late packet, old timer or stale UI requests into the draft.
+    {ok,_}=erm_phrase_lab:record_voice(),wait_listening(),
+    {P,E,Rev,TakeId}=context(),emit(P,<<"B",E:64,TakeId:64>>),
+    ?assertMatch(#{processing:=true},erm_phrase_voice:status()),
+    {ok,#{enrolment_id:=NewId}}=erm_phrase_lab:restart_voice(OldId),
+    ?assert(NewId=/=OldId),
+    emit(P,packet(E,TakeId,Rev)),emit(P,<<"F">>),
+    _=erm_phrase_voice:status(),Lab!{voice_enrol_expired,OldId},
+    ?assertEqual({error,stale_enrolment},erm_phrase_lab:restart_voice(OldId)),
+    ?assertEqual({error,stale_capture},erm_phrase_lab:cancel(OldId)),
+    ?assertMatch(#{phase:=idle,enrolment:=#{id:=NewId,label:= <<"Retry draft">>,
+        collected:=0,rejected:=0,target:=3},profiles:=#{active_voice:= <<"configured">>}},erm_phrase_lab:status()),
+    ?assertEqual(Thresholds,maps:get(thresholds,erm_phrase_lab:status())),
+    ?assertEqual({ok,Original},file:read_file(filename:join(Dir,"owner.profile"))),
+    ?assertEqual({ok,OriginalPhrases},file:read_file(filename:join(Dir,"commands.eph"))),
+    wait(fun()->maps:get(echo_guard_remaining_ms,erm_phrase_voice:status())=:=0 end,800),
+    %% The replacement first take establishes a new reference, independently
+    %% of both the discarded first take and the still-selected saved profile.
+    voice_take(#{offset=>153,embedding=>[0.0,1.0]}),
+    ?assertMatch(#{enrolment:=#{id:=NewId,collected:=1,rejected:=0},
+        last:=#{check:=#{accepted:=true,consistency:=#{candidate_score:=undefined}}}},erm_phrase_lab:status()),
+    ?assertEqual({ok,Original},file:read_file(filename:join(Dir,"owner.profile")))
+end}.
+
+enrol_cancel(_)->fun()->
+    {ok,#{enrolment_id:=Id}}=erm_phrase_lab:enrol_voice("Temporary",3),
+    voice_take(#{offset=>71}),
+    ?assertEqual({error,stale_capture},erm_phrase_lab:cancel(Id+100000)),
+    ok=erm_phrase_lab:cancel(Id),
+    ?assertMatch(#{enrolment:=undefined,profiles:=#{active_voice:=<<"configured">>,voices:=V}}
+        when length(V)=:=1,erm_phrase_lab:status()),
+    ?assertMatch({error,_},erm_phrase_lab:save_voice())
+end.
+
+bootstrap_voice({{_,Dir},Lab})->fun()->
+    gen_server:stop(Lab),gen_server:stop(erm_phrase_voice),
+    ok=file:delete(filename:join(Dir,"owner.profile")),
+    {ok,OldTemplates}=file:read_file(filename:join(Dir,"commands.eph")),
+    {ok,P}=erm_phrase_voice:start_link(backend_options(Dir,0.8)),unlink(P),
+    try
+        backend_ready(),
+        ?assertMatch(#{enrolled:=false,paused:=true,templates:=T} when map_size(T)=:=0,erm_phrase_voice:status()),
+        {ok,L}=erm_phrase_lab:start_link(#{}),unlink(L),
+        try
+            {ok,_}=erm_phrase_lab:enrol_voice("First voice",3),
+            [voice_take(#{offset=>N})||N<-[81,82,83]],
+            {ok,_}=erm_phrase_lab:save_voice(),backend_ready(),
+            ?assertMatch(#{enrolled:=true},erm_phrase_voice:status()),
+            ?assertEqual({ok,OldTemplates},file:read_file(filename:join(Dir,"commands.eph")))
+        after gen_server:stop(L) end
+    after gen_server:stop(P) end,
+    {ok,Again}=erm_phrase_voice:start_link(backend_options(Dir,0.8)),unlink(Again),
+    try backend_ready(),
+        ?assertMatch(#{enrolled:=true,profiles:=#{voices:=[#{label:=<<"First voice">>}]}},erm_phrase_voice:status())
+    after gen_server:stop(Again) end
+end.
+voice_take(Input)->{ok,_}=erm_phrase_lab:record_voice(),wait_listening(),complete_capture(Input).
+wait_listening()->wait(fun()->maps:get(phase,erm_phrase_lab:status())=:=listening end,100).
+backend_ready()->wait(fun()->maps:get(ready,erm_phrase_voice:status()) end,100).
+
+lab_verify({{_,Dir},_})->fun()->
+    {ok,#{id:=Id}}=erm_phrase_lab:verify(stop_music),
+    wait(fun()->maps:get(phase,erm_phrase_lab:status())=:=listening end,100),
+    ?assertEqual({error,stale_capture},erm_phrase_lab:cancel(Id+1)),
+    complete_capture(#{embedding=>[0.53,0.848],ms=>2118}),
+    ?assertMatch(#{last:=#{outcome:=voice_verified,saved:=false,
+        check:=#{accepted:=false,reason:=speaker_below_threshold}}},erm_phrase_lab:status()),
+    {ok,_}=erm_phrase_lab:verify(stop_music),
+    wait(fun()->maps:get(phase,erm_phrase_lab:status())=:=listening end,100),
+    complete_capture(#{}),
+    ?assertMatch(#{last:=#{outcome:=voice_verified,saved:=false,check:=#{accepted:=true}},corpus:=C}
+        when map_size(C)=:=0,erm_phrase_lab:status()),
+    ?assertMatch(#{last:=#{check:=#{accepted:=true},recognition:=#{reason:=no_eligible_templates},content_match:=false}},erm_phrase_lab:status()),
+    ?assertNot(filelib:is_file(filename:join(Dir,"lab.elab")))
+end.
+
+controller_workflow(_)->fun()->
+    {ok,C}=erm_voice_training:start(self()),
+    try
+        wait(fun()->maps:get(phase,erm_voice_training:status(C))=:=idle end,100),
+        ?assertMatch(#{controls:=#{train:=false,record:=true,end_session:=true}},erm_voice_training:status(C)),
+        erm_voice_training:command(C,verify),
+        wait(fun()->maps:get(phase,erm_phrase_lab:status())=:=listening end,100),
+        complete_capture(#{embedding=>[0.53,0.848],ms=>2118}),
+        wait(fun()->maps:get(check,erm_voice_training:status(C))=/=#{} end,100),
+        ?assertMatch(#{accepted:=0,check:=#{accepted:=false},
+            labels:=#{heading:=<<"Take rejected">>}},erm_voice_training:status(C)),
+        lists:foreach(fun(N)->
+            erm_voice_training:command(C,record),
+            wait(fun()->maps:get(phase,erm_phrase_lab:status())=:=listening end,100),
+            complete_capture(#{offset=>N}),
+            wait(fun()->maps:get(accepted,erm_voice_training:status(C))=:=N-19 end,100)
+        end,[20,21,22]),
+        ?assertMatch(#{controls:=#{train:=true},accepted:=3},erm_voice_training:status(C)),
+        erm_voice_training:command(C,train),
+        wait(fun()->case erm_phrase_lab:status() of
+            #{last:=#{outcome:=human_templates_committed}}->true;_->false end end,100),
+        ?assertMatch(#{templates:=#{stop_music:=3},observe_only:=true},erm_phrase_voice:status()),
+        ?assertNot(contains_private_data(erm_voice_training:status(C)))
+    after gen_server:stop(C) end,
+    ?assert(is_pid(whereis(erm_phrase_lab)))
+end.
+
+controller_stale_cancel(_)->fun()->
+    {ok,C}=erm_voice_training:start(self()),
+    erm_voice_training:command(C,verify),
+    wait(fun()->maps:get(phase,erm_phrase_lab:status())=:=listening end,100),
+    complete_capture(#{}),
+    %% A later shell capture must survive closing the widget's controller.
+    {ok,#{id:=Id}}=erm_phrase_lab:verify(stop_music),
+    wait(fun()->maps:get(phase,erm_phrase_lab:status())=:=listening end,100),
+    gen_server:stop(C),
+    ?assertMatch(#{run:=#{id:=Id},phase:=listening},erm_phrase_lab:status()),
+    ok=erm_phrase_lab:cancel(Id)
+end.
+
+lab_empty_corpus({_,Lab})->fun()->
+    ?assertMatch({error,#{reason:=insufficient_training_samples,accepted:=0,required_min:=3}},
+        erm_phrase_lab:train(stop_music)),
+    ?assertMatch({error,#{reason:=missing_training_sample,available:=0,index:=1}},
+        erm_phrase_lab:cycle(stop_music,1,#{acoustic=>true})),
+    ?assertMatch({error,#{reason:=missing_training_sample}},erm_phrase_lab:sweep(stop_music,1)),
+    ?assertMatch({error,#{reason:=invalid_sample_index}},erm_phrase_lab:cycle(stop_music,0,#{})),
+    ?assertEqual({error,unknown_action},erm_phrase_lab:train(invalid_action)),
+    ?assertEqual({error,unknown_is_evaluation_only},erm_phrase_lab:record(unknown,train)),
+    ?assert(is_process_alive(Lab)),
+    ?assertMatch(#{phase:=idle,corpus:=#{},command_dispatch:=disabled},erm_phrase_lab:status())
+end.
+
+lab_rejection({{_,Dir},Lab},Reason,Input)->
+    take(train,Input),
+    Status=erm_phrase_lab:status(),
+    ?assertMatch(#{phase:=idle,last:=#{outcome:=human_sample_rejected,
+        reason:=Reason,check:=#{accepted:=false,reason:=Reason,quality:=_,thresholds:=_}}},Status),
+    ?assertEqual(#{},maps:get(corpus,Status)),
+    ?assertNot(filelib:is_file(filename:join(Dir,"lab.elab"))),
+    ?assertMatch({error,#{reason:=insufficient_training_samples,accepted:=0}},
+        erm_phrase_lab:train(stop_music)),
+    ?assertMatch({error,#{reason:=missing_training_sample}},
+        erm_phrase_lab:cycle(stop_music,1,#{acoustic=>true})),
+    ?assertNot(contains_private_data(Status)),
+    ?assertNot(contains_private_data(erm_phrase_voice:status())),
+    wait(fun()->lists:any(fun
+        (#{producer:=P,data:=#{phase:=error,text:=Text}})->P=:=Lab andalso byte_size(Text)>0;
+        (_)->false
+    end,erm_voice_events:snapshot()) end,100),
+    receive {command,_}->error(lab_dispatched_rejected_take) after 20->ok end.
+
+lab_accepted_training({{_,Dir},_})->fun()->
+    %% A short held-out take is retained as a failed measurement, but cannot
+    %% become training data. Use distinct features for every subsequent take.
+    take(validation,#{ms=>600,offset=>9}),
+    ?assertMatch(#{last:=#{recorded:=_,verification:={error,audio_too_short}}},erm_phrase_lab:status()),
+    take(train,#{offset=>10,ms=>1200,rms=> -45.0,clip=>0.02}),
+    ?assertMatch(#{last:=#{recorded:=_,check:=#{accepted:=true}}},erm_phrase_lab:status()),
+    ?assertMatch({error,#{accepted:=1,required_min:=3}},erm_phrase_lab:train(stop_music)),
+    take(train,#{offset=>11}),
+    take(train,#{offset=>12}),
+    ?assertMatch(#{corpus:=#{{train,stop_music}:=3,{validation,stop_music}:=1}},erm_phrase_lab:status()),
+    ?assertMatch({ok,#{action:=stop_music,templates:=3}},erm_phrase_lab:train(stop_music)),
+    wait(fun()->maps:get(ready,erm_phrase_voice:status()) end,100),
+    ?assertMatch(#{templates:=#{stop_music:=3},lab_reserved:=true,observe_only:=true},erm_phrase_voice:status()),
+    %% A duplicate is refused without changing the existing corpus or profile.
+    take(train,#{offset=>12}),
+    ?assertMatch(#{last:=#{reason:=duplicate_sample},corpus:=#{{train,stop_music}:=3}},erm_phrase_lab:status()),
+    ?assert(filelib:is_file(filename:join(Dir,"lab.elab"))),
+    receive {command,_}->error(lab_dispatched_training_take) after 20->ok end
+end.
+
+take(Split,Input)->
+    persistent_term:put(phrase_test_parent,self()),
+    ?assertMatch({ok,#{wait_for:=listening,min_speaker_ms:=1200}},erm_phrase_lab:record(stop_music,Split)),
+    wait(fun()->maps:get(phase,erm_phrase_lab:status())=:=listening end,100),
+    complete_capture(Input).
+complete_capture(Input)->
+    {P,E,Rev,Id}=context(),emit(P,<<"B",E:64,Id:64>>),
+    _=erm_phrase_voice:status(),
+    (maps:get(after_begin,Input,fun()->ok end))(),
+    Ms=maps:get(ms,Input,1500),V=maps:get(embedding,Input,[1.0,0.0]),
+    N=maps:get(frames,Input,2),Offset=maps:get(offset,Input,10),
+    Rms=maps:get(rms,Input,-20.0),Clip=maps:get(clip,Input,0.0),
+    Emb= << <<F:32/float-big>> || F<-V >>,
+    Features= << <<(float(Offset)/100):32/float-big>> || _<-lists:seq(1,N*13) >>,
+    Packet= <<"P",E:64,Id:64,Ms:32,(length(V)):16,Rms:32/float-big,-10.0:32/float-big,
+        Clip:32/float-big,0.0:32/float-big,Emb/binary,Rev:64,1:8,0:8,
+        0.1:32/float-big,0.3:32/float-big,1:8,N:16,13:8,Features/binary>>,
+    Samples=Ms*16,Frames=(Samples+159) div 160,
+    Frame= <<0.05:32/float-big,140.0:32/float-big,0.9:32/float-big,0:512>>,
+    Model= <<"ELS1",Samples:32,Frames:16,(binary:copy(Frame,Frames))/binary>>,
+    emit(P,<<"Q",(byte_size(Packet)):32,Packet/binary,Model/binary>>),emit(P,<<"F">>),
+    _=erm_phrase_voice:status(),
+    wait(fun()->maps:get(phase,erm_phrase_lab:status())=:=idle end,100).
+
+contains_private_data(M) when is_map(M)->
+    lists:any(fun(K)->maps:is_key(K,M) end,[embedding,features,synthesis,sample,model]) orelse
+    lists:any(fun contains_private_data/1,maps:values(M));
+contains_private_data(L) when is_list(L)->lists:any(fun contains_private_data/1,L);
+contains_private_data(T) when is_tuple(T)->contains_private_data(tuple_to_list(T));
+contains_private_data(_)->false.
+
 context()->S=sys:get_state(erm_phrase_voice),{element(6,S),element(12,S),element(11,S),element(17,S)+1}.
 emit(P,D)->erm_phrase_voice!{P,{data,D}}.
-setup()->
+setup()->setup(0.8).
+setup(Threshold)->
     persistent_term:erase({erm_tts,suppress_until}),
     Dir=temp_dir(),Model=filename:join(Dir,"speaker.onnx"),Owner=filename:join(Dir,"owner.profile"),
     ok=file:write_file(Model,<<"fixture model">>),Hash=erm_phrase_codec:model_hash(Model),
@@ -93,11 +470,15 @@ setup()->
     ok=file:write_file(Owner,term_to_binary(Profile)),ok=file:change_mode(Owner,8#600),
     Binding=crypto:hash(sha256,term_to_binary({erm_phrase_mfcc_v1,Profile,"default",<<"bob">>},[deterministic])),
     Path=filename:join(Dir,"commands.eph"),Samples=[(sample(N))#{action=>stop_music}||N<-[1,2,3]],
-    ok=erm_phrase_codec:save_profile(Path,Binding,Samples),Peer=os:getenv("PHRASE_TEST_PEER"),
-    Options=#{native=>#{binary=>Peer,speaker_model=>Model,vad_model=>Model,arecord=>Peer,profile_file=>Owner,speaker_threshold=>0.8},
-        phrases=>#{profile_file=>Path,lab_enabled=>true},trigger_phrases=>["bob"]},
+    ok=erm_phrase_codec:save_profile(Path,Binding,Samples),
+    Options=backend_options(Dir,Threshold),
     {ok,Pid}=erm_phrase_voice:start_link(Options),unlink(Pid),
     wait(fun()->maps:get(ready,erm_phrase_voice:status()) end,100),{Pid,Dir}.
+backend_options(Dir,Threshold)->
+    Peer=os:getenv("PHRASE_TEST_PEER"),Model=filename:join(Dir,"speaker.onnx"),
+    #{native=>#{binary=>Peer,speaker_model=>Model,vad_model=>Model,arecord=>Peer,
+        profile_file=>filename:join(Dir,"owner.profile"),speaker_threshold=>Threshold},
+      phrases=>#{profile_file=>filename:join(Dir,"commands.eph"),lab_enabled=>true},trigger_phrases=>["bob"]}.
 cleanup({Pid,Dir})->
     try gen_server:stop(Pid) catch exit:_->ok end,
     persistent_term:erase({erm_tts,suppress_until}),persistent_term:erase(phrase_test_parent),file:del_dir_r(Dir).

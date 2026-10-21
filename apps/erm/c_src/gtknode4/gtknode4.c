@@ -20,6 +20,23 @@
 #endif
 
 #define GN4_PROTOCOL_VERSION 1
+#define GN4_GTK_DISPATCH_LIMIT 32
+#define GN4_GTK_DISPATCH_US 2000
+#define GN4_RECEIVE_TIMEOUT_MS 1000
+
+/* A frame clock, map or idle source can remain ready indefinitely. Never
+ * drain GTK to quiescence: distribution ticks and commands need a turn too.
+ * sync uses the same bounded dispatch and is not an animation-complete wait. */
+static void gn4_dispatch_gtk(Gn4State *st) {
+  GMainContext *context = g_main_context_default();
+  gint64 deadline = g_get_monotonic_time() + GN4_GTK_DISPATCH_US;
+  for (unsigned i = 0; i < GN4_GTK_DISPATCH_LIMIT && st->running; i++) {
+    if (!g_main_context_iteration(context, FALSE))
+      break;
+    if (g_get_monotonic_time() >= deadline)
+      break;
+  }
+}
 
 typedef struct {
   long id;
@@ -56,6 +73,8 @@ typedef struct {
   char *selection;
   char *add;
   char *source_id;
+  char *hscroll;
+  char *vscroll;
   char **items;
   int item_count;
   gboolean has_items;
@@ -63,6 +82,8 @@ typedef struct {
   int selected_index;
   gboolean has_enabled;
   gboolean enabled;
+  gboolean has_editable;
+  gboolean editable;
   gboolean has_shown;
   gboolean shown;
   gboolean has_focus;
@@ -195,6 +216,8 @@ static void gn4_options_clear(Gn4Options *opts) {
   g_free(opts->selection);
   g_free(opts->add);
   g_free(opts->source_id);
+  g_free(opts->hscroll);
+  g_free(opts->vscroll);
   for (i = 0; i < opts->item_count; i++)
     g_free(opts->items[i]);
   g_free(opts->items);
@@ -331,6 +354,8 @@ static gboolean gn4_decode_options(const char *buf, int *idx,
     GN4_STRING_OPTION("selection", selection)
     GN4_STRING_OPTION("add", add)
     GN4_STRING_OPTION("source_id", source_id)
+    GN4_STRING_OPTION("hscroll", hscroll)
+    GN4_STRING_OPTION("vscroll", vscroll)
 
 #undef GN4_STRING_OPTION
 
@@ -354,6 +379,7 @@ static gboolean gn4_decode_options(const char *buf, int *idx,
     }
 
     GN4_BOOL_OPTION("enabled", has_enabled, enabled)
+    GN4_BOOL_OPTION("editable", has_editable, editable)
     GN4_BOOL_OPTION("shown", has_shown, shown)
     GN4_BOOL_OPTION("focus", has_focus, focus)
     GN4_BOOL_OPTION("pointer_events", has_pointer_events, pointer_events)
@@ -400,6 +426,13 @@ static gboolean gn4_decode_options(const char *buf, int *idx,
 
     g_free(key);
     if (ei_skip_term(buf, idx) < 0)
+      return FALSE;
+  }
+  const char *policies[] = {opts->hscroll, opts->vscroll};
+  for (guint p = 0; p < G_N_ELEMENTS(policies); p++) {
+    const char *value = policies[p];
+    if (value && strcmp(value, "automatic") != 0 &&
+        strcmp(value, "never") != 0 && strcmp(value, "always") != 0)
       return FALSE;
   }
   return TRUE;
@@ -505,8 +538,8 @@ static void gn4_send_reply_ok_double(Gn4State *st, const erlang_ref *ref,
   ei_x_free(&reply);
 }
 
-static void gn4_send_reply_ok_bool(Gn4State *st, const erlang_ref *ref,
-                                   gboolean value) {
+static void gn4_send_reply_ok_atom(Gn4State *st, const erlang_ref *ref,
+                                  const char *value) {
   ei_x_buff reply;
   ei_x_new_with_version(&reply);
   ei_x_encode_tuple_header(&reply, 4);
@@ -515,10 +548,15 @@ static void gn4_send_reply_ok_bool(Gn4State *st, const erlang_ref *ref,
   ei_x_encode_ref(&reply, (erlang_ref *)ref);
   ei_x_encode_tuple_header(&reply, 2);
   ei_x_encode_atom(&reply, "ok");
-  ei_x_encode_atom(&reply, value ? "true" : "false");
+  ei_x_encode_atom(&reply, value);
   ei_reg_send(&st->ec, st->dist_fd, st->peer_regname, reply.buff,
               reply.index);
   ei_x_free(&reply);
+}
+
+static void gn4_send_reply_ok_bool(Gn4State *st, const erlang_ref *ref,
+                                  gboolean value) {
+  gn4_send_reply_ok_atom(st, ref, value ? "true" : "false");
 }
 
 static void gn4_event_begin(Gn4Widget *entry, ei_x_buff *event,
@@ -658,6 +696,8 @@ static void gn4_on_button_clicked(GtkButton *button, gpointer user_data) {
     gn4_send_empty_event(entry, "clicked");
 }
 
+#include "erm_voice_notes_keys.h"
+
 static void gn4_on_entry_activate(GtkEntry *widget, gpointer user_data) {
   Gn4Widget *entry = user_data;
   const char *text;
@@ -785,6 +825,22 @@ static gboolean gn4_on_window_close(GtkWindow *window, gpointer user_data) {
 static GtkOrientation gn4_orientation(const char *value) {
   return value && strcmp(value, "horizontal") == 0 ? GTK_ORIENTATION_HORIZONTAL
                                                     : GTK_ORIENTATION_VERTICAL;
+}
+
+static GtkPolicyType gn4_scroll_policy(const char *value) {
+  if (strcmp(value, "never") == 0)
+    return GTK_POLICY_NEVER;
+  if (strcmp(value, "always") == 0)
+    return GTK_POLICY_ALWAYS;
+  return GTK_POLICY_AUTOMATIC;
+}
+
+static const char *gn4_scroll_policy_name(GtkPolicyType policy) {
+  if (policy == GTK_POLICY_NEVER)
+    return "never";
+  if (policy == GTK_POLICY_ALWAYS)
+    return "always";
+  return "automatic";
 }
 
 static GtkAlign gn4_align(const char *value) {
@@ -1132,6 +1188,20 @@ static gboolean gn4_apply_options(Gn4Widget *entry, Gn4Options *opts) {
     gtk_widget_set_tooltip_text(widget, opts->tooltip);
   if (opts->placeholder && GTK_IS_ENTRY(target))
     gtk_entry_set_placeholder_text(GTK_ENTRY(target), opts->placeholder);
+  if (opts->has_editable) {
+    if (GTK_IS_TEXT_VIEW(target))
+      gtk_text_view_set_editable(GTK_TEXT_VIEW(target), opts->editable);
+    else if (GTK_IS_EDITABLE(target))
+      gtk_editable_set_editable(GTK_EDITABLE(target), opts->editable);
+  }
+  if ((opts->hscroll || opts->vscroll) && GTK_IS_SCROLLED_WINDOW(widget)) {
+    GtkPolicyType horizontal, vertical;
+    gtk_scrolled_window_get_policy(GTK_SCROLLED_WINDOW(widget),
+                                   &horizontal, &vertical);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(widget),
+        opts->hscroll ? gn4_scroll_policy(opts->hscroll) : horizontal,
+        opts->vscroll ? gn4_scroll_policy(opts->vscroll) : vertical);
+  }
   if (opts->classes) {
     gtk_widget_set_css_classes(widget, NULL);
     gn4_apply_css_classes(widget, opts->classes);
@@ -1171,8 +1241,13 @@ static gboolean gn4_apply_options(Gn4Widget *entry, Gn4Options *opts) {
     gtk_box_set_spacing(GTK_BOX(target), opts->spacing);
   if (opts->has_homogeneous && GTK_IS_BOX(target))
     gtk_box_set_homogeneous(GTK_BOX(target), opts->homogeneous);
-  if (opts->has_wrap && GTK_IS_LABEL(target))
-    gtk_label_set_wrap(GTK_LABEL(target), opts->wrap);
+  if (opts->has_wrap) {
+    if (GTK_IS_LABEL(target))
+      gtk_label_set_wrap(GTK_LABEL(target), opts->wrap);
+    else if (GTK_IS_TEXT_VIEW(target))
+      gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(target),
+          opts->wrap ? GTK_WRAP_WORD_CHAR : GTK_WRAP_NONE);
+  }
   if (opts->has_width_chars) {
     if (GTK_IS_LABEL(target))
       gtk_label_set_width_chars(GTK_LABEL(target), opts->width_chars);
@@ -1433,6 +1508,7 @@ static Gn4Widget *gn4_create_widget(Gn4State *st, long id, const char *type,
     gn4_destroy_widget(st, id);
     return NULL;
   }
+  gn4_voice_notes_keys(entry);
   return entry;
 }
 
@@ -1573,6 +1649,14 @@ static void gn4_handle_read(Gn4State *st, const erlang_ref *ref,
     else if (GTK_IS_LABEL(target))
       gn4_send_reply_ok_binary(st, ref,
                                gtk_label_get_text(GTK_LABEL(target)));
+    else if (GTK_IS_TEXT_VIEW(target)) {
+      GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(target));
+      GtkTextIter start, end;
+      gtk_text_buffer_get_bounds(buffer, &start, &end);
+      char *text = gtk_text_buffer_get_text(buffer, &start, &end, TRUE);
+      gn4_send_reply_ok_binary(st, ref, text);
+      g_free(text);
+    }
     else
       gn4_send_reply_error(st, ref, "unsupported_property");
   } else if (strcmp(key, "label") == 0) {
@@ -1590,6 +1674,17 @@ static void gn4_handle_read(Gn4State *st, const erlang_ref *ref,
     gn4_send_reply_ok_bool(st, ref, gtk_widget_get_visible(widget));
   } else if (strcmp(key, "enabled") == 0) {
     gn4_send_reply_ok_bool(st, ref, gtk_widget_get_sensitive(widget));
+  } else if (strcmp(key, "editable") == 0 && GTK_IS_TEXT_VIEW(target)) {
+    gn4_send_reply_ok_bool(st, ref, gtk_text_view_get_editable(GTK_TEXT_VIEW(target)));
+  } else if (strcmp(key, "editable") == 0 && GTK_IS_EDITABLE(target)) {
+    gn4_send_reply_ok_bool(st, ref, gtk_editable_get_editable(GTK_EDITABLE(target)));
+  } else if ((strcmp(key, "hscroll") == 0 || strcmp(key, "vscroll") == 0) &&
+             GTK_IS_SCROLLED_WINDOW(widget)) {
+    GtkPolicyType horizontal, vertical;
+    gtk_scrolled_window_get_policy(GTK_SCROLLED_WINDOW(widget),
+                                   &horizontal, &vertical);
+    gn4_send_reply_ok_atom(st, ref, gn4_scroll_policy_name(
+        strcmp(key, "hscroll") == 0 ? horizontal : vertical));
   } else if (strcmp(key, "title") == 0 && GTK_IS_WINDOW(widget)) {
     gn4_send_reply_ok_binary(st, ref,
                              gtk_window_get_title(GTK_WINDOW(widget)));
@@ -1839,8 +1934,7 @@ static void gn4_handle_command(Gn4State *st, const char *buf, int *idx,
       return;
     }
     if (strcmp(command, "sync") == 0) {
-      while (g_main_context_pending(NULL))
-        g_main_context_iteration(NULL, FALSE);
+      gn4_dispatch_gtk(st);
       if (reply)
         gn4_send_reply_ok(st, ref);
     } else if (strcmp(command, "shutdown") == 0) {
@@ -1990,8 +2084,10 @@ gboolean gn4_poll_erlang(Gn4State *st) {
   char *kind = NULL;
   erlang_ref ref;
 
-  if (st->dist_fd < 0)
+  if (st->dist_fd < 0) {
+    st->running = FALSE;
     return FALSE;
+  }
   descriptor.fd = st->dist_fd;
   descriptor.events = POLLIN;
   descriptor.revents = 0;
@@ -2001,16 +2097,37 @@ gboolean gn4_poll_erlang(Gn4State *st) {
   if (result < 0) {
     if (errno == EINTR)
       return TRUE;
+    fprintf(stderr, "gtknode4: distribution poll failed: %s\n", strerror(errno));
+    st->running = FALSE;
     return FALSE;
   }
+  if (descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+    fprintf(stderr, "gtknode4: distribution socket closed: revents=0x%x\n",
+            (unsigned)descriptor.revents);
+    st->running = FALSE;
+    return FALSE;
+  }
+  if (!(descriptor.revents & POLLIN))
+    return TRUE;
 
-  ei_x_new(&message_buffer);
-  result = ei_xreceive_msg(st->dist_fd, &message, &message_buffer);
+  if (ei_x_new(&message_buffer) < 0) {
+    fprintf(stderr, "gtknode4: distribution buffer allocation failed\n");
+    st->running = FALSE;
+    return FALSE;
+  }
+  /* POLLIN guarantees bytes, not a complete packet. Bound a stalled read.
+   * On failure abandon this connection: libei may have consumed a partial
+   * packet, so retrying it as a fresh message could corrupt the stream. */
+  result = ei_xreceive_msg_tmo(st->dist_fd, &message, &message_buffer,
+                             GN4_RECEIVE_TIMEOUT_MS);
   if (result == ERL_TICK) {
     ei_x_free(&message_buffer);
     return TRUE;
   }
-  if (result == ERL_ERROR) {
+  if (result != ERL_MSG) {
+    fprintf(stderr,
+            "gtknode4: distribution receive failed: result=%d erl_errno=%d (%s)\n",
+            result, erl_errno, strerror(erl_errno));
     ei_x_free(&message_buffer);
     st->running = FALSE;
     return FALSE;
@@ -2156,15 +2273,16 @@ void gn4_signal_handler(GtkWidget *widget, const char *signal_name,
   (void)user_data;
 }
 
-void gn4_main_loop(Gn4State *st) {
-  GMainContext *context = g_main_context_default();
+gboolean gn4_main_loop(Gn4State *st) {
   while (st->running) {
-    while (g_main_context_pending(context))
-      g_main_context_iteration(context, FALSE);
-    if (!gn4_poll_erlang(st))
+    gn4_dispatch_gtk(st);
+    if (!st->running)
       break;
+    if (!gn4_poll_erlang(st))
+      return FALSE;
     g_usleep(5000);
   }
+  return TRUE;
 }
 
 void gn4_cleanup(Gn4State *st) {
@@ -2230,7 +2348,7 @@ int main(int argc, char **argv) {
     gn4_cleanup(&state);
     return 1;
   }
-  gn4_main_loop(&state);
+  gboolean clean_shutdown = gn4_main_loop(&state);
   gn4_cleanup(&state);
-  return 0;
+  return clean_shutdown ? 0 : 1;
 }

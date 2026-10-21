@@ -8,7 +8,7 @@
     enrol/2, enrol/3,
     cancel_enrol/0,
     decode/1,
-    normalise/1,
+    normalise/1, enrolment_check/3,
     score/2,
     configure/1,
     reload/0, reload/1,

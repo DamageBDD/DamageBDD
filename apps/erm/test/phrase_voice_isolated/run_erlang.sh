@@ -12,7 +12,7 @@ ${CXX:-c++} -std=c++17 -O2 -Wall -Wextra -Werror "$HERE/fake_port.cpp" -o "$PHRA
 for source in "$HERE"/*.erl.src; do cp "$source" "$TMP/$(basename "$source" .src)"; done
 # Production modules, not substitutes for the codec/gates/speaker math.
 erlc -o "$TMP" "$ERM/src/erm_native_voice.erl"
-erlc -Werror -o "$TMP" "$ERM/src/erm_phrase_codec.erl" "$ERM/src/erm_phrase_voice.erl" \
+erlc -Werror -o "$TMP" "$ERM/src/erm_voice_profiles.erl" "$ERM/src/erm_phrase_codec.erl" "$ERM/src/erm_phrase_voice.erl" \
     "$ERM/src/erm_voice_events.erl" "$TMP"/*.erl
 erl +S 2 -noshell -pa "$TMP" -eval \
     'application:ensure_all_started(crypto), case eunit:test(erm_phrase_tests,[verbose]) of ok -> halt(0); _ -> halt(1) end.'

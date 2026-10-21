@@ -1563,6 +1563,13 @@ native_option({enable, Bool}, Acc) when is_boolean(Bool) -> maps:put(enabled, Bo
 native_option({map, Bool}, Acc) when is_boolean(Bool) -> maps:put(shown, Bool, Acc);
 native_option({show, Bool}, Acc) when is_boolean(Bool) -> maps:put(shown, Bool, Acc);
 native_option({setfocus, Bool}, Acc) when is_boolean(Bool) -> maps:put(focus, Bool, Acc);
+native_option({editable, Bool}, Acc) when is_boolean(Bool) -> maps:put(editable, Bool, Acc);
+native_option({editable, Value}, _Acc) -> error({invalid_editable, Value});
+native_option({Key, Policy}, Acc) when Key =:= hscroll; Key =:= vscroll ->
+    case lists:member(Policy, [automatic, never, always]) of
+        true -> maps:put(Key, Policy, Acc);
+        false -> error({invalid_scroll_policy, Key, Policy})
+    end;
 native_option({orient, Orientation}, Acc) ->
     maps:put(orientation, Orientation, Acc);
 native_option({layout, Orientation}, Acc) ->

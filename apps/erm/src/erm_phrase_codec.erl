@@ -4,7 +4,7 @@
 -include_lib("kernel/include/file.hrl").
 -export([actions/0, action_id/1, action/1, command/1, prompt/2, decode/1,
     encode_profile/4, read_profile/2, save_profile/3, load_speaker/2,
-    model_hash/1, fingerprint/1, validate_samples/1]).
+    model_hash/1, fingerprint/1, validate_samples/1, private_read/2, atomic_write/2]).
 
 -define(MAX_FILE, 1048576).
 -define(DIM, 13).
