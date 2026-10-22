@@ -1,0 +1,54 @@
+%% Merge these entries into the existing damage application tuple.
+%% Do not replace your complete sys.config with this example.
+[
+ {damage, [
+   {ai_profiles, [
+     {<<"local">>, [
+       {backend, damage_ai_openai},
+       {base_url, <<"http://127.0.0.1:11434/v1">>},
+       {allow_loopback_http, true},
+       {model, <<"REPLACE_WITH_INSTALLED_CHAT_MODEL">>},
+       {embedding_model, <<"REPLACE_WITH_INSTALLED_EMBEDDING_MODEL">>},
+       {api_key, none},
+       {allowed_accounts, [<<"ak_REPLACE_WITH_AUTHORIZED_ACCOUNT">>]},
+       {allowed_skills, [<<"summarize">>, <<"classify">>, <<"extract">>,
+                         <<"rewrite">>, <<"translate">>, <<"answer">>,
+                         <<"prompt">>, <<"embed">>, <<"support-triage">>]},
+       {token_limit_key, max_tokens},
+       {json_mode, json_object},
+       {max_output_tokens, 1024},
+       {timeout_ms, 30000},
+       {max_input_bytes, 65536},
+       {max_response_bytes, 1048576},
+       {max_calls, 10}
+     ]},
+     {<<"remote">>, [
+       {backend, damage_ai_openai},
+       {base_url, <<"https://api.openai.com/v1">>},
+       {model, <<"REPLACE_WITH_SUPPORTED_CHAT_MODEL">>},
+       {embedding_model, <<"REPLACE_WITH_SUPPORTED_EMBEDDING_MODEL">>},
+       {api_key, {env, "DAMAGE_AI_API_KEY"}},
+       %% Alternatively: {api_key, {secret, damage_ai_api_key}}.
+       %% An empty allowlist deliberately disables access to paid inference.
+       {allowed_accounts, []},
+       {allowed_skills, [<<"summarize">>, <<"classify">>, <<"extract">>]},
+       {token_limit_key, max_completion_tokens},
+       {json_mode, json_schema},
+       {max_output_tokens, 1024},
+       {timeout_ms, 30000},
+       {max_input_bytes, 65536},
+       {max_response_bytes, 1048576},
+       {max_calls, 5}
+     ]}
+   ]},
+   {ai_skills, [
+     {<<"support-triage">>, [
+       {version, <<"1">>},
+       {instruction, <<"Triage the support request. Return a JSON object with "
+                       "category, priority, and suggested_reply. Use only facts "
+                       "in the input. Do not promise a refund or take actions.">>},
+       {output, json_object}
+     ]}
+   ]}
+ ]}
+].
