@@ -1,11 +1,12 @@
 import * as wallet from "./wallet.js";
+import { templateCards, templateFields, templateParams, templateDefaults, createPreviewGate } from "./schedule-templates.js";
 
 const API = "/api/schedules/v2";
 const TOKEN_DECIMALS = 8;
 let mounted = false;
 let host = null;
 let currentRangeDays = 30;
-let previewState = null;
+let templateCatalog = null;
 let modalReturnFocus = null;
 let modalKeyHandler = null;
 
@@ -18,7 +19,7 @@ export async function updateSchedulesTable() {
     mounted = true;
     await resumeMobileWalletFlow();
   }
-  await Promise.all([loadSchedules(), loadAnalytics(currentRangeDays), loadStatus()]);
+  await Promise.all([loadSchedules(), loadAnalytics(currentRangeDays), loadStatus(), loadTemplates()]);
 }
 
 function findHost() {
@@ -30,11 +31,11 @@ function findHost() {
 }
 
 function ensureStyles() {
-  if (document.querySelector('link[href="/static/css/schedules-v2.css"]')) return;
+  if (document.querySelector('link[href^="/static/css/schedules-v2.css"]')) return;
   const link = document.createElement("link");
   link.id = "schedules-v2-css";
   link.rel = "stylesheet";
-  link.href = "/static/css/schedules-v2.css";
+  link.href = "/static/css/schedules-v2.css?theme=semantic-v2";
   document.head.appendChild(link);
 }
 
@@ -52,6 +53,12 @@ function mount(root) {
           <button type="button" id="sv2-new" class="sv2-primary">+ New schedule</button>
         </div>
       </div>
+
+      <details id="sv2-starters" class="sv2-starters" open>
+        <summary>Start with a ready-made check</summary>
+        <p>Choose a template, enter your endpoint, then review a 7-day budget. Nothing runs or spends until you enable it.</p>
+        <div id="sv2-template-list" class="sv2-template-grid" aria-live="polite">Loading starter checks…</div>
+      </details>
 
       <div class="sv2-toolbar">
         <div class="sv2-range" role="group" aria-label="Analytics range">
@@ -81,7 +88,7 @@ function mount(root) {
     <div id="sv2-toast" class="sv2-toast" hidden></div>
   `;
 
-  root.querySelector("#sv2-new").addEventListener("click", openCreateModal);
+  root.querySelector("#sv2-new").addEventListener("click", () => openCreateModal());
   root.querySelector("#sv2-refresh").addEventListener("click", updateSchedulesTable);
   root.querySelectorAll(".sv2-range button[data-days]").forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -135,7 +142,7 @@ async function loadSchedules() {
     host.querySelector("#sv2-count").textContent = `${schedules.length} schedule${schedules.length === 1 ? "" : "s"}`;
     if (!schedules.length) {
       list.innerHTML = `<div class="sv2-empty"><strong>No scheduled verification yet.</strong><span>Create a budgeted schedule to run verification automatically.</span><button type="button" class="sv2-primary" id="sv2-empty-create">Create schedule</button></div>`;
-      list.querySelector("#sv2-empty-create")?.addEventListener("click", openCreateModal);
+      list.querySelector("#sv2-empty-create")?.addEventListener("click", () => openCreateModal());
       return;
     }
     list.innerHTML = schedules.map(renderSchedule).join("");
@@ -203,7 +210,8 @@ async function mutateSchedule(id, action, btn) {
   try {
     const path = action === "run" ? "run" : action;
     const response = await apiFetch(`${API}/${encodeURIComponent(id)}/${path}`, { method: "POST", body: "{}" });
-    await maybeSignResponse(response);
+    const final = await maybeSignResponse(response);
+    if (final?.status === "redirect") return;
     toast(action === "cancel" ? "Schedule cancelled; unlocked balance is returning to the account." : `Schedule ${action} submitted`, "success");
     await updateSchedulesTable();
   } catch (e) { toast(e.message, "error"); }
@@ -299,37 +307,102 @@ function renderChart(buckets) {
   }).join("")}</div><div class="sv2-chart-legend"><span><i class="runs"></i>Runs</span><span><i class="spend"></i>Spend</span></div>`;
 }
 
-function openCreateModal() {
-  previewState = null;
-  const feature = document.getElementById("damageTextArea")?.value || "";
+async function loadTemplates() {
+  const container = host?.querySelector("#sv2-template-list");
+  if (!container) return;
+  try {
+    if (!templateCatalog) {
+      const response = await apiFetch(`${API}/templates`);
+      if (!Array.isArray(response.data)) throw new Error("Invalid starter catalogue response.");
+      templateCatalog = response.data;
+    }
+    container.innerHTML = templateCards(templateCatalog);
+    container.querySelectorAll("[data-template-id]").forEach(button => {
+      button.addEventListener("click", () => openTemplateModal(templateCatalog.find(t => t.id === button.dataset.templateId)));
+    });
+  } catch (error) {
+    container.innerHTML = `<div class="sv2-empty error">${escapeHtml(error.message)}<button type="button" class="sv2-secondary">Retry starter checks</button></div>`;
+    container.querySelector("button").addEventListener("click", loadTemplates);
+  }
+}
+
+function openTemplateModal(template) {
+  if (!template) return;
+  showModal(`
+    <form id="sv2-template-form" class="sv2-modal-card sv2-create">
+      <button type="button" class="sv2-modal-close" data-close aria-label="Close template dialog">×</button>
+      <div class="sv2-eyebrow">Starter check · ${escapeHtml(template.category)}</div>
+      <h3>${escapeHtml(template.title)}</h3><p class="sv2-form-intro">${escapeHtml(template.description)}</p>
+      ${templateFields(template)}
+      <p class="sv2-template-note">${escapeHtml(template.authorization)}</p>
+      <p class="sv2-template-note">Use public, non-secret URLs and text: these are stored in feature/report artifacts. Security probes are read-only; a pass is not a full vulnerability assessment.</p>
+      <label class="sv2-consent"><input name="authorized" type="checkbox" required><span>I own this system or have explicit permission to monitor it.</span></label>
+      <p id="sv2-template-error" class="sv2-inline-error" role="alert"></p>
+      <div class="sv2-form-actions"><button type="submit" class="sv2-primary">Review schedule</button></div>
+    </form>`);
+  const form = document.getElementById("sv2-template-form");
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (form.dataset.busy === "true" || !form.reportValidity()) return;
+    const button = form.querySelector('[type="submit"]');
+    try {
+      const values = Object.fromEntries(new FormData(form));
+      const params = templateParams(template, values, form.elements.authorized.checked);
+      form.dataset.busy = "true";
+      setBusy(button, true);
+      form.querySelectorAll("input").forEach(input => { input.disabled = true; });
+      form.querySelector("#sv2-template-error").textContent = "";
+      const draft = await apiFetch(`${API}/templates/render`, {
+        method: "POST", body: JSON.stringify({template_id: template.id, params})
+      });
+      if (!form.isConnected) return;
+      openCreateModal(draft);
+    } catch (error) {
+      if (form.isConnected) form.querySelector("#sv2-template-error").textContent = error.message;
+    } finally {
+      if (form.isConnected) {
+        delete form.dataset.busy;
+        form.querySelectorAll("input").forEach(input => { input.disabled = false; });
+        setBusy(button, false);
+      }
+    }
+  });
+}
+
+function openCreateModal(draft = null) {
+  const defaults = draft ? templateDefaults(draft) : null;
+  const feature = defaults?.feature ?? (document.getElementById("damageTextArea")?.value || "");
+  const days = defaults?.days || 30;
   const now = new Date();
-  const end = new Date(Date.now() + 30 * 86400000);
+  const end = new Date(Date.now() + days * 86400000);
   showModal(`
     <form id="sv2-create-form" class="sv2-modal-card sv2-create">
       <button type="button" class="sv2-modal-close" data-close aria-label="Close new schedule dialog">×</button>
-      <div class="sv2-eyebrow">New schedule</div><h3>Schedule verification</h3>
+      <div class="sv2-eyebrow">${defaults ? "Starter schedule" : "New schedule"}</div><h3>Schedule verification</h3>
       <p class="sv2-form-intro">Dry-run the feature, count upcoming executions, then lock a bounded DAMAGE budget before activation.</p>
-
+      ${draft ? `<p class="sv2-template-note">${escapeHtml(draft.note)}</p>` : ""}
       <label class="sv2-field"><span>Feature</span><textarea id="sv2-feature" rows="9" required>${escapeHtml(feature)}</textarea></label>
       <div class="sv2-form-grid">
         <label class="sv2-field"><span>Frequency</span><select id="sv2-frequency">
           <option value="hourly">Every hour</option><option value="15m">Every 15 minutes</option>
-          <option value="daily">Daily</option><option value="weekdays">Weekdays</option><option value="custom">Custom cron</option>
+          <option value="daily-utc">Daily at 09:00 UTC</option><option value="daily">Daily (local time)</option>
+          <option value="weekdays">Weekdays (local time)</option><option value="custom">Custom cron</option>
         </select></label>
         <label class="sv2-field" id="sv2-time-field"><span>Time</span><input id="sv2-time" type="time" value="09:00"></label>
-        <label class="sv2-field sv2-custom-cron" hidden><span>Cron (UTC)</span><input id="sv2-cron" value="0 * * * *"></label>
+        <label class="sv2-field sv2-custom-cron" hidden><span>Cron (UTC)</span><input id="sv2-cron" value="${escapeAttr(defaults?.cron || "0 * * * *")}"></label>
         <label class="sv2-field"><span>Concurrency</span><input id="sv2-concurrency" type="number" min="1" max="1" value="1" disabled><small>Scheduled runs are serialized per account so measured execution cost remains exact.</small></label>
       </div>
-      <div class="sv2-field"><span>Execution window</span><div class="sv2-presets"><button type="button" data-window="7">7 days</button><button type="button" data-window="30" class="active">30 days</button><button type="button" data-window="90">90 days</button></div></div>
+      <div class="sv2-field"><span>Execution window</span><div class="sv2-presets">${[7,30,90].map(d => `<button type="button" data-window="${d}" class="${d === days ? "active" : ""}">${d} days</button>`).join("")}</div></div>
       <div class="sv2-form-grid">
         <label class="sv2-field"><span>Starts</span><input id="sv2-start" type="datetime-local" value="${localDateTimeValue(now)}"></label>
         <label class="sv2-field"><span>Ends</span><input id="sv2-end" type="datetime-local" value="${localDateTimeValue(end)}"></label>
       </div>
-      <div class="sv2-timezone-note">Times are converted to the canonical UTC schedule. Browser timezone: <b>${escapeHtml(browserTimezone())}</b>.</div>
-
-      <div class="sv2-preview-card" id="sv2-preview-card"><div class="sv2-preview-empty">Run a dry-run preview to calculate the budget.</div></div>
-      <div class="sv2-form-actions"><button type="button" id="sv2-preview" class="sv2-secondary">Calculate budget</button><button id="sv2-create" class="sv2-primary" disabled>Create & lock budget</button></div>
+      <div class="sv2-timezone-note">Window dates use browser timezone <b>${escapeHtml(browserTimezone())}</b>. Starter daily checks use 09:00 UTC. Local daily times are converted using the start date's offset.</div>
+      <div class="sv2-preview-card" id="sv2-preview-card"><div class="sv2-preview-empty">Calculate a budget before enabling this schedule. No live monitoring request is sent during preview.</div></div>
+      <p id="sv2-create-error" class="sv2-inline-error" role="alert"></p>
+      <div class="sv2-form-actions"><button type="button" id="sv2-preview" class="sv2-secondary">Calculate budget</button><button id="sv2-create" class="sv2-primary" disabled>Enable & lock budget</button></div>
     </form>`);
+  document.getElementById("sv2-frequency").value = defaults?.frequency || "hourly";
   bindCreateForm();
 }
 
@@ -337,37 +410,73 @@ function bindCreateForm() {
   const modal = document.getElementById("sv2-modal");
   const form = modal.querySelector("#sv2-create-form");
   const freq = form.querySelector("#sv2-frequency");
-  freq.addEventListener("change", () => {
+  const gate = createPreviewGate();
+  let previewBusy = false, createBusy = false;
+  const create = form.querySelector("#sv2-create");
+  const error = form.querySelector("#sv2-create-error");
+  const syncFrequency = () => {
     form.querySelector(".sv2-custom-cron").hidden = freq.value !== "custom";
     form.querySelector("#sv2-time-field").hidden = !["daily","weekdays"].includes(freq.value);
-    previewState = null; form.querySelector("#sv2-create").disabled = true;
+  };
+  const invalidate = () => {
+    gate.invalidate(); create.disabled = true;
+    form.querySelector("#sv2-preview-card").innerHTML = '<div class="sv2-preview-empty">Inputs changed. Recalculate the budget before enabling.</div>';
+  };
+  syncFrequency();
+  freq.addEventListener("change", syncFrequency);
+  for (const eventName of ["input", "change"]) form.addEventListener(eventName, event => {
+    if (event.target.id === "sv2-lock-display") return;
+    invalidate();
   });
   form.querySelectorAll("[data-window]").forEach(btn => btn.addEventListener("click", () => {
     form.querySelectorAll("[data-window]").forEach(b => b.classList.remove("active")); btn.classList.add("active");
     const start = new Date(form.querySelector("#sv2-start").value || Date.now());
     form.querySelector("#sv2-end").value = localDateTimeValue(new Date(start.getTime() + Number(btn.dataset.window) * 86400000));
-    previewState = null; form.querySelector("#sv2-create").disabled = true;
+    invalidate();
   }));
   form.querySelector("#sv2-preview").addEventListener("click", async () => {
-    const btn = form.querySelector("#sv2-preview"); setBusy(btn, true);
+    if (previewBusy || createBusy || !form.reportValidity()) return;
+    const btn = form.querySelector("#sv2-preview"); previewBusy = true; setBusy(btn, true);
+    create.disabled = true; error.textContent = "";
     try {
-      const spec = formSpec(form);
+      const spec = formSpec(form), ticket = gate.begin(spec);
       const r = await apiFetch(`${API}/preview`, {method:"POST", body: JSON.stringify(spec)});
-      previewState = {spec, preview:r}; renderBudgetPreview(form, r); form.querySelector("#sv2-create").disabled = false;
-    } catch(e) { toast(e.message,"error"); }
-    finally { setBusy(btn,false); }
+      if (!form.isConnected) return;
+      if (!gate.accept(ticket, r)) { error.textContent = "Inputs changed during preview. Recalculate the budget."; return; }
+      if (!(Number(r.window?.occurrences) > 0) || !(Number(r.budget?.max_cost_per_run) > 0)) {
+        gate.invalidate(); throw new Error("No billable runs in this window. Check the dates and frequency.");
+      }
+      renderBudgetPreview(form, r); create.disabled = false;
+    } catch(e) { if (form.isConnected) error.textContent = e.message; }
+    finally { previewBusy = false; if (form.isConnected) setBusy(btn,false); }
   });
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault(); if (!previewState) return;
-    const btn = form.querySelector("#sv2-create"); setBusy(btn,true);
+  form.addEventListener("submit", async event => {
+    event.preventDefault(); if (createBusy || previewBusy) return;
     try {
-      const lockInput = form.querySelector("#sv2-lock");
-      const spec = {...previewState.spec, lock_amount: Number(lockInput.dataset.baseUnits)};
-      const r = await apiFetch(API, {method:"POST", body:JSON.stringify(spec)});
-      await maybeSignResponse(r);
-      hideModal(); toast("Schedule created and budget locked.","success"); await updateSchedulesTable();
-    } catch(e) { toast(e.message,"error"); }
-    finally { setBusy(btn,false); }
+      const accepted = gate.current(formSpec(form));
+      if (!accepted) { invalidate(); throw new Error("Calculate a fresh budget before enabling."); }
+      const lock = parseDamage(form.querySelector("#sv2-lock-display").value);
+      const minimum = Number(accepted.preview.budget.max_cost_per_run);
+      if (!Number.isSafeInteger(lock) || lock < minimum || lock <= 0) throw new Error("Choose a valid budget covering at least one capped run.");
+      createBusy = true; setBusy(create, true); error.textContent = "";
+      // Do not let the user edit a feature or issue a second creation while a
+      // create/sign request is pending. Closing still does not undo a submitted tx.
+      form.querySelectorAll("input, textarea, select, button:not([data-close])").forEach(el => { el.disabled = true; });
+      const r = await apiFetch(API, {method:"POST", body:JSON.stringify({...accepted.spec, lock_amount: lock})});
+      const final = await maybeSignResponse(r);
+      if (final?.status === "redirect") return;
+      if (form.isConnected) hideModal();
+      toast("Schedule created and budget locked.","success"); await updateSchedulesTable();
+    } catch(e) { if (form.isConnected) error.textContent = e.message; else toast(e.message,"error"); }
+    finally {
+      createBusy = false;
+      if (form.isConnected) {
+        form.querySelectorAll("input, textarea, select, button").forEach(el => { el.disabled = false; });
+        form.querySelector("#sv2-concurrency").disabled = true;
+        setBusy(create,false);
+        try { create.disabled = !gate.current(formSpec(form)); } catch { create.disabled = true; }
+      }
+    }
   });
 }
 
@@ -392,6 +501,7 @@ function buildCron(form, start) {
   if (freq === "custom") return form.querySelector("#sv2-cron").value.trim();
   if (freq === "15m") return "*/15 * * * *";
   if (freq === "hourly") return "0 * * * *";
+  if (freq === "daily-utc") return "0 9 * * *";
   const [h,m] = (form.querySelector("#sv2-time").value || "09:00").split(":").map(Number);
   const local = new Date(start); local.setHours(h,m,0,0);
   const minute = local.getUTCMinutes(), hour = local.getUTCHours();
@@ -427,7 +537,7 @@ async function maybeSignResponse(response) {
   let r = response;
   while (r && r.status === "signing_required") {
     const signed = await signPreparedTx(r.tx, {schedule_id:r.schedule_id, stage:r.stage});
-    if (signed === "redirect") return;
+    if (signed === "redirect") return {status: "redirect"};
     r = await apiFetch(`${API}/tx/submit`, {method:"POST", body:JSON.stringify({schedule_id:r.schedule_id, stage:r.stage, signed_tx:signed})});
   }
   return r;
@@ -451,13 +561,17 @@ async function signPreparedTx(tx, state) {
 async function resumeMobileWalletFlow() {
   const params = new URLSearchParams(window.location.search);
   const txHash = params.get("schedule_v2_tx_hash");
-  const pendingRaw = localStorage.getItem("damage_schedule_v2_pending");
-  if (!txHash || !pendingRaw) return;
+  if (!txHash) return;
+  let pendingRaw;
+  try { pendingRaw = localStorage.getItem("damage_schedule_v2_pending"); }
+  catch { toast("Wallet resume requires browser storage access.", "error"); return; }
+  if (!pendingRaw) return;
   try {
     const pending = JSON.parse(pendingRaw);
     localStorage.removeItem("damage_schedule_v2_pending");
     let r = await apiFetch(`${API}/tx/submit`, {method:"POST", body:JSON.stringify({...pending, tx_hash:txHash})});
-    await maybeSignResponse(r);
+    const final = await maybeSignResponse(r);
+    if (final?.status === "redirect") return;
     toast("Schedule transaction confirmed.","success");
   } catch(e) { toast(e.message,"error"); }
   finally {
@@ -475,7 +589,9 @@ function showModal(html) {
   const modal = document.getElementById("sv2-modal");
   if (!modal) return;
 
-  modalReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  if (modal.hidden || !modal.contains(document.activeElement)) {
+    modalReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  }
   modal.innerHTML = `<div class="sv2-modal-backdrop">${html}</div>`;
   modal.hidden = false;
 

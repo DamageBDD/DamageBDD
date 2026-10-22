@@ -1,7 +1,7 @@
 :root {
-  --ecai-indexer-border: color-mix(in srgb, currentColor 18%, transparent);
-  --ecai-indexer-muted: color-mix(in srgb, currentColor 62%, transparent);
-  --ecai-indexer-panel: color-mix(in srgb, currentColor 3%, transparent);
+  --ecai-indexer-border: var(--theme-border, color-mix(in srgb, currentColor 18%, transparent));
+  --ecai-indexer-muted: var(--theme-muted, color-mix(in srgb, currentColor 62%, transparent));
+  --ecai-indexer-panel: var(--theme-surface-alt, color-mix(in srgb, currentColor 3%, transparent));
 }
 
 [hidden] { display: none !important; }
@@ -251,7 +251,7 @@
 }
 
 .ecai-indexer-login-dialog::backdrop {
-  background: rgb(0 0 0 / .45);
+  background: var(--theme-backdrop, rgb(0 0 0 / .45));
 }
 
 .ecai-indexer-login-form {

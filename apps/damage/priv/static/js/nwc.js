@@ -111,10 +111,10 @@ function updateRelayCount() {
 
 	if (relays.length < 3) {
 		countEl.textContent = `Using ${relays.length} relay${relays.length === 1 ? "" : "s"}. Pick at least 3.`;
-		countEl.style.color = "#fcd34d";
+		countEl.style.color = "var(--theme-warning, #fcd34d)";
 	} else if (relays.length > 5) {
 		countEl.textContent = `Using ${relays.length} relays. Keep it to 3–5 for reliable overlap.`;
-		countEl.style.color = "#fcd34d";
+		countEl.style.color = "var(--theme-warning, #fcd34d)";
 	} else {
 		countEl.textContent = `Using ${relays.length} relays.`;
 		countEl.style.color = "";

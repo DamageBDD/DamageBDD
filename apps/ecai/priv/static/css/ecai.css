@@ -1,13 +1,13 @@
-:root { --bg:#0b0f14; --fg:#e6edf3; --muted:#9da7b3; --card:#111824; --line:#1f2a3a; --accent:#7ee787; }
+:root { --bg:var(--theme-bg, #0b0f14); --fg:var(--theme-text, #e6edf3); --muted:var(--theme-muted, #9da7b3); --card:var(--theme-surface, #111824); --line:var(--theme-border, #1f2a3a); --accent:var(--theme-accent, #7ee787); }
 * { box-sizing: border-box; }
 body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,"Helvetica Neue",Arial,sans-serif; }
 .wrap { max-width:900px; margin:12vh auto; padding:0 16px; text-align:center; }
 .brand { font-weight:700; font-size:28px; letter-spacing:.2px; margin-bottom:18px; }
 .row { display:flex; gap:10px; justify-content:center; }
-.searchbox { flex:1; max-width:720px; background:#0e1420; border:1px solid var(--line); border-radius:999px; padding:12px 16px; display:flex; gap:12px; align-items:center; }
+.searchbox { flex:1; max-width:720px; background:var(--theme-surface, #0e1420); border:1px solid var(--line); border-radius:999px; padding:12px 16px; display:flex; gap:12px; align-items:center; }
 .searchbox input { flex:1; border:0; outline:0; background:transparent; color:var(--fg); font-size:16px; }
 .btn { border:0; border-radius:999px; padding:11px 16px; font-weight:600; cursor:pointer; }
-.btn-primary { background:var(--accent); color:#0b0f14; }
+.btn-primary { background:var(--accent); color:var(--theme-on-accent, #0b0f14); }
 .btn-ghost { background:transparent; color:var(--fg); border:1px solid var(--line); }
 .sub { margin-top:8px; color:var(--muted); font-size:13px; }
 .status { margin-top:8px; color:var(--muted); font-size:13px; min-height:20px; }
@@ -15,7 +15,7 @@ body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.45 system-ui
 .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px 16px; }
 .doc { font-weight:600; }
 .score { color:var(--muted); font-size:13px; margin-top:4px; }
-.err { color:#ffb4b4; }
+.err { color:var(--theme-danger, #ffb4b4); }
 .ok { color:var(--accent); }
 .searchbox { position: relative; /* allow absolute clear button */ }
 .clear-btn{
@@ -25,8 +25,8 @@ body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.45 system-ui
   width:32px; height:32px; line-height:30px;
   border-radius:50%;
   border:1px solid var(--line);
-  background:#0e1420; color:var(--muted);
+  background:var(--theme-surface, #0e1420); color:var(--muted);
   font-size:18px; padding:0; cursor:pointer;
   display:none;                /* shown when input has text */
 }
-.clear-btn:hover{ color:var(--fg); border-color:#2a3850; }
+.clear-btn:hover{ color:var(--fg); border-color:var(--theme-link, #2a3850); }

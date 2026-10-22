@@ -3,7 +3,7 @@
 .eval-tabs [aria-pressed=true] {background:var(--ink);color:var(--paper);border-color:var(--ink)}
 .eval-workspace [hidden] {display:none!important}
 .eval-status {min-height:24px;margin-bottom:12px;overflow-wrap:anywhere}
-.eval-status[data-error=true] {border-left:3px solid #b73a3a;padding:8px 12px;background:#fff1f0}
+.eval-status[data-error=true] {border-left:3px solid var(--theme-danger, #b73a3a);padding:8px 12px;background:var(--theme-danger-soft, #fff1f0)}
 .eval-workspace label {display:grid;gap:6px;font-weight:600;min-width:0}
 .eval-workspace label:has(input[type=checkbox]) {display:flex;align-items:center;gap:9px}
 .eval-workspace select,.eval-workspace input:not([type=checkbox]),.eval-workspace textarea {max-width:100%;width:100%;box-sizing:border-box}

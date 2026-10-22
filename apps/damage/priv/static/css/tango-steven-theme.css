@@ -1,19 +1,19 @@
 /* tango-steven-theme.css – Clean and Consistent Tango Theme */
 
 :root {
-  --bg: #2e3436;
-  --fg: #eeeeec;
-  --fg-alt: #d3d7cf;
-  --accent: #729fcf;
-  --accent-dark: #3465a4;
-  --error: #cc0000;
-  --warning: #f57900;
-  --success: #73d216;
-  --comment: #888a85;
-  --highlight: #555753;
-  --modal-bg: #3f4447;
-  --input-bg: #1c1c1c;
-  --input-border: #555753;
+  --bg: var(--theme-bg, #2e3436);
+  --fg: var(--theme-text, #eeeeec);
+  --fg-alt: var(--theme-muted, #d3d7cf);
+  --accent: var(--theme-accent, #729fcf);
+  --accent-dark: var(--theme-accent-hover, #3465a4);
+  --error: var(--theme-danger, #cc0000);
+  --warning: var(--theme-warning, #f57900);
+  --success: var(--theme-success, #73d216);
+  --comment: var(--theme-muted, #888a85);
+  --highlight: var(--theme-surface-alt, #555753);
+  --modal-bg: var(--theme-surface, #3f4447);
+  --input-bg: var(--theme-input, #1c1c1c);
+  --input-border: var(--theme-control-border, #555753);
 }
 
 /* Base */
@@ -41,7 +41,7 @@ a:hover {
 
 /* Toolbar */
 #toolbar {
-  background-color: #3c3f41;
+  background-color: var(--theme-surface, #3c3f41);
   color: var(--fg);
   font-family: 'Press Start 2P', monospace;
   text-transform: uppercase;
@@ -78,10 +78,10 @@ a:hover {
   transition: all 0.3s ease-in-out;
 }
 .token-cta:hover {
-  background: #6c7378;
+  background: var(--theme-accent-soft, #6c7378);
   color: var(--fg);
   border-color: var(--accent);
-  box-shadow: 0 0 10px rgba(114, 159, 207, 0.3);
+  box-shadow: 0 0 10px var(--theme-shadow, rgba(114, 159, 207, 0.3));
 }
 
 
@@ -109,10 +109,10 @@ input:focus, textarea:focus {
 /* Forms */
 form {
 /*  background-color: var(--modal-bg);*/
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--theme-surface, rgba(255, 255, 255, 0.05));
   padding: 1rem;
   border-radius: 8px;
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 8px 16px var(--theme-shadow, rgba(0, 0, 0, 0.1));
 }
 
 /* Styled Buttons */

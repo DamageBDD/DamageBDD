@@ -187,7 +187,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const complianceWarning = document.createElement("p");
     complianceWarning.id = "compliance-warning";
-    complianceWarning.style.color = "#d00";
+    complianceWarning.style.color = "var(--theme-danger, #d00)";
     complianceWarning.style.fontWeight = "bold";
     audInput.parentElement.appendChild(complianceWarning);
 

@@ -2,8 +2,8 @@
 .console-session-kind { font-size:10px; color:var(--muted); white-space:nowrap; }
 .console-auth-status { color:var(--alert); font-size:12px; overflow-wrap:anywhere; margin-bottom:12px; }
 .console-auth-status:empty { display:none; }
-.console-wallet-notice { display:flex; gap:18px; align-items:center; justify-content:space-between; padding:17px 20px; border:1px solid #ccd9fa; background:#edf3ff; border-radius:12px; margin-bottom:22px; }
-.console-wallet-notice strong { color:#284a8c; font-size:13px; }
+.console-wallet-notice { display:flex; gap:18px; align-items:center; justify-content:space-between; padding:17px 20px; border:1px solid var(--theme-border, #ccd9fa); background:var(--theme-surface, #edf3ff); border-radius:12px; margin-bottom:22px; }
+.console-wallet-notice strong { color:var(--theme-link, #284a8c); font-size:13px; }
 .console-wallet-notice p { font-size:12px; margin:6px 0 0; max-width:850px; }
 /* Keep auth colours local: the shared auth sheet and the node theme may
    both set input paint, text-fill and global text tokens. Do not change them
@@ -11,109 +11,109 @@
 #login-modal {
   display: none;
   --ecai-auth-ui-version: auth-colours-v1;
-  --ecai-auth-bg: #ffffff;
-  --ecai-auth-panel: #f3f6fc;
-  --ecai-auth-field: #ffffff;
-  --ecai-auth-text: #14223d;
-  --ecai-auth-muted: #566987;
-  --ecai-auth-line: #d7e1f1;
-  --ecai-auth-field-line: #8495b2;
-  --ecai-auth-accent: #3048bf;
-  --ecai-auth-primary: #4356d9;
-  --ecai-auth-primary-hover: #3344bd;
-  --ecai-auth-selected: #ffffff;
-  --ecai-auth-focus: #3048bf;
-  --ecai-auth-disabled-bg: #eff2f7;
-  --ecai-auth-disabled-text: #5b6980;
-  --ecai-auth-good: #176644;
-  --ecai-auth-good-bg: #eaf8f0;
-  --ecai-auth-error: #922e42;
-  --ecai-auth-error-bg: #fff0f2;
-  color-scheme: light;
+  --ecai-auth-bg: var(--theme-bg, #ffffff);
+  --ecai-auth-panel: var(--theme-surface, #f3f6fc);
+  --ecai-auth-field: var(--theme-input, #ffffff);
+  --ecai-auth-text: var(--theme-text, #14223d);
+  --ecai-auth-muted: var(--theme-muted, #566987);
+  --ecai-auth-line: var(--theme-border, #d7e1f1);
+  --ecai-auth-field-line: var(--theme-control-border, #8495b2);
+  --ecai-auth-accent: var(--theme-link, #3048bf);
+  --ecai-auth-primary: var(--theme-accent, #4356d9);
+  --ecai-auth-primary-hover: var(--theme-accent-hover, #3344bd);
+  --ecai-auth-selected: var(--theme-accent-soft, #ffffff);
+  --ecai-auth-focus: var(--theme-focus, #3048bf);
+  --ecai-auth-disabled-bg: var(--theme-surface-alt, #eff2f7);
+  --ecai-auth-disabled-text: var(--theme-muted, #5b6980);
+  --ecai-auth-good: var(--theme-success, #176644);
+  --ecai-auth-good-bg: var(--theme-success-soft, #eaf8f0);
+  --ecai-auth-error: var(--theme-danger, #922e42);
+  --ecai-auth-error-bg: var(--theme-danger-soft, #fff0f2);
+  color-scheme: var(--theme-color-scheme, light);
 }
 @media (prefers-color-scheme: dark) {
   #login-modal {
-    --ecai-auth-bg: #172337;
-    --ecai-auth-panel: #1e2e45;
-    --ecai-auth-field: #0d192b;
-    --ecai-auth-text: #e7eefb;
-    --ecai-auth-muted: #b2c1da;
-    --ecai-auth-line: #3c506e;
-    --ecai-auth-field-line: #6880a2;
-    --ecai-auth-accent: #b3c0ff;
-    --ecai-auth-primary: #4356d9;
-    --ecai-auth-primary-hover: #394bc7;
-    --ecai-auth-selected: #273758;
-    --ecai-auth-focus: #b3c0ff;
-    --ecai-auth-disabled-bg: #26354b;
-    --ecai-auth-disabled-text: #aabbd5;
-    --ecai-auth-good: #87e4bc;
-    --ecai-auth-good-bg: #163b32;
-    --ecai-auth-error: #ffb8c5;
-    --ecai-auth-error-bg: #442932;
-    color-scheme: dark;
+    --ecai-auth-bg: var(--theme-bg, #172337);
+    --ecai-auth-panel: var(--theme-surface, #1e2e45);
+    --ecai-auth-field: var(--theme-input, #0d192b);
+    --ecai-auth-text: var(--theme-text, #e7eefb);
+    --ecai-auth-muted: var(--theme-muted, #b2c1da);
+    --ecai-auth-line: var(--theme-border, #3c506e);
+    --ecai-auth-field-line: var(--theme-control-border, #6880a2);
+    --ecai-auth-accent: var(--theme-link, #b3c0ff);
+    --ecai-auth-primary: var(--theme-accent, #4356d9);
+    --ecai-auth-primary-hover: var(--theme-accent-hover, #394bc7);
+    --ecai-auth-selected: var(--theme-accent-soft, #273758);
+    --ecai-auth-focus: var(--theme-focus, #b3c0ff);
+    --ecai-auth-disabled-bg: var(--theme-surface-alt, #26354b);
+    --ecai-auth-disabled-text: var(--theme-muted, #aabbd5);
+    --ecai-auth-good: var(--theme-success, #87e4bc);
+    --ecai-auth-good-bg: var(--theme-success-soft, #163b32);
+    --ecai-auth-error: var(--theme-danger, #ffb8c5);
+    --ecai-auth-error-bg: var(--theme-danger-soft, #442932);
+    color-scheme: var(--theme-color-scheme, dark);
   }
 }
 /* Match the explicit theme selectors used by the compute workspace.
    An explicit light choice must also win over an OS dark preference. */
 :is(html, body):is(.theme-dark, .force-dark, [data-theme="dark"]) #login-modal {
-  --ecai-auth-bg: #172337;
-  --ecai-auth-panel: #1e2e45;
-  --ecai-auth-field: #0d192b;
-  --ecai-auth-text: #e7eefb;
-  --ecai-auth-muted: #b2c1da;
-  --ecai-auth-line: #3c506e;
-  --ecai-auth-field-line: #6880a2;
-  --ecai-auth-accent: #b3c0ff;
-  --ecai-auth-primary: #4356d9;
-  --ecai-auth-primary-hover: #394bc7;
-  --ecai-auth-selected: #273758;
-  --ecai-auth-focus: #b3c0ff;
-  --ecai-auth-disabled-bg: #26354b;
-  --ecai-auth-disabled-text: #aabbd5;
-  --ecai-auth-good: #87e4bc;
-  --ecai-auth-good-bg: #163b32;
-  --ecai-auth-error: #ffb8c5;
-  --ecai-auth-error-bg: #442932;
-  color-scheme: dark;
+  --ecai-auth-bg: var(--theme-bg, #172337);
+  --ecai-auth-panel: var(--theme-surface, #1e2e45);
+  --ecai-auth-field: var(--theme-input, #0d192b);
+  --ecai-auth-text: var(--theme-text, #e7eefb);
+  --ecai-auth-muted: var(--theme-muted, #b2c1da);
+  --ecai-auth-line: var(--theme-border, #3c506e);
+  --ecai-auth-field-line: var(--theme-control-border, #6880a2);
+  --ecai-auth-accent: var(--theme-link, #b3c0ff);
+  --ecai-auth-primary: var(--theme-accent, #4356d9);
+  --ecai-auth-primary-hover: var(--theme-accent-hover, #394bc7);
+  --ecai-auth-selected: var(--theme-accent-soft, #273758);
+  --ecai-auth-focus: var(--theme-focus, #b3c0ff);
+  --ecai-auth-disabled-bg: var(--theme-surface-alt, #26354b);
+  --ecai-auth-disabled-text: var(--theme-muted, #aabbd5);
+  --ecai-auth-good: var(--theme-success, #87e4bc);
+  --ecai-auth-good-bg: var(--theme-success-soft, #163b32);
+  --ecai-auth-error: var(--theme-danger, #ffb8c5);
+  --ecai-auth-error-bg: var(--theme-danger-soft, #442932);
+  color-scheme: var(--theme-color-scheme, dark);
 }
 :is(html, body):is(.theme-light, .force-light, [data-theme="light"]) #login-modal {
-  --ecai-auth-bg: #ffffff;
-  --ecai-auth-panel: #f3f6fc;
-  --ecai-auth-field: #ffffff;
-  --ecai-auth-text: #14223d;
-  --ecai-auth-muted: #566987;
-  --ecai-auth-line: #d7e1f1;
-  --ecai-auth-field-line: #8495b2;
-  --ecai-auth-accent: #3048bf;
-  --ecai-auth-primary: #4356d9;
-  --ecai-auth-primary-hover: #3344bd;
-  --ecai-auth-selected: #ffffff;
-  --ecai-auth-focus: #3048bf;
-  --ecai-auth-disabled-bg: #eff2f7;
-  --ecai-auth-disabled-text: #5b6980;
-  --ecai-auth-good: #176644;
-  --ecai-auth-good-bg: #eaf8f0;
-  --ecai-auth-error: #922e42;
-  --ecai-auth-error-bg: #fff0f2;
-  color-scheme: light;
+  --ecai-auth-bg: var(--theme-bg, #ffffff);
+  --ecai-auth-panel: var(--theme-surface, #f3f6fc);
+  --ecai-auth-field: var(--theme-input, #ffffff);
+  --ecai-auth-text: var(--theme-text, #14223d);
+  --ecai-auth-muted: var(--theme-muted, #566987);
+  --ecai-auth-line: var(--theme-border, #d7e1f1);
+  --ecai-auth-field-line: var(--theme-control-border, #8495b2);
+  --ecai-auth-accent: var(--theme-link, #3048bf);
+  --ecai-auth-primary: var(--theme-accent, #4356d9);
+  --ecai-auth-primary-hover: var(--theme-accent-hover, #3344bd);
+  --ecai-auth-selected: var(--theme-accent-soft, #ffffff);
+  --ecai-auth-focus: var(--theme-focus, #3048bf);
+  --ecai-auth-disabled-bg: var(--theme-surface-alt, #eff2f7);
+  --ecai-auth-disabled-text: var(--theme-muted, #5b6980);
+  --ecai-auth-good: var(--theme-success, #176644);
+  --ecai-auth-good-bg: var(--theme-success-soft, #eaf8f0);
+  --ecai-auth-error: var(--theme-danger, #922e42);
+  --ecai-auth-error-bg: var(--theme-danger-soft, #fff0f2);
+  color-scheme: var(--theme-color-scheme, light);
 }
 /* Aliases keep the shared DamageBDD layout on the same palette. */
 #login-modal, #login-modal .auth-modal {
-  --auth-bg: var(--ecai-auth-bg);
-  --auth-panel: var(--ecai-auth-panel);
-  --auth-line: var(--ecai-auth-line);
-  --auth-text: var(--ecai-auth-text);
-  --auth-muted: var(--ecai-auth-muted);
-  --auth-accent: var(--ecai-auth-accent);
+  --auth-bg: var(--theme-bg, var(--ecai-auth-bg));
+  --auth-panel: var(--theme-surface, var(--ecai-auth-panel));
+  --auth-line: var(--theme-border, var(--ecai-auth-line));
+  --auth-text: var(--theme-text, var(--ecai-auth-text));
+  --auth-muted: var(--theme-muted, var(--ecai-auth-muted));
+  --auth-accent: var(--theme-link, var(--ecai-auth-accent));
   color: var(--ecai-auth-text);
 }
 #login-modal.is-open { display: block; }
-#login-modal .modal__overlay { position: fixed; inset: 0; z-index: 80; display: flex; justify-content: center; background: #0d182fa6; }
+#login-modal .modal__overlay { position: fixed; inset: 0; z-index: 80; display: flex; justify-content: center; background: var(--theme-backdrop, #0d182fa6); }
 #login-modal .auth-modal { margin: auto; color-scheme: inherit; }
 #login-modal #login_modal_content { padding: 28px; border-radius: inherit; }
 #login-modal .auth-heading { margin: 22px 0; }
-#login-modal .auth-brand img { background: #17253c; }
+#login-modal .auth-brand img { background: var(--theme-surface, #17253c); }
 /* Colour-only !important declarations form the modal's theme boundary.
    The node's generated theme is loaded later and may use important global
    input/button rules. Leave layout, visibility and event handling untouched. */
@@ -134,7 +134,7 @@
 #login-modal .auth-tabs [aria-selected="true"] {
   background: var(--ecai-auth-selected) !important;
   color: var(--ecai-auth-accent) !important;
-  box-shadow: 0 0 0 1px var(--ecai-auth-line), 0 2px 6px #0d182f18;
+  box-shadow: 0 0 0 1px var(--ecai-auth-line), 0 2px 6px var(--theme-shadow, #0d182f18);
 }
 #login-modal a, #login-modal button:not(.auth-primary):not(.auth-wallet-choice):not([role="tab"]) {
   color: var(--ecai-auth-accent) !important;
@@ -143,8 +143,8 @@
 #login-modal a:hover { text-decoration: underline; }
 #login-modal .auth-dismiss { display: block; margin-left: auto; padding: 0; min-height: 30px; }
 #login-modal :is(input:where(:not([type="checkbox"]):not([type="radio"]):not([type="hidden"]):not([type="submit"]):not([type="button"])), textarea, select) {
-  --ecai-auth-control-bg: var(--ecai-auth-field);
-  --ecai-auth-control-text: var(--ecai-auth-text);
+  --ecai-auth-control-bg: var(--theme-bg, var(--ecai-auth-field));
+  --ecai-auth-control-text: var(--theme-text, var(--ecai-auth-text));
   color-scheme: inherit;
   background: var(--ecai-auth-control-bg) !important;
   color: var(--ecai-auth-control-text) !important;
@@ -159,10 +159,10 @@
   -webkit-text-fill-color: currentColor !important;
   opacity: 1;
 }
-#login-modal :is(input, textarea)[readonly] { --ecai-auth-control-bg: var(--ecai-auth-panel); }
+#login-modal :is(input, textarea)[readonly] { --ecai-auth-control-bg: var(--theme-bg, var(--ecai-auth-panel)); }
 #login-modal :is(input, textarea, select):disabled {
-  --ecai-auth-control-bg: var(--ecai-auth-disabled-bg);
-  --ecai-auth-control-text: var(--ecai-auth-disabled-text);
+  --ecai-auth-control-bg: var(--theme-bg, var(--ecai-auth-disabled-bg));
+  --ecai-auth-control-text: var(--theme-text, var(--ecai-auth-disabled-text));
   cursor: not-allowed;
 }
 #login-modal :is(input[type="checkbox"], input[type="radio"]) { accent-color: var(--ecai-auth-primary); }
@@ -186,7 +186,7 @@
 #login-modal :is(input, textarea, select)[aria-invalid="true"] { border-color: var(--ecai-auth-error) !important; }
 #login-modal .auth-primary {
   background: var(--ecai-auth-primary) !important;
-  color: #ffffff !important;
+  color: var(--theme-on-accent, #ffffff) !important;
   border-color: var(--ecai-auth-primary) !important;
 }
 #login-modal .auth-primary:hover:not(:disabled):not([aria-disabled="true"]) { background: var(--ecai-auth-primary-hover) !important; }
@@ -215,22 +215,22 @@
 @media (forced-colors: active) {
   #login-modal,
   :is(html, body):is(.theme-dark, .force-dark, .theme-light, .force-light, [data-theme]) #login-modal {
-    --ecai-auth-bg: Canvas;
-    --ecai-auth-panel: Canvas;
-    --ecai-auth-field: Field;
-    --ecai-auth-text: CanvasText;
-    --ecai-auth-muted: CanvasText;
-    --ecai-auth-line: ButtonText;
-    --ecai-auth-field-line: ButtonText;
-    --ecai-auth-accent: LinkText;
-    --ecai-auth-focus: Highlight;
-    --ecai-auth-selected: Canvas;
-    --ecai-auth-good: CanvasText;
-    --ecai-auth-good-bg: Canvas;
-    --ecai-auth-error: CanvasText;
-    --ecai-auth-error-bg: Canvas;
-    --ecai-auth-disabled-bg: Canvas;
-    --ecai-auth-disabled-text: GrayText;
+    --ecai-auth-bg: var(--theme-bg, Canvas);
+    --ecai-auth-panel: var(--theme-surface, Canvas);
+    --ecai-auth-field: var(--theme-input, Field);
+    --ecai-auth-text: var(--theme-text, CanvasText);
+    --ecai-auth-muted: var(--theme-muted, CanvasText);
+    --ecai-auth-line: var(--theme-border, ButtonText);
+    --ecai-auth-field-line: var(--theme-control-border, ButtonText);
+    --ecai-auth-accent: var(--theme-link, LinkText);
+    --ecai-auth-focus: var(--theme-focus, Highlight);
+    --ecai-auth-selected: var(--theme-accent-soft, Canvas);
+    --ecai-auth-good: var(--theme-success, CanvasText);
+    --ecai-auth-good-bg: var(--theme-success-soft, Canvas);
+    --ecai-auth-error: var(--theme-danger, CanvasText);
+    --ecai-auth-error-bg: var(--theme-danger-soft, Canvas);
+    --ecai-auth-disabled-bg: var(--theme-surface-alt, Canvas);
+    --ecai-auth-disabled-text: var(--theme-muted, GrayText);
   }
   #login-modal input:is(:autofill, :-webkit-autofill) {
     -webkit-text-fill-color: currentColor !important;

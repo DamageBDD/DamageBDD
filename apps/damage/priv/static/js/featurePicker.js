@@ -688,7 +688,7 @@ function injectStylesOnce() {
   const css = `
   .dbdd-picker{
     font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
-    color: rgba(231,233,238,.95);
+    color: var(--theme-text, rgba(231,233,238,.95));
   }
   .dbdd-header{
     display:flex; align-items:center; justify-content:space-between;
@@ -698,23 +698,23 @@ function injectStylesOnce() {
   .dbdd-actions{ display:flex; gap:8px; align-items:center; }
   .dbdd-search{
     width:min(340px, 52vw);
-    background: rgba(255,255,255,.06);
-    border: 1px solid rgba(255,255,255,.10);
+    background: var(--theme-surface, rgba(255,255,255,.06));
+    border: 1px solid var(--theme-border, rgba(255,255,255,.10));
     color: inherit;
     border-radius: 12px;
     padding: 10px 12px;
     outline: none;
   }
-  .dbdd-search:focus{ border-color: rgba(255,255,255,.22); }
+  .dbdd-search:focus{ border-color: var(--theme-focus, rgba(255,255,255,.22)); }
   .dbdd-refresh{
     width:40px; height:40px;
     border-radius: 12px;
-    border: 1px solid rgba(255,255,255,.10);
-    background: rgba(255,255,255,.06);
+    border: 1px solid var(--theme-border, rgba(255,255,255,.10));
+    background: var(--theme-surface, rgba(255,255,255,.06));
     color: inherit;
     cursor:pointer;
   }
-  .dbdd-refresh:hover{ background: rgba(255,255,255,.09); }
+  .dbdd-refresh:hover{ background: var(--theme-accent-soft, rgba(255,255,255,.09)); }
 
   .dbdd-tabs{
     display:flex; gap:8px;
@@ -725,16 +725,16 @@ function injectStylesOnce() {
     display:flex; align-items:center; gap:8px;
     padding: 8px 10px;
     border-radius: 999px;
-    border: 1px solid rgba(255,255,255,.10);
-    background: rgba(255,255,255,.05);
+    border: 1px solid var(--theme-border, rgba(255,255,255,.10));
+    background: var(--theme-surface, rgba(255,255,255,.05));
     color: inherit;
     cursor:pointer;
     user-select:none;
   }
-  .dbdd-tab:hover{ background: rgba(255,255,255,.08); }
+  .dbdd-tab:hover{ background: var(--theme-accent-soft, rgba(255,255,255,.08)); }
   .dbdd-tab.active{
-    background: rgba(255,255,255,.12);
-    border-color: rgba(255,255,255,.22);
+    background: var(--theme-surface, rgba(255,255,255,.12));
+    border-color: var(--theme-border, rgba(255,255,255,.22));
   }
   .dbdd-tab-ico{ opacity:.9; }
   .dbdd-tab-count{
@@ -742,8 +742,8 @@ function injectStylesOnce() {
     font-size: 12px;
     padding: 2px 8px;
     border-radius: 999px;
-    background: rgba(0,0,0,.28);
-    border: 1px solid rgba(255,255,255,.10);
+    background: var(--theme-surface-alt, rgba(0,0,0,.28));
+    border: 1px solid var(--theme-border, rgba(255,255,255,.10));
   }
 
   .dbdd-body{
@@ -758,8 +758,8 @@ function injectStylesOnce() {
   }
 
   .dbdd-list{
-    border: 1px solid rgba(255,255,255,.10);
-    background: rgba(255,255,255,.03);
+    border: 1px solid var(--theme-border, rgba(255,255,255,.10));
+    background: var(--theme-surface, rgba(255,255,255,.03));
     border-radius: 16px;
     overflow: hidden;
     min-height: 360px;
@@ -767,11 +767,11 @@ function injectStylesOnce() {
 
   .dbdd-card{
     padding: 12px 12px;
-    border-bottom: 1px solid rgba(255,255,255,.08);
+    border-bottom: 1px solid var(--theme-border, rgba(255,255,255,.08));
     cursor:pointer;
   }
-  .dbdd-card:hover{ background: rgba(255,255,255,.05); }
-  .dbdd-card.selected{ background: rgba(255,255,255,.09); }
+  .dbdd-card:hover{ background: var(--theme-accent-soft, rgba(255,255,255,.05)); }
+  .dbdd-card.selected{ background: var(--theme-accent-soft, rgba(255,255,255,.09)); }
   .dbdd-card-top{ display:flex; justify-content:space-between; gap:10px; align-items:baseline; }
   .dbdd-card-title{ font-weight: 700; font-size: 13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .dbdd-card-when{ font-size: 11.5px; opacity:.75; white-space:nowrap; }
@@ -779,8 +779,8 @@ function injectStylesOnce() {
   .dbdd-card-cid{ font-size: 11.5px; opacity:.65; margin-top: 6px; }
 
   .dbdd-detail{
-    border: 1px solid rgba(255,255,255,.10);
-    background: rgba(255,255,255,.03);
+    border: 1px solid var(--theme-border, rgba(255,255,255,.10));
+    background: var(--theme-surface, rgba(255,255,255,.03));
     border-radius: 16px;
     padding: 12px;
     min-height: 360px;
@@ -801,13 +801,13 @@ function injectStylesOnce() {
     font-size: 12px;
     padding: 4px 10px;
     border-radius: 999px;
-    background: rgba(0,0,0,.28);
-    border: 1px solid rgba(255,255,255,.10);
+    background: var(--theme-surface-alt, rgba(0,0,0,.28));
+    border: 1px solid var(--theme-border, rgba(255,255,255,.10));
     opacity:.9;
   }
   .dbdd-link{
     font-size: 12px;
-    color: rgba(231,233,238,.95);
+    color: var(--theme-text, rgba(231,233,238,.95));
     opacity:.85;
     text-decoration: none;
   }
@@ -817,8 +817,8 @@ function injectStylesOnce() {
     margin: 8px 0 10px;
     padding: 12px;
     border-radius: 14px;
-    border: 1px solid rgba(255,255,255,.10);
-    background: rgba(0,0,0,.30);
+    border: 1px solid var(--theme-border, rgba(255,255,255,.10));
+    background: var(--theme-surface-alt, rgba(0,0,0,.30));
     overflow:auto;
     max-height: 340px;
   }
@@ -828,13 +828,13 @@ function injectStylesOnce() {
   }
   .dbdd-detail-actions button{
     border-radius: 12px;
-    border: 1px solid rgba(255,255,255,.10);
-    background: rgba(255,255,255,.06);
+    border: 1px solid var(--theme-border, rgba(255,255,255,.10));
+    background: var(--theme-surface, rgba(255,255,255,.06));
     color: inherit;
     padding: 10px 12px;
     cursor:pointer;
   }
-  .dbdd-detail-actions button:hover{ background: rgba(255,255,255,.09); }
+  .dbdd-detail-actions button:hover{ background: var(--theme-accent-soft, rgba(255,255,255,.09)); }
 
   .dbdd-toast{
     position: fixed;
@@ -843,9 +843,9 @@ function injectStylesOnce() {
     transform: translateX(-50%);
     padding: 10px 14px;
     border-radius: 999px;
-    background: rgba(0,0,0,.75);
-    border: 1px solid rgba(255,255,255,.12);
-    color: rgba(231,233,238,.98);
+    background: var(--theme-surface, rgba(0,0,0,.75));
+    border: 1px solid var(--theme-border, rgba(255,255,255,.12));
+    color: var(--theme-text, rgba(231,233,238,.98));
     opacity: 0;
     transition: opacity .18s ease;
     z-index: 9999;

@@ -8,24 +8,24 @@
   <meta name="theme-color" content="#101b32">
   <title>{{brand_name}} · Control plane</title>
   {{#has_brand_favicon}}<link rel="icon" href="{{brand_favicon}}">{{/has_brand_favicon}}
-  <link rel="stylesheet" href="/static/css/ecai-model-internals.css?v=model-internals-v1">
-  <link rel="stylesheet" href="/static/css/ecai-console.css?v=personality-conversations-v1-knowledge-v2&index-mint=index-mint-v1">
-  <link rel="stylesheet" href="/static/css/ecai-personalities.css?v=personalities-v1">
-  <link rel="stylesheet" href="/static/css/ecai-eval.css?v=eval-v1">
-  <link rel="stylesheet" href="/static/css/ecai-math-paths.css?v=math-samples-explorer-v2">
-  <link rel="stylesheet" href="/static/css/ecai-video.css">
-  <link rel="stylesheet" href="/static/css/ecai-market-maker.css">
+  <link rel="stylesheet" href="/static/css/ecai-model-internals.css?v=model-internals-v1&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-console.css?v=personality-conversations-v1-knowledge-v2&index-mint=index-mint-v1&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-personalities.css?v=personalities-v1&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-eval.css?v=eval-v1&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-math-paths.css?v=math-samples-explorer-v2&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-video.css?theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-market-maker.css?theme=semantic-v2">
   <link rel="stylesheet" href="/ecai/auth-assets/css/auth.css">
-  <link rel="stylesheet" href="/static/css/ecai-auth.css?v=auth-colours-v1">
-  <link rel="stylesheet" href="/static/css/ecai-quick-index.css?v=quick-index-v2&index-mint=index-mint-v1">
-  <link rel="stylesheet" href="/static/css/ecai-index-pool.css">
-  <link rel="stylesheet" href="/static/css/ecai-compute-settings.css?v=compute-only-v1">
-  <link rel="stylesheet" href="/static/css/ecai-keys.css">
-  <link rel="stylesheet" href="/static/css/ecai-index-mint-settings.css?v=index-mint-settings-v1">
-  <link rel="stylesheet" href="/static/css/ecai-knowledge-workspace.css?v=knowledge-v2">
-  <link rel="stylesheet" href="/static/css/ecai-aws-setup.css?v=automatic-aws-v1">
+  <link rel="stylesheet" href="/static/css/ecai-auth.css?v=auth-colours-v1&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-quick-index.css?v=quick-index-v2&index-mint=index-mint-v1&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-index-pool.css?theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-compute-settings.css?v=compute-only-v1&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-keys.css?theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-index-mint-settings.css?v=index-mint-settings-v1&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-knowledge-workspace.css?v=knowledge-v2&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-aws-setup.css?v=automatic-aws-v1&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-sidebar-settings.css?v=sidebar-settings-v1&theme=semantic-v2">
   <link rel="stylesheet" href="/api/themes/css?app=ecai">
-  <link rel="stylesheet" href="/static/css/ecai-sidebar-settings.css?v=sidebar-settings-v1">
 </head>
 <body>
   <div class="console-shell" id="ecaiConsole" data-node-version="{{node_version}}">
@@ -258,6 +258,19 @@
               <button class="button button-primary" type="submit">Search</button>
             </form>
             <div class="knowledge-search-options"><p id="searchHelp">Search as you type · Enter searches immediately.</p><label class="checkbox-label"><input id="searchLiveRefresh" type="checkbox" checked> Refresh live results</label></div>
+            <details id="searchIndexes" class="knowledge-indexes">
+              <summary><span>Search indexes</span><span id="searchIndexSummary" class="knowledge-index-summary">All indexes</span></summary>
+              <div class="knowledge-index-body">
+                <p class="context-hint">Choose which indexes the backend searches. Unchecked indexes are not queried. Your funded indexes are visible only to your account.</p>
+                <div class="knowledge-index-toolbar" role="group" aria-label="Index selection actions">
+                  <button id="searchIndexAll" class="button button-outline button-sm" type="button" aria-pressed="true">All indexes</button>
+                  <button id="searchIndexNone" class="button button-outline button-sm" type="button" aria-pressed="false">Clear selection</button>
+                  <button id="searchIndexRefresh" class="button button-outline button-sm" type="button">Refresh list</button>
+                </div>
+                <p id="searchIndexStatus" class="context-hint" role="status" aria-live="polite">Expand to load the indexes visible to this session.</p>
+                <div id="searchIndexChoices" class="knowledge-index-choices" aria-busy="false"></div>
+              </div>
+            </details>
             <p id="searchStatus" class="knowledge-search-status" role="status" aria-live="polite" aria-atomic="true">Start typing to search. Guest access is available.</p>
             <p id="searchWarning" class="knowledge-search-warning" role="status" hidden></p>
             <div id="searchResults" class="result-stack" aria-label="Knowledge search results" aria-busy="false"><div class="empty-state">Start with a name, term, category or location.</div></div>

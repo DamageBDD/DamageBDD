@@ -3,21 +3,21 @@
    Keep this marker in sync with the template, controller and asset URLs. */
 [data-panel="compute"] {
   --compute-ui-version: compute-only-v1;
-  --compute-canvas: #f5f7fb;
-  --compute-surface: #ffffff;
-  --compute-subtle: #f1f4fa;
-  --compute-ink: #14223d;
-  --compute-muted: #52627a;
-  --compute-line: #d9e1ed;
-  --compute-accent: #3e50cc;
-  --compute-focus: #3e50cc;
-  --compute-primary: #4356d9;
-  --compute-primary-hover: #3344bd;
-  --compute-selected: #eef1ff;
-  --compute-good: #1b684e;
-  --compute-warning: #815600;
-  --compute-warning-bg: #fff4d9;
-  color-scheme: light;
+  --compute-canvas: var(--theme-bg, #f5f7fb);
+  --compute-surface: var(--theme-surface, #ffffff);
+  --compute-subtle: var(--theme-surface-alt, #f1f4fa);
+  --compute-ink: var(--theme-text, #14223d);
+  --compute-muted: var(--theme-muted, #52627a);
+  --compute-line: var(--theme-border, #d9e1ed);
+  --compute-accent: var(--theme-link, #3e50cc);
+  --compute-focus: var(--theme-focus, #3e50cc);
+  --compute-primary: var(--theme-accent, #4356d9);
+  --compute-primary-hover: var(--theme-accent-hover, #3344bd);
+  --compute-selected: var(--theme-accent-soft, #eef1ff);
+  --compute-good: var(--theme-success, #1b684e);
+  --compute-warning: var(--theme-warning, #815600);
+  --compute-warning-bg: var(--theme-warning-soft, #fff4d9);
+  color-scheme: var(--theme-color-scheme, light);
   color: var(--compute-ink);
   background: var(--compute-canvas);
   display: grid;
@@ -26,56 +26,56 @@
 }
 @media (prefers-color-scheme: dark) {
   [data-panel="compute"] {
-    --compute-canvas: #0d1521;
-    --compute-surface: #172337;
-    --compute-subtle: #1e2e45;
-    --compute-ink: #e7eefb;
-    --compute-muted: #afc0dc;
-    --compute-line: #3c506e;
-    --compute-accent: #b3c0ff;
-    --compute-focus: #b3c0ff;
-    --compute-primary: #4356d9;
-    --compute-primary-hover: #394bc7;
-    --compute-selected: #273758;
-    --compute-good: #87e4bc;
-    --compute-warning: #f6d58b;
-    --compute-warning-bg: #3b3020;
-    color-scheme: dark;
+    --compute-canvas: var(--theme-bg, #0d1521);
+    --compute-surface: var(--theme-surface, #172337);
+    --compute-subtle: var(--theme-surface-alt, #1e2e45);
+    --compute-ink: var(--theme-text, #e7eefb);
+    --compute-muted: var(--theme-muted, #afc0dc);
+    --compute-line: var(--theme-border, #3c506e);
+    --compute-accent: var(--theme-link, #b3c0ff);
+    --compute-focus: var(--theme-focus, #b3c0ff);
+    --compute-primary: var(--theme-accent, #4356d9);
+    --compute-primary-hover: var(--theme-accent-hover, #394bc7);
+    --compute-selected: var(--theme-accent-soft, #273758);
+    --compute-good: var(--theme-success, #87e4bc);
+    --compute-warning: var(--theme-warning, #f6d58b);
+    --compute-warning-bg: var(--theme-warning-soft, #3b3020);
+    color-scheme: var(--theme-color-scheme, dark);
   }
 }
 :is(html, body):is(.theme-dark, .force-dark, [data-theme="dark"]) [data-panel="compute"] {
-  --compute-canvas: #0d1521;
-  --compute-surface: #172337;
-  --compute-subtle: #1e2e45;
-  --compute-ink: #e7eefb;
-  --compute-muted: #afc0dc;
-  --compute-line: #3c506e;
-  --compute-accent: #b3c0ff;
-  --compute-focus: #b3c0ff;
-  --compute-primary: #4356d9;
-  --compute-primary-hover: #394bc7;
-  --compute-selected: #273758;
-  --compute-good: #87e4bc;
-  --compute-warning: #f6d58b;
-  --compute-warning-bg: #3b3020;
-  color-scheme: dark;
+  --compute-canvas: var(--theme-bg, #0d1521);
+  --compute-surface: var(--theme-surface, #172337);
+  --compute-subtle: var(--theme-surface-alt, #1e2e45);
+  --compute-ink: var(--theme-text, #e7eefb);
+  --compute-muted: var(--theme-muted, #afc0dc);
+  --compute-line: var(--theme-border, #3c506e);
+  --compute-accent: var(--theme-link, #b3c0ff);
+  --compute-focus: var(--theme-focus, #b3c0ff);
+  --compute-primary: var(--theme-accent, #4356d9);
+  --compute-primary-hover: var(--theme-accent-hover, #394bc7);
+  --compute-selected: var(--theme-accent-soft, #273758);
+  --compute-good: var(--theme-success, #87e4bc);
+  --compute-warning: var(--theme-warning, #f6d58b);
+  --compute-warning-bg: var(--theme-warning-soft, #3b3020);
+  color-scheme: var(--theme-color-scheme, dark);
 }
 :is(html, body):is(.theme-light, .force-light, [data-theme="light"]) [data-panel="compute"] {
-  --compute-canvas: #f5f7fb;
-  --compute-surface: #ffffff;
-  --compute-subtle: #f1f4fa;
-  --compute-ink: #14223d;
-  --compute-muted: #52627a;
-  --compute-line: #d9e1ed;
-  --compute-accent: #3e50cc;
-  --compute-focus: #3e50cc;
-  --compute-primary: #4356d9;
-  --compute-primary-hover: #3344bd;
-  --compute-selected: #eef1ff;
-  --compute-good: #1b684e;
-  --compute-warning: #815600;
-  --compute-warning-bg: #fff4d9;
-  color-scheme: light;
+  --compute-canvas: var(--theme-bg, #f5f7fb);
+  --compute-surface: var(--theme-surface, #ffffff);
+  --compute-subtle: var(--theme-surface-alt, #f1f4fa);
+  --compute-ink: var(--theme-text, #14223d);
+  --compute-muted: var(--theme-muted, #52627a);
+  --compute-line: var(--theme-border, #d9e1ed);
+  --compute-accent: var(--theme-link, #3e50cc);
+  --compute-focus: var(--theme-focus, #3e50cc);
+  --compute-primary: var(--theme-accent, #4356d9);
+  --compute-primary-hover: var(--theme-accent-hover, #3344bd);
+  --compute-selected: var(--theme-accent-soft, #eef1ff);
+  --compute-good: var(--theme-success, #1b684e);
+  --compute-warning: var(--theme-warning, #815600);
+  --compute-warning-bg: var(--theme-warning-soft, #fff4d9);
+  color-scheme: var(--theme-color-scheme, light);
 }
 
 /* Compute onboarding and reservations. No external dependencies. */
@@ -192,7 +192,7 @@
 [data-panel="compute"] .button-primary {
   background: var(--compute-primary);
   border-color: var(--compute-primary);
-  color: #fff;
+  color: var(--theme-on-accent, #fff);
 }
 [data-panel="compute"] .button-primary:hover:not(:disabled) {
   background: var(--compute-primary-hover);

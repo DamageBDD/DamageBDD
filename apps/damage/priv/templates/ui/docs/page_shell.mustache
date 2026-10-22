@@ -8,38 +8,38 @@
   <meta name="description" content="{{description}}">
   <style>
     html,body{margin:0;padding:0}
-    body{font-family:Arial,Helvetica,sans-serif;line-height:1.4;color:#222;background:#fff}
-    a{color:#0645ad;text-decoration:none} a:hover{text-decoration:underline}
+    body{font-family:Arial,Helvetica,sans-serif;line-height:1.4;color:var(--theme-text, #222);background:var(--theme-bg, #fff)}
+    a{color:var(--theme-link, #0645ad);text-decoration:none} a:hover{text-decoration:underline}
     code,pre{font-family:Menlo,Consolas,monospace}
-    pre{background:#f6f8fa;border:1px solid #e5e5e5;padding:8px;overflow:auto}
-    .header{border-bottom:1px solid #e5e5e5;background:#fafafa}
+    pre{background:var(--theme-surface, #f6f8fa);border:1px solid var(--theme-border, #e5e5e5);padding:8px;overflow:auto}
+    .header{border-bottom:1px solid var(--theme-border, #e5e5e5);background:var(--theme-surface, #fafafa)}
     .header .inner{max-width:1100px;margin:0 auto;padding:10px 16px}
     .brand{font-weight:bold}
-    .meta{font-size:12px;color:#555;margin-top:2px}
-    .searchbar{position:sticky;top:0;z-index:10;background:#fff;border-bottom:1px solid #eee}
+    .meta{font-size:12px;color:var(--theme-muted, #555);margin-top:2px}
+    .searchbar{position:sticky;top:0;z-index:10;background:var(--theme-surface, #fff);border-bottom:1px solid var(--theme-border, #eee)}
     .searchbar .inner{max-width:1100px;margin:0 auto;padding:10px 16px}
-    .searchbar label{display:block;font-size:12px;color:#666;margin-bottom:4px}
-    .search-input{width:100%;padding:14px 12px;border:1px solid #bbb;border-radius:6px;font-size:18px}
+    .searchbar label{display:block;font-size:12px;color:var(--theme-muted, #666);margin-bottom:4px}
+    .search-input{width:100%;padding:14px 12px;border:1px solid var(--theme-control-border, #bbb);border-radius:6px;font-size:18px}
     .jump{margin-top:8px}
-    .jump select{width:100%;padding:12px;border:1px solid #bbb;border-radius:6px;font-size:16px}
+    .jump select{width:100%;padding:12px;border:1px solid var(--theme-control-border, #bbb);border-radius:6px;font-size:16px}
     .layout{max-width:1100px;margin:0 auto}
     .sidebar{display:none}
     .content{padding:16px}
-    .step{border:1px solid #e5e5e5;margin:12px 0;padding:12px;border-radius:6px}
+    .step{border:1px solid var(--theme-border, #e5e5e5);margin:12px 0;padding:12px;border-radius:6px}
     .step h4{margin:0 0 8px 0;font-size:17px}
-    .badge{display:inline-block;font-size:12px;border:1px solid #ddd;padding:2px 8px;margin-right:6px;background:#f9f9f9;border-radius:999px}
-    .kv{font-size:13px;color:#333;margin:6px 0}
-    .small{font-size:12px;color:#666}
-    .dock{position:fixed;left:0;right:0;bottom:0;background:#fafafa;border-top:1px solid #e5e5e5;z-index:20}
+    .badge{display:inline-block;font-size:12px;border:1px solid var(--theme-border, #ddd);padding:2px 8px;margin-right:6px;background:var(--theme-surface, #f9f9f9);border-radius:999px}
+    .kv{font-size:13px;color:var(--theme-text, #333);margin:6px 0}
+    .small{font-size:12px;color:var(--theme-muted, #666)}
+    .dock{position:fixed;left:0;right:0;bottom:0;background:var(--theme-surface, #fafafa);border-top:1px solid var(--theme-border, #e5e5e5);z-index:20}
     .dock .inner{max-width:1100px;margin:0 auto;display:block;padding:8px}
     .dock .row{display:table;width:100%}
-    .dock .btn{display:table-cell;text-align:center;padding:12px 6px;border-right:1px solid #e5e5e5;font-size:16px}
+    .dock .btn{display:table-cell;text-align:center;padding:12px 6px;border-right:1px solid var(--theme-border, #e5e5e5);font-size:16px}
     .dock .btn:last-child{border-right:none}
-    .btn a,.btn button{display:block;width:100%;padding:12px 0;border:1px solid #bbb;background:#fff;border-radius:8px;text-decoration:none;color:#111;font-size:16px}
+    .btn a,.btn button{display:block;width:100%;padding:12px 0;border:1px solid var(--theme-border, #bbb);background:var(--theme-surface, #fff);border-radius:8px;text-decoration:none;color:var(--theme-text, #111);font-size:16px}
     .btn button{cursor:pointer}
     .dock-spacer{height:70px}
     @media (min-width:900px){
-      .sidebar{display:block;float:left;width:260px;border-right:1px solid #eee;padding:12px 10px}
+      .sidebar{display:block;float:left;width:260px;border-right:1px solid var(--theme-border, #eee);padding:12px 10px}
       .content{margin-left:260px}
       .toc{list-style:none;margin:0;padding:0}
       .toc li{margin:6px 0}

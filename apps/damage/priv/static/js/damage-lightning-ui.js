@@ -61,7 +61,7 @@ export function showLightningQR({ containerId, paymentRequest, address, expirySe
     const addrText = document.createElement("p");
     addrText.style.wordBreak = "break-word";
     addrText.style.fontSize = "0.9em";
-    addrText.style.color = "#ccc";
+    addrText.style.color = "var(--theme-muted, #ccc)";
     addrText.textContent = `For address: ${address}`;
     qrSection.appendChild(addrText);
 
@@ -105,8 +105,8 @@ export function showLightningQR({ containerId, paymentRequest, address, expirySe
     copyButton.style.borderRadius = "0.5em";
     copyButton.style.border = "none";
     copyButton.style.cursor = "pointer";
-    copyButton.style.background = "#333";
-    copyButton.style.color = "white";
+    copyButton.style.background = "var(--theme-surface-alt, #333)";
+    copyButton.style.color = "var(--theme-text, white)";
     copyButton.style.display = "none";
     copyButton.setAttribute("aria-label", "Copy Lightning Invoice");
     copyButton.onclick = () => {
@@ -135,7 +135,7 @@ export function showLightningQR({ containerId, paymentRequest, address, expirySe
         helpLink.style.display = "block";
         helpLink.style.marginTop = "1em";
         helpLink.style.fontSize = "0.9em";
-        helpLink.style.color = "#88f";
+        helpLink.style.color = "var(--theme-link, #88f)";
         helpLink.textContent = "❓ Need Help? View Payment Instructions";
         qrSection.appendChild(helpLink);
     }
@@ -162,7 +162,7 @@ export function showLightningQR({ containerId, paymentRequest, address, expirySe
             timer.textContent = "⚠️ Invoice expired. Please generate a new one.";
             qrCanvas.style.opacity = "0.5";
             copyButton.disabled = true;
-            copyButton.style.background = "#777";
+            copyButton.style.background = "var(--theme-accent-soft, #777)";
         }
     }, 1000);
 }

@@ -96,7 +96,8 @@ canonical(M) when is_map(M) ->
 canonical(L) when is_list(L) -> [canonical(V) || V <- L];
 canonical(V) -> V.
 
-%% Kept intentionally last in <head> to remap all three applications' old tokens.
+%% Loaded last in <head>. The six package colours remain immutable; semantic
+%% roles are derived at render time, not added to NFT manifests or their hashes.
 %% CSS cannot contain values from nonvalidated manifests.
 css(App, M) when is_binary(App), is_map(M) ->
     Colors = maps:get(<<"tokens">>, M),
@@ -107,17 +108,23 @@ css(App, M) when is_binary(App), is_map(M) ->
     Accent = maps:get(<<"accent">>, Colors),
     Border = maps:get(<<"border">>, Colors),
     %% Define cross-product tokens first; compatibility aliases then inherit them.
-    Vars = [
+    Vars = semantic_vars(BG, Surface, Text, Muted, Accent, Border) ++ [
         {<<"damage-bg">>, BG}, {<<"damage-surface">>, Surface},
-        {<<"damage-text">>, Text}, {<<"damage-muted">>, Muted},
+        {<<"damage-text">>, <<"var(--theme-text)">>}, {<<"damage-muted">>, <<"var(--theme-muted)">>},
         {<<"damage-accent">>, Accent}, {<<"damage-border">>, Border},
         {<<"ws-bg">>, BG}, {<<"ws-surface">>, Surface},
-        {<<"ws-text">>, Text}, {<<"ws-muted">>, Muted},
+        {<<"ws-panel">>, Surface}, {<<"ws-input">>, BG},
+        {<<"ws-raised">>, <<"var(--theme-surface-alt)">>},
+        {<<"ws-accent-text">>, contrast_text(Accent)},
+        {<<"ws-error">>, <<"var(--theme-danger)">>},
+        {<<"ws-text">>, <<"var(--theme-text)">>}, {<<"ws-muted">>, <<"var(--theme-muted)">>},
         {<<"ws-accent">>, Accent}, {<<"ws-line">>, Border},
-        {<<"green">>, Accent}, {<<"ink">>, Text}, {<<"line">>, Border},
-        {<<"muted">>, Muted}, {<<"node-accent">>, Accent},
+        {<<"green">>, Accent}, {<<"ink">>, <<"var(--theme-text)">>}, {<<"line">>, Border},
+        {<<"muted">>, <<"var(--theme-muted)">>}, {<<"node-accent">>, Accent},
         {<<"accent">>, Accent}, {<<"background">>, BG}, {<<"surface">>, Surface},
-        {<<"text">>, Text}
+        {<<"text">>, <<"var(--theme-text)">>}, {<<"bg">>, BG}, {<<"fg">>, <<"var(--theme-text)">>},
+        {<<"paper">>, Surface}, {<<"panel">>, Surface}, {<<"card">>, Surface},
+        {<<"on-accent">>, contrast_text(Accent)}
     ],
     AppVars = case App of
         <<"ecai">> -> ecai_vars(BG, Surface, Text, Muted, Accent, Border);
@@ -127,17 +134,82 @@ css(App, M) when is_binary(App), is_map(M) ->
     %% Make background/surfaces participate in existing hardcoded shells.
     Extra = case App of
         <<"damage">> -> <<".damage-dashboard .dashboard-sidebar,.damage-dashboard .dashboard-topbar{background:var(--damage-surface)}.damage-dashboard .dashboard-main{background:var(--damage-bg)}">>;
-        <<"nosternity">> -> <<"body{background:var(--damage-bg);color:var(--damage-text)}.panel,.card{background:var(--damage-surface)}">>;
+        <<"nosternity">> -> <<"body{background:var(--theme-bg);color:var(--theme-text)}">>;
+        <<"bop">> -> <<"body,body.dark{background:var(--theme-bg);color:var(--theme-text)}">>;
         <<"ecai">> -> <<".console-shell,.console-body{background:var(--damage-bg);color:var(--damage-text)}.console-sidebar,.console-topbar{background:var(--damage-surface)}.theme-brand-logo{width:42px;height:42px;object-fit:contain;flex-shrink:0;border-radius:9px}">>;
         _ -> <<>>
     end,
-    iolist_to_binary([<<":root,body{">>, Lines, <<"}\n">>, Extra, <<"\n">>]).
+    iolist_to_binary([<<":root,body{">>, Lines,
+        <<"color-scheme:var(--theme-color-scheme);}\n">>, Extra, <<"\n">>]).
+
+%% One semantic contract for all first-party styles. Component-local aliases
+%% reference these roles with their original defaults as fallbacks. This also
+%% lets standalone/static pages remain usable when the theme endpoint is absent.
+semantic_vars(BG, Surface, Text, Muted, Accent, Border) ->
+    Ink = readable_on(Text, [Surface, BG]),
+    SoftText = readable_on(Muted, [Surface, BG]),
+    Link = readable_on(Accent, [Surface, BG]),
+    Good = semantic(<<"#17694f">>, <<"#91d99c">>, Surface),
+    Bad = semantic(<<"#a72c43">>, <<"#ff9eae">>, Surface),
+    Warn = semantic(<<"#795917">>, <<"#ffd392">>, Surface),
+    Info = semantic(<<"#285eae">>, <<"#a9c9ff">>, Surface),
+    Scheme = case luminance(Surface) < 0.179 of true -> <<"dark">>; false -> <<"light">> end,
+    [
+        {<<"theme-bg">>, BG}, {<<"theme-surface">>, Surface},
+        {<<"theme-surface-alt">>, mix(Surface, Ink, 96)},
+        {<<"theme-input">>, BG}, {<<"theme-text">>, Ink},
+        {<<"theme-muted">>, SoftText}, {<<"theme-link">>, Link},
+        {<<"theme-border">>, Border}, {<<"theme-control-border">>, SoftText},
+        {<<"theme-accent">>, Accent}, {<<"theme-on-accent">>, contrast_text(Accent)},
+        {<<"theme-accent-hover">>, Accent},
+        {<<"theme-accent-soft">>, mix(Surface, Accent, 94)},
+        {<<"theme-focus">>, Link},
+        {<<"theme-success">>, Good}, {<<"theme-success-soft">>, mix(Surface, Good, 94)},
+        {<<"theme-on-success">>, contrast_text(Good)},
+        {<<"theme-danger">>, Bad}, {<<"theme-danger-soft">>, mix(Surface, Bad, 94)},
+        {<<"theme-on-danger">>, contrast_text(Bad)},
+        {<<"theme-warning">>, Warn}, {<<"theme-warning-soft">>, mix(Surface, Warn, 94)},
+        {<<"theme-on-warning">>, contrast_text(Warn)},
+        {<<"theme-info">>, Info}, {<<"theme-info-soft">>, mix(Surface, Info, 94)},
+        {<<"theme-on-info">>, contrast_text(Info)},
+        {<<"theme-backdrop">>, <<"rgba(0,0,0,.6)">>},
+        {<<"theme-shadow">>, <<"rgba(0,0,0,.18)">>},
+        {<<"theme-focus-glow">>, mix(Link, <<"transparent">>, 20)},
+        {<<"theme-color-scheme">>, Scheme}
+    ].
+
+mix(A, B, Percent) ->
+    iolist_to_binary([<<"color-mix(in srgb,">>, A, <<" ">>,
+        integer_to_binary(Percent), <<"%,">>, B, <<")">>]).
+
+%% Retain supplied colours where readable on both canvas and panels. If not,
+%% minimally move toward the better contrasting endpoint (rather than turning
+%% all muted labels pure black/white). Opposing custom surfaces may not admit
+%% one foreground; use the best achievable minimum contrast in that case.
+readable_on(FG, Backgrounds) ->
+    Black = <<"#000000">>, White = <<"#ffffff">>,
+    Target = case min_contrast(Black, Backgrounds) >= min_contrast(White, Backgrounds) of
+        true -> Black; false -> White
+    end,
+    readable_step(FG, Target, Backgrounds, 0).
+readable_step(FG, Target, BGs, N) ->
+    Candidate = blend_hex(FG, Target, N),
+    case min_contrast(Candidate, BGs) >= 4.7 orelse N =:= 20 of
+        true -> Candidate;
+        false -> readable_step(FG, Target, BGs, N + 1)
+    end.
+min_contrast(FG, BGs) -> lists:min([contrast_ratio(FG, BG) || BG <- BGs]).
+blend_hex(<<"#", AR:2/binary, AG:2/binary, AB:2/binary>>,
+          <<"#", BR:2/binary, BG:2/binary, BB:2/binary>>, N) ->
+    iolist_to_binary([<<"#">> | [io_lib:format("~2.16.0b", [
+        round((binary_to_integer(A,16) * (20-N) + binary_to_integer(B,16) * N) / 20)
+    ]) || {A,B} <- [{AR,BR},{AG,BG},{AB,BB}]]]).
 
 %% ECAI's legacy palette used --paper/--canvas while the theme supplied only
 %% --surface/--background. Remap both halves; derive readable interactive text.
 ecai_vars(BG, Surface, Text, Muted, Accent, Border) ->
-    Ink = readable(Text, Surface),
-    SoftText = readable(Muted, Surface),
+    Ink = readable_on(Text, [Surface, BG]),
+    SoftText = readable_on(Muted, [Surface, BG]),
     [
         {<<"canvas">>, BG}, {<<"paper">>, Surface}, {<<"ink">>, Ink},
         {<<"text">>, Ink}, {<<"muted">>, SoftText},
@@ -145,7 +217,7 @@ ecai_vars(BG, Surface, Text, Muted, Accent, Border) ->
         {<<"nav-ink">>, Ink}, {<<"nav-muted">>, SoftText},
         {<<"blue">>, Accent}, {<<"blue-strong">>, Accent},
         {<<"on-accent">>, contrast_text(Accent)},
-        {<<"link">>, readable(Accent, Surface)}, {<<"focus">>, readable(Accent, Surface)},
+        {<<"link">>, readable_on(Accent, [Surface, BG])}, {<<"focus">>, readable_on(Accent, [Surface, BG])},
         {<<"border">>, Border}, {<<"border-strong">>, SoftText},
         {<<"surface-2">>, <<"color-mix(in srgb,", Surface/binary, " 94%,", Ink/binary, ")">>},
         {<<"accent-soft">>, <<"color-mix(in srgb,", Accent/binary, " 12%,", Surface/binary, ")">>},

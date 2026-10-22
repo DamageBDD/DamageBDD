@@ -24,10 +24,11 @@ dark_and_light_control_text_test() ->
     ?assertNotEqual(nomatch, binary:match(DarkCss, <<"--ecai-color-scheme:dark;">>)),
     ?assertNotEqual(nomatch, binary:match(LightCss, <<"--ecai-color-scheme:light;">>)).
 
-non_ecai_palette_unchanged_test() ->
+non_ecai_palette_uses_shared_roles_test() ->
     [Theme | _] = damage_theme_manifest:builtin(),
     lists:foreach(fun(App) ->
         Css = damage_theme_manifest:css(App, Theme),
-        ?assertEqual(nomatch, binary:match(Css, <<"--paper:">>)),
+        ?assertNotEqual(nomatch, binary:match(Css, <<"--paper:">>)),
+        ?assertNotEqual(nomatch, binary:match(Css, <<"--theme-surface:">>)),
         ?assertEqual(nomatch, binary:match(Css, <<"--ecai-color-scheme:">>))
     end, [<<"damage">>, <<"nosternity">>]).

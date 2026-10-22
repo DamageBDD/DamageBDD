@@ -71,7 +71,7 @@
   border: 1px solid var(--ws-line);
   border-radius: 999px;
   background: var(--ws-input);
-  color: #c7d3e1;
+  color: var(--theme-text, #c7d3e1);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 @media (max-width: 600px) {

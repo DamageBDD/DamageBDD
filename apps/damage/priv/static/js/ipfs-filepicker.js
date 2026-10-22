@@ -321,7 +321,7 @@ export function createIpfsFilePicker(opts = {}){
       if (p === "/ipfs/"){
         state.entries = [];
         els.list.innerHTML = `
-          <div style="padding:18px;color:rgba(231,233,238,.75)">
+          <div style="padding:18px;color:var(--theme-muted, rgba(231,233,238,.75))">
             Paste an immutable CID or feature path into <b>Start path</b>, then hit <b>Go</b>.<br/>
             Example: <code>/ipfs/&lt;cid&gt;/features/login.feature</code>
           </div>`;
@@ -341,7 +341,7 @@ export function createIpfsFilePicker(opts = {}){
       renderListFrom(state.entries);
     }catch(e){
       state.entries = [];
-      els.list.innerHTML = `<div style="padding:18px;color:rgba(231,233,238,.75)">Error: ${escapeHtml(e.message)}</div>`;
+      els.list.innerHTML = `<div style="padding:18px;color:var(--theme-muted, rgba(231,233,238,.75))">Error: ${escapeHtml(e.message)}</div>`;
       setStatus("Error");
     }
   }
@@ -353,7 +353,7 @@ export function createIpfsFilePicker(opts = {}){
     els.list.innerHTML = "";
 
     if (!filtered.length){
-      els.list.innerHTML = `<div style="padding:18px;color:rgba(231,233,238,.75)">No items</div>`;
+      els.list.innerHTML = `<div style="padding:18px;color:var(--theme-muted, rgba(231,233,238,.75))">No items</div>`;
       return;
     }
 
@@ -439,7 +439,7 @@ export function createIpfsFilePicker(opts = {}){
       if (!state.allowUpload || !state.uploadApiBase){
         setStatus("Upload disabled");
         els.list.innerHTML = `
-          <div style="padding:18px;color:rgba(231,233,238,.75)">
+          <div style="padding:18px;color:var(--theme-muted, rgba(231,233,238,.75))">
             Browser uploads are disabled on this node. Add the feature to IPFS through
             your normal publication workflow, then paste its CID above.
           </div>`;
@@ -449,7 +449,7 @@ export function createIpfsFilePicker(opts = {}){
       els.list.innerHTML = `
         <div style="padding:18px;border:1px dashed rgba(255,255,255,.18);border-radius:12px;margin:10px;">
           <div style="font-weight:900;margin-bottom:8px;">Upload a local file to IPFS</div>
-          <div style="color:rgba(231,233,238,.75);font-size:12px;margin-bottom:12px;">
+          <div style="color:var(--theme-muted, rgba(231,233,238,.75));font-size:12px;margin-bottom:12px;">
             Uses <code>/api/v0/add</code> on your configured IPFS node.
           </div>
           <input data-ipfsfp-upload type="file" />
