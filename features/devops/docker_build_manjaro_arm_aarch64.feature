@@ -12,6 +12,23 @@ Feature: Publish DamageBDD for Manjaro ARM aarch64
     set -eux
     cd /opt/workspace
 
+    # Some builder layers leave $HOME/.cache unwritable by the damage user.
+    # Move disposable caches only; retain HOME and the voice SDK install prefixes.
+    # This private cache stays with this container, outside the checkout/package.
+    [ "$(id -u)" -ne 0 ] || {
+        echo "[damagebdd] Refusing a root release build; use the damage user." >&2
+        exit 1
+    }
+    XDG_CACHE_HOME=$(mktemp -d /tmp/damagebdd-build-cache.XXXXXXXX)
+    CCACHE_DIR="$XDG_CACHE_HOME/ccache"
+    export XDG_CACHE_HOME CCACHE_DIR
+    mkdir -p "$CCACHE_DIR" "$XDG_CACHE_HOME/erm-native-voice"
+    for CACHE_PATH in "$XDG_CACHE_HOME" "$CCACHE_DIR" "$XDG_CACHE_HOME/erm-native-voice"; do
+        CACHE_PROBE=$(mktemp "$CACHE_PATH/.write-check.XXXXXXXX")
+        rm -f "$CACHE_PROBE"
+    done
+    printf '%s\n' "[damagebdd] writable build cache: $XDG_CACHE_HOME"
+
     command -v flock >/dev/null 2>&1 || {
         echo "Builder requires flock (util-linux)" >&2
         exit 1
