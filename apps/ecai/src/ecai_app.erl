@@ -112,7 +112,8 @@ get_trails() ->
             ecai_knowledge_http,
             ecai_yelp_admin,
             ecai_dashboard,
-            ecai_chat_http_handler
+            ecai_chat_http_handler,
+            ecai_voice_notes_http
         ] ++ conversation_history_handlers() ++ ollama_api_handlers() ++ code_admin_handlers() ++ marketplace_handlers(),
     %% The dashboard uses the same supervised browser auth service as DamageBDD.
     %% Legacy login routes remain for the separate older indexer pages only.

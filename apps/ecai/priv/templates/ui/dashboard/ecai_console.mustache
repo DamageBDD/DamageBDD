@@ -9,7 +9,7 @@
   <title>{{brand_name}} · Control plane</title>
   {{#has_brand_favicon}}<link rel="icon" href="{{brand_favicon}}">{{/has_brand_favicon}}
   <link rel="stylesheet" href="/static/css/ecai-model-internals.css?v=model-internals-v1&theme=semantic-v2">
-  <link rel="stylesheet" href="/static/css/ecai-console.css?v=personality-conversations-v1-knowledge-v2&index-mint=index-mint-v1&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-console.css?v=personality-conversations-v1-knowledge-v2&index-mint=index-mint-v1&theme=semantic-v2&chat=wide-v2">
   <link rel="stylesheet" href="/static/css/ecai-personalities.css?v=personalities-v1&theme=semantic-v2">
   <link rel="stylesheet" href="/static/css/ecai-eval.css?v=eval-v1&theme=semantic-v2">
   <link rel="stylesheet" href="/static/css/ecai-math-paths.css?v=math-samples-explorer-v2&theme=semantic-v2">
@@ -280,7 +280,7 @@
 
         <section class="view" data-panel="chat" aria-labelledby="chatTitle" hidden>
           <div class="page-intro"><div class="eyebrow">CONVERSATION</div><h1 id="chatTitle">Speak to the knowledge layer</h1><p>Signed-in conversations are durable, searchable through the private ECAI term index and can be grouped into projects. Guest chat remains an isolated session. Replies depend on the configured backend and are not cryptographic proofs.</p></div>
-          <div class="chat-workspace">
+          <div class="chat-workspace" id="chatWorkspace">
             <aside class="surface chat-history-panel" id="chatHistoryPanel" aria-label="Conversation history">
               <div class="chat-history-actions">
                 <button type="button" class="button button-primary chat-new-button" id="newChatBtn">＋ New chat</button>
@@ -299,7 +299,8 @@
             </aside>
             <div class="surface chat-layout">
               <div class="chat-toolbar">
-                <button type="button" class="chat-history-toggle" id="chatHistoryToggle" aria-controls="chatHistoryPanel" aria-expanded="false" aria-label="Toggle conversation history">☰</button>
+                <button type="button" class="chat-history-toggle chat-nav-toggle" id="chatNavToggle" aria-label="Expand main navigation" aria-pressed="false" title="Expand main navigation">◨</button>
+                <button type="button" class="chat-history-toggle" id="chatHistoryToggle" aria-controls="chatHistoryPanel" aria-expanded="true" aria-label="Toggle conversation history">☰</button>
                 <span class="status-indicator"><span class="status-pulse"></span>ECAI chat</span>
                 <div class="chat-thread-heading"><strong id="chatConversationTitle">New conversation</strong><span id="chatProjectLabel" class="small muted">Guest session</span></div>
                 <span id="chatSessionLabel" class="mono small">New session</span>
@@ -316,7 +317,23 @@
                 <p id="chatPersonalityStatus" class="chat-personality-status" role="status" aria-live="polite">Guest conversations use ECAI default.</p>
               </div>
               <div class="chat-messages" id="chatMessages" aria-live="polite"><div class="chat-welcome"><div class="welcome-icon">e·</div><h2>Ask a question</h2><p>Guest messages use a temporary session. Sign in to keep searchable conversation history.</p></div></div>
-              <form id="chatForm" class="composer"><label class="sr-only" for="chatPrompt">Your message</label><textarea id="chatPrompt" rows="2" required maxlength="16384" placeholder="Ask the ECAI knowledge layer…"></textarea><button class="button button-primary" type="submit" id="chatSend">Send ↗</button></form>
+              <form id="chatForm" class="composer chat-composer">
+                <input id="chatFileInput" type="file" hidden multiple accept=".txt,.md,.markdown,.org,.json,.jsonl,.csv,.tsv,.yaml,.yml,.html,.xml,.log,text/plain,text/markdown,text/csv,application/json">
+                <input id="chatVoiceFile" type="file" hidden accept="audio/webm,audio/ogg,audio/mp4,audio/wav,audio/*">
+                <div class="chat-composer-shell">
+                  <div id="chatAttachmentList" class="chat-attachment-list" hidden></div>
+                  <label class="sr-only" for="chatPrompt">Your message</label>
+                  <textarea id="chatPrompt" rows="2" maxlength="16384" placeholder="Ask anything about your knowledge…"></textarea>
+                  <div class="chat-composer-bottom">
+                    <div class="chat-composer-tools">
+                      <button type="button" class="button button-outline button-sm" id="chatAttachBtn" aria-label="Attach a text file">＋ Attach</button>
+                      <button type="button" class="button button-outline button-sm" id="chatVoiceBtn" aria-label="Record a voice note">♩ Voice</button>
+                      <span class="chat-composer-shortcut">Enter to send · Shift+Enter for a newline</span>
+                    </div>
+                    <button class="button button-primary" type="submit" id="chatSend">Send ↗</button>
+                  </div>
+                </div>
+              </form>
               <div class="form-meta"><span id="chatStatus" role="status">Ready</span><span>Saved + privately indexed when signed in</span></div>
             </div>
           </div>
@@ -803,6 +820,6 @@
   <script type="module" src="/static/js/ecai-compute-settings.js?v=compute-only-v1&aws-setup=automatic-aws-v1"></script>
   <script type="module" src="/static/js/ecai-keys.js"></script>
   <script type="module" src="/static/js/ecai-index-mint-settings.js?v=index-mint-settings-v1"></script>
-  <script type="module" src="/static/js/ecai-console.js?v=model-internals-v1-personality-conversations-v1-personalities-v1-video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-explorer-v2-eval-v1-source-retrieval-v1-knowledge-v2-compute-only-v1&index-mint=index-mint-v1-sidebar-settings-v1"></script>
+  <script type="module" src="/static/js/ecai-console.js?v=model-internals-v1-personality-conversations-v1-personalities-v1-video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-explorer-v2-eval-v1-source-retrieval-v1-knowledge-v2-compute-only-v1&index-mint=index-mint-v1-sidebar-settings-v1&chat=wide-v2"></script>
 </body>
 </html>
