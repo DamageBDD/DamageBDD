@@ -38,7 +38,7 @@ replay_rejected_enrolment({{_,Dir},_})->{timeout,15,fun()->
     ?assertMatch(#{playback:=#{phase:=idle,available:=true},enrolment:=#{collected:=1}},status()),
     Marker=filename:join(Dir,"player.pid"),true=os:putenv("PHRASE_LAB_PLAYER_PID",Marker),
     ok=erm_phrase_lab:set_autoplay(true),
-    take(record_voice,#{offset=>202,embedding=>[0.654,math:sqrt(1-0.654*0.654)]}),
+    take(record_voice,#{offset=>202,rms=> -60.0,embedding=>[0.654,math:sqrt(1-0.654*0.654)]}),
     wait_phase(playing),wait(fun()->filelib:is_regular(Marker) end),
     Playing=status(),Last=maps:get(last,Playing),Diagnostic=maps:get(diagnostics,Playing),
     ?assertMatch(#{capture:=#{ready:=false,playback_active:=true},
@@ -161,7 +161,14 @@ wait_completed(N)->wait(fun()->length([ok||#{event:=playback_completed}<-maps:ge
 wait_echo()->wait(fun()->maps:get(echo_guard_remaining_ms,maps:get(capture,status()))=:=0 end,900).
 wait_player_exit(Marker)->
     {ok,Pid}=file:read_file(Marker),
-    wait(fun()->not filelib:is_dir("/proc/"++binary_to_list(Pid)) end).
+    %% Some container PID 1 implementations defer reaping an orphan. A zombie
+    %% is stopped and cannot play audio; the native protocol test uses the same
+    %% definition. Still fail on a live player after cancellation.
+    wait(fun()->case file:read_file("/proc/"++binary_to_list(Pid)++"/stat") of
+        {error,enoent}->true;
+        {ok,Info}->case binary:split(Info,<<") ">>) of [_,<<"Z ",_/binary>>]->true;_->false end;
+        _->false
+    end end).
 wait(F)->wait(F,300).
 wait(_,0)->error(wait_timeout);
 wait(F,N)->case F() of true->ok;false->timer:sleep(10),wait(F,N-1) end.

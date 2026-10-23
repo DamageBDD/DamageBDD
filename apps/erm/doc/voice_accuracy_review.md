@@ -1,5 +1,10 @@
 # Voice enrolment and recognition review
 
+Current GTK speaker enrolment uses [repeated recordings and bounded automatic
+adjustment](voice_repeated_enrolment.md). Its repeated batch and two validation
+takes supersede the sequential GTK enrolment workflow described below. The older
+standalone guided native-enrolment API remains sequential.
+
 Source basis: the supplied ERM source with the motion, training, profiles and
 explicit-enrolment patches, and `latest-ecai.tar(3).gz`. This is a source review
 and a workflow regression fix, not a measured live-microphone accuracy result.

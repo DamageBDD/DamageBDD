@@ -2,6 +2,26 @@
 -include_lib("eunit/include/eunit.hrl").
 -export([init/1]).
 init([])->{ok,{{one_for_one,1,5},[]}}.
+repeated_enrolment_presentation_test()->
+    Draft=#{id=>repeats,label=><<"Repeated voice">>,collected=>1,target=>8,rejected=>0,
+        stage=>repeats,sentence=>1,repeat_index=>2,repeat_target=>3,
+        prompt=><<"I am speaking naturally at my usual volume.">>},
+    Last=#{outcome=>voice_sample_accepted,check=>#{accepted=>true,reason=>repeat_collected,
+        consistency=>#{method=>repeated_sentences,threshold=>undefined}}},
+    View=presentation(Last,#{enrolment=>Draft}),Labels=maps:get(labels,View),
+    ?assertMatch({_,_},binary:match(maps:get(score,Labels),<<"consistency is pending">>)),
+    ?assertMatch({_,_},binary:match(maps:get(enrol_status,Labels),<<"Sentence 1: repeated training take 2 of 3">>)),
+    ?assertEqual(maps:get(prompt,Draft),maps:get(prompt,Labels)),
+    ?assertMatch(#{record_voice:=true,save_voice:=false},maps:get(controls,View)).
+validation_presentation_test()->
+    Draft=#{id=>repeats,label=><<"Repeated voice">>,collected=>6,target=>8,rejected=>1,
+        stage=>validation,sentence=>3,repeat_index=>1,repeat_target=>2,prompt=><<"Third sentence">>},
+    Last=#{outcome=>voice_sample_rejected,check=>#{accepted=>false,reason=>validation_speaker_mismatch,
+        speaker_score=>0.4,consistency=>#{method=>repeated_sentences,threshold=>0.56}}},
+    View=presentation(Last,#{enrolment=>Draft}),Labels=maps:get(labels,View),
+    ?assertMatch({_,_},binary:match(maps:get(feedback,Labels),<<"cannot lower the threshold">>)),
+    ?assertMatch({_,_},binary:match(maps:get(enrol_status,Labels),<<"validation take 1 of 2">>)),
+    ?assertMatch(#{record_voice:=true,save_voice:=false},maps:get(controls,View)).
 first_enrolment_sample_presentation_test()->
     Draft=#{id=>first_sample,label=><<"Fresh voice">>,collected=>1,target=>5,rejected=>0,
         prompt=><<"Read the next sentence">>},
@@ -178,17 +198,17 @@ training()->
         ?assertMatch({_,_},binary:match(maps:get(enrol_prompt,maps:get(labels,training_view())),<<"speaking naturally">>)),
         enabled(record,false),enabled(record_voice,true),
         %% The first genuine protocol sample must leave the GTK controller
-        %% alive. A low-consistency second sample must be recoverable through
-        %% a real Restart samples click without weakening the 0.700 gate.
+        %% alive. A lower-similarity second sample remains provisional until
+        %% the repeated batch is fitted. Restart still invalidates the draft.
         OldDraftId=maps:get(id,maps:get(enrolment,training_view())),
         click(Window,95,480),wait_phase(listening),
         erm_phrase_lab_tests:complete_capture(#{offset=>85,embedding=>[1.0,0.0]}),
         wait(fun()->maps:get(collected,maps:get(enrolment,training_view()))=:=1 end),
-        ?assertMatch({_,_},binary:match(maps:get(score,maps:get(labels,training_view())),<<"First sample">>)),
+        ?assertMatch({_,_},binary:match(maps:get(score,maps:get(labels,training_view())),<<"Collecting repeated">>)),
         click(Window,95,480),wait_phase(listening),
         erm_phrase_lab_tests:complete_capture(#{offset=>86,embedding=>[0.654,math:sqrt(1-0.654*0.654)]}),
-        wait(fun()->maps:get(rejected,maps:get(enrolment,training_view()))=:=1 end),
-        ?assertMatch({_,_},binary:match(maps:get(score,maps:get(labels,training_view())),<<"0.654 / 0.700">>)),
+        wait(fun()->maps:get(collected,maps:get(enrolment,training_view()))=:=2 end),
+        ?assertMatch({_,_},binary:match(maps:get(score,maps:get(labels,training_view())),<<"consistency is pending">>)),
         enabled(restart_voice,true),screenshot(Window,"voice-inconsistent"),
         click(Window,350,275),
         wait(fun()->maps:get(id,maps:get(enrolment,training_view()))=/=OldDraftId end),
@@ -200,7 +220,7 @@ training()->
             ?assertMatch({_,_},binary:match(maps:get(enrol_status,maps:get(labels,training_view())),<<"Speak now">>)),
             erm_phrase_lab_tests:complete_capture(#{offset=>N+90,embedding=>[0.53,0.848]}),
             wait(fun()->maps:get(collected,maps:get(enrolment,training_view()))=:=N end)
-        end,lists:seq(1,5)),
+        end,lists:seq(1,8)),
         enabled(save_voice,true),enabled(record_voice,false),
         ?assertEqual(<<"configured">>,maps:get(active_voice,maps:get(profiles,training_view()))),
         screenshot(Window,"voice-ready"),
@@ -276,14 +296,13 @@ debug_playback(Window,{_,Dir})->
     %% The rejected capture must also be reconstructed. Its own diagnostic
     %% frame and trace remain visible rather than the previous accepted take.
     click(Window,95,480),wait_phase(listening),
-    erm_phrase_lab_tests:complete_capture(#{offset=>161,
+    erm_phrase_lab_tests:complete_capture(#{offset=>161,rms=> -60.0,
         embedding=>[0.51,math:sqrt(1-0.51*0.51)]}),
     wait_playback(playing),
     ?assertMatch(#{enrolment:=#{collected:=1,rejected:=1}},erm_phrase_lab:status()),
     assert_debug_capture(voice_sample_rejected),
     RejectedDiagnostic=maps:get(diagnostics,erm_phrase_lab:status()),
-    [#{index:=1,score:=Pairwise}]=maps:get(references,RejectedDiagnostic),
-    ?assert(abs(Pairwise-0.51)<0.000001),
+    ?assertEqual([],maps:get(references,RejectedDiagnostic)),
     RejectedId=maps:get(id,RejectedDiagnostic),
     screenshot(Window,"debug-rejected-playback"),
     _=command("xdotool",["mousemove","--window",Window,"1400","560","click","--repeat","9","--delay","30","5"]),

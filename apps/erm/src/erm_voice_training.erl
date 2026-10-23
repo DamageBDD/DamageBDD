@@ -255,7 +255,7 @@ present(S)->
     VoiceIndex=case maps:get(active_voice,Profiles) of undefined-> -1;
         Active->length(lists:takewhile(fun(#{id:=X})->X=/=Active end,Voices)) end,
     CountText=case Draft of
-        #{collected:=Got,target:=Target,rejected:=Rejected}->fmt("Voice samples · ~B / ~B accepted · ~B rejected",[Got,Target,Rejected]);
+        #{collected:=Got,target:=Target,rejected:=Rejected}->fmt("Recordings · ~B / ~B collected · ~B rejected",[Got,Target,Rejected]);
         _->fmt("~B / 3 required takes  ·  up to 5 per phrase",[Count])
     end,
     EnrolState=enrolment_state(Draft,Capture#{playback_phase=>maps:get(phase,Playback,idle)},
@@ -281,7 +281,7 @@ present(S)->
             {_,_,D} when D=/=undefined->fmt("Delete '~ts'? Phrase takes remain on disk.",[ActiveLabel]);
             {undefined,_,_}-> <<"Enrolment builds a new speaker reference; verification checks the saved voice.">>;
             {#{label:=DraftLabel,collected:=Got0,target:=Target0},_,_}->
-                DraftHint=fmt("~ts · ~B / ~B voice samples accepted",[DraftLabel,Got0,Target0]),
+                DraftHint=fmt("~ts · ~B / ~B recordings collected",[DraftLabel,Got0,Target0]),
                 case maps:get(remaining_ms,Draft,undefined) of
                     Remaining when is_integer(Remaining)->
                         <<DraftHint/binary,(fmt(" · idle timeout in ~B s",[(max(0,Remaining)+999) div 1000]))/binary>>;
@@ -290,7 +290,7 @@ present(S)->
         wake_hint=><<"Train the full wake phrase + command. Each wake phrase keeps its own takes.">>,
         limits=>limits(Limits),score=>score(Check),quality=>quality(Check),
         recognition=>case Draft of undefined->recognition(Relevant,Lab,A,Count);
-            _-> <<"Enrolment compares these new samples with each other.">> end}}.
+            _-> <<"Repeat each sentence. Two further takes validate the frozen reference.">> end}}.
 enrolment_state(_,_,_,_,Error,_) when Error=/=undefined->error_text(Error);
 enrolment_state(_,_,_,Busy,_,_) when Busy=/=undefined-> <<"Working. Waiting for the voice backend...">>;
 enrolment_state(undefined,_,_,_,_,#{outcome:=voice_enrolled})->
@@ -312,6 +312,11 @@ enrolment_state(#{collected:=N,target:=N},_,_,_,_,_)->
 enrolment_state(_,#{suppressed:=true},_,_,_,_)-> <<"Waiting for playback to finish before recording a voice sample.">>;
 enrolment_state(_,#{echo_guard_remaining_ms:=Ms},_,_,_,_) when Ms>0->
     fmt("Record sample becomes available in ~B s after the microphone echo guard.",[(Ms+999) div 1000]);
+enrolment_state(#{label:=Name,collected:=N,target:=T,stage:=Stage,sentence:=Sentence,
+    repeat_index:=I,repeat_target:=R},_,_,_,_,_)->
+    What=case Stage of validation->"validation";_->"repeated training" end,
+    fmt("Enrolment active for ~ts: ~B / ~B collected. Sentence ~B: ~s take ~B of ~B.",
+        [Name,N,T,Sentence,What,I,R]);
 enrolment_state(#{label:=Name,collected:=N,target:=T},_,_,_,_,
     #{outcome:=voice_sample_rejected,check:=#{reason:=audio_too_short}})->
     fmt("Enrolment active for ~ts: ~B / ~B accepted. Sample too short. Read the entire sentence at your usual pace.",[Name,N,T]);
@@ -323,7 +328,13 @@ enrolment_state(#{label:=Name,collected:=N,target:=T},_,_,_,_,
     fmt("Enrolment active for ~ts: ~B / ~B accepted. ~ts",[Name,N,T,reason(Why)]);
 enrolment_state(#{label:=Name,collected:=N,target:=T},_,_,_,_,_)->
     fmt("Enrolment active for ~ts: ~B / ~B accepted. Choose Record sample.",[Name,N,T]).
+voice_feedback(#{check:=#{reason:=enrolment_outlier_removed}})->
+    {<<"Outlier removed">>,<<"The consistent majority was kept. Repeat the displayed sentence to replace the removed take.">>};
+voice_feedback(#{check:=#{reason:=enrolment_batch_inconsistent}})->
+    {<<"Record a fresh batch">>,<<"No clear consistent majority was found. The draft was reset automatically; keep the microphone and distance steady.">>};
 voice_feedback(#{outcome:=voice_sample_rejected,check:=#{reason:=Why}})->{<<"Voice sample rejected">>,reason(Why)};
+voice_feedback(#{outcome:=voice_sample_accepted,check:=#{consistency:=#{method:=repeated_sentences}}})->
+    {<<"Recording collected">>,<<"Repeat the displayed sentence. The third sentence validates the frozen profile and adjusted threshold.">>};
 voice_feedback(#{outcome:=voice_sample_accepted})->{<<"Voice sample accepted">>,<<"Choose Record sample, then say the next sentence above at your usual distance and volume.">>};
 voice_feedback(_)->{<<"Enrolling a new voice">>,<<"Choose Record sample. Wait for Speak now, then read the sentence above naturally.">>}.
 session_line(Snap,Owned,#{echo_guard_remaining_ms:=Ms}) when Ms>0->
@@ -380,6 +391,10 @@ feedback(_,_,idle,_,voice_enrolment_expired)->
 feedback(_,_,idle,_,cancelled)->{<<"Capture cancelled"/utf8>>,<<"No training take was saved."/utf8>>};
 feedback(_,_,idle,_,_)->{<<"Ready to capture"/utf8>>,<<"Verify your voice, or record a new training take. Training only uses accepted human takes."/utf8>>};
 feedback(_,_,_,_,_)->{<<"Lab working…"/utf8>>,<<"An experiment is running. Training controls will return when it finishes."/utf8>>}.
+reason(validation_speaker_mismatch)-> <<"This validation take failed the frozen threshold. Repeat the displayed sentence; validation cannot lower the threshold or update the reference.">>;
+reason(enrolment_attempt_limit)-> <<"The 64-take limit was reached. Choose Restart samples for a fresh batch.">>;
+reason(enrolment_batch_inconsistent)-> <<"No clear consistent majority. The training batch was reset automatically.">>;
+reason(enrolment_outlier_removed)-> <<"An outlier was removed. Repeat the displayed sentence to replace it.">>;
 reason(enrolment_inconsistent)-> <<"This sample does not match the preceding voice samples. Retry with the same microphone and speaking distance. If the first take was poor, choose Restart samples for a fresh reference.">>;
 reason(speaker_below_threshold)-> <<"Speaker score is below the enrolled profile threshold. Check the microphone and speaker profile, then retry. This take cannot train the phrase."/utf8>>;
 reason(audio_too_short)-> <<"Take too short. Say the full wake phrase and command; meet the minimum duration below."/utf8>>;
@@ -404,6 +419,14 @@ error_text(Why)->fmt("~P",[Why,8]).
 limits(#{speaker_threshold:=T,min_speaker_ms:=Ms,min_rms_dbfs:=R,max_clipped_fraction:=C})->
     fmt("Limits · speaker ≥ ~.3f  ·  ≥ ~B ms\nRMS ≥ ~.1f dBFS  ·  clipping ≤ ~.1f%",[float(T),Ms,float(R),100*C]);
 limits(_)-> <<"Verification limits load with the lab session"/utf8>>.
+score(#{consistency:=#{method:=repeated_sentences,threshold:=undefined}})->
+    <<"Collecting repeated recordings; speaker consistency is pending">>;
+score(#{consistency:=#{method:=repeated_sentences,threshold:=T}=C}=Check)->
+    case maps:get(speaker_score,Check,undefined) of
+        V when is_number(V)->fmt("Validation ~.3f / ~.3f required · ~s",[float(V),float(T),pass(V>=T)]);
+        _->fmt("Adjusted speaker threshold ~.3f · cross-sentence minimum ~.3f",
+            [float(T),float(maps:get(cross_sentence_min,C))])
+    end;
 score(#{consistency:=#{candidate_score:=undefined}})-> <<"First sample establishes the speaker reference">>;
 score(#{consistency:=#{candidate_score:=C,threshold:=T,profile_min_score:=Min}})
     when is_number(C),is_number(T),is_number(Min)->

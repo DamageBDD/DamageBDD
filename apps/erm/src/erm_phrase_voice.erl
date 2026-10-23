@@ -12,7 +12,8 @@
     busy = false, inflight = undefined, received = false, last_id = 0,
     paused = false, observe = true, enrol = undefined, last = undefined,
     error = undefined, timer = undefined, retry = undefined, poll = undefined,
-    next_arm = 0, lab = undefined}).
+    next_arm = 0, lab = undefined, calibration = undefined,
+    speaker_meta = undefined}).
 
 start_link(Options) -> gen_server:start_link({local, ?MODULE}, ?MODULE, Options, []).
 status() -> gen_server:call(?MODULE, status, 2000).
@@ -40,11 +41,14 @@ init(Options) ->
             [erm_native_voice, whisper_trigger_srv]),
         Hash = erm_phrase_codec:model_hash(maps:get(speaker_model, O)),
         Store=erm_voice_profiles:open(O,Hash),
-        #{profile:=Profile,binding:=Binding,path:=Path,samples:=Samples,wake:=Wake}=erm_voice_profiles:resolve(Store),
+        #{profile:=Profile,speaker_meta:=Meta,binding:=Binding,path:=Path,
+            samples:=Samples,wake:=Wake}=erm_voice_profiles:resolve(Store),
         Speaker=case Profile of undefined->[];_->maps:get(embedding,Profile) end,
         O1=O#{profile_store=>Store,profile_file=>Path,wake=>Wake},
+        log_speaker_profile(loaded,Meta,length(Samples)),
         self() ! connect,
-        {ok, #st{opts = O1, speaker = Speaker, binding = Binding, samples = Samples,
+        {ok, #st{opts = O1, speaker = Speaker, speaker_meta = Meta,
+            calibration = calibration(Profile), binding = Binding, samples = Samples,
             observe = maps:get(observe_only, O1), paused = Speaker=:=[], next_arm = now_ms(),
             poll = erlang:send_after(100, self(), poll)}}
     catch C:R -> {stop, {phrase_voice_startup, C, R}} end.
@@ -66,9 +70,14 @@ handle_call(status, _, S) ->
         paused => S#st.paused, echo_guard_remaining_ms => max(0, S#st.next_arm-now_ms()),
         suppressed => suppressed(), observe_only => S#st.observe,
         enrolment => Enrol, templates => counts(S#st.samples), revision => S#st.revision,
+        speaker_profile_id => speaker_meta(id, S#st.speaker_meta),
+        speaker_profile_file => speaker_meta(path, S#st.speaker_meta),
+        speaker_profile_fingerprint => speaker_meta(fingerprint, S#st.speaker_meta),
+        speaker_profile_disk => speaker_profile_disk_state(S),
         last => S#st.last, error => S#st.error,
         thresholds => maps:with([max_distance, min_margin, speaker_threshold,
-            min_speaker_ms, min_rms_dbfs, max_clipped_fraction], S#st.opts)}, S};
+            min_speaker_ms, min_rms_dbfs, max_clipped_fraction, configured_speaker_threshold], speaker_options(S)),
+        voice_calibration => S#st.calibration}, S};
 handle_call({enrol, A, N}, _, S = #st{phase = ready, enrol = undefined, paused = false, lab = undefined})
     when is_integer(N), N >= 3, N =< 5 ->
     case lists:member(A, erm_phrase_codec:actions()) andalso not suppressed() of
@@ -240,10 +249,12 @@ packet(<<"Q", Size:32, Tail/binary>>, S = #st{busy = true, received = false,
         andalso S#st.phase =:= ready andalso maps:get(waiting, L) andalso not suppressed() of
         true ->
             Check = verification_check(U, S),
+            log_speaker_verification(U, Check, lab, S),
             maps:get(owner, L) ! {erm_phrase_lab, maps:get(ref, L),
                 {sample, U#{synthesis => Model, verification => verification_result(Check),
                             check => Check}}},
-            Next#st{lab = L#{waiting => false}, last = #{outcome => lab_only, check => Check}};
+            Next#st{lab = L#{waiting => false}, last = #{outcome => lab_only,
+                check => Check, speaker_profile_fingerprint => speaker_meta(fingerprint, S#st.speaker_meta)}};
         false -> Next#st{last = {rejected, stale_lab_capture}}
     end;
 packet(<<"Q", _/binary>>, S = #st{busy = true, received = false}) ->
@@ -285,19 +296,20 @@ ready(S = #st{config_ack = true, profile_ack = true}) ->
 ready(S) -> S.
 
 accept(U, S) ->
-    case verified(U, S) of
+    Check = verification_check(U, S),
+    log_speaker_verification(U, Check, command, S),
+    case verification_result(Check) of
         {ok, SpeakerScore} ->
             #{result := Result, quality := Quality} = U,
             Measurement = Result#{speaker_score => SpeakerScore, quality => Quality,
-                audio_ms => maps:get(ms, U)},
+                audio_ms => maps:get(ms, U),
+                speaker_profile_fingerprint => speaker_meta(fingerprint, S#st.speaker_meta)},
             case S#st.enrol of
                 undefined -> recognize(Result, S#st{last = Measurement});
                 _ -> enrol_sample(maps:get(sample, U), S#st{last = Measurement})
             end;
         {error, Reason} -> S#st{last = {rejected, Reason}}
     end.
-
-verified(U, S) -> verification_result(verification_check(U, S)).
 
 verification_result(#{accepted := true, speaker_score := Score}) -> {ok, Score};
 verification_result(#{reason := speaker_below_threshold, speaker_score := Score}) ->
@@ -307,13 +319,22 @@ verification_result(#{reason := Reason}) -> {error, Reason}.
 %% Numeric diagnostics only: never copy embeddings, features or synthesis data
 %% into status, logs or UI events. The acceptance gates and order are unchanged.
 verification_check(#{embedding := V, ms := Ms, quality := Q,
-                     sample := #{frames := Frames}}, S) ->
-    O = S#st.opts,
+                     sample := #{frames := Frames}} = U, S) ->
+    O = speaker_options(S),
     Check = #{accepted => false, audio_ms => Ms, frames => Frames,
         quality => maps:with([rms_dbfs, peak_dbfs, clipped_fraction, input_gain_db], Q),
         thresholds => maps:with([min_speaker_ms, min_rms_dbfs,
                                 max_clipped_fraction, speaker_threshold], O),
         embedding_dimension => length(V), expected_embedding_dimension => maps:get(embedding_dimension,O,length(S#st.speaker))},
+    case speaker_profile_disk_state(S) of
+        current -> verification_check_current(U, S, O, Check);
+        not_enrolled -> verification_check_current(U, S, O, Check);
+        changed_restart_required -> Check#{reason => speaker_profile_changed_restart_required};
+        {unavailable, _} -> Check#{reason => speaker_profile_unavailable}
+    end.
+
+verification_check_current(#{embedding := V, ms := Ms, quality := Q,
+                     sample := #{frames := Frames}}, S, O, Check) ->
     Checks = [{not_enrolled,S#st.speaker=/=[]},{audio_too_short, Ms >= maps:get(min_speaker_ms, O)},
         {no_phrase_features, Frames > 0},
         {audio_too_quiet, maps:get(rms_dbfs, Q) >= maps:get(min_rms_dbfs, O)},
@@ -333,6 +354,41 @@ verification_check(#{embedding := V, ms := Ms, quality := Q,
                 {error, _} -> Check#{reason => invalid_embedding}
             end
     end.
+
+speaker_meta(_Key, undefined) -> undefined;
+speaker_meta(Key, Meta) -> maps:get(Key, Meta).
+
+speaker_profile_disk_state(#st{speaker_meta = undefined}) -> not_enrolled;
+speaker_profile_disk_state(#st{speaker_meta = #{path := Path, fingerprint := Expected}}) ->
+    case erm_phrase_codec:speaker_file_fingerprint(Path) of
+        {ok, Expected} -> current;
+        {ok, _} -> changed_restart_required;
+        {error, Reason} -> {unavailable, Reason}
+    end.
+
+%% The selected speaker reference may be a named voice in /voices/*.speaker,
+%% not the legacy owner.profile. Never log or expose the embedding bytes.
+log_speaker_profile(Event, undefined, _Templates) ->
+    logger:notice("erm_voice_profile event=~p backend=phrases status=not_enrolled", [Event]);
+log_speaker_profile(Event, #{id := Id, path := Path, fingerprint := Fingerprint}, Templates) ->
+    logger:notice(
+        "erm_voice_profile event=~p backend=phrases fingerprint=~ts " ++
+        "voice_id=~ts path=~ts templates=~p",
+        [Event, Fingerprint, Id, Path, Templates]).
+
+log_speaker_verification(U, Check, Mode, S) ->
+    Meta = S#st.speaker_meta,
+    logger:notice(
+        "erm_voice_profile event=verification backend=phrases mode=~p " ++
+        "fingerprint=~ts voice_id=~ts capture_id=~p score=~p threshold=~p " ++
+        "outcome=~p reason=~p",
+        [Mode, log_value(speaker_meta(fingerprint, Meta)), log_value(speaker_meta(id, Meta)),
+            maps:get(id, U, undefined), maps:get(speaker_score, Check, undefined),
+            maps:get(speaker_threshold, speaker_options(S)),
+            case maps:get(accepted, Check, false) of true -> pass; false -> reject end,
+            maps:get(reason, Check, undefined)]).
+log_value(undefined) -> <<"none">>;
+log_value(Value) -> Value.
 
 recognize(#{reason := matched, action := A, distance := D, margin := Gap}, S) ->
     O = S#st.opts,
@@ -472,12 +528,17 @@ lab_snapshot(S) ->
     #{profiles=>erm_voice_profiles:public(Store),
       legacy_binding=>maps:get(legacy_binding,maps:get(state,Store)),
       enrolled=>S#st.speaker=/=[],speaker_dimension=>maps:get(embedding_dimension,S#st.opts,0),
+      speaker_profile_id=>speaker_meta(id,S#st.speaker_meta),
+      speaker_profile_file=>speaker_meta(path,S#st.speaker_meta),
+      speaker_profile_fingerprint=>speaker_meta(fingerprint,S#st.speaker_meta),
+      speaker_profile_disk=>speaker_profile_disk_state(S),
       binding => S#st.binding, samples => S#st.samples, revision => S#st.revision,
       profile_file => maps:get(profile_file, S#st.opts),
       wake => maps:get(wake, S#st.opts),
       capture_context => capture_context(S#st.opts),
       thresholds => maps:with([min_speaker_ms, min_rms_dbfs, max_clipped_fraction,
-                              speaker_threshold, enrolment_threshold, max_segment_ms], S#st.opts),
+                              speaker_threshold, configured_speaker_threshold, enrolment_threshold, max_segment_ms], speaker_options(S)),
+      voice_calibration => S#st.calibration,
       max_distance => maps:get(max_distance, S#st.opts), min_margin => maps:get(min_margin, S#st.opts)}.
 capture_context(O)->
     (maps:with([input_gain_db,vad_threshold,silence_ms,min_speech_ms,max_segment_ms],O))#{
@@ -496,6 +557,10 @@ profile_request(Request,S)->
             {select,Id}->erm_voice_profiles:select(Store,Id);
             {delete,Id}->erm_voice_profiles:remove(Store,Id);
             {wake,Text}->erm_voice_profiles:wake(Store,Text);
+            {enrol_repeated,Label,Payload}->
+                {ok,Mean,Calibration}=erm_voice_calibration:profile(Payload,
+                    maps:get(speaker_threshold,S#st.opts),maps:get(embedding_dimension,S#st.opts)),
+                erm_voice_profiles:enrol(Store,Label,Mean,Calibration);
             {enrol,Label,Vs} when is_list(Vs),length(Vs)>=3,length(Vs)=<10->
                 Dim=maps:get(embedding_dimension,S#st.opts),
                 true=lists:all(fun(V)->is_list(V) andalso length(V)=:=Dim end,Vs),
@@ -512,21 +577,36 @@ profile_request(Request,S)->
             #{embedding:=Embedding}->true=length(Embedding)=:=maps:get(embedding_dimension,S#st.opts)
         end,
         ok=erm_voice_profiles:commit(NextStore),
+        case Request of
+            {enrol, _, _} -> log_speaker_profile(saved,maps:get(speaker_meta,Resolved),length(maps:get(samples,Resolved)));
+            {enrol_repeated, _, _} -> log_speaker_profile(saved,maps:get(speaker_meta,Resolved),length(maps:get(samples,Resolved)));
+            {select, _} -> log_speaker_profile(selected,maps:get(speaker_meta,Resolved),length(maps:get(samples,Resolved)));
+            _ -> ok
+        end,
         Cleanup=case Request of {delete,Deleted}->erm_voice_profiles:delete_file(Store,Deleted);_->ok end,
         case apply_profile(NextStore,Resolved,S) of
             {reply,{ok,Snapshot},Next}->{reply,{ok,Snapshot#{profile_cleanup=>Cleanup}},Next};
             Reply->Reply
         end
     catch C:R->{reply,{error,{profile_selection,C,R}},S} end.
-apply_profile(Store,#{profile:=P,binding:=B,path:=Path,samples:=Samples,wake:=Wake},S)->
+apply_profile(Store,#{profile:=P,speaker_meta:=Meta,binding:=B,path:=Path,samples:=Samples,wake:=Wake},S)->
     Next=close_gate(S),
     Speaker=case P of undefined->[];_->maps:get(embedding,P) end,
     Updated=Next#st{opts=(S#st.opts)#{profile_store=>Store,profile_file=>Path,wake=>Wake},
-        speaker=Speaker,binding=B,samples=Samples,revision=S#st.revision+1,
+        speaker=Speaker,speaker_meta=Meta,calibration=calibration(P),binding=B,
+        samples=Samples,revision=S#st.revision+1,
         phase=configuring,config_ack=true,profile_ack=false,paused=true,observe=true},
     try send_profile(Updated),
+        log_speaker_profile(loaded,Meta,length(Samples)),
         {reply,{ok,lab_snapshot(Updated)},arm_timer(10000,Updated)}
     catch C:R->{reply,{error,{profile_reload,C,R}},failed({profile_reload,C,R},Updated)} end.
+
+calibration(undefined)->undefined;
+calibration(P)->maps:get(voice_calibration,P,undefined).
+speaker_options(S)->
+    O=S#st.opts,Configured=maps:get(speaker_threshold,O),
+    O#{speaker_threshold=>erm_voice_calibration:threshold(S#st.calibration,Configured),
+       configured_speaker_threshold=>Configured}.
 
 release_lab(S = #st{lab = L}) when is_map(L) ->
     erlang:demonitor(maps:get(monitor, L), [flush]),

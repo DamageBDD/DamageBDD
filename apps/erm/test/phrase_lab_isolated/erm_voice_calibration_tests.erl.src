@@ -1,0 +1,89 @@
+-module(erm_voice_calibration_tests).
+-include_lib("eunit/include/eunit.hrl").
+
+fp(I)->crypto:hash(sha256,integer_to_binary(I)).
+add(V,I,C)->erm_voice_calibration:add(V,fp(I),C,0.7).
+training()->
+    lists:foldl(fun({V,I},C)->{Next,_}=add(V,I,C),Next end,erm_voice_calibration:new(5),
+        [{[1.0,0.0,0.0],I}||I<-[1,2,3]]++[{[0.6,0.8,0.0],I}||I<-[4,5,6]]).
+held(Score)->[Score*2/math:sqrt(5),Score/math:sqrt(5),math:sqrt(1-Score*Score)].
+finish(C)->{A,_}=add(held(0.60),7,C),{B,_}=add(held(0.62),8,A),B.
+
+repeated_prompt_and_pending_identity_test()->
+    C=erm_voice_calibration:new(5),P=erm_voice_calibration:progress(C),
+    ?assertMatch(#{target:=8,sentence:=1,repeat_index:=1,repeat_target:=3},P),
+    {A,Check}=add([1.0,0.0,0.0],1,C),
+    ?assertMatch(#{consistency:=#{threshold:=undefined,stage:=repeats}},Check),
+    ?assertNot(maps:is_key(candidate_score,maps:get(consistency,Check))),
+    ?assertEqual(maps:get(prompt,P),maps:get(prompt,erm_voice_calibration:progress(A))),
+    {B,_}=add([1.0,0.0,0.0],2,A),{D,_}=add([1.0,0.0,0.0],3,B),
+    ?assertMatch(#{sentence:=2,repeat_index:=1},erm_voice_calibration:progress(D)).
+
+adjust_and_validate_different_sentence_test()->
+    C=training(),#{calibration:=Fit,stage:=validation}=erm_voice_calibration:progress(C),
+    ?assert(abs(maps:get(threshold,Fit)-0.56)<0.00001),
+    Done=finish(C),?assertMatch(#{stage:=ready,collected:=8},erm_voice_calibration:progress(Done)),
+    {ok,Mean,Calibration}=erm_voice_calibration:profile(erm_voice_calibration:payload(Done),0.7,3),
+    ?assertEqual(ok,erm_voice_calibration:validate(Calibration)),
+    %% Validation voices have a third coordinate, absent from the trained mean.
+    ?assert(abs(lists:nth(3,Mean))<0.00001),
+    ?assertMatch(#{training_count:=6,validation_count:=2,negative_samples:=0},Calibration),
+    ?assert(erm_native_voice:score(held(0.60),Mean)>=erm_voice_calibration:threshold(Calibration,0.7)),
+    ?assert(erm_native_voice:score([-1.0,0.0,0.0],Mean)<erm_voice_calibration:threshold(Calibration,0.7)).
+
+validation_cannot_lower_limit_or_train_reference_test()->
+    C=training(),Fit=maps:get(calibration,erm_voice_calibration:progress(C)),
+    {Failed,Check}=add(held(0.40),7,C),
+    ?assertMatch(#{accepted:=false,reason:=validation_speaker_mismatch},Check),
+    ?assertEqual(Fit,maps:get(calibration,erm_voice_calibration:progress(Failed))),
+    ?assertEqual(erm_voice_calibration:payload(C),erm_voice_calibration:payload(Failed)),
+    ?assertMatch({error,_},erm_voice_calibration:profile(erm_voice_calibration:payload(Failed),0.7,3)).
+
+bad_first_take_replaced_by_majority_test()->
+    {A,_}=add([-1.0,0.0],1,erm_voice_calibration:new(5)),
+    B=lists:foldl(fun(I,C)->{Next,_}=add([1.0,0.0],I,C),Next end,A,[2,3,4,5,6]),
+    ?assertMatch(#{collected:=5,discarded:=1,sentence:=1,repeat_index:=3},erm_voice_calibration:progress(B)),
+    {D,_}=add([1.0,0.0],7,B),{E,_}=add([1.0,0.0],8,D),{F,_}=add([1.0,0.0],9,E),
+    ?assertMatch({ok,[1.0,0.0],_},erm_voice_calibration:profile(erm_voice_calibration:payload(F),0.7,2)).
+
+mixed_speakers_reset_batch_test()->
+    C=lists:foldl(fun({V,I},S)->{Next,_}=add(V,I,S),Next end,erm_voice_calibration:new(5),
+        [{[1.0,0.0],I}||I<-[1,2,3]]++[{[0.0,1.0],I}||I<-[4,5,6]]),
+    ?assertMatch(#{collected:=0,discarded:=6,stage:=repeats},erm_voice_calibration:progress(C)).
+
+duplicate_and_attempt_limit_test()->
+    {A,_}=add([1.0,0.0],1,erm_voice_calibration:new(5)),
+    {A,Check}=add([1.0,0.0],1,A),?assertMatch(#{reason:=duplicate_sample,accepted:=false},Check),
+    Full=A#{seen=>[fp(I)||I<-lists:seq(1,64)]},
+    {Full,Limit}=add([1.0,0.0],65,Full),?assertMatch(#{reason:=enrolment_attempt_limit},Limit).
+
+backend_recomputes_and_bounds_metadata_test()->
+    P=erm_voice_calibration:payload(finish(training())),
+    ?assertMatch({error,_},erm_voice_calibration:profile(P#{threshold=>0.01},0.7,3)),
+    [First|Rest]=maps:get(training,P),
+    Duplicate=P#{validation=>[First#{group=>3},First#{group=>3}]},
+    ?assertMatch({error,_},erm_voice_calibration:profile(Duplicate,0.7,3)),
+    ?assertMatch({error,_},erm_voice_calibration:profile(P#{training=>[First#{embedding=>[0.0,0.0,0.0]}|Rest]},0.7,3)),
+    {ok,_,C}=erm_voice_calibration:profile(P,0.7,3),
+    ?assertEqual(0.7,erm_voice_calibration:threshold(undefined,0.7)),
+    ?assertEqual(0.7,erm_voice_calibration:threshold(C#{threshold=>0.01},0.7)),
+    ?assertEqual(0.7,erm_voice_calibration:threshold(C,0.9)),
+    ?assertMatch({error,_},erm_voice_calibration:validate(C#{extra=>true})).
+
+persist_and_apply_in_native_measurement_test()->
+    {ok,Mean,C}=erm_voice_calibration:profile(erm_voice_calibration:payload(finish(training())),0.7,3),
+    Hash=crypto:hash(sha256,<<"model">>),
+    P=#{version=>1,label=><<"Repeated voice">>,model_hash=>Hash,embedding=>Mean,voice_calibration=>C},
+    O=#{speaker_threshold=>0.7,min_speaker_ms=>1200,trigger_phrases=>["bob"]},
+    U=#{id=>1,ms=>1500,embedding=>held(0.60),text=><<"bob stop music">>},
+    ?assertMatch(#{accepted:=true,threshold:=T} when T<0.7,erm_voice_acoustics:measurement(U,3,P,O)),
+    ?assertMatch(#{accepted:=false},erm_voice_acoustics:measurement(U,3,maps:remove(voice_calibration,P),O)),
+    Dir=filename:join(os:getenv("PHRASE_TEST_TMP"),"calibration-profile"),
+    ok=file:make_dir(Dir),ok=file:change_mode(Dir,8#700),File=filename:join(Dir,"voice.speaker"),
+    ok=erm_phrase_codec:atomic_write(File,term_to_binary(P)),
+    ?assertMatch({ok,#{voice_calibration:=C}},erm_phrase_codec:load_speaker(File,Hash)),
+    %% A new VM loads the persisted atom vocabulary before safe ETF decoding.
+    Args=["+S","2","-noshell","-pa",filename:dirname(code:which(?MODULE)),"-eval",
+        lists:flatten(io_lib:format("case erm_phrase_codec:load_speaker(~p,~p) of {ok,#{voice_calibration:=_}}->halt(0);_->halt(1) end.",[File,Hash]))],
+    Port=open_port({spawn_executable,filename:join([code:root_dir(),"bin","erl"])},[exit_status,{args,Args}]),
+    receive {Port,{exit_status,0}}->ok;{Port,{exit_status,N}}->error({fresh_vm,N}) after 10000->error(fresh_vm_timeout) end.

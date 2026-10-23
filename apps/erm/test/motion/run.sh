@@ -12,7 +12,7 @@ erlc -Werror -pa "$MOTION_TEST_TMP" -o "$MOTION_TEST_TMP" \
     apps/erm/src/gtknode4_port.erl apps/erm/src/gtknode4_sup.erl \
     apps/erm/src/erm_display.erl apps/erm/src/erm_log.erl apps/erm/src/erm_otp_compat.erl \
     apps/erm/src/erm_voice_events.erl apps/erm/src/erm_voice_widget.erl \
-    apps/erm/src/erm_voice_training.erl apps/erm/src/erm_voice_profiles.erl apps/erm/src/erm_phrase_codec.erl \
+    apps/erm/src/erm_voice_training.erl apps/erm/src/erm_voice_calibration.erl apps/erm/src/erm_voice_profiles.erl apps/erm/src/erm_phrase_codec.erl \
     apps/ecai/src/ecai_voice_ui.erl apps/erm/test/gtkgs_motion_tests.erl
 if [ "${MOTION_USE_DISPLAY:-0}" = 1 ]; then
     set -- env

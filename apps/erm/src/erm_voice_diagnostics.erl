@@ -32,7 +32,14 @@ describe(U,C)->
     SpeakerState=speaker_state(Check),
     SpeakerText=speaker_text(Check,Kind),
     {PhraseState,PhraseText}=phrase_stage(Kind,Result),
-    {StoreState,StoreText}=store_stage(Outcome),
+    {StoreState,DefaultStoreText}=store_stage(Outcome),
+    StoreText=case Reason of
+        enrolment_batch_inconsistent-> <<"No clear majority; the training batch was reset.">>;
+        enrolment_outlier_removed-> <<"Outliers removed; repeat the sentence needing a replacement.">>;
+        repeat_collected-> <<"Collected provisionally; batch consistency is pending.">>;
+        validation_speaker_mismatch-> <<"Validation failed; reference and threshold remain frozen.">>;
+        _->DefaultStoreText
+    end,
     Stages=[stage(audio,<<"Audio quality">>,AudioState,AudioText),
         stage(features,<<"Analysis">>,FeatureState,
             fmt("~B MFCC frames · embedding ~B / ~B dimensions",[Frames,Dim,ExpectedDim])),
@@ -54,7 +61,7 @@ describe(U,C)->
     end,
     #{id=>maps:get(id,C,maps:get(id,U,undefined)),kind=>Kind,outcome=>Outcome,
         stages=>Stages,scores=>Scores,references=>References,
-        reference_note=><<"Pairwise comparisons only. Acceptance uses the preceding mean and proposed profile minimum.">>,
+        reference_note=><<"Repeated enrolment fits a batch, then validates a different sentence against the frozen profile.">>,
         envelope=>envelope(maps:get(synthesis,U,<<>>)),
         envelope_note=><<"Captured-segment RMS envelope, 25 ms windows. Not the raw waveform.">>,
         mfcc=>feature_preview(Sample),duration_ms=>Ms,feature_frames=>Frames,
@@ -67,6 +74,8 @@ checks(Tests)->
         false->case lists:all(fun({A,B,minimum})->A>=B;({A,B,maximum})->A=<B end,Tests) of
             true->pass;false->fail end
     end.
+speaker_state(#{consistency:=#{method:=repeated_sentences},accepted:=false})->fail;
+speaker_state(#{consistency:=#{method:=repeated_sentences,threshold:=undefined}})->pending;
 speaker_state(#{consistency:=#{failed_check:=_}})->fail;
 speaker_state(#{consistency:=_})->pass;
 speaker_state(#{speaker_score:=V,thresholds:=#{speaker_threshold:=T}}) when is_number(V),is_number(T)->
@@ -74,6 +83,13 @@ speaker_state(#{speaker_score:=V,thresholds:=#{speaker_threshold:=T}}) when is_n
     %% comparison. The backend supplies a score only after its prerequisites.
     case V>=T of true->pass;false->fail end;
 speaker_state(_)->na.
+speaker_text(#{consistency:=#{method:=repeated_sentences,threshold:=undefined}},_)->
+    <<"Collecting repeated takes; batch consistency is pending.">>;
+speaker_text(#{consistency:=#{method:=repeated_sentences,threshold:=T}}=Check,_)->
+    case maps:get(speaker_score,Check,undefined) of
+        V when is_number(V)->fmt("Held-out sentence cosine ~.3f; frozen limit ~.3f",[float(V),float(T)]);
+        _->fmt("Repeated sentences fitted; adjusted limit ~.3f",[float(T)])
+    end;
 speaker_text(#{consistency:=#{candidate_score:=undefined}},_)->
     <<"First reference sample; no prior identity comparison.">>;
 speaker_text(#{consistency:=#{candidate_score:=V,threshold:=T}=D},_)->
@@ -101,6 +117,10 @@ store_stage(human_sample_rejected)->{fail,<<"Human take rejected; no training sa
 store_stage(voice_verified)->{na,<<"Verification only; this take was not saved.">>};
 store_stage(_)->{pending,<<"Capture outcome is pending.">>}.
 
+speaker_scores(#{consistency:=#{method:=repeated_sentences}=D}=Check,_)->
+    T=maps:get(threshold,D,undefined),
+    bar(<<"Cross-sentence minimum">>,maps:get(cross_sentence_min,D,undefined),-1,1,T,minimum)++
+    bar(<<"Held-out sentence">>,maps:get(speaker_score,Check,undefined),-1,1,T,minimum);
 speaker_scores(#{consistency:=D},_)->
     T=maps:get(threshold,D,undefined),
     bar(<<"Candidate / preceding mean">>,maps:get(candidate_score,D,undefined),-1,1,T,minimum)++

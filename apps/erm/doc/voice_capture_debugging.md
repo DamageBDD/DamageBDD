@@ -2,7 +2,8 @@
 
 This increment applies after `erm-voice-enrolment-recovery.patch`. It adds a
 native GTK capture inspector, a bounded event trace and automatic reconstruction
-playback. It does not change speaker thresholds or phrase-matching decisions.
+playback. The current repeated-enrolment policy is described in
+[Repeated voice enrolment](voice_repeated_enrolment.md).
 
 ## What to do
 
@@ -13,7 +14,8 @@ playback. It does not change speaker thresholds or phrase-matching decisions.
    **Speak now**, read the prompt naturally, then pause.
 3. Inspect **Matching & playback**. Each completed human take, including rejected
    takes, updates its measured stages and plays its reconstruction when autoplay
-   is on. A rejected fifth sample does not replace the four accepted samples.
+   is on. Training takes remain provisional until the repeated batch is fitted; clear
+   outliers may be removed and replaced before validation.
 4. Use **Replay last sample** to listen again or **Stop playback** to interrupt.
    Wait for the post-playback echo guard before recording the next take.
 5. Select and copy the read-only **Event trace** when reporting a failure.
@@ -31,8 +33,8 @@ draft from a rejected take.
 - **Audio quality:** captured segment duration, RMS level and clipped fraction.
 - **Analysis:** MFCC frame count and speaker embedding dimensions.
 - **Voice consistency / speaker identity:** the actual comparison gate. During
-  enrolment this is the new take versus the preceding accepted-sample mean,
-  followed by the proposed profile's minimum similarity when calculated. During
+  enrolment this is pending during collection, followed by the measured
+  cross-sentence minimum and frozen validation threshold. During
   verification it is the saved-profile cosine score. These are not probabilities.
 - **Phrase content:** separately reports the command match. It is not applicable
   to speaker enrolment. A content match does not override failed identity checks.
@@ -43,8 +45,8 @@ draft from a rejected take.
 Score bars show the exact numeric values and a gold threshold marker. Green
 and red indicate the existing comparison's pass/fail result. Pairwise reference
 bars are neutral: they compare the candidate with individual accepted takes,
-but they are not additional acceptance gates. This can reveal one unusually
-dissimilar reference without silently deleting or modifying it.
+when available. Repeated enrolment instead reports batch and held-out-sentence
+measurements; the first take is not presented as a successful identity match.
 
 The RMS envelope is measured from the same captured VAD segment's reconstruction
 analysis. Its vertical scale follows that take's peak RMS; the numeric quality

@@ -17,6 +17,14 @@ check()->#{accepted=>false,reason=>enrolment_inconsistent,
 context()->#{kind=>voice_enrol,id=>12,outcome=>voice_sample_rejected,check=>check(),
     snapshot=>#{max_distance=>0.35,min_margin=>0.08,capture_context=>#{device=><<"default">>,
         speaker_model=><<"speaker.onnx">>,private_file=>"never expose"}}}.
+repeated_collection_is_pending_test()->
+    C=(check())#{accepted=>true,reason=>repeat_collected,
+        consistency=>#{method=>repeated_sentences,threshold=>undefined}},
+    D=erm_voice_diagnostics:capture(input(),(context())#{check=>C,outcome=>voice_sample_accepted}),
+    [_,_,Speaker|_]=maps:get(stages,D),
+    ?assertEqual(pending,maps:get(status,Speaker)),
+    ?assertMatch({_,_},binary:match(maps:get(value,Speaker),<<"batch consistency is pending">>)),
+    ?assertEqual([],maps:get(references,D)).
 reported_rejection_test()->
     D=erm_voice_diagnostics:capture(input(),context()),
     [Audio,Features,Speaker,Phrase,Store]=maps:get(stages,D),

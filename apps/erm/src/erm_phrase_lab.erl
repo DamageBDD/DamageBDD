@@ -85,7 +85,7 @@ handle_call(cancel,_,S)->{reply,ok,cancel_work(S)};
 handle_call({cancel,Id},_,S=#st{voice_draft=#{id:=Id}})->{reply,ok,cancel_work(S)};
 handle_call({cancel,Id},_,S=#st{active=#{id:=Id}})->{reply,ok,cancel_work(S)};
 handle_call({cancel,_},_,S)->{reply,{error,stale_capture},S};
-handle_call({restart_voice,Id},_,S0=#st{voice_draft=#{id:=Id,label:=Label,target:=N}})->
+handle_call({restart_voice,Id},_,S0=#st{voice_draft=#{id:=Id,label:=Label,calibration_state:=#{repeats:=R}}})->
     S=clear_debug_audio(stop_debug_playback(restarted,S0)),
     %% Close the owned capture before replacing its reference samples. The
     %% backend advances its epoch, so late native results cannot enter the
@@ -94,7 +94,7 @@ handle_call({restart_voice,Id},_,S0=#st{voice_draft=#{id:=Id,label:=Label,target
         ok->
             flush_capture_messages(S#st.ref),
             cancel_voice_timer(S),
-            Draft=voice_draft(Label,N),
+            Draft=voice_draft(Label,2*R),
             {reply,{ok,#{enrolment_id=>maps:get(id,Draft)}},
                 trace(enrolment_restarted,#{id=>maps:get(id,Draft)},
                     S#st{voice_draft=Draft,phase=idle,active=undefined,last=voice_enrolment_restarted})};
@@ -125,8 +125,8 @@ idle_call({enrol_voice,Text,N},S=#st{voice_draft=undefined})->
     {reply,{ok,#{enrolment_id=>maps:get(id,Draft)}},S#st{voice_draft=Draft,last=voice_enrolment_started}};
 idle_call(record_voice,S=#st{voice_draft=#{collected:=N,target:=Target}=D}) when N<Target->
     begin_capture(#{kind=>voice_enrol,expected=>speaker,say=>maps:get(prompt,D)},S);
-idle_call(save_voice,S=#st{voice_draft=#{collected:=N,target:=N,label:=Label,vectors:=Vs}})->
-    profile_change({enrol,Label,Vs},S);
+idle_call(save_voice,S=#st{voice_draft=#{collected:=N,target:=N,label:=Label,calibration_state:=C}})->
+    profile_change({enrol_repeated,Label,erm_voice_calibration:payload(C)},S);
 idle_call(_,S=#st{voice_draft=D}) when D=/=undefined->
     {reply,{error,finish_or_cancel_voice_enrolment},S};
 idle_call({select_voice,Id},S)->profile_change({select,Id},S);
@@ -390,7 +390,9 @@ capture_status(S)->
     C=capture_status(),
     case S#st.playback_job of undefined->C;_->C#{ready=>false,playback_active=>true} end.
 capture_status()->
-    try maps:with([ready,processing,suppressed,echo_guard_remaining_ms],erm_phrase_voice:status())
+    try maps:with([ready,processing,suppressed,echo_guard_remaining_ms,
+        speaker_profile_id,speaker_profile_fingerprint,speaker_profile_disk],
+        erm_phrase_voice:status())
     catch _:_ -> #{ready=>false} end.
 safe_cancel(S)->try erm_phrase_voice:lab_cancel(S#st.ref) catch _:_ -> ok end.
 flush_capture_messages(Ref)->
@@ -431,43 +433,39 @@ corpus_options(O,Snap)->
 template_counts(Samples)->lists:foldl(fun(#{action:=A},M)->
     maps:update_with(A,fun(N)->N+1 end,1,M) end,#{},Samples).
 draft_status(undefined)->undefined;
-draft_status(D)->(maps:with([id,label,target,collected,rejected,prompt,last],D))#{
+draft_status(D)->(maps:with([id,label,target,collected,rejected,prompt,last,stage,sentence,
+    repeat_index,repeat_target,discarded,calibration],D))#{
     remaining_ms=>max(0,maps:get(deadline,D)-now_ms())}.
 voice_draft(Label,N)->
-    Id=erlang:unique_integer([positive,monotonic]),
-    #{id=>Id,label=>Label,target=>N,collected=>0,rejected=>0,vectors=>[],fingerprints=>[],
-      prompt=>voice_prompt(0),last=>undefined,
-      deadline=>now_ms()+180000,timer=>erlang:send_after(180000,self(),{voice_enrol_expired,Id})}.
+    Id=erlang:unique_integer([positive,monotonic]),C=erm_voice_calibration:new(N),
+    maps:merge(#{id=>Id,label=>Label,rejected=>0,calibration_state=>C,last=>undefined,
+      deadline=>now_ms()+180000,timer=>erlang:send_after(180000,self(),{voice_enrol_expired,Id})},
+      erm_voice_calibration:progress(C)).
 touch_draft(S=#st{voice_draft=#{id:=Id}=D})->
     cancel_voice_timer(S),
     S#st{voice_draft=D#{deadline=>now_ms()+180000,
         timer=>erlang:send_after(180000,self(),{voice_enrol_expired,Id})}};
 touch_draft(S)->S.
-voice_prompt(N)->lists:nth((N rem 5)+1,[
-    <<"I am speaking naturally at my usual volume.">>,
-    <<"Please play some music while I work today.">>,
-    <<"The microphone can hear me clearly from here.">>,
-    <<"I can pause the music and choose another track.">>,
-    <<"This is my voice at a comfortable speaking pace.">>]).
 voice_sample(U,S=#st{voice_draft=D})->
-    #{vectors:=Vs,fingerprints:=Fs,collected:=N,target:=Target}=D,
-    FP=erm_phrase_codec:fingerprint(maps:get(sample,U)),
-    Result=case lists:member(FP,Fs) of
-        true->{reject,(maps:remove(speaker_score,maps:get(check,U)))#{accepted=>false,reason=>duplicate_sample}};
-        false->erm_voice_profiles:enrol_check(U,Vs,maps:get(thresholds,S#st.snapshot),
-            maps:get(speaker_dimension,S#st.snapshot))
+    C=maps:get(calibration_state,D),Limits=maps:get(thresholds,S#st.snapshot),
+    {State,Check}=case erm_voice_profiles:sample_check(U,Limits,maps:get(speaker_dimension,S#st.snapshot)) of
+        {reject,Failed}->{C,Failed};
+        {accept,V,Base}->
+            FP=erm_phrase_codec:fingerprint(maps:get(sample,U)),
+            {Updated,Result}=erm_voice_calibration:add(V,FP,C,maps:get(configured_speaker_threshold,Limits,maps:get(speaker_threshold,Limits))),
+            {Updated,maps:merge(Base,Result)}
     end,
-    {Next,Check,Outcome}=case Result of
-        {accept,V,C}->{D#{vectors=>Vs++[V],fingerprints=>Fs++[FP],collected=>N+1,
-            prompt=>voice_prompt(N+1),last=>C},C,voice_sample_accepted};
-        {reject,C}->{D#{rejected=>maps:get(rejected,D)+1,last=>C},C,voice_sample_rejected}
+    Accepted=maps:get(accepted,Check),
+    Next=maps:merge(D#{calibration_state=>State,last=>Check,
+        rejected=>maps:get(rejected,D)+case Accepted of true->0;false->1 end},
+        erm_voice_calibration:progress(State)),
+    Outcome=case Accepted of true->voice_sample_accepted;false->voice_sample_rejected end,
+    Text=case maps:get(stage,Next) of
+        ready-> <<"Repeated recordings and independent validation passed. Choose Save voice.">>;
+        validation-> <<"Reference and threshold frozen. Repeat the validation sentence twice.">>;
+        _-> <<"Repeat the displayed sentence. The batch is compared after both sentences are recorded.">>
     end,
-    Text=case {Outcome,maps:get(collected,Next)} of
-        {voice_sample_accepted,Target}-> <<"Voice samples ready. Choose Save voice to activate the new profile.">>;
-        {voice_sample_accepted,_}-> <<"Voice sample accepted. Record the next prompted sentence.">>;
-        _-> <<"Voice sample rejected. Check the quality and consistency feedback, then retry.">>
-    end,
-    lab_event(case Outcome of voice_sample_accepted->idle;_->error end,Text),
+    lab_event(case Accepted of true->idle;false->error end,Text),
     S#st{phase=idle,active=undefined,voice_draft=Next,last=#{outcome=>Outcome,check=>Check}}.
 cancel_voice_timer(#st{voice_draft=#{timer:=T}})->erlang:cancel_timer(T),ok;
 cancel_voice_timer(_)->ok.
@@ -479,7 +477,7 @@ profile_change(Request,S0)->
             O=corpus_options(S#st.opts,Snap),
             case erm_phrase_lab_store:load(maps:get(corpus_file,O),maps:get(binding,Snap)) of
                 {ok,Rows}->
-                    Outcome=case Request of {enrol,_,_}->voice_enrolled;{wake,_}->wake_selected;
+                    Outcome=case Request of {enrol,_,_}->voice_enrolled;{enrol_repeated,_,_}->voice_enrolled;{wake,_}->wake_selected;
                         {delete,_}->voice_deleted;_->voice_selected end,
                     Public=maps:get(profiles,Snap),
                     lab_event(idle,<<"Voice settings updated. Training data now matches the selected voice and wake phrase.">>),
@@ -525,7 +523,7 @@ captured(U,Before,After0)->
         _->playback_failed(no_audio_available,clear_debug_audio(After))
     end.
 history_scores(#{consistency:=C})->
-    maps:with([candidate_score,threshold,profile_min_score],C);
+    maps:with([method,stage,candidate_score,threshold,profile_min_score,loo_min,cross_sentence_min,training_count],C);
 history_scores(#{speaker_score:=Score,thresholds:=#{speaker_threshold:=T}})->
     #{speaker_score=>Score,threshold=>T};
 history_scores(_)->#{}.
@@ -604,7 +602,8 @@ trace(Event,Detail,S)->
     %% corpus samples, model paths or arbitrary exception terms in this stream.
     Allowed=maps:map(fun(_,V)->trace_value(V) end,
         maps:with([id,kind,expected,outcome,reason,audio_ms,accepted,enabled,
-            speaker_score,candidate_score,threshold,profile_min_score],Detail)),
+            speaker_score,candidate_score,threshold,profile_min_score,method,stage,loo_min,
+            cross_sentence_min,training_count],Detail)),
     Text=unicode:characters_to_binary(lists:sublist(lists:flatten(io_lib:format("~0tp",[Allowed])),320)),
     Seq=S#st.trace_seq+1,
     Entry=#{seq=>Seq,ms=>max(0,now_ms()-S#st.trace_start),event=>Event,detail=>Text},

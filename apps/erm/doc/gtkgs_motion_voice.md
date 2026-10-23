@@ -1,5 +1,10 @@
 # Native motion and the ECAI voice widget
 
+Current GTK speaker enrolment uses [repeated recordings and bounded automatic
+adjustment](voice_repeated_enrolment.md). Its repeated batch and two validation
+takes supersede the sequential GTK enrolment workflow described below. The older
+standalone guided native-enrolment API remains sequential.
+
 This patch adds `gtkgs_motion`, a GTK frame-clock animation layer, and
 `erm_voice_widget`, a native window driven by the existing ERM/ECAI voice
 pipeline. Erlang sends animation targets; GTK interpolates and draws each frame.

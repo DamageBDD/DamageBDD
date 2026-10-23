@@ -4,6 +4,7 @@
 -include_lib("kernel/include/file.hrl").
 -export([actions/0, action_id/1, action/1, command/1, prompt/2, decode/1,
     encode_profile/4, read_profile/2, save_profile/3, load_speaker/2,
+    load_speaker_with_fingerprint/2, speaker_file_fingerprint/1,
     model_hash/1, fingerprint/1, validate_samples/1, private_read/2, atomic_write/2]).
 
 -define(MAX_FILE, 1048576).
@@ -141,18 +142,37 @@ save_profile(Path, Binding, Samples) when is_binary(Binding), byte_size(Binding)
     catch C:R -> {error, {phrase_profile_save, C, R}} end.
 
 %% A trusted local native-speaker profile, not ECAI's separate speaker POC file.
+%% Preserve load_speaker/2's original return value and phrase-binding format.
 load_speaker(Path, ExpectedHash) ->
+    case load_speaker_with_fingerprint(Path, ExpectedHash) of
+        {ok, Speaker, _Fingerprint} -> {ok, Speaker};
+        Error -> Error
+    end.
+
+load_speaker_with_fingerprint(Path, ExpectedHash) ->
     case private_read(Path, 65536) of
         {ok, <<131, 80, _/binary>>} -> {error, compressed_speaker_profile_not_supported};
         {ok, B} ->
             try
+                {module,erm_voice_calibration}=code:ensure_loaded(erm_voice_calibration),
                 #{version := 1, model_hash := ExpectedHash, label := Label, embedding := V} = P = binary_to_term(B, [safe]),
                 true = is_binary(Label) andalso byte_size(Label) >= 1 andalso byte_size(Label) =< 128,
                 true = is_list(V) andalso length(V) >= 1 andalso length(V) =< 4096,
                 true = lists:all(fun(X) -> is_number(X) andalso abs(X) =< 1000000 end, V),
                 {ok, Normal} = erm_native_voice:normalise(V),
-                {ok, P#{embedding => Normal}}
+                case maps:get(voice_calibration,P,undefined) of
+                    undefined->ok;Calibration->ok=erm_voice_calibration:validate(Calibration)
+                end,
+                {ok, P#{embedding => Normal}, erm_native_voice:profile_fingerprint(B)}
             catch _:_ -> {error, invalid_or_stale_native_speaker_profile} end;
+        Error -> Error
+    end.
+
+%% Secure bounded disk read, for checking that an already loaded profile
+%% has not been replaced. Never emit embedding bytes into status or logs.
+speaker_file_fingerprint(Path) ->
+    case private_read(Path, 65536) of
+        {ok, Bytes} -> {ok, erm_native_voice:profile_fingerprint(Bytes)};
         Error -> Error
     end.
 

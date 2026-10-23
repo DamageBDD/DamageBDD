@@ -22,7 +22,7 @@ erlc -Werror -pa "$widget_tmp" -o "$widget_tmp" \
     apps/erm/src/gtknode4_port.erl apps/erm/src/gtknode4_sup.erl \
     apps/erm/src/erm_display.erl apps/erm/src/erm_log.erl apps/erm/src/erm_otp_compat.erl \
     apps/erm/src/erm_voice_events.erl apps/erm/src/erm_voice_widget.erl \
-    apps/erm/src/erm_voice_training.erl apps/erm/src/erm_voice_diagnostics.erl apps/erm/src/erm_voice_profiles.erl apps/erm/src/erm_phrase_codec.erl \
+    apps/erm/src/erm_voice_training.erl apps/erm/src/erm_voice_diagnostics.erl apps/erm/src/erm_voice_calibration.erl apps/erm/src/erm_voice_profiles.erl apps/erm/src/erm_phrase_codec.erl \
     apps/erm/src/erm_phrase_voice.erl apps/erm/src/erm_phrase_lab.erl \
     apps/erm/src/erm_phrase_lab_native.erl apps/erm/src/erm_phrase_lab_store.erl \
     apps/erm/src/erm_phrase_lab_metrics.erl "$widget_tmp"/*.erl \

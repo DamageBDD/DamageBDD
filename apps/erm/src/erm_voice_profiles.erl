@@ -3,8 +3,8 @@
 %% generated IDs form filenames. UI/status never receives embeddings or paths.
 -module(erm_voice_profiles).
 -include_lib("kernel/include/file.hrl").
--export([open/2,resolve/1,public/1,select/2,wake/2,enrol/3,commit/1,remove/2,delete_file/2,
-         normalise_wake/1,label/1,check_name/2,enrol_check/4]).
+-export([open/2,resolve/1,public/1,select/2,wake/2,enrol/3,enrol/4,commit/1,remove/2,delete_file/2,
+         normalise_wake/1,label/1,check_name/2,enrol_check/4,sample_check/3]).
 open(O,Hash)->
     Base=maps:get(profile_file,O),Root=filename:join(filename:dirname(Base),"voices"),
     Manifest=Base++".voices",
@@ -58,9 +58,15 @@ select(Store=#{state:=S},Id)->
     true=maps:is_key(Id,maps:get(voices,S)),Store#{state=>S#{active=>Id}}.
 wake(Store=#{state:=S},Text)->Store#{state=>S#{wake=>normalise_wake(Text)}}.
 resolve(Store=#{state:=S})->
-    Profile=case maps:get(active,S) of
-        undefined->undefined;
-        Id->{ok,P}=erm_phrase_codec:load_speaker(speaker_path(Store,Id),maps:get(hash,Store)),P
+    %% Bind the loaded speaker and its fingerprint to the SAME validated read.
+    %% A second read here could race with a file replacement during enrolment.
+    {Profile,SpeakerMeta}=case maps:get(active,S) of
+        undefined->{undefined,undefined};
+        Id->
+            SpeakerPath=speaker_path(Store,Id),
+            {ok,P,Fingerprint}=erm_phrase_codec:load_speaker_with_fingerprint(
+                SpeakerPath,maps:get(hash,Store)),
+            {P,#{id=>Id,path=>SpeakerPath,fingerprint=>Fingerprint}}
     end,
     Wake=maps:get(wake,S),Binding=binding(Store,Profile,Wake),
     Path=case Binding=:=maps:get(legacy_binding,S) of
@@ -69,15 +75,19 @@ resolve(Store=#{state:=S})->
             filename:join([maps:get(root,Store),binary_to_list(binary:encode_hex(Binding)),"commands.eph"])
     end,
     {ok,Samples}=erm_phrase_codec:read_profile(Path,Binding),
-    #{profile=>Profile,binding=>Binding,path=>Path,samples=>Samples,wake=>Wake}.
+    #{profile=>Profile,speaker_meta=>SpeakerMeta,
+      binding=>Binding,path=>Path,samples=>Samples,wake=>Wake}.
 binding(Store,Profile,Wake)->crypto:hash(sha256,term_to_binary(
     {erm_phrase_mfcc_v1,Profile,maps:get(device,Store),Wake},[deterministic])).
 speaker_path(Store,<<"configured">>)->maps:get(configured,Store);
 speaker_path(Store,Id)->filename:join(maps:get(root,Store),binary_to_list(Id)++".speaker").
-enrol(Store=#{state:=S},Text,Mean)->
+enrol(Store,Text,Mean)->enrol(Store,Text,Mean,undefined).
+enrol(Store=#{state:=S},Text,Mean,Calibration)->
     L=check_name(Store,Text),Id=binary:encode_hex(crypto:strong_rand_bytes(12)),
     ok=ensure_root(Store),
-    P=#{version=>1,label=>L,model_hash=>maps:get(hash,Store),embedding=>Mean},
+    Base=#{version=>1,label=>L,model_hash=>maps:get(hash,Store),embedding=>Mean},
+    P=case Calibration of undefined->Base;_->
+        ok=erm_voice_calibration:validate(Calibration),Base#{voice_calibration=>Calibration} end,
     ok=erm_phrase_codec:atomic_write(speaker_path(Store,Id),term_to_binary(P)),
     Store#{state=>S#{active=>Id,voices=>(maps:get(voices,S))#{Id=>L}}}.
 commit(Store)->ok=erm_phrase_codec:atomic_write(maps:get(manifest,Store),term_to_binary(maps:get(state,Store))),ok.
@@ -113,8 +123,18 @@ delete_file(Store,Id)->
 %% accepted take must pass quality checks and be consistent with the preceding
 %% takes; all must still match the resulting mean. Raw vectors stay in memory.
 enrol_check(U,Previous,Limits,Dim)->
+    case sample_check(U,Limits,Dim) of
+        {reject,_}=Rejected->Rejected;
+        {accept,N,Base}->
+            case erm_native_voice:enrolment_check(N,Previous,maps:get(enrolment_threshold,Limits)) of
+                {accept,_,C}->{accept,N,Base#{accepted=>true,reason=>consistent_voice,consistency=>C}};
+                {reject,C}->{reject,Base#{reason=>enrolment_inconsistent,consistency=>C}}
+            end
+    end.
+
+%% Repeated enrolment collects quality-checked takes before fitting a batch.
+sample_check(U,Limits,Dim)->
     #{embedding:=V,ms:=Ms,quality:=Q,sample:=#{frames:=Frames}}=U,
-    Threshold=maps:get(enrolment_threshold,Limits),
     Base=#{accepted=>false,audio_ms=>Ms,frames=>Frames,quality=>Q,thresholds=>Limits,
         embedding_dimension=>length(V),expected_embedding_dimension=>Dim},
     Checks=[{audio_too_short,Ms>=maps:get(min_speaker_ms,Limits)},
@@ -125,9 +145,6 @@ enrol_check(U,Previous,Limits,Dim)->
         [Reason|_]->{reject,Base#{reason=>Reason}};
         []->case erm_native_voice:normalise(V) of
             {error,_}->{reject,Base#{reason=>invalid_embedding}};
-            {ok,N}->case erm_native_voice:enrolment_check(N,Previous,Threshold) of
-                {accept,_,C}->{accept,N,Base#{accepted=>true,reason=>consistent_voice,consistency=>C}};
-                {reject,C}->{reject,Base#{reason=>enrolment_inconsistent,consistency=>C}}
-            end
+            {ok,N}->{accept,N,Base#{accepted=>true,reason=>quality_passed}}
         end
     end.
