@@ -26,6 +26,7 @@
     % (Ctx, QueryMap, Limit) -> {Results, ProofHeaders}
     search/3,
     search/4,
+    text_search/4,
     source/2,
     % (Ctx, TermBin) -> #{df:=..., root:=..., tag:=...}
     info_term/2,
@@ -405,6 +406,17 @@ search(Ctx = #ctx{}, QueryMap, Limit0, Opts) when is_map(Opts) ->
     end,
 
     {Results, Proofs}.
+
+%% Knowledge/typeahead policy. Read the canonical ETS postings even when a GPU
+%% mirror is enabled: every live write and snapshot already maintains these.
+%% No records, roots, tags or cached snapshots are rewritten for a search.
+text_search(Ctx = #ctx{post_tab = Tab}, Query, Limit, Mode) ->
+    {ok, Plan} = ecai_text_query:plan(Query, Mode),
+    Lookup = fun(T, Cap) -> ecai_text_query:ets_docs(Tab, T, Cap) end,
+    Expand = fun(P, Cap) -> ecai_text_query:ets_terms(Tab, P, Cap) end,
+    {Scores, Meta} = ecai_text_query:run(Plan, Lookup, Expand),
+    Hits = [enrich_int(Ctx, Id, Score) || {Id, Score} <- ecai_text_query:top(Scores, Limit)],
+    {[H || H <- Hits, map_size(maps:get(record,H)) > 0], Meta}.
 
 source(Ctx, DocId) when is_binary(DocId) ->
     case lookup_record(Ctx, DocId) of

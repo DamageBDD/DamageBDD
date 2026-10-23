@@ -136,3 +136,36 @@
   #wikiSearchForm { flex-wrap: wrap; }
   #wikiSearchForm > input { flex-basis: 100%; }
 }
+
+/* Native details/summary accordion; no hard-coded light cards or wide controls. */
+.knowledge-indexes { margin-top: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); color: var(--ink); min-width: 0; }
+.knowledge-indexes > summary { display: flex; align-items: center; gap: 10px; padding: 13px 15px; cursor: pointer; color: var(--ink); font-size: 14px; font-weight: 650; list-style: none; }
+.knowledge-indexes > summary::-webkit-details-marker { display: none; }
+.knowledge-indexes > summary::before { content: "▸"; flex: 0 0 auto; color: var(--muted); }
+.knowledge-indexes[open] > summary::before { content: "▾"; }
+.knowledge-indexes > summary:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: 2px; border-radius: 10px; }
+.knowledge-index-summary { margin-left: auto; color: var(--muted); font-size: 12px; font-weight: 500; text-align: right; }
+.knowledge-index-body { padding: 0 15px 15px; border-top: 1px solid var(--line); }
+.knowledge-index-body > .context-hint { font-size: 12px; line-height: 1.65; color: var(--muted); }
+.knowledge-index-toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
+.knowledge-index-toolbar .button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); }
+.knowledge-index-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; min-width: 0; }
+.knowledge-index-group { padding: 0; border: 0; margin: 0; min-width: 0; }
+.knowledge-index-group legend { padding: 0; margin-bottom: 8px; color: var(--muted); font-size: 12px; font-weight: 650; }
+.knowledge-index-choice { display: flex; flex-direction: row; font-weight: 400; align-items: flex-start; gap: 10px; padding: 12px; margin-bottom: 8px; min-width: 0; border: 1px solid var(--line); border-radius: 9px; background: var(--surface-2); cursor: pointer; color: var(--ink); }
+.knowledge-index-choice.is-selected { border-color: var(--accent); background: var(--accent-soft); }
+.knowledge-index-choice:focus-within { outline: 2px solid var(--focus, var(--accent)); outline-offset: 2px; }
+.knowledge-index-choice input[type="checkbox"] { width: 18px; height: 18px; min-height: 18px; padding: 0; margin: 2px 0 0; flex: 0 0 18px; accent-color: var(--accent); }
+.knowledge-index-copy { display: grid; gap: 4px; min-width: 0; flex: 1; }
+.knowledge-index-copy strong { font-size: 13px; line-height: 1.45; color: var(--ink); overflow-wrap: anywhere; }
+.knowledge-index-description, .knowledge-index-id { color: var(--muted); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; font-weight: 400; }
+.knowledge-index-state { font-size: 11px; color: var(--muted); line-height: 1.5; text-align: right; flex: 0 0 65px; }
+@media (max-width: 780px) { .knowledge-index-choices { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 420px) { .knowledge-index-choice { flex-wrap: wrap; } .knowledge-index-state { margin-left: 28px; flex-basis: auto; text-align: left; } }
+/* Guest action buttons must wrap rather than widen the mobile search viewport. */
+@media (max-width: 560px) {
+  .console-topbar { height: auto; min-height: 62px; padding-block: 10px; flex-wrap: wrap; }
+  .console-topbar .topbar-actions { min-width: 0; flex-wrap: wrap; justify-content: flex-end; }
+}
+/* Small captions need full foreground contrast on tinted selection surfaces. */
+.knowledge-index-choice :is(.knowledge-index-description,.knowledge-index-id,.knowledge-index-state) { color: var(--ink); }

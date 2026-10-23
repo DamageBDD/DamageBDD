@@ -90,6 +90,7 @@ const response=(q)=>({results:[{doc_id:'damage-analytics:'+ 'Q'.repeat(90),
     description:'A readable excerpt about '+q+'. Account ak_'+'a'.repeat(50)}}],
   partial:q==='partial',backends:{shared:'available',other:q==='partial'?'unavailable':'available'}});
 const request=(path,options)=>new Promise((resolve,reject)=>{
+  if(path.endsWith('/indexes')) {resolve({indexes:[{id:'shared',kind:'shared',scope:'public',state:'ready'}]});return;}
   const q=options.body.q, source=path.endsWith('/source');
   const plan=source?window.__sourcePlan:(window.__plans[q]||{});
   const call={path,q,aborted:false};window.__calls.push(call);
@@ -217,6 +218,8 @@ class Backend:
             if q == "Quantum mechanics":
                 record = {"title": "Quantum mechanics", "text": "Quantum mechanics is the theory of matter and energy at microscopic scales."}
             data = {"results": [{"doc_id": record.get("id", "wiki-1"), "record": record, "index": "shared", "source_ref": {"id": "test"}, "live": False}], "partial": False}
+        elif path == "/ecai/knowledge/indexes":
+            data = {"indexes": [{"id": "shared", "kind": "shared", "scope": "public", "state": "ready"}]}
         elif path == "/ecai/knowledge/source":
             data = {"complete": True, "integrity": "verified", "text": self.sample.decode(), "representation": "JSONL"}
         return await route.fulfill(json=data)

@@ -20,6 +20,151 @@ export function resultExcerpt(result, query = "") {
   return { snippet: `${start ? "… " : ""}${clip(clean.slice(start), 360)}`, identifiersHidden: clean !== raw };
 }
 
+// null means dynamic "all"; [] means none. Never coerce an empty list to all.
+export function searchIndexSelectionBody(selection) {
+  if (selection === null) return {};
+  if (!Array.isArray(selection) || selection.length > 128 || selection.some((id) =>
+    typeof id !== "string" || !id.length || new TextEncoder().encode(id).length > 128)) {
+    throw new Error("Invalid index selection");
+  }
+  return { indexes: [...new Set(selection)].sort() };
+}
+
+export function normalizeIndexCatalog(data) {
+  if (!Array.isArray(data?.indexes) || data.indexes.length > 1024) throw new Error("Invalid index catalog");
+  const entries = new Map();
+  for (const item of data.indexes) {
+    searchIndexSelectionBody([item?.id]);
+    if (entries.has(item.id)) throw new Error("Duplicate index ID in catalog");
+    entries.set(item.id, { id: item.id, label: clip(compact(item.label) || item.id, 160),
+      description: clip(compact(item.description), 240),
+      kind: ["shared", "wikimedia", "disk", "funded"].includes(item.kind) ? item.kind : "other",
+      scope: item.scope === "owner" ? "owner" : "public",
+      state: ["ready", "not_ready", "unavailable", "limited", "timeout"].includes(item.state) ? item.state : "unknown" });
+  }
+  return [...entries.values()];
+}
+
+function initKnowledgeIndexSelection({ root, request, authEpoch, isActive, onChange, showError, timeoutMs }) {
+  const $ = (id) => root.getElementById(id);
+  const panel = $("searchIndexes"), choices = $("searchIndexChoices"), caption = $("searchIndexSummary");
+  const message = $("searchIndexStatus"), all = $("searchIndexAll"), none = $("searchIndexNone"), refresh = $("searchIndexRefresh");
+  let selection = null, entries = [], attempted = false, loaded = false, pending = null, generation = 0, disposed = false;
+  const listeners = [], rows = new Map();
+  const listen = (target, type, fn) => { if (target) { target.addEventListener(type, fn); listeners.push(() => target.removeEventListener(type, fn)); } };
+  const el = (tag, cls, value) => {
+    const node = root.createElement(tag); if (cls) node.className = cls;
+    if (value !== undefined) node.textContent = value;
+    return node;
+  };
+  const statusText = (state) => ({ready: "Ready", not_ready: "Not ready", unavailable: "Unavailable",
+    limited: "Limited", timeout: "Timed out", unknown: "Not checked", removed: "No longer listed"})[state] || "Not checked";
+  function summarize() {
+    if (caption) caption.textContent = selection === null ? "All indexes" : `${selection.length} selected`;
+    if (all) all.setAttribute("aria-pressed", String(selection === null));
+    if (none) none.setAttribute("aria-pressed", String(selection?.length === 0));
+    for (const [id, {input, row}] of rows) {
+      input.checked = selection === null || selection.includes(id);
+      row.classList.toggle("is-selected", input.checked);
+    }
+  }
+  function choose(next) {
+    try { searchIndexSelectionBody(next); }
+    catch (error) { if (message) message.textContent = "Select at most 128 indexes, or use All indexes."; summarize(); return; }
+    selection = next === null ? null : [...new Set(next)].sort();
+    summarize(); onChange();
+  }
+  function render() {
+    if (!choices) return;
+    rows.clear();
+    const shown = entries.slice(), available = new Set(shown.map((entry) => entry.id));
+    // Keep a disappeared selection explicit until the user changes it. Never
+    // broaden a selection, or choose every other index after a refresh failure.
+    for (const id of selection || []) if (!available.has(id)) shown.push({id, label: id,
+      kind: "other", description: "No longer in this catalog. Uncheck it or refresh the list.", state: "removed", scope: "owner"});
+    const fragment = root.createDocumentFragment();
+    for (const [kind, label] of [["shared", "Shared live"], ["wikimedia", "Wikimedia"], ["disk", "Published disk"], ["funded", "Your funded indexes"], ["other", "Other / previously selected"]]) {
+      const group = shown.filter((entry) => entry.kind === kind);
+      if (!group.length) continue;
+      const fieldset = el("fieldset", "knowledge-index-group"); fieldset.append(el("legend", "", label));
+      for (const entry of group) {
+        const row = el("label", "knowledge-index-choice");
+        const input = el("input"); input.type = "checkbox"; input.value = entry.id;
+        input.setAttribute("aria-label", `Search ${entry.label}`);
+        const copy = el("span", "knowledge-index-copy"), name = el("strong", "", entry.label);
+        const subtitle = [entry.description, entry.scope === "owner" ? "Only your account" : "Public"].filter(Boolean).join(" · ");
+        copy.append(name, el("span", "knowledge-index-description", subtitle), el("code", "knowledge-index-id", entry.id));
+        const state = el("span", "knowledge-index-state", statusText(entry.state)); state.dataset.state = entry.state;
+        row.append(input, copy, state); fieldset.append(row); rows.set(entry.id, {input, row, state});
+        input.addEventListener("change", () => {
+          const selected = new Set(selection === null ? entries.map((item) => item.id) : selection);
+          if (input.checked) selected.add(entry.id); else selected.delete(entry.id);
+          choose([...selected]);
+        });
+      }
+      fragment.append(fieldset);
+    }
+    if (!shown.length) fragment.append(el("p", "context-hint", loaded ? "No indexes are listed for this session." : "Expand this panel to load the index list."));
+    choices.replaceChildren(fragment); summarize();
+  }
+  function stop() { generation++; pending?.abort(); pending = null; if (refresh) refresh.disabled = false; choices?.setAttribute("aria-busy", "false"); }
+  async function load(force = false) {
+    if (!panel || !choices || disposed || !isActive() || (attempted && !force)) return;
+    stop(); attempted = true;
+    const seq = generation, epoch = authEpoch(), controller = new AbortController(); pending = controller;
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+    if (message) message.textContent = "Loading indexes visible to this session…";
+    if (refresh) refresh.disabled = true;
+    choices.setAttribute("aria-busy", "true");
+    try {
+      const data = await request("/ecai/knowledge/indexes", { method: "GET", signal: controller.signal });
+      if (seq !== generation || epoch !== authEpoch() || disposed) return;
+      if (controller.signal.aborted) throw new DOMException("Catalog aborted", "AbortError");
+      if (data?.ok === false) throw new Error("Index catalog unavailable");
+      entries = normalizeIndexCatalog(data); loaded = true; render();
+      if (message) message.textContent = data.partial
+        ? "Public indexes loaded, but your funded index list is unavailable. Your selection has not changed; refresh to retry."
+        : `${entries.length} indexes listed. Availability is checked again when searching. All indexes also includes indexes added later.`;
+    } catch (error) {
+      if (seq !== generation || epoch !== authEpoch() || disposed) return;
+      if (error.name !== "AbortError" || timedOut) {
+        if (message) message.textContent = `${timedOut ? "Index list timed out." : `Could not load index list: ${showError(error)}`} Your selection has not changed. Refresh to retry.`;
+      }
+    } finally {
+      clearTimeout(timer);
+      if (seq === generation) { pending = null; if (refresh) refresh.disabled = false; choices.setAttribute("aria-busy", "false"); }
+    }
+  }
+  listen(panel, "toggle", () => { if (panel.open) void load(); });
+  listen(refresh, "click", () => void load(true));
+  listen(all, "click", () => choose(null));
+  listen(none, "click", () => choose([]));
+  render();
+  return {
+    key: () => JSON.stringify(selection), body: () => searchIndexSelectionBody(selection),
+    isEmpty: () => selection?.length === 0,
+    label: () => selection === null ? "all indexes" : `${selection.length} selected index${selection.length === 1 ? "" : "es"}`,
+    ensure: () => { void load(); },
+    accepts(data) {
+      // Mixed frontend/backend deployments must not silently ignore a filter.
+      return selection === null || (data?.selection?.mode === "selected" &&
+        Array.isArray(data.selection.indexes) && JSON.stringify([...data.selection.indexes].sort()) === JSON.stringify(selection));
+    },
+    observe(states) {
+      for (const item of Array.isArray(states) ? states : []) {
+        const row = rows.get(item.id); if (!row) continue;
+        row.state.textContent = statusText(item.state); row.state.dataset.state = item.state;
+      }
+    },
+    reset() { stop(); selection = null; entries = []; attempted = false; loaded = false; render();
+      if (message) message.textContent = "Index selection reset for this session.";
+      queueMicrotask(() => { if (isActive()) void load(); }); },
+    suspend() { if (pending) { stop(); attempted = false; } },
+    dispose() { disposed = true; stop(); for (const remove of listeners) remove(); }
+  };
+}
+
 export function initKnowledgeSearch({ request, showError = (e) => e.message || "Request failed", authEpoch = () => 0,
   root = document, debounceMs = 300, refreshMs = 3000, timeoutMs = 30000 } = {}) {
   const $ = (id) => root.getElementById(id);
@@ -39,7 +184,9 @@ export function initKnowledgeSearch({ request, showError = (e) => e.message || "
   };
   const active = () => visible && !panel?.hidden && root.visibilityState !== "hidden" && !disposed;
   const count = () => Math.min(100, Math.max(1, Math.trunc(Number(limit?.value) || 10)));
-  const currentKey = () => JSON.stringify([query.value.trim(), count(), authEpoch()]);
+  const currentKey = () => JSON.stringify([query.value.trim(), count(), authEpoch(), indexChooser.key()]);
+  const indexChooser = initKnowledgeIndexSelection({root, request, authEpoch, isActive: active,
+    onChange: indexesChanged, showError, timeoutMs});
   const setStatus = (value) => { if (status) status.textContent = value; };
   const stopPolling = () => { clearTimeout(refreshTimer); refreshTimer = null; };
   const busy = (on) => {
@@ -162,7 +309,8 @@ export function initKnowledgeSearch({ request, showError = (e) => e.message || "
     event?.preventDefault();
     if (composing || !active()) return;
     const term = query.value.trim();
-    cancel();
+    cancel(); indexChooser.ensure();
+    if (indexChooser.isEmpty()) { empty("Select at least one index in Search indexes."); setStatus("No indexes selected. Search is paused."); return; }
     if (!term) { empty(); setStatus("Search as you type. Enter searches immediately."); return; }
     if (term.length > 2048) { setStatus("Use a query of at most 2,048 characters."); return; }
     const epoch = authEpoch(), key = currentKey(), seq = sequence;
@@ -174,22 +322,34 @@ export function initKnowledgeSearch({ request, showError = (e) => e.message || "
     setStatus(`Searching for “${clip(term, 80)}”…${renderedQuery && renderedQuery !== term ? ` Showing previous results for “${clip(renderedQuery, 60)}” until it finishes.` : ""}`);
     if (warning) warning.hidden = true;
     try {
-      const data = await request("/ecai/knowledge/search", { method: "POST", body: { q: term, limit: count() }, signal: pending.signal });
+      const data = await request("/ecai/knowledge/search", { method: "POST", body: { q: term, limit: count(), ...indexChooser.body() }, signal: pending.signal });
       if (seq !== sequence || epoch !== authEpoch() || key !== currentKey() || !active()) return;
       if (pending.signal.aborted) throw new DOMException("Search aborted", "AbortError");
       if (data?.ok === false || data?.status === "error") throw new Error(text(data.message) || JSON.stringify(data.error || "Search failed"));
+      if (!indexChooser.accepts(data)) throw new Error("The server did not confirm the selected indexes. Update the search backend before filtering.");
+      indexChooser.observe(data.backends);
       const items = (Array.isArray(data.results) ? data.results : []).filter((r) => r && typeof r === "object").slice(0, count());
       results.replaceChildren(...items.map((result) => renderCard(result, term, key, epoch)));
       if (!items.length) results.append(el("div", "empty-state", data.partial ? "No matches from the available backends. Other sources could not be searched." : "No matching records. Try a broader term or index a sample."));
       renderedKey = key; renderedQuery = term; hasLive = items.some((result) => result.live === true);
-      setStatus(`${items.length} result${items.length === 1 ? "" : "s"} for “${clip(term, 80)}” · ${((performance.now() - started) / 1000).toFixed(2)} s`);
-      if (warning) { warning.hidden = !data.partial; warning.textContent = data.partial ? "Some search backends are unavailable. These results may be incomplete; expand Retrieval status for details." : ""; }
-      if (proofs) proofs.textContent = JSON.stringify({ ranking: data.ranking, consistency: data.consistency, backends: data.backends,
+      setStatus(`${items.length} result${items.length === 1 ? "" : "s"} for “${clip(term, 80)}” · ${((performance.now() - started) / 1000).toFixed(2)} s · ${indexChooser.label()}`);
+      if (warning) {
+        warning.hidden = !data.partial;
+        const states = Array.isArray(data.backends) ? data.backends : [];
+        const limitedOnly = states.some((item) => item.state === "limited") && states.every((item) => ["ready", "limited"].includes(item.state));
+        warning.textContent = data.partial ? (limitedOnly
+          ? "Search limits were reached in selected indexes. Results may be incomplete; expand Retrieval status for details."
+          : "Some selected indexes are unavailable or could not be fully searched. Results may be incomplete; expand Retrieval status for details.") : "";
+      }
+      if (proofs) proofs.textContent = JSON.stringify({ ranking: data.ranking, consistency: data.consistency, selection: data.selection, backends: data.backends,
         note: "Live previews omit Merkle proofs. Use a finalized artifact for release verification." }, null, 2);
     } catch (error) {
       if (seq !== sequence || epoch !== authEpoch() || key !== currentKey() || !active()) return;
       if (error.name === "AbortError" && !timedOut) return;
       hasLive = false; // No automatic error/retry storm while a backend is down.
+      if (error.body?.error === "invalid_index_selection") {
+        empty("One or more selected indexes are no longer accessible. Refresh Search indexes and update your selection.");
+      }
       setStatus(`${timedOut ? "Search timed out. Try again." : `Search failed: ${showError(error)}`}${renderedQuery ? ` Previous results for “${clip(renderedQuery, 60)}” are still shown.` : ""}`);
       if (renderedKey === key) results.querySelectorAll("button").forEach((button) => { button.disabled = false; });
     } finally {
@@ -197,15 +357,22 @@ export function initKnowledgeSearch({ request, showError = (e) => e.message || "
       if (seq === sequence) { controller = null; busy(false); scheduleRefresh(); }
     }
   }
+  function indexesChanged() {
+    cancel(); empty(); // No results or source text from the previous scope remain visible.
+    if (indexChooser.isEmpty()) { empty("Select at least one index in Search indexes."); setStatus("No indexes selected. Search is paused."); return; }
+    if (query.value.trim()) void run();
+    else setStatus(`Search scope: ${indexChooser.label()}. Start typing to search.`);
+  }
   function queueSearch() {
     cancel(); lockOldResults();
+    if (indexChooser.isEmpty()) { empty("Select at least one index in Search indexes."); setStatus("No indexes selected. Search is paused."); return; }
     if (!query.value.trim()) { empty(); setStatus("Search as you type. Enter searches immediately."); return; }
     if (composing || !active()) return;
     setStatus(`Waiting for typing to pause…${renderedQuery ? ` Previous results: “${clip(renderedQuery, 60)}”.` : ""}`);
     debounceTimer = setTimeout(() => { debounceTimer = null; void run(); }, debounceMs);
   }
   function reset() {
-    cancel(); query.value = ""; busy(false); empty();
+    cancel(); query.value = ""; busy(false); empty(); indexChooser.reset();
     setStatus("Identity changed. Start a new search.");
   }
   listen(form, "submit", (event) => void run(event));
@@ -216,11 +383,12 @@ export function initKnowledgeSearch({ request, showError = (e) => e.message || "
   listen(live, "change", scheduleRefresh);
   listen(clear, "click", () => { query.value = ""; queueSearch(); query.focus(); });
   listen(root, "ecai:identity-changed", reset);
-  listen(root, "visibilitychange", () => { if (!active()) cancel(); else if (query.value.trim()) queueSearch(); });
+  listen(root, "visibilitychange", () => { if (!active()) { cancel(); indexChooser.suspend(); } else { indexChooser.ensure(); if (query.value.trim()) queueSearch(); } });
+  if (active()) indexChooser.ensure();
   return {
     run, reset,
     setQuery(value) { query.value = text(value).slice(0, 2048); query.focus(); return run(); },
-    setVisible(on) { visible = Boolean(on); if (!visible) cancel(); else scheduleRefresh(); },
-    dispose() { disposed = true; cancel(); for (const remove of listeners) remove(); }
+    setVisible(on) { visible = Boolean(on); if (!visible) { cancel(); indexChooser.suspend(); } else { indexChooser.ensure(); scheduleRefresh(); } },
+    dispose() { disposed = true; cancel(); indexChooser.dispose(); for (const remove of listeners) remove(); }
   };
 }

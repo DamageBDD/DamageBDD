@@ -5,14 +5,18 @@
 trails() ->
     [trails:trail(Path, ?MODULE, #{action => Action}, #{}) || {Path,Action} <- [
         {"/ecai/knowledge/search",search}, {"/ecai/knowledge/source",source},
-        {"/ecai/knowledge/status",status}]].
+        {"/ecai/knowledge/status",status}, {"/ecai/knowledge/indexes",indexes}]].
 
 init(Req0, #{action := Action} = State) ->
     try
         Method = cowboy_req:method(Req0),
         case {Action,Method} of
-            {status,<<"GET">>} -> process_request(Action,Req0,State,#{});
-            {search,<<"GET">>} -> process_request(Action,Req0,State,maps:from_list(cowboy_req:parse_qs(Req0)));
+            {A,<<"GET">>} when A =:= status; A =:= indexes -> process_request(Action,Req0,State,#{});
+            {search,<<"GET">>} ->
+                case search_query_string(Req0) of
+                    {ok, Body} -> process_request(Action,Req0,State,Body);
+                    {error, Why} -> reply(Req0,State,400,#{ok => false,error => Why})
+                end;
             {A,<<"POST">>} when A =:= search; A =:= source ->
                 case cowboy_req:header(<<"content-type">>,Req0,<<>>) of
                     <<"application/json",_/binary>> ->
@@ -36,9 +40,16 @@ process_request(Action,Req,State,Body) ->
         {ok,Principal} ->
             Result = case Action of
                 status -> {ok,ecai_knowledge:status(Principal)};
+                indexes -> {ok,ecai_knowledge:index_catalog(Principal)};
                 search ->
-                    ecai_knowledge:search(maps:get(<<"q">>,Body,<<>>),
-                        #{limit => limit(maps:get(<<"limit">>,Body,10)),principal => Principal});
+                    case {matching(maps:get(<<"matching">>,Body,<<"bool_prefix">>)),
+                          indexes(maps:get(<<"indexes">>,Body,<<"all">>))} of
+                        {{ok,Mode},{ok,Ids}} -> ecai_knowledge:search(maps:get(<<"q">>,Body,<<>>),
+                            #{limit => limit(maps:get(<<"limit">>,Body,10)),
+                              principal => Principal, matching => Mode, indexes => Ids});
+                        {{error,_} = Error0,_} -> Error0;
+                        {_,Error0} -> Error0
+                    end;
                 source ->
                     case source_ref(maps:get(<<"source_ref">>,Body,#{})) of
                         {ok,Ref} -> ecai_knowledge:source(Ref,Principal);
@@ -99,6 +110,7 @@ limit(B) when is_binary(B) -> try binary_to_integer(B) catch _:_ -> 10 end;
 limit(N) -> N.
 decode(Bytes) -> try jsx:decode(Bytes,[return_maps]) of
     M when is_map(M) -> {ok,M}; _ -> error catch _:_ -> error end.
+error_status(funded_indexes_unavailable) -> 503;
 error_status(source_not_found) -> 404;
 error_status(source_not_retained) -> 404;
 error_status(source_hash_mismatch) -> 409;
@@ -109,3 +121,30 @@ reply(Req,State,Code,Data) ->
         <<"cache-control">> => <<"no-store">>, <<"x-content-type-options">> => <<"nosniff">>},
     Bytes = jsx:encode(ecai_index_job_codec:externalize(Data)),
     {ok,cowboy_req:reply(Code,Headers,Bytes,Req),State}.
+
+%% Only logical IDs from the server's caller-visible catalog, never module
+%% names, filesystem paths, URLs or caller-supplied principals.
+indexes(<<"all">>) -> {ok,all};
+indexes(Value) when is_list(Value) -> ecai_knowledge:validate_indexes(Value);
+indexes(_) -> {error,invalid_index_selection}.
+
+%% GET uses one `indexes` parameter: "all" or a JSON array. Repeated parameters
+%% are rejected, not collapsed to the last value (which could widen scope).
+search_query_string(Req) ->
+    Pairs = cowboy_req:parse_qs(Req),
+    Body = maps:from_list(Pairs),
+    case [V || {<<"indexes">>,V} <- Pairs] of
+        [] -> {ok,Body};
+        [<<"all">>] -> {ok,Body};
+        [Bytes] when is_binary(Bytes), byte_size(Bytes) =< 16384 ->
+            try jsx:decode(Bytes,[return_maps]) of
+                Ids when is_list(Ids) -> {ok,Body#{<<"indexes">> => Ids}};
+                _ -> {error,invalid_index_selection}
+            catch _:_ -> {error,invalid_index_selection} end;
+        _ -> {error,invalid_index_selection}
+    end.
+
+%% No dynamic atoms or client-selected backend implementation modules.
+matching(<<"bool_prefix">>) -> {ok,bool_prefix};
+matching(<<"exact">>) -> {ok,exact};
+matching(_) -> {error,invalid_matching}.
