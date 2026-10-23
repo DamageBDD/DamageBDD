@@ -1,0 +1,1236 @@
+diff --git a/apps/damage/docs/browser-recorder.md b/apps/damage/docs/browser-recorder.md
+new file mode 100644
+index 0000000..eaaa5a3
+--- /dev/null
++++ b/apps/damage/docs/browser-recorder.md
+@@ -0,0 +1,168 @@
++# DamageBDD Browser Recorder — current WebDriver integration
++
++This integration is based on `latest-damage.tar.gz` supplied in this conversation.
++The archive contains `apps/damage/` and the v0.1 recorder module, but no monorepo
++root `rebar.config`, `rebar.lock`, other umbrella applications or dependencies.
++
++## Upgrade
++
++From the DamageBDD monorepo root, extract `damagebdd-recorder-latest-update.zip`.
++The update contains `extensions/damagebdd-recorder/` and a backend patch. It does
++not contain a root README, root configuration, or copies of unrelated applications.
++Extraction updates the recorder extension; applying the patch changes the backend.
++
++```sh
++unzip -o /path/to/damagebdd-recorder-latest-update.zip -d .
++git apply --check patches/0002-browser-recorder-current-webdriver.patch
++git apply patches/0002-browser-recorder-current-webdriver.patch
++rebar3 compile
++rebar3 eunit --module=steps_browser_recorder_tests
++node --test extensions/damagebdd-recorder/tests/*.test.mjs
++```
++
++Do not apply `patches/0001-wire-browser-recorder-steps.patch` from v0.1. Current
++`damage_utils:loaded_steps/0` discovers `steps_*.beam` and returns module atoms.
++`damage:step_modules_for_context/1` then filters those modules through the role
++policy. Do not prepend a module, replace that filtering function, or convert the
++module list to strings. No change to `damage.erl` or `damage_utils.erl` is needed.
++
++The patch targets the uploaded backend, including the already-present v0.1
++`steps_browser_recorder.erl`. `git apply --check` must succeed before application.
++If it fails, leave your existing changes intact; do not use `--reject` or force
++an overwrite. The patch is not meant to be applied twice.
++
++## Configure replay
++
++Recording and exporting remain local and do not require a DamageBDD login.
++**Live replay requires `node_admin`**, matching the existing WebDriver subsystem.
++Role membership comes from the node's configured `node_admins` and authenticated
++account, not a field added to a feature's context.
++
++Prefer your existing `{webdriver, [...]}` settings, including managed
++ChromeDriver/Appium profiles. An external Selenium example is in
++`apps/damage/priv/config/browser-recorder.sys.config.example`.
++All configuration objects are Erlang tuples/proplists, not maps.
++
++With a modern profile already configured, no recorder-specific configuration is
++needed. The recorder starts that profile and navigates to the captured URL; it
++uses ordinary WebDriver browser navigation rather than the dashboard-specific
++login/fixture setup operation. The recorded browser is a new automation session,
++not the recording user's authenticated browser session. Record the steps needed
++to establish a reproducible initial state.
++
++For migration only, explicitly configured `browser_recorder_webdriver_url` and
++`browser_recorder_browser` are translated into a native profile when **no** modern
++`webdriver` setting is present. Modern settings take precedence. There is no
++silent fallback to an automation endpoint when neither has been configured.
++
++A feature can select an existing operator-defined profile before recording steps:
++
++```gherkin
++Feature: Recorded signup
++  Scenario: A user signs up
++    Given I use WebDriver profile "desktop"
++    Given I start a recorded browser at "https://example.test/signup"
++    When I type into recorded field "#name"
++      """
++      Alice
++      """
++    When I click recorded element "#submit"
++    Then recorded element "#message" should contain text
++      """
++      Success
++      """
++    Then I close the recorded browser
++```
++
++The exported vocabulary remains compatible with v0.1. The optional profile step
++belongs to `steps_webdriver`; the recorded steps belong to `steps_browser_recorder`.
++
++## Account-scoped private inputs
++
++The extension exports a **name**, never the detected private field's value:
++
++```gherkin
++When I type secret "browser_secret_a1b2c3d4" into recorded field "#password"
++```
++
++Provision that name in the replaying account's scope using the existing trusted
++operator provisioning flow. Where `SecretValue` is already securely obtained:
++
++```erlang
++secrets:encrypt_store(
++    {account, <<"ak_REPLAYING_ACCOUNT">>},
++    <<"browser_secret_a1b2c3d4">>,
++    SecretValue
++).
++```
++
++Replay resolves `secrets:retrieve_decrypt({account, Owner}, Name)` inside the
++owned WebDriver client process. The owner is taken from authenticated execution
++context; the Gherkin cannot choose it. There is **no node-wide or legacy atom-key
++fallback**. Re-provision former v0.1 node-scoped recorder secrets in the account
++scope. Plaintext is not returned in context or passed in WebDriver API message
++arguments. The website and WebDriver necessarily receive the entered value;
++use isolated test accounts and a trusted automation endpoint.
++
++## Lifecycle and replay correctness
++
++The recorder is now a vocabulary adapter over `steps_webdriver` and
++`damage_webdriver`, not a second HTTP/WebDriver implementation. It uses the same
++owned `webdriver_session` process, operation deadlines, managed service capacity,
++protocol-error redaction, lifetime limits, and close operations. Existing
++`damage:execute_steps/3` cleanup covers successful scenarios, failures in other
++steps, skipped explicit close steps and exceptions. Owner monitoring covers
++process exit. A failed remote cleanup remains subject to existing runtime and
++server timeout behaviour; cleanup cannot be guaranteed through a network outage.
++
++Text and URL assertions use the native bounded polling loop. Native single
++selects are chosen by `select.value`, including an empty value, and duplicate
++values are rejected. Checkbox state is idempotent; an already-checked checkbox
++is not clicked again. A radio button can be checked but cannot be unchecked by
++an independent replay step. Multi-selects are explicitly unsupported.
++
++Clicks are real WebDriver actions. A lost response is a failure, not an excuse to
++retry a potentially side-effecting action. This follows the same rule as the
++existing native client.
++
++The exporter refuses enabled actions before the first navigation, missing
++selectors, unknown enabled actions and unsafe control characters. Such problems
++appear as export errors in the editor rather than producing a broken scenario.
++Direct manual source editing bypasses the generator's checks; validate manually
++edited features before executing them.
++
++## Browser extension
++
++The update retains the existing MV3 Chrome/Firefox extension. Reload it after
++upgrading and reload any page with an old recording content script injected.
++Chrome: `chrome://extensions` → Developer mode → Load unpacked, selecting
++`extensions/damagebdd-recorder`. Firefox: `about:debugging#/runtime/this-firefox`
++→ Load Temporary Add-on, selecting the extension's `manifest.json`.
++These packages are development builds, not signed store releases.
++
++Open an HTTP(S) test site, start recording from the toolbar, perform the journey,
++add a visible-text assertion, then stop and export. Recordings stay in local
++extension storage; review ordinary inputs, page titles and URLs for personal
++information. Private-field detection is heuristic, not a guarantee that all
++sensitive values will be recognised.
++
++One tab is recorded. Popups/new tabs, cross-origin frames, shadow-root controls,
++file uploads, rich contenteditable editors, canvas controls and multi-selects are
++not supported. Do not mistake an unsupported interaction for replay coverage.
++
++## Validation status
++
++On the supplied source plus this update:
++
++- Original integration patch failure was reproduced.
++- Replacement backend patch applies cleanly and passes Git whitespace checks.
++- All 16 Node tests pass (13 recorder/vocabulary tests, 3 source-contract checks).
++- JavaScript syntax checks pass for the extension's `.js` and `.mjs` files.
++- 12 new EUnit cases are included, using local HTTP fixtures plus catalog checks.
++  They have **not been executed here**. Erlang, `erlc` and `rebar3` are absent in
++  the available environment; the upload also lacks root build files/dependencies.
++- A complete `rebar3 compile`, EUnit run, live Selenium/Grid replay, actual
++  Chrome/Firefox loading and store-signing validation remain to be run locally.
++
++The Node source-contract checks are not an Erlang compiler, parser integration
++run, browser test or proof of a successful live replay.
+diff --git a/apps/damage/priv/config/browser-recorder.sys.config.example b/apps/damage/priv/config/browser-recorder.sys.config.example
+new file mode 100644
+index 0000000..c766fb7
+--- /dev/null
++++ b/apps/damage/priv/config/browser-recorder.sys.config.example
+@@ -0,0 +1,30 @@
++%% Merge into the EXISTING {damage, [...]} entry, not a second damage entry.
++%% Keep the rest of your node configuration. Objects use tuples/proplists.
++%% Reuse an existing managed webdriver profile instead when already configured.
++[
++ {damage, [
++   %% Only identities already trusted to use this node's automation service.
++   {node_admins, [<<"ak_REPLAYING_ACCOUNT">>]},
++   {webdriver, [
++     {endpoint, <<"http://127.0.0.1:4444">>},
++     {dashboard_url, <<"https://example.test">>},
++     {fixture, false},
++     {wait_ms, 15000},
++     {command_timeout_ms, 30000},
++     {session_start_timeout_ms, 120000},
++     {idle_timeout_ms, 120000},
++     {session_lifetime_ms, 900000},
++     {capabilities, [
++       {browserName, <<"chrome">>},
++       {'goog:chromeOptions', [
++         {args, [<<"--headless=new">>, <<"--window-size=1440,1000">>]}
++       ]}
++     ]}
++   ]}
++ ]}
++].
++%% Firefox: replace capabilities with
++%% {capabilities, [{browserName, <<"firefox">>},
++%%                 {'moz:firefoxOptions', [{args, [<<"-headless">>]}]}]}.
++%% Supply account-scoped recorder secrets through your trusted provisioning
++%% flow, not as plaintext in this file or in the exported feature.
+diff --git a/apps/damage/src/damage_webdriver.erl b/apps/damage/src/damage_webdriver.erl
+index 44dabb8..ce60e03 100644
+--- a/apps/damage/src/damage_webdriver.erl
++++ b/apps/damage/src/damage_webdriver.erl
+@@ -3,7 +3,7 @@
+ -module(damage_webdriver).
+ -compile({no_auto_import, [element/2]}).
+ -behaviour(gen_server).
+--export([start/1, perform/3, close/1, options/1, capabilities/1]).
++-export([start/1, perform/3, close/1, options/1, capabilities/1, navigation_url/1]).
+ -export([
+     init/1,
+     handle_call/3,
+@@ -268,7 +268,8 @@ operation_timeout(Op, S) ->
+             layout,
+             fixture_idle,
+             value_contains,
+-            fixture_count
++            fixture_count,
++            url_prefix
+         ])
+     of
+         true -> maps:get(wait, S);
+@@ -290,6 +291,39 @@ operation(start, [], #{session := undefined} = S) ->
+         #{<<"sessionId">> := Id} when is_binary(Id), byte_size(Id) > 0 -> S#{session => Id};
+         _ -> fail(bad_session_response)
+     end;
++operation(navigate, [Url], S) ->
++    case navigation_url(Url) of
++        {ok, Target} -> navigate(Target, S);
++        {error, Reason} -> fail(Reason)
++    end;
++operation(url_prefix, [Prefix0], S) ->
++    case navigation_url(Prefix0) of
++        {ok, Prefix} ->
++            await(fun(S1) ->
++                case command(S1, get, <<"/url">>, #{}) of
++                    Current when is_binary(Current) -> binary:match(Current, Prefix) =:= {0, byte_size(Prefix)};
++                    _ -> false
++                end
++            end, S);
++        {error, Reason} -> fail(Reason)
++    end;
++operation(select, [Css, Wanted], S) ->
++    select_option(bin(Css), bin(Wanted), S);
++operation(checked, [Css, State], S) ->
++    Wanted = case bin(State) of
++        <<"checked">> -> true;
++        <<"unchecked">> -> false;
++        _ -> fail(invalid_checked_state)
++    end,
++    set_checked(bin(Css), Wanted, S);
++operation(account_secret, [Owner0, Name0, Css], S) ->
++    Owner = bin(Owner0),
++    Name = bin(Name0),
++    %% Resolve in the owned client process; no plaintext in context or command args.
++    case account_secret(Owner, Name) of
++        {ok, Value} -> fill(bin(Css), Value, S);
++        error -> fail(missing_recorded_account_secret)
++    end;
+ operation(open, [], S) ->
+     open_clean(S);
+ operation(open_authenticated, [], S) ->
+@@ -600,6 +634,86 @@ credential(Key, S) ->
+             fail(missing_webdriver_credential)
+     end.
+ 
++%% Website URLs may include path/query/hash, unlike the automation endpoint.
++%% Reject credentials, controls and non-web schemes before creating a session.
++navigation_url(Value) ->
++    try
++        Url = bin(Value),
++        true = byte_size(Url) > 0 andalso byte_size(Url) =< 8192,
++        #{scheme := Scheme, host := Host} = Parsed = uri_string:parse(Url),
++        true = (Scheme =:= <<"http">> orelse Scheme =:= <<"https">>),
++        true = is_binary(Host) andalso byte_size(Host) > 0,
++        false = maps:is_key(userinfo, Parsed),
++        Port = maps:get(port, Parsed, 80),
++        true = is_integer(Port) andalso Port > 0 andalso Port < 65536,
++        nomatch = re:run(Url, <<"[\\x00-\\x20\\x7f]">>, [{capture, none}]),
++        {ok, Url}
++    catch
++        _:_ -> {error, invalid_browser_url}
++    end.
++
++account_secret(Owner, Name) when is_binary(Owner), byte_size(Owner) > 0,
++    is_binary(Name), byte_size(Name) > 0, byte_size(Name) =< 256 ->
++    try secrets:retrieve_decrypt({account, Owner}, Name) of
++        {ok, Value} when is_binary(Value); is_list(Value) ->
++            case bin(Value) of
++                B when is_binary(B) -> {ok, B};
++                _ -> error
++            end;
++        _ -> error
++    catch
++        _:_ -> error
++    end;
++account_secret(_, _) -> error.
++
++select_option(Css, Wanted, S) ->
++    S1 = wait_state(Css, <<"clickable">>, S),
++    Id = element(Css, S1),
++    case {command(S1, get, element_path(Id, <<"/name">>), #{}),
++        command(S1, get, element_path(Id, <<"/property/multiple">>), #{})} of
++        {<<"select">>, false} -> ok;
++        _ -> fail(expected_single_select)
++    end,
++    Option = matching_option(Id, Wanted, S1),
++    %% WebDriver clicks the option; no synthetic change events or action retries.
++    _ = command(S1, post, element_path(Option, <<"/click">>), #{}),
++    await(fun(S2) -> command(S2, get, element_path(Option, <<"/selected">>), #{}) =:= true end, S1).
++
++matching_option(Select, Wanted, S) ->
++    Options = command(S, post, element_path(Select, <<"/elements">>),
++        #{<<"using">> => <<"css selector">>, <<"value">> => <<"option">>}),
++    %% Recorders capture select.value, not the displayed label. In particular,
++    %% an empty option value is valid and must not be replaced by its label.
++    Matches = [Id || #{?ELEMENT := Id} <- Options,
++        command(S, get, element_path(Id, <<"/property/value">>), #{}) =:= Wanted],
++    case Matches of
++        [Id] -> Id;
++        [] ->
++            case remaining(S) > 100 of
++                true -> timer:sleep(100), matching_option(Select, Wanted, S);
++                false -> fail(recorded_option_not_found)
++            end;
++        _ -> fail(ambiguous_recorded_option)
++    end.
++
++set_checked(Css, Wanted, S) ->
++    S1 = wait_state(Css, <<"clickable">>, S),
++    Id = element(Css, S1),
++    Kind = command(S1, get, element_path(Id, <<"/property/type">>), #{}),
++    case {Kind, Wanted} of
++        {<<"checkbox">>, _} -> ok;
++        {<<"radio">>, true} -> ok;
++        {<<"radio">>, false} -> fail(cannot_uncheck_radio);
++        _ -> fail(expected_checkbox_or_radio)
++    end,
++    case command(S1, get, element_path(Id, <<"/selected">>), #{}) of
++        Wanted -> S1;
++        Actual when is_boolean(Actual) ->
++            _ = command(S1, post, element_path(Id, <<"/click">>), #{}),
++            await(fun(S2) -> command(S2, get, element_path(Id, <<"/selected">>), #{}) =:= Wanted end, S1);
++        _ -> fail(invalid_checked_response)
++    end.
++
+ navigate(Url, S) ->
+     _ = command(S, post, <<"/url">>, #{<<"url">> => Url}),
+     S.
+diff --git a/apps/damage/src/steps_browser_recorder.erl b/apps/damage/src/steps_browser_recorder.erl
+index 131e84f..54c0471 100644
+--- a/apps/damage/src/steps_browser_recorder.erl
++++ b/apps/damage/src/steps_browser_recorder.erl
+@@ -1,373 +1,144 @@
+-%%%-------------------------------------------------------------------
+-%%% DamageBDD recorder: W3C WebDriver-backed replay steps.
+-%%%
+-%%% Configure using proplists / sys.config tuples:
+-%%%   {browser_recorder_webdriver_url, "http://127.0.0.1:4444"}
+-%%%   {browser_recorder_browser, "chrome"} %% or "firefox"
+-%%%
+-%%% A browser session is scoped to the current DamageBDD scenario context.
+-%%% Credentials are retrieved from secrets by key and never copied into
+-%%% the context, logs, Gherkin or error messages.
+-%%%-------------------------------------------------------------------
++%% Recorder vocabulary adapter for the current DamageBDD WebDriver runtime.
++%% All sessions are owned/cleaned by steps_webdriver and damage:execute_steps/3.
++%% Recording/export is local; replay deliberately follows the node_admin policy.
+ -module(steps_browser_recorder).
+ -author("DamageBDD").
+ -license("Apache-2.0").
++-damage_roles([node_admin]).
+ -export([step/6, step_dry/6]).
+--include_lib("kernel/include/logger.hrl").
+ 
+--define(SESS, browser_recorder_session).
+--define(START, ["I start a recorded browser at", Url]).
+--define(NAVIGATE, ["I navigate the recorded browser to", Url]).
+--define(CLICK, ["I click recorded element", Selector]).
+--define(FILL, ["I type into recorded field", Selector]).
+--define(SECRET, ["I type secret", SecretName, "into recorded field", Selector]).
+--define(SELECT, ["I select recorded option in", Selector]).
+--define(CHECK, ["I set recorded checkbox", Selector, "to checked"]).
+--define(UNCHECK, ["I set recorded checkbox", Selector, "to unchecked"]).
+--define(PRESS, ["I press Enter in recorded field", Selector]).
+--define(TEXT, ["recorded element", Selector, "should contain text"]).
+--define(URL, ["the recorded browser URL should start with", ExpectedUrl]).
++-define(START(Url), ["I start a recorded browser at", Url]).
++-define(NAVIGATE(Url), ["I navigate the recorded browser to", Url]).
++-define(CLICK(Selector), ["I click recorded element", Selector]).
++-define(FILL(Selector), ["I type into recorded field", Selector]).
++-define(SECRET(SecretName, Selector), ["I type secret", SecretName, "into recorded field", Selector]).
++-define(SELECT(Selector), ["I select recorded option in", Selector]).
++-define(CHECK(Selector), ["I set recorded checkbox", Selector, "to checked"]).
++-define(UNCHECK(Selector), ["I set recorded checkbox", Selector, "to unchecked"]).
++-define(PRESS(Selector), ["I press Enter in recorded field", Selector]).
++-define(TEXT(Selector), ["recorded element", Selector, "should contain text"]).
++-define(URL(ExpectedUrl), ["the recorded browser URL should start with", ExpectedUrl]).
+ -define(CLOSE, ["I close the recorded browser"]).
+--define(ELEMENT_KEY, <<"element-6066-11e4-a52e-4f735466cecf">>).
+--define(TIMEOUT_MS, 10000).
+ 
+-%% Dry-run clauses must match only our step vocabulary; an unconditional
+-%% fallback would swallow all other DamageBDD steps during dry run.
+-step_dry(Cfg, Ctx, K, N, ?START = Parts, Body) -> dry(Cfg,Ctx,K,N,Parts,Body);
+-step_dry(Cfg, Ctx, K, N, ?NAVIGATE = Parts, Body) -> dry(Cfg,Ctx,K,N,Parts,Body);
+-step_dry(Cfg, Ctx, K, N, ?CLICK = Parts, Body) -> dry(Cfg,Ctx,K,N,Parts,Body);
+-step_dry(Cfg, Ctx, K, N, ?FILL = Parts, Body) -> dry(Cfg,Ctx,K,N,Parts,Body);
+-step_dry(Cfg, Ctx, K, N, ?SECRET = Parts, Body) -> dry(Cfg,Ctx,K,N,Parts,Body);
+-step_dry(Cfg, Ctx, K, N, ?SELECT = Parts, Body) -> dry(Cfg,Ctx,K,N,Parts,Body);
+-step_dry(Cfg, Ctx, K, N, ?CHECK = Parts, Body) -> dry(Cfg,Ctx,K,N,Parts,Body);
+-step_dry(Cfg, Ctx, K, N, ?UNCHECK = Parts, Body) -> dry(Cfg,Ctx,K,N,Parts,Body);
+-step_dry(Cfg, Ctx, K, N, ?PRESS = Parts, Body) -> dry(Cfg,Ctx,K,N,Parts,Body);
+-step_dry(Cfg, Ctx, K, N, ?TEXT = Parts, Body) -> dry(Cfg,Ctx,K,N,Parts,Body);
+-step_dry(Cfg, Ctx, K, N, ?URL = Parts, Body) -> dry(Cfg,Ctx,K,N,Parts,Body);
+-step_dry(Cfg, Ctx, K, N, ?CLOSE = Parts, Body) -> dry(Cfg,Ctx,K,N,Parts,Body).
+-
+-dry(Cfg, Ctx, K, N, Parts, Body) ->
+-    steps_utils:step_dry(Cfg, Ctx, K, N, Parts, Body).
+-
+-step(Cfg, Ctx, _K, _N, ?START, _Body) ->
+-    handle(Ctx, fun() ->
+-        {ok, UrlBin} = allowed_url(Url),
+-        {ok, Session} = new_session(Cfg),
+-        case navigate(Cfg, Session, UrlBin) of
+-            ok -> {ok, Ctx#{?SESS => Session}};
+-            Error -> _ = close(Cfg, Session), Error
+-        end
+-    end);
+-step(Cfg, Ctx, _K, _N, ?NAVIGATE, _Body) ->
+-    with_session(Cfg, Ctx, fun(Session) ->
+-        {ok, UrlBin} = allowed_url(Url),
+-        navigate(Cfg, Session, UrlBin)
+-    end);
+-step(Cfg, Ctx, _K, _N, ?CLICK, _Body) ->
+-    with_session(Cfg, Ctx, fun(Session) ->
+-        with_element(Cfg, Session, Selector, fun(Element) ->
+-            no_value(Cfg, Session, post, ["element/", Element, "/click"], #{})
+-        end)
+-    end);
+-step(Cfg, Ctx, _K, _N, ?FILL, Body) ->
+-    with_session(Cfg, Ctx, fun(Session) ->
+-        fill(Cfg, Session, Selector, to_bin(Body))
+-    end);
+-step(Cfg, Ctx, _K, _N, ?SECRET, _Body) ->
+-    %% Return a generic error on secret failures; do not display returned data.
+-    with_session(Cfg, Ctx, fun(Session) ->
+-        case read_secret(SecretName) of
+-            {ok, Value} when is_binary(Value); is_list(Value) ->
+-                case fill(Cfg, Session, Selector, to_bin(Value)) of
+-                    ok -> ok;
+-                    _ -> {error, secret_input_failed}
+-                end;
+-            _ -> {error, missing_recorded_secret}
+-        end
+-    end);
+-step(Cfg, Ctx, _K, _N, ?SELECT, Body) ->
+-    with_session(Cfg, Ctx, fun(Session) ->
+-        with_element(Cfg, Session, Selector, fun(Element) ->
+-            select_option(Cfg, Session, Element, to_bin(Body))
+-        end)
+-    end);
+-step(Cfg, Ctx, _K, _N, ?CHECK, _Body) ->
+-    with_session(Cfg, Ctx, fun(Session) -> set_checked(Cfg, Session, Selector, true) end);
+-step(Cfg, Ctx, _K, _N, ?UNCHECK, _Body) ->
+-    with_session(Cfg, Ctx, fun(Session) -> set_checked(Cfg, Session, Selector, false) end);
+-step(Cfg, Ctx, _K, _N, ?PRESS, _Body) ->
+-    with_session(Cfg, Ctx, fun(Session) ->
+-        with_element(Cfg, Session, Selector, fun(Element) ->
+-            %% W3C WebDriver Enter key code
+-            no_value(Cfg, Session, post, ["element/",Element,"/value"],
+-                #{<<"text">> => <<16#EE,16#80,16#87>>})
+-        end)
+-    end);
+-step(Cfg, Ctx, _K, _N, ?TEXT, Body) ->
+-    with_session(Cfg, Ctx, fun(Session) ->
+-        with_element(Cfg, Session, Selector, fun(Element) ->
+-            case webdriver(Cfg, Session, get, ["element/",Element,"/text"], none) of
+-                {ok, Text} when is_binary(Text) ->
+-                    case binary:match(Text, to_bin(Body)) of
+-                        nomatch -> {error, recorded_text_not_found};
+-                        _ -> ok
+-                    end;
+-                Error -> Error
+-            end
+-        end)
+-    end);
+-step(Cfg, Ctx, _K, _N, ?URL, _Body) ->
+-    with_session(Cfg, Ctx, fun(Session) ->
+-        {ok, Prefix} = allowed_url(ExpectedUrl),
+-        wait_url(Cfg, Session, Prefix, erlang:monotonic_time(millisecond) + ?TIMEOUT_MS)
+-    end);
+-step(Cfg, Ctx, _K, _N, ?CLOSE, _Body) ->
+-    handle(Ctx, fun() ->
+-        case maps:find(?SESS, Ctx) of
+-            {ok, Session} ->
+-                case close(Cfg, Session) of
+-                    ok -> {ok, maps:remove(?SESS, Ctx)};
+-                    Error -> Error
+-                end;
+-            error -> {error, no_recorded_browser_session}
+-        end
+-    end).
+-
+-handle(Ctx, Fun) ->
+-    try Fun() of
+-        {ok, Next} when is_map(Next) -> Next;
+-        ok -> Ctx;
+-        {error, Reason} -> fail(Ctx, Reason);
+-        Other -> fail(Ctx, {unexpected_browser_response, sanitize_error(Other)})
+-    catch
+-        _:{badmatch, {error, Reason}} -> fail(Ctx, Reason);
+-        Class:_Reason:_Stack -> fail(Ctx, {browser_step_failed, Class})
+-    end.
+-
+-with_session(Cfg, Ctx, Fun) ->
+-    handle(Ctx, fun() ->
+-        case maps:find(?SESS, Ctx) of
+-            {ok, Session} -> Fun(Session);
+-            error -> {error, no_recorded_browser_session}
+-        end
+-    end).
+-
+-fail(Ctx, Reason) ->
+-    ?LOG_WARNING("Recorder step failed: ~p", [sanitize_error(Reason)]),
+-    maps:put(fail, to_bin(io_lib:format("Recorded browser step failed: ~p", [sanitize_error(Reason)])), Ctx).
+-
+-sanitize_error({http_status, Status, Reason}) -> {http_status, Status, Reason};
+-sanitize_error({webdriver_error, Reason}) -> {webdriver_error, Reason};
+-sanitize_error(E) when is_atom(E); is_integer(E) -> E;
+-sanitize_error(_) -> unknown_error.
+-
+-read_secret(Name0) ->
+-    Name = to_bin(Name0),
+-    case secrets:retrieve_decrypt(Name) of
+-        {ok, Value} -> {ok, Value};
+-        _ ->
+-            try
+-                Atom = binary_to_existing_atom(Name, utf8),
+-                secrets:retrieve_decrypt(Atom)
+-            catch _:_ -> {error, not_found}
+-            end
+-    end.
+-
+-config(Cfg, Key, Default) ->
+-    proplists:get_value(Key, Cfg, application:get_env(damage, Key, Default)).
+-
+-driver(Cfg) ->
+-    Raw = to_list(config(Cfg, browser_recorder_webdriver_url, "http://127.0.0.1:4444")),
+-    case uri_string:parse(Raw) of
+-        #{scheme := Scheme, host := Host} when (Scheme =:= "http" orelse Scheme =:= "https"), Host =/= "" ->
+-            string:trim(Raw, trailing, "/");
+-        _ -> erlang:error(invalid_webdriver_url)
+-    end.
+-
+-new_session(Cfg) ->
+-    Browser = to_bin(config(Cfg, browser_recorder_browser, "chrome")),
+-    case lists:member(Browser, [<<"chrome">>, <<"firefox">>]) of
+-        false -> {error, invalid_browser_name};
++%% No catch-all clauses: unrelated steps must continue through the registry.
++step_dry(Config, Context, Keyword, Line, ?START(_) = Parts, Body) ->
++    dry(Config, Context, Keyword, Line, Parts, Body);
++step_dry(Config, Context, Keyword, Line, ?NAVIGATE(_) = Parts, Body) ->
++    dry(Config, Context, Keyword, Line, Parts, Body);
++step_dry(Config, Context, Keyword, Line, ?CLICK(_) = Parts, Body) ->
++    dry(Config, Context, Keyword, Line, Parts, Body);
++step_dry(Config, Context, Keyword, Line, ?FILL(_) = Parts, Body) ->
++    dry(Config, Context, Keyword, Line, Parts, Body);
++step_dry(Config, Context, Keyword, Line, ?SECRET(_, _) = Parts, Body) ->
++    dry(Config, Context, Keyword, Line, Parts, Body);
++step_dry(Config, Context, Keyword, Line, ?SELECT(_) = Parts, Body) ->
++    dry(Config, Context, Keyword, Line, Parts, Body);
++step_dry(Config, Context, Keyword, Line, ?CHECK(_) = Parts, Body) ->
++    dry(Config, Context, Keyword, Line, Parts, Body);
++step_dry(Config, Context, Keyword, Line, ?UNCHECK(_) = Parts, Body) ->
++    dry(Config, Context, Keyword, Line, Parts, Body);
++step_dry(Config, Context, Keyword, Line, ?PRESS(_) = Parts, Body) ->
++    dry(Config, Context, Keyword, Line, Parts, Body);
++step_dry(Config, Context, Keyword, Line, ?TEXT(_) = Parts, Body) ->
++    dry(Config, Context, Keyword, Line, Parts, Body);
++step_dry(Config, Context, Keyword, Line, ?URL(_) = Parts, Body) ->
++    dry(Config, Context, Keyword, Line, Parts, Body);
++step_dry(Config, Context, Keyword, Line, ?CLOSE = Parts, Body) ->
++    dry(Config, Context, Keyword, Line, Parts, Body).
++
++dry(Config, Context, Keyword, Line, Parts, Body) ->
++    case steps_utils:is_admin(Context) of
++        true -> steps_utils:step_dry(Config, Context, Keyword, Line, Parts, Body);
++        false -> denied(Context)
++    end.
++
++step(Config, Context, Keyword, Line, ?START(Url), _Body) ->
++    case steps_utils:is_admin(Context) of
++        false ->
++            denied(Context);
+         true ->
+-            Payload = #{<<"capabilities">> => #{<<"alwaysMatch">> => #{<<"browserName">> => Browser}}},
+-            case request(Cfg, post, "/session", Payload) of
+-                {ok, Result} when is_map(Result) ->
+-                    Value = maps:get(<<"value">>, Result, #{}),
+-                    SessionId = maps:get(<<"sessionId">>, Value, maps:get(<<"sessionId">>, Result, undefined)),
+-                    case SessionId of
+-                        Id when is_binary(Id), byte_size(Id) > 0 -> {ok, Id};
+-                        _ -> {error, missing_webdriver_session_id}
++            case damage_webdriver:navigation_url(Url) of
++                {ok, Target} ->
++                    case recorder_config(Config, Target) of
++                        {ok, Config1} ->
++                            Started = steps_webdriver:step(
++                                Config1, Context, Keyword, Line,
++                                ["I start the configured WebDriver browser"], <<>>
++                            ),
++                            case maps:is_key(fail, Started) of
++                                true -> Started;
++                                false ->
++                                    delegate(Config1, Started, Keyword, Line,
++                                        ["I navigate the WebDriver browser to", Target], <<>>)
++                            end;
++                        {error, _} ->
++                            Context#{fail => <<"Invalid recorder WebDriver configuration">>}
+                     end;
+-                Error -> Error
++                {error, _} ->
++                    Context#{fail => <<"Recorded browser URL must be HTTP(S), without embedded credentials">>}
+             end
+-    end.
+-
+-navigate(Cfg, Session, Url) ->
+-    no_value(Cfg, Session, post, ["url"], #{<<"url">> => Url}).
+-
+-close(Cfg, Session) ->
+-    no_value(Cfg, Session, delete, [], none).
+-
+-allowed_url(Url0) ->
+-    Url = to_bin(Url0),
+-    case uri_string:parse(Url) of
+-        #{scheme := Scheme, host := _} when Scheme =:= <<"http">>; Scheme =:= <<"https">> -> {ok, Url};
+-        #{scheme := Scheme, host := _} when Scheme =:= "http"; Scheme =:= "https" -> {ok, Url};
+-        _ -> {error, unsupported_browser_url}
+-    end.
+-
+-with_element(Cfg, Session, Selector0, Fun) ->
+-    Selector = to_bin(Selector0),
+-    Deadline = erlang:monotonic_time(millisecond) + ?TIMEOUT_MS,
+-    case locate(Cfg, Session, Selector, Deadline) of
+-        {ok, Element} -> Fun(Element);
+-        Error -> Error
+-    end.
+-
+-locate(Cfg, Session, Selector, Deadline) ->
+-    case webdriver(Cfg, Session, post, "element", #{<<"using">> => <<"css selector">>, <<"value">> => Selector}) of
+-        {ok, #{?ELEMENT_KEY := Element}} when is_binary(Element) -> {ok, Element};
+-        {ok, _} -> {error, missing_webdriver_element};
+-        Error ->
+-            case erlang:monotonic_time(millisecond) < Deadline andalso missing_element(Error) of
+-                true -> timer:sleep(200), locate(Cfg, Session, Selector, Deadline);
+-                false -> Error
++    end;
++step(Config, Context, Keyword, Line, ?NAVIGATE(Url), _Body) ->
++    delegate(Config, Context, Keyword, Line, ["I navigate the WebDriver browser to", Url], <<>>);
++step(Config, Context, Keyword, Line, ?CLICK(Selector), _Body) ->
++    delegate(Config, Context, Keyword, Line, ["I click the WebDriver element", Selector], <<>>);
++step(Config, Context, Keyword, Line, ?FILL(Selector), Body) ->
++    delegate(Config, Context, Keyword, Line, ["I fill the WebDriver element", Selector, "with"], Body);
++step(Config, Context, Keyword, Line, ?SECRET(SecretName, Selector), _Body) ->
++    delegate(Config, Context, Keyword, Line, ["I enter the WebDriver account secret", SecretName, "into", Selector], <<>>);
++step(Config, Context, Keyword, Line, ?SELECT(Selector), Body) ->
++    delegate(Config, Context, Keyword, Line, ["I select the WebDriver option in", Selector], Body);
++step(Config, Context, Keyword, Line, ?CHECK(Selector), _Body) ->
++    delegate(Config, Context, Keyword, Line, ["I set the WebDriver checked state of", Selector, "to", "checked"], <<>>);
++step(Config, Context, Keyword, Line, ?UNCHECK(Selector), _Body) ->
++    delegate(Config, Context, Keyword, Line, ["I set the WebDriver checked state of", Selector, "to", "unchecked"], <<>>);
++step(Config, Context, Keyword, Line, ?PRESS(Selector), _Body) ->
++    delegate(Config, Context, Keyword, Line, ["I press the WebDriver key", "Enter", "in", Selector], <<>>);
++step(Config, Context, Keyword, Line, ?TEXT(Selector), Body) ->
++    delegate(Config, Context, Keyword, Line, ["the WebDriver text in", Selector, "should contain", Body], <<>>);
++step(Config, Context, Keyword, Line, ?URL(ExpectedUrl), _Body) ->
++    delegate(Config, Context, Keyword, Line, ["the WebDriver URL should start with", ExpectedUrl], <<>>);
++step(Config, Context, Keyword, Line, ?CLOSE, _Body) ->
++    delegate(Config, Context, Keyword, Line, ["I close the WebDriver browser"], <<>>).
++
++delegate(Config, Context, Keyword, Line, Parts, Body) ->
++    %% steps_webdriver also guards direct calls before touching the client.
++    steps_webdriver:step(Config, Context, Keyword, Line, Parts, Body).
++
++denied(Context) ->
++    Context#{fail => <<"Recorded browser replay requires node_admin">>}.
++
++%% Prefer the node's existing trusted webdriver profile (including managed
++%% ChromeDriver/Appium). Translate explicitly configured v0.1 recorder keys
++%% only when no modern profile has been configured. Never accept a profile
++%% or endpoint from the scenario context.
++recorder_config(Config, Target) when is_list(Config) ->
++    case proplists:is_defined(webdriver, Config) orelse
++        application:get_env(damage, webdriver) =/= undefined of
++        true -> {ok, Config};
++        false ->
++            Endpoint = proplists:get_value(browser_recorder_webdriver_url, Config,
++                application:get_env(damage, browser_recorder_webdriver_url, undefined)),
++            case Endpoint of
++                undefined -> {ok, Config};
++                _ ->
++                    Browser0 = proplists:get_value(browser_recorder_browser, Config,
++                        application:get_env(damage, browser_recorder_browser, "chrome")),
++                    case legacy_browser(Browser0) of
++                        {ok, Browser} ->
++                            {ok, [{webdriver, [
++                                {endpoint, Endpoint}, {dashboard_url, Target},
++                                {capabilities, [{browserName, Browser}]}
++                            ]} | Config]};
++                        Error -> Error
++                    end
+             end
+-    end.
+-
+-missing_element({error, {webdriver_error, <<"no such element">>}}) -> true;
+-missing_element(_) -> false.
+-
+-fill(Cfg, Session, Selector, Text) ->
+-    with_element(Cfg, Session, Selector, fun(Element) ->
+-        case no_value(Cfg, Session, post, ["element/",Element,"/clear"], #{}) of
+-            ok -> no_value(Cfg, Session, post, ["element/",Element,"/value"], #{<<"text">> => Text});
+-            Error -> Error
+-        end
+-    end).
+-
+-select_option(Cfg, Session, Element, Wanted) ->
+-    case webdriver(Cfg, Session, post, ["element/",Element,"/elements"],
+-        #{<<"using">> => <<"css selector">>, <<"value">> => <<"option">>}) of
+-        {ok, Options} when is_list(Options) -> choose_option(Cfg, Session, Options, Wanted);
+-        Error -> Error
+-    end.
+-
+-choose_option(_Cfg, _Session, [], _Wanted) -> {error, recorded_option_not_found};
+-choose_option(Cfg, Session, [Option | Rest], Wanted) ->
+-    case maps:get(?ELEMENT_KEY, Option, undefined) of
+-        undefined -> choose_option(Cfg, Session, Rest, Wanted);
+-        Element ->
+-            Text = webdriver(Cfg, Session, get, ["element/",Element,"/text"], none),
+-            Attr = webdriver(Cfg, Session, get, ["element/",Element,"/attribute/value"], none),
+-            case Text =:= {ok, Wanted} orelse Attr =:= {ok, Wanted} of
+-                true -> no_value(Cfg, Session, post, ["element/",Element,"/click"], #{});
+-                false -> choose_option(Cfg, Session, Rest, Wanted)
+-            end
+-    end.
+-
+-set_checked(Cfg, Session, Selector, Wanted) ->
+-    with_element(Cfg, Session, Selector, fun(Element) ->
+-        case webdriver(Cfg, Session, get, ["element/",Element,"/selected"], none) of
+-            {ok, Wanted} -> ok;
+-            {ok, Actual} when is_boolean(Actual) ->
+-                no_value(Cfg, Session, post, ["element/",Element,"/click"], #{});
+-            Error -> Error
+-        end
+-    end).
+-
+-wait_url(Cfg, Session, Prefix, Deadline) ->
+-    case webdriver(Cfg, Session, get, "url", none) of
+-        {ok, Current} when is_binary(Current) ->
+-            case binary:match(Current, Prefix) of
+-                {0, _} -> ok;
+-                _ -> retry_url(Cfg, Session, Prefix, Deadline)
+-            end;
+-        Error -> Error
+-    end.
+-
+-retry_url(Cfg, Session, Prefix, Deadline) ->
+-    case erlang:monotonic_time(millisecond) < Deadline of
+-        true -> timer:sleep(200), wait_url(Cfg, Session, Prefix, Deadline);
+-        false -> {error, recorded_url_mismatch}
+-    end.
+-
+-no_value(Cfg, Session, Method, Path, Body) ->
+-    case webdriver(Cfg, Session, Method, Path, Body) of
+-        {ok, _} -> ok;
+-        Error -> Error
+-    end.
+-
+-webdriver(Cfg, Session, Method, Path, Body) ->
+-    Sess = binary_to_list(Session),
+-    Prefix = "/session/" ++ Sess,
+-    Suffix = case iolist_to_binary(Path) of <<>> -> ""; P -> "/" ++ binary_to_list(P) end,
+-    case request(Cfg, Method, Prefix ++ Suffix, Body) of
+-        {ok, BodyMap} when is_map(BodyMap) -> {ok, maps:get(<<"value">>, BodyMap, null)};
+-        Error -> Error
+-    end.
+-
+-%% Reuse DamageBDD's existing connection wrapper; no extra OTP application
+-%% dependencies or unsafe TLS verification fallbacks are introduced.
+-request(Cfg, Method, Path, Payload) ->
+-    Url = driver(Cfg) ++ Path,
+-    case parse_endpoint(Url) of
+-        {ok, Host, Port, RequestPath, Transport} ->
+-            Headers = [{<<"accept">>, <<"application/json">>},
+-                {<<"content-type">>, <<"application/json">>}],
+-            Body = case Method of
+-                post -> jsx:encode(Payload);
+-                _ -> <<>>
+-            end,
+-            Opts = #{transport => Transport, proxy => direct, timeout => ?TIMEOUT_MS,
+-                connect_timeout => ?TIMEOUT_MS, decode => raw},
+-            case damage_gun:request(Method, Host, Port, RequestPath, Headers, Body, Opts) of
+-                {ok, #{status := Status, body := RespBody}} -> response(Status, RespBody);
+-                {error, _} -> {error, webdriver_transport_failure};
+-                _ -> {error, unexpected_webdriver_transport_reply}
+-            end;
+-        Error -> Error
+-    end.
+-
+-parse_endpoint(Url) ->
+-    case uri_string:parse(Url) of
+-        #{scheme := Scheme0, host := Host0} = Parsed ->
+-            Scheme = to_list(Scheme0),
+-            case Scheme of
+-                "http" -> endpoint_parts(Host0, maps:get(port, Parsed, 80), Parsed, tcp);
+-                "https" -> endpoint_parts(Host0, maps:get(port, Parsed, 443), Parsed, tls);
+-                _ -> {error, invalid_webdriver_scheme}
+-            end;
+-        _ -> {error, invalid_webdriver_url}
+-    end.
+-
+-endpoint_parts(Host, Port, Parsed, Transport) ->
+-    Path0 = maps:get(path, Parsed, "/"),
+-    Path = case to_bin(Path0) of
+-        <<>> -> <<"/">>;
+-        Bin -> Bin
+-    end,
+-    case {maps:get(query, Parsed, undefined), Port} of
+-        {undefined, P} when is_integer(P), P > 0, P < 65536 ->
+-            {ok, to_list(Host), Port, Path, Transport};
+-        _ -> {error, invalid_webdriver_endpoint}
+-    end.
+-
+-response(Status, Body) ->
+-    try jsx:decode(Body, [return_maps]) of
+-        Data when is_map(Data) ->
+-            case maps:get(<<"value">>, Data, undefined) of
+-                #{<<"error">> := Error} -> {error, {webdriver_error, Error}};
+-                _ when Status >= 200, Status < 300 -> {ok, Data};
+-                _ -> {error, {http_status, Status, invalid_webdriver_response}}
+-            end;
+-        _ -> {error, invalid_webdriver_json}
+-    catch _:_ -> {error, invalid_webdriver_json}
+-    end.
+-
+-to_bin(B) when is_binary(B) -> B;
+-to_bin(L) when is_list(L) -> unicode:characters_to_binary(L);
+-to_bin(_) -> <<>>.
+-
+-to_list(B) when is_binary(B) -> binary_to_list(B);
+-to_list(L) when is_list(L) -> L.
++    end;
++recorder_config(_, _) ->
++    {error, invalid_configuration}.
++
++legacy_browser("chrome") -> {ok, <<"chrome">>};
++legacy_browser(<<"chrome">>) -> {ok, <<"chrome">>};
++legacy_browser("firefox") -> {ok, <<"firefox">>};
++legacy_browser(<<"firefox">>) -> {ok, <<"firefox">>};
++legacy_browser(_) -> {error, invalid_browser_name}.
+diff --git a/apps/damage/src/steps_webdriver.erl b/apps/damage/src/steps_webdriver.erl
+index f746080..d71dbdc 100644
+--- a/apps/damage/src/steps_webdriver.erl
++++ b/apps/damage/src/steps_webdriver.erl
+@@ -5,6 +5,20 @@
+ -damage_roles([node_admin]).
+ -export([step/6, step_dry/6, cleanup/1, cleanup_owner/0]).
+ 
++%% Generic browser-journey operations used by the recorder adapter.
++step(Config, Context, _Keyword, _Line, ["I navigate the WebDriver browser to", Url], _Body) ->
++    perform(Config, Context, navigate, [Url]);
++step(Config, Context, _Keyword, _Line, ["I select the WebDriver option in", Css], Body) ->
++    perform(Config, Context, select, [Css, Body]);
++step(Config, Context, _Keyword, _Line,
++    ["I set the WebDriver checked state of", Css, "to", State], _Body) ->
++    perform(Config, Context, checked, [Css, State]);
++step(Config, Context, _Keyword, _Line, ["the WebDriver URL should start with", Prefix], _Body) ->
++    perform(Config, Context, url_prefix, [Prefix]);
++step(Config, Context, _Keyword, _Line,
++    ["I enter the WebDriver account secret", Name, "into", Css], _Body) ->
++    %% The account comes from authenticated execution context, never the step.
++    perform(Config, Context, account_secret, [maps:get(public_key, Context, undefined), Name, Css]);
+ step(Config, Context, _Keyword, _Line, ["I use WebDriver profile", Name], _Body) ->
+     perform(Config, Context, profile, [Name]);
+ step(Config, Context, _Keyword, _Line, ["I use the WebDriver sidebar action", Action], _Body) ->
+@@ -189,6 +203,18 @@ step(Config, Context, _Keyword, _Line, ["I close the WebDriver browser"], _Body)
+     perform(Config, Context, close, []).
+ 
+ %% Dry runs deliberately avoid the browser, credentials, network and assertions.
++step_dry(_Config, Context, _Keyword, _Line, ["I navigate the WebDriver browser to", _Url], _Body) ->
++    Context;
++step_dry(_Config, Context, _Keyword, _Line, ["I select the WebDriver option in", _Css], _Body) ->
++    Context;
++step_dry(_Config, Context, _Keyword, _Line,
++    ["I set the WebDriver checked state of", _Css, "to", _State], _Body) ->
++    Context;
++step_dry(_Config, Context, _Keyword, _Line, ["the WebDriver URL should start with", _Prefix], _Body) ->
++    Context;
++step_dry(_Config, Context, _Keyword, _Line,
++    ["I enter the WebDriver account secret", _Name, "into", _Css], _Body) ->
++    Context;
+ step_dry(_Config, Context, _Keyword, _Line, ["I use WebDriver profile", _Name], _Body) ->
+     Context;
+ step_dry(_Config, Context, _Keyword, _Line, ["I use the WebDriver sidebar action", _Action], _Body) ->
+diff --git a/apps/damage/test/steps_browser_recorder_tests.erl b/apps/damage/test/steps_browser_recorder_tests.erl
+new file mode 100644
+index 0000000..47a9446
+--- /dev/null
++++ b/apps/damage/test/steps_browser_recorder_tests.erl
+@@ -0,0 +1,284 @@
++%% Local socket fixtures exercise the real managed-client protocol, not Selenium.
++-module(steps_browser_recorder_tests).
++-include_lib("eunit/include/eunit.hrl").
++-define(ELEMENT, <<"element-6066-11e4-a52e-4f735466cecf">>).
++-define(OWNER, <<"recorder-unit-admin">>).
++
++profile(Endpoint) ->
++    [{endpoint, Endpoint}, {dashboard_url, <<"https://example.test">>},
++     {wait_ms, 300}, {command_timeout_ms, 1000}, {session_start_timeout_ms, 2000},
++     {capabilities, [{browserName, <<"chrome">>}]}].
++
++run(Context, Parts) -> run(Context, Parts, <<>>).
++run(Context, Parts, Body) ->
++    steps_browser_recorder:step([], Context, <<"When">>, 1, Parts, Body).
++
++start(Endpoint) ->
++    steps_browser_recorder:step(
++        [{webdriver, profile(Endpoint)}], #{public_key => ?OWNER}, <<"Given">>, 1,
++        ["I start a recorded browser at", "https://example.test/signup"], <<>>).
++
++runtime_guard_denies_unprivileged_replay_test() ->
++    with_admin(fun() ->
++        [begin
++            Context = #{public_key => <<"not-admin">>},
++            ?assertMatch(#{fail := _}, run(Context, Parts)),
++            ?assertMatch(#{fail := _}, steps_browser_recorder:step_dry(
++                [], Context, <<"Given">>, 1, Parts, <<>>))
++        end || Parts <- vocabulary()],
++        %% A feature-supplied roles field does not grant permission.
++        ?assertMatch(#{fail := _}, run(#{roles => [node_admin]},
++            ["I start a recorded browser at", "https://example.test"]))
++    end).
++
++recorder_is_discovered_once_and_role_filtered_test() ->
++    with_admin(fun() ->
++        ?assertEqual(1, length([M || M <- damage_utils:loaded_steps(), M =:= steps_browser_recorder])),
++        ?assert(steps_utils:step_module_allowed(steps_browser_recorder, #{public_key => ?OWNER})),
++        ?assertNot(steps_utils:step_module_allowed(steps_browser_recorder, #{}))
++    end).
++
++dry_run_has_no_browser_and_preserves_metering_test() ->
++    with_admin(fun() ->
++        C = #{public_key => ?OWNER},
++        [begin
++            Result = steps_browser_recorder:step_dry([], C, <<"When">>, 1, Parts, <<>>),
++            ?assertNot(maps:is_key(fail, Result)),
++            ?assertNot(maps:is_key(webdriver_session, Result)),
++            ?assert(maps:is_key(step_spend, Result))
++        end || Parts <- vocabulary()],
++        ?assertEqual(undefined, get({steps_webdriver, session}))
++    end).
++
++unrelated_steps_are_not_swallowed_test() ->
++    ?assertError(function_clause,
++        steps_browser_recorder:step([], #{}, <<"When">>, 1, ["Unrelated step"], <<>>)),
++    ?assertError(function_clause,
++        steps_browser_recorder:step_dry([], #{}, <<"When">>, 1, ["Unrelated step"], <<>>)).
++
++navigation_validation_test() ->
++    [begin
++        ?assertEqual({error, invalid_browser_url}, damage_webdriver:navigation_url(URL))
++    end || URL <- [
++        <<"javascript:alert(1)">>, <<"file:///etc/passwd">>, <<"about:blank">>,
++        <<"https://user:password@example.test/">>, <<"https://example.test:0/">>,
++        <<"https://example.test/a\nb">>, <<"https://example.test:65536/">>, <<>>
++    ]],
++    URL = <<"https://example.test/path?q=a%20b#/screen">>,
++    ?assertEqual({ok, URL}, damage_webdriver:navigation_url(URL)).
++
++invalid_start_does_not_open_a_session_test() ->
++    with_admin(fun() ->
++        C = run(#{public_key => ?OWNER}, ["I start a recorded browser at", "file:///private"]),
++        ?assertMatch(#{fail := _}, C),
++        ?assertNot(maps:is_key(webdriver_session, C)),
++        ?assertEqual(undefined, get({steps_webdriver, session}))
++    end).
++
++recorded_vocabulary_uses_native_session_and_cleanup_test() ->
++    with_admin(fun() ->
++        with_server(fun normal/3, fun(URL) ->
++            C0 = start(URL),
++            ?assertNot(maps:is_key(fail, C0)),
++            Pid = maps:get(webdriver_session, C0),
++            ?assert(is_pid(Pid)),
++            ?assertNot(maps:is_key(browser_recorder_session, C0)),
++            C1 = run(C0, ["I type into recorded field", "#name"], <<"Alice\nSmith">>),
++            C2 = run(C1, ["I select recorded option in", "#plan"], <<"pro">>),
++            C3 = run(C2, ["I set recorded checkbox", "#terms", "to checked"]),
++            C4 = run(C3, ["I set recorded checkbox", "#terms", "to checked"]),
++            C5 = run(C4, ["I set recorded checkbox", "#terms", "to unchecked"]),
++            C6 = run(C5, ["I press Enter in recorded field", "#name"]),
++            C7 = run(C6, ["I click recorded element", "#submit"]),
++            C8 = run(C7, ["recorded element", "#message", "should contain text"], <<"Success">>),
++            C9 = run(C8, ["the recorded browser URL should start with", "https://example.test/signup"]),
++            C10 = run(C9, ["I navigate the recorded browser to", "https://example.test/done"]),
++            ?assertNot(maps:is_key(fail, C10)),
++            Closed = run(C10, ["I close the recorded browser"]),
++            ?assertNot(maps:is_key(webdriver_session, Closed)),
++            ?assertNot(maps:is_key(fail, Closed)),
++            ?assertEqual(undefined, get({steps_webdriver, session})),
++            Requests = drain_requests([]),
++            ?assertEqual(2, length([ok || {<<"POST">>, P, _} <- Requests,
++                binary:match(P, <<"/element/terms/click">>) =/= nomatch])),
++            ?assertEqual(1, length([ok || {<<"DELETE">>, _, _} <- Requests])),
++            ?assert(lists:any(fun({M, P, Payload}) ->
++                M =:= <<"POST">> andalso binary:match(P, <<"/element/name/value">>) =/= nomatch
++                    andalso maps:get(<<"text">>, Payload, undefined) =:= <<"Alice\nSmith">>
++            end, Requests))
++        end)
++    end).
++
++empty_select_value_is_replayed_test() ->
++    with_admin(fun() ->
++        with_server(fun normal/3, fun(URL) ->
++            C = run(start(URL), ["I select recorded option in", "#plan"], <<>>),
++            ?assertNot(maps:is_key(fail, C)),
++            _ = run(C, ["I close the recorded browser"]),
++            ?assert(lists:any(fun({M, P, _}) ->
++                M =:= <<"POST">> andalso binary:match(P, <<"/element/empty/click">>) =/= nomatch
++            end, drain_requests([])))
++        end)
++    end).
++
++text_assertion_failure_closes_session_test() ->
++    with_admin(fun() ->
++        with_server(fun normal/3, fun(URL) ->
++            Failed = run(start(URL), ["recorded element", "#message", "should contain text"], <<"Missing">>),
++            ?assertMatch(#{fail := _}, Failed),
++            ?assertNot(maps:is_key(webdriver_session, Failed)),
++            ?assertEqual(1, length([ok || {<<"DELETE">>, _, _} <- drain_requests([])]))
++        end)
++    end).
++
++scenario_cleanup_handles_skipped_explicit_close_test() ->
++    with_admin(fun() ->
++        with_server(fun normal/3, fun(URL) ->
++            C = start(URL),
++            %% The same cleanup entrypoints used by damage:execute_steps/3.
++            ?assertEqual(ok, steps_webdriver:cleanup(C#{fail => <<"A later HTTP step failed">>})),
++            ?assertEqual(ok, steps_webdriver:cleanup_owner()),
++            ?assertEqual(1, length([ok || {<<"DELETE">>, _, _} <- drain_requests([])]))
++        end)
++    end).
++
++remote_error_text_is_redacted_test() ->
++    with_admin(fun() ->
++        Handler = fun(Method, Path, Json) ->
++            case {Method, binary:match(Path, <<"/click">>)} of
++                {<<"POST">>, {_, _}} -> {500, #{<<"error">> => <<"SENTINEL_SECRET">>, <<"message">> => <<"SENTINEL_SECRET">>}};
++                _ -> normal(Method, Path, Json)
++            end
++        end,
++        with_server(Handler, fun(URL) ->
++            Failed = run(start(URL), ["I click recorded element", "#submit"]),
++            ?assertMatch(#{fail := _}, Failed),
++            ?assertEqual(nomatch, binary:match(term_to_binary(Failed), <<"SENTINEL_SECRET">>)),
++            ?assertNot(maps:is_key(webdriver_session, Failed))
++        end)
++    end).
++
++fixture_feature_matches_catalog_test() ->
++    {ok, {steps_browser_recorder, [{abstract_code, {raw_abstract_v1, Forms}}]}} =
++        beam_lib:chunks(code:which(steps_browser_recorder), [abstract_code]),
++    Entries = damage_bdd_catalog:from_forms(<<"steps_browser_recorder">>, <<"test">>, Forms),
++    Catalog = #{revision => <<"test">>, steps => Entries},
++    Source = proplists:get_value(source, ?MODULE:module_info(compile)),
++    File = filename:join([filename:dirname(Source), "steps_browser_recorder_tests_data", "vocabulary.feature"]),
++    {ok, Text} = file:read_file(File),
++    Result = damage_bdd_validator:validate(Text, Catalog),
++    ?assertEqual({true, []}, {maps:get(valid, Result), maps:get(diagnostics, Result)}).
++
++vocabulary() ->
++    [["I start a recorded browser at", "https://example.test"],
++     ["I navigate the recorded browser to", "https://example.test/next"],
++     ["I click recorded element", "#submit"],
++     ["I type into recorded field", "#name"],
++     ["I type secret", "browser_secret_test", "into recorded field", "#password"],
++     ["I select recorded option in", "#plan"],
++     ["I set recorded checkbox", "#terms", "to checked"],
++     ["I set recorded checkbox", "#terms", "to unchecked"],
++     ["I press Enter in recorded field", "#name"],
++     ["recorded element", "#message", "should contain text"],
++     ["the recorded browser URL should start with", "https://example.test"],
++     ["I close the recorded browser"]].
++
++with_admin(Fun) ->
++    Previous = application:get_env(damage, node_admins),
++    application:set_env(damage, node_admins, [?OWNER]),
++    try Fun()
++    after
++        _ = steps_webdriver:cleanup_owner(),
++        case Previous of
++            {ok, Value} -> application:set_env(damage, node_admins, Value);
++            undefined -> application:unset_env(damage, node_admins)
++        end
++    end.
++
++%% Each fixture listens on loopback and an ephemeral port. Request logging is
++%% test-only and uses synthetic inputs; production code never records bodies.
++with_server(Handler, Test) ->
++    {ok, _} = application:ensure_all_started(inets),
++    _ = drain_requests([]),
++    Parent = self(),
++    Wrapped = fun(M, P, J) -> Parent ! {recorder_wire, M, P, J}, Handler(M, P, J) end,
++    {ok, Listen} = gen_tcp:listen(0, [binary, {active, false}, {reuseaddr, true}, {ip, {127,0,0,1}}]),
++    {ok, {_, Port}} = inet:sockname(Listen),
++    Pid = spawn_link(fun() -> accept_loop(Listen, Wrapped) end),
++    URL = iolist_to_binary(["http://127.0.0.1:", integer_to_list(Port), "/wd/hub"]),
++    try Test(URL)
++    after
++        _ = steps_webdriver:cleanup_owner(),
++        gen_tcp:close(Listen),
++        unlink(Pid),
++        exit(Pid, shutdown),
++        _ = drain_requests([])
++    end.
++
++accept_loop(Listen, Handler) ->
++    case gen_tcp:accept(Listen) of
++        {ok, Socket} ->
++            try serve(Socket, Handler) after gen_tcp:close(Socket) end,
++            accept_loop(Listen, Handler);
++        {error, closed} -> ok
++    end.
++serve(Socket, Handler) ->
++    {Head, Rest} = read_header(Socket, <<>>),
++    [First | _] = binary:split(Head, <<"\r\n">>, [global]),
++    [Method, Path, _] = binary:split(First, <<" ">>, [global]),
++    Length = case re:run(Head, <<"(?i)content-length:\\s*([0-9]+)">>, [{capture, [1], binary}]) of
++        {match, [N]} -> binary_to_integer(N);
++        nomatch -> 0
++    end,
++    Body = read_body(Socket, Rest, Length),
++    Json = case Body of <<>> -> #{}; _ -> jsx:decode(Body, [return_maps]) end,
++    {Status, Value} = Handler(Method, Path, Json),
++    Raw = jsx:encode(#{<<"value">> => Value}),
++    ok = gen_tcp:send(Socket, ["HTTP/1.1 ", integer_to_list(Status), " Test\r\n",
++        "Content-Type: application/json\r\nConnection: close\r\nContent-Length: ",
++        integer_to_list(byte_size(Raw)), "\r\n\r\n", Raw]).
++read_header(Socket, Bytes) ->
++    case binary:split(Bytes, <<"\r\n\r\n">>) of
++        [Head, Rest] -> {Head, Rest};
++        [_] when byte_size(Bytes) < 65536 ->
++            {ok, More} = gen_tcp:recv(Socket, 0, 2000),
++            read_header(Socket, <<Bytes/binary, More/binary>>)
++    end.
++read_body(_Socket, Bytes, Length) when byte_size(Bytes) >= Length -> binary:part(Bytes, 0, Length);
++read_body(Socket, Bytes, Length) ->
++    {ok, More} = gen_tcp:recv(Socket, Length - byte_size(Bytes), 2000),
++    <<Bytes/binary, More/binary>>.
++
++drain_requests(Acc) ->
++    receive {recorder_wire, M, P, J} -> drain_requests([{M, P, J} | Acc])
++    after 0 -> lists:reverse(Acc)
++    end.
++
++normal(<<"POST">>, <<"/wd/hub/session">>, _) ->
++    {200, #{<<"sessionId">> => <<"recorder-test">>, <<"capabilities">> => #{}}};
++normal(M, <<"/wd/hub/session/recorder-test", Path/binary>>, J) ->
++    normal_session(M, Path, J).
++normal_session(<<"POST">>, <<"/url">>, #{<<"url">> := URL}) -> put(url, URL), {200, null};
++normal_session(<<"GET">>, <<"/url">>, _) -> {200, get(url)};
++normal_session(<<"POST">>, <<"/execute/sync">>, #{<<"script">> := Script}) ->
++    case binary:match(Script, <<"e.innerText">>) of
++        nomatch -> {200, true};
++        _ -> {200, <<"Success">>}
++    end;
++normal_session(<<"POST">>, <<"/elements">>, #{<<"value">> := <<"#", Id/binary>>}) ->
++    {200, [#{?ELEMENT => Id}]};
++normal_session(<<"GET">>, <<"/element/plan/name">>, _) -> {200, <<"select">>};
++normal_session(<<"GET">>, <<"/element/plan/property/multiple">>, _) -> {200, false};
++normal_session(<<"POST">>, <<"/element/plan/elements">>, _) ->
++    {200, [#{?ELEMENT => <<"empty">>}, #{?ELEMENT => <<"pro">>}]};
++normal_session(<<"GET">>, <<"/element/empty/property/value">>, _) -> {200, <<>>};
++normal_session(<<"GET">>, <<"/element/pro/property/value">>, _) -> {200, <<"pro">>};
++normal_session(<<"GET">>, <<"/element/terms/property/type">>, _) -> {200, <<"checkbox">>};
++normal_session(M, <<"/element/", Tail/binary>>, _) ->
++    case {M, binary:split(Tail, <<"/">>)} of
++        {<<"POST">>, [Id, <<"click">>]} ->
++            put({selected, Id}, get({selected, Id}) =/= true), {200, null};
++        {<<"GET">>, [Id, <<"selected">>]} -> {200, get({selected, Id}) =:= true};
++        _ -> {200, null}
++    end;
++normal_session(_, _, _) -> {200, null}.
+diff --git a/apps/damage/test/steps_browser_recorder_tests_data/vocabulary.feature b/apps/damage/test/steps_browser_recorder_tests_data/vocabulary.feature
+new file mode 100644
+index 0000000..f60ceeb
+--- /dev/null
++++ b/apps/damage/test/steps_browser_recorder_tests_data/vocabulary.feature
+@@ -0,0 +1,25 @@
++Feature: Recorded browser vocabulary
++
++  # Set account secret: browser_secret_test (never include its value in this file)
++  Scenario: Replay the recorded journey
++    Given I start a recorded browser at "https://example.test/signup"
++    When I type into recorded field "#name"
++      """
++      Alice
++      """
++    When I type secret "browser_secret_test" into recorded field "#password"
++    When I select recorded option in "#plan"
++      """
++      pro
++      """
++    When I set recorded checkbox "#terms" to checked
++    When I set recorded checkbox "#terms" to unchecked
++    When I press Enter in recorded field "#name"
++    When I click recorded element "#submit"
++    Then recorded element "#message" should contain text
++      """
++      Success
++      """
++    Then the recorded browser URL should start with "https://example.test/done"
++    When I navigate the recorded browser to "https://example.test/logout"
++    Then I close the recorded browser

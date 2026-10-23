@@ -1,0 +1,10 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>DamageBDD recorder demo</title>
+<style>body{font:16px system-ui;max-width:560px;margin:6em auto;color:#1b294f;padding:0 20px}input,select,button{font:inherit;display:block;padding:10px;width:100%;margin:10px 0 22px}button{color:white;background:#324bb5;border:0;border-radius:8px}h1{font-size:30px}</style>
+<h1>Recorder demo</h1><p>Record a simple signup flow without sending any information to a server.</p>
+<form id="demo"><label>Email<input type="email" name="email" data-testid="signup-email" required></label>
+<label>Password (will not be recorded)<input type="password" name="password" data-testid="signup-password" required></label>
+<label>Plan<select name="plan" data-testid="signup-plan"><option value="starter">Starter</option><option value="pro">Pro</option></select></label>
+<label><input type="checkbox" name="agree" id="agree" required> I accept the demo terms</label>
+<button type="submit" data-testid="signup-submit">Create demo account</button></form>
+<p id="result" hidden></p>
+<script>document.getElementById('demo').addEventListener('submit',e=>{e.preventDefault();document.getElementById('result').textContent='Your demo account is ready';document.getElementById('result').hidden=false;});</script></html>

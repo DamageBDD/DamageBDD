@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "DamageBDD Recorder",
+  "description": "Turn browser journeys into readable, replayable DamageBDD feature files.",
+  "version": "0.1.1",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "tabs"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "scripts": [
+      "background.js"
+    ]
+  },
+  "action": {
+    "default_title": "DamageBDD Recorder",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png"
+    }
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "recorder@damagebdd.com",
+      "strict_min_version": "121.0"
+    }
+  }
+}

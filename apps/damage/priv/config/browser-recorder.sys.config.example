@@ -1,0 +1,30 @@
+%% Merge into the EXISTING {damage, [...]} entry, not a second damage entry.
+%% Keep the rest of your node configuration. Objects use tuples/proplists.
+%% Reuse an existing managed webdriver profile instead when already configured.
+[
+ {damage, [
+   %% Only identities already trusted to use this node's automation service.
+   {node_admins, [<<"ak_REPLAYING_ACCOUNT">>]},
+   {webdriver, [
+     {endpoint, <<"http://127.0.0.1:4444">>},
+     {dashboard_url, <<"https://example.test">>},
+     {fixture, false},
+     {wait_ms, 15000},
+     {command_timeout_ms, 30000},
+     {session_start_timeout_ms, 120000},
+     {idle_timeout_ms, 120000},
+     {session_lifetime_ms, 900000},
+     {capabilities, [
+       {browserName, <<"chrome">>},
+       {'goog:chromeOptions', [
+         {args, [<<"--headless=new">>, <<"--window-size=1440,1000">>]}
+       ]}
+     ]}
+   ]}
+ ]}
+].
+%% Firefox: replace capabilities with
+%% {capabilities, [{browserName, <<"firefox">>},
+%%                 {'moz:firefoxOptions', [{args, [<<"-headless">>]}]}]}.
+%% Supply account-scoped recorder secrets through your trusted provisioning
+%% flow, not as plaintext in this file or in the exported feature.
