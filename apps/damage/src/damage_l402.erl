@@ -141,7 +141,8 @@ verify_authorization(AuthHeader, Req) ->
             {error, invalid}
     end.
 
--spec challenge(cowboy_req:req(), binary(), integer()) -> {cowboy_req:req(), map()}.
+-spec challenge(cowboy_req:req(), binary(), integer()) ->
+    {cowboy_req:req(), map()} | {error, term()}.
 challenge(Req0, Scope, AmountMsat) ->
     Body =
         jsx:encode(#{
@@ -154,9 +155,8 @@ challenge(Req0, Scope, AmountMsat) ->
     challenge_with_body(Req0, Scope, AmountMsat, Body).
 
 -spec challenge_with_body(cowboy_req:req(), binary(), integer(), binary()) ->
-    {cowboy_req:req(), map()}.
+    {cowboy_req:req(), map()} | {error, term()}.
 challenge_with_body(Req0, Scope, AmountMsat, BodyBin) ->
-    ensure_tabs(),
     Expiry = application:get_env(damage, l402_invoice_expiry, 600),
     Uses = application:get_env(damage, l402_uses, 1),
 
@@ -166,16 +166,20 @@ challenge_with_body(Req0, Scope, AmountMsat, BodyBin) ->
     Label = <<"l402:", Scope/binary, ":", (list_to_binary(Timestamp))/binary, ":", MacB64/binary>>,
     Desc = <<"DamageBDD L402 ", Scope/binary>>,
 
-    InvoiceMap = damage_cln:create_invoice(AmountMsat, Desc, Expiry, Label),
-    Bolt11 = maps:get(bolt11, InvoiceMap, maps:get(<<"bolt11">>, InvoiceMap, undefined)),
-    PaymentHash0 = maps:get(
-        payment_hash, InvoiceMap, maps:get(<<"payment_hash">>, InvoiceMap, undefined)
-    ),
-    PaymentHashHex = normalize_hex(PaymentHash0),
+    %% The facade returns {error, Reason} for a missing/timed-out backend.
+    %% Never read it as a map or create token state from a partial RPC reply.
+    case invoice_fields(damage_cln:create_invoice(AmountMsat, Desc, Expiry, Label), Expiry) of
+        {ok, Bolt11, PaymentHashHex, ExpiresAt} ->
+            issue_challenge(
+                Req0, Scope, AmountMsat, BodyBin, MacB64, Uses,
+                Bolt11, PaymentHashHex, ExpiresAt
+            );
+        {error, _} = Error ->
+            Error
+    end.
 
-    Now = erlang:system_time(second),
-    ExpiresAt = Now + Expiry,
-
+issue_challenge(Req0, Scope, AmountMsat, BodyBin, MacB64, Uses, Bolt11, PaymentHashHex, ExpiresAt) ->
+    ensure_tabs(),
     Meta = #{
         scope => Scope,
         amount_msat => AmountMsat,
@@ -202,12 +206,79 @@ challenge_with_body(Req0, Scope, AmountMsat, BodyBin) ->
             402,
             #{
                 <<"content-type">> => <<"application/json">>,
+                <<"cache-control">> => <<"no-store">>,
                 <<"www-authenticate">> => HeaderVal
             },
             BodyBin,
             Req0
         ),
     {Req1, Meta}.
+
+%% Accept the facade's current map result and an explicitly wrapped success.
+%% Error replies deliberately retain their original reason for the HTTP
+%% layer's NODE_SECRETS_LOCKED / L402_UNAVAILABLE classification.
+invoice_fields({error, _} = Error, _Expiry) ->
+    Error;
+invoice_fields({ok, Invoice}, Expiry) when is_map(Invoice) ->
+    invoice_fields(Invoice, Expiry);
+invoice_fields(Invoice, Expiry) when is_map(Invoice) ->
+    case lists:any(fun(Key) -> maps:is_key(Key, Invoice) end,
+                   [error, <<"error">>, code, <<"code">>]) of
+        true ->
+            %% Do not reflect backend messages, bodies or secrets to a client.
+            {error, {invoice_creation_failed, cln_rpc_error}};
+        false ->
+            Bolt11 = invoice_binary(invoice_field(bolt11, Invoice)),
+            PaymentHash = invoice_binary(invoice_field(payment_hash, Invoice)),
+            case {valid_invoice_text(Bolt11), valid_payment_hash(PaymentHash)} of
+                {true, true} ->
+                    case invoice_expiry(invoice_field(expires_at, Invoice), Expiry) of
+                        {ok, ExpiresAt} ->
+                            {ok, Bolt11, string:lowercase(PaymentHash), ExpiresAt};
+                        {error, _} = Error ->
+                            Error
+                    end;
+                {false, _} ->
+                    {error, {invalid_invoice_response, bolt11}};
+                {_, false} ->
+                    {error, {invalid_invoice_response, payment_hash}}
+            end
+    end;
+invoice_fields(_Other, _Expiry) ->
+    {error, invalid_invoice_response}.
+
+invoice_field(Key, Invoice) ->
+    maps:get(Key, Invoice, maps:get(atom_to_binary(Key, utf8), Invoice, undefined)).
+
+invoice_binary(Value) when is_binary(Value) ->
+    Value;
+invoice_binary(Value) when is_list(Value) ->
+    try iolist_to_binary(Value) of
+        Bin -> Bin
+    catch
+        error:badarg -> undefined
+    end;
+invoice_binary(_) ->
+    undefined.
+
+%% Structural/header-safety validation, not a BOLT11 signature verifier.
+valid_invoice_text(Bolt11) when is_binary(Bolt11), byte_size(Bolt11) =< 16384 ->
+    re:run(Bolt11, <<"\\A(?:ln|LN)[A-Za-z0-9]+\\z">>, [{capture, none}]) =:= match;
+valid_invoice_text(_) ->
+    false.
+
+valid_payment_hash(Hash) when is_binary(Hash), byte_size(Hash) =:= 64 ->
+    re:run(Hash, <<"\\A[0-9A-Fa-f]{64}\\z">>, [{capture, none}]) =:= match;
+valid_payment_hash(_) ->
+    false.
+
+invoice_expiry(InvoiceExpiry, RequestedExpiry) ->
+    Now = erlang:system_time(second),
+    case InvoiceExpiry of
+        undefined -> {ok, Now + RequestedExpiry};
+        At when is_integer(At), At > Now -> {ok, min(At, Now + RequestedExpiry)};
+        _ -> {error, {invalid_invoice_response, expires_at}}
+    end.
 
 %% Accept: "L402 <mac>:<preimage>"
 -spec parse_authorization(binary()) -> {ok, binary(), binary()} | {error, atom()}.
