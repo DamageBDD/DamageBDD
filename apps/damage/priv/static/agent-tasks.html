@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Automated tasks · DamageBDD</title><link rel="stylesheet" href="/static/css/agent-tasks.css">
+<script type="module" src="/static/js/agent-tasks-page.js"></script></head>
+<body><main id="agent-tasks"><header><a href="/">DamageBDD</a><p class="eyebrow">BEHAVIOUR-BOUNDED AUTOMATION</p>
+<h1>Automated tasks</h1><p>Models propose. Policy permits. Verification records what passed.</p></header>
+<p role="status" data-role="message">Loading your authorised templates…</p>
+<section><h2>Start a task</h2><form data-role="create"><label>Approved template<select name="template" required></select></label>
+<label>Objective<textarea name="goal" rows="4" maxlength="4096" required placeholder="Review the configured source snapshot and explain findings with file references. Do not apply changes."></textarea></label>
+<button type="submit">Start supervised task</button></form>
+<p class="note">Tasks continue after this page closes. Do not put credentials in objectives. Use your existing dashboard login.</p></section>
+<section><h2>Your tasks</h2><div data-role="tasks"></div></section>
+<section data-role="detail-section" hidden><h2>Task evidence</h2><div data-role="controls"></div>
+<p class="note">Completion means the configured acceptance gate passed. It does not prove a review is correct or that code is safe to merge.</p>
+<h3>Accounting</h3><p data-role="budget"></p>
+<p class="note">A passing behaviour check is not a payment receipt. Pending accounting requires reconciliation, not a new execution.</p>
+<pre data-role="detail"></pre><h3>Pending proposal</h3><pre data-role="proposal"></pre>
+<h3>Generated artifacts</h3><div data-role="artifacts"></div>
+<h3>Audit events</h3><pre data-role="events"></pre></section>
+</main></body></html>

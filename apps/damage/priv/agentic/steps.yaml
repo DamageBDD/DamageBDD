@@ -1,0 +1,26 @@
+Agentic task steps:
+  Given I use agent template "{{Template}}":
+    help: Select a node-operator-approved template for the authenticated execution account.
+  When I start an agent task named "{{Name}}" with objective:
+    args: Objective text in a Gherkin docstring.
+    help: Start asynchronously and return a private task handle. Does not assert completion.
+  When I refresh agent task "{{Name}}":
+    help: Read the current account-scoped status.
+  When I pause agent task "{{Name}}":
+    help: Pause at the next operation boundary; an in-flight operation may still finish.
+  When I resume agent task "{{Name}}":
+    help: Resume a clean pause; uncertain actions require separate reconciliation.
+  When I cancel agent task "{{Name}}":
+    help: Stop local orchestration. External effects are not rolled back.
+  When I await agent task "{{Name}}" for "{{Seconds}}" seconds:
+    help: Optional bounded join of zero to sixty seconds. Stop early for terminal, paused, interrupted or approval-required states.
+  Then the agent task "{{Name}}" should be "{{Status}}":
+    help: Assert the exact current task state.
+  Then the agent task "{{Name}}" should be accepted:
+    help: Assert that the task exists. This is not a success assertion for the background work.
+  Then the agent task "{{Name}}" should have learning evidence:
+    help: Assert a durable audit chain exists. Private source and reports are not copied into the parent BDD context.
+  Then the agent task "{{Name}}" should have settled accounting:
+    help: Assert that both treasury settlement and execution receipt were included on chain. This does not establish semantic correctness.
+  Then the agent task "{{Name}}" should stay within its monetary budget:
+    help: Assert booked integer base-unit charges do not exceed the pinned task ceiling. This does not assert settlement.

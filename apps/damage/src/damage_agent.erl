@@ -1,281 +1,212 @@
+%% Public account-scoped facade. Authentication happens before Owner reaches here.
 -module(damage_agent).
-
 -author("Steven Joseph <steven@stevenjoseph.in>").
+-behaviour(gen_server).
 -license("Apache-2.0").
+-export([start_link/0, start/4, status/2, list/1, command/4, events/2, learning/2,
+         public/1]).
+-export([create_agent/1, fund_agent/2, create_job/2, execute_job/2,
+         pause_agent/1, revoke_agent/1, write_receipt/2]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3, handle_continue/2,format_status/1]).
 
--include_lib("kernel/include/logger.hrl").
+start_link() -> gen_server:start_link({local,?MODULE},?MODULE,[],[]).
+start(O,Template,Goal,Key) -> call({start,O,Template,Goal,Key}).
+command(O,Id,Cmd,Hash) -> call({command,O,Id,Cmd,Hash}).
+call(R) ->
+    try gen_server:call(?MODULE,R,20000)
+    catch exit:_ -> {error,agent_service_unavailable} end.
+status(O,Id) ->
+    case damage_agent_store:get(O,Id) of {ok,J} -> {ok,public(J)}; E -> E end.
+list(O) -> [summary(J) || J <- damage_agent_store:list(O)].
+events(O,Id) -> damage_agent_store:events(O,Id).
+learning(O,Id) ->
+    case damage_agent_store:bundle(O,Id) of
+        {ok,#{task := J,events := Es}} ->
+            {ok,#{schema => <<"damage.agent.experience.v1">>,
+                   classification => <<"candidate_evidence_not_training_truth">>,
+                   training_eligible => false, semantic_correctness => <<"not_established">>,
+                   task => public(J), checkpoint => J, events => Es,
+                   observations => maps:get(observations,J,[]),
+                   source_hashes => maps:get(source_hashes,J,[]),
+                   artifacts => maps:get(artifacts,J,#{}),
+                   chain_encoding => <<"damage-canonical-json-sha256-v1">>}};
+        _ -> {error,not_found}
+    end.
 
--export([
-    create_agent/1,
-    fund_agent/2,
-    create_job/2,
-    execute_job/2,
-    pause_agent/1,
-    revoke_agent/1,
-    write_receipt/2
-]).
+init([]) -> {ok,#{}, {continue,recover}}.
+%% Recover after init acknowledges startup; never replay a saved operation.
+handle_continue(recover,S) ->
+    S1 = lists:foldl(fun(J,Acc) ->
+        case damage_agent_policy:terminal(maps:get(status,J)) of
+            true -> Acc;
+            false -> element(2,launch(J#{recovery => true},Acc))
+        end
+    end,S,damage_agent_store:all()),
+    {noreply,S1}.
 
--record(agent_job, {
-    agent_id,
-    job_id,
-    requester,
-    feature_data,
-    feature_hash,
-    input_hash,
-    estimated_cost = 0,
-    reservation_id,
-    session_id,
-    context = #{}
-}).
-
-create_agent(#{
-    requester := Requester,
-    agent_id := AgentId,
-    controller := Controller,
-    policy_contract := PolicyContract,
-    treasury_contract := TreasuryContract,
-    metadata_hash := MetadataHash,
-    capability_hash := CapabilityHash
-}) ->
-    {ok, AgentRegistryCt} = agent_registry_ct(Requester),
-    damage_ae:contract_call(
-        damage,
-        AgentRegistryCt,
-        "register_agent",
-        [
-            AgentId,
-            Controller,
-            PolicyContract,
-            TreasuryContract,
-            MetadataHash,
-            CapabilityHash
-        ]
-    ).
-
-fund_agent(AgentId, Amount) when is_binary(AgentId); is_list(AgentId) ->
-    {error, {missing_requester, {fund_agent, AgentId, Amount}}};
-fund_agent(#{requester := Requester, agent_id := AgentId}, Amount) ->
-    {ok, AgentTreasuryCt} = agent_treasury_ct(Requester),
-    damage_ae:contract_call(
-        damage,
-        AgentTreasuryCt,
-        "allocate_budget",
-        [AgentId, Amount]
-    ).
-
-create_job(AgentId, #{requester := Requester, feature_data := FeatureData} = Job0) ->
-    FeatureHash = damage_utils:sha256_hex(FeatureData),
-    JobId = maps:get(job_id, Job0, damage_utils:uuid()),
-    InputHash = damage_utils:sha256_hex(term_to_binary(Job0)),
-    {ok, #agent_job{
-        agent_id = AgentId,
-        job_id = JobId,
-        requester = Requester,
-        feature_data = FeatureData,
-        feature_hash = FeatureHash,
-        input_hash = InputHash,
-        context = maps:get(context, Job0, #{})
-    }}.
-
-execute_job(AgentId, Job0) ->
-    {ok, Job1} = create_job(AgentId, Job0),
-    case authorize(Job1) of
-        ok ->
-            case reserve(Job1) of
-                {ok, Job2} ->
-                    run_reserved_job(Job2);
-                Error ->
-                    Error
+handle_call({start,O,Template,Goal,Key},_From,S) ->
+    case damage_agent_policy:template(O,Template) of
+        {ok,P} ->
+            case damage_agent_codec:text(Goal,4096) andalso damage_agent_codec:text(Key,128) of
+                false -> {reply,{error,invalid_task},S};
+                true ->
+                    Now = erlang:system_time(second),
+                    Id = string:lowercase(binary:encode_hex(crypto:strong_rand_bytes(16))),
+                    J = #{id => Id,owner => O,template => Template,goal => Goal,
+                          request_id => Key,
+                          request_hash => damage_agent_codec:hash([Template,Goal]),
+                          policy_hash => maps:get(hash,P),policy_contract => damage_agent_policy:descriptor(P),
+                          behaviour_identity => behaviour_identity(P),
+                          status => queued,created_at => Now,
+                          deadline => Now+damage_agent_policy:limit(P,max_wall_seconds,3600),
+                          iteration => 0, llm_calls => 0, action_calls => 0,
+                          observations => [],source_hashes => [],completed_skills => [],
+                          artifacts => #{},pause_requested => false},
+                    case initialise_and_create(O,P,J) of
+                        {ok,Saved,new} ->
+                            {Reply,S1} = launch(Saved,S),
+                            {reply,Reply,S1};
+                        {ok,Saved,duplicate} -> {reply,{ok,public(Saved)},S};
+                        E -> {reply,E,S}
+                    end
             end;
-        Error ->
-            Error
+        E -> {reply,E,S}
+    end;
+handle_call({command,O,Id,Cmd,Hash},_From,S) ->
+    case {damage_agent_policy:owner(O),damage_agent_store:get(O,Id),maps:find(Id,S)} of
+        {true,{ok,_J},{ok,{Pid,_Mon}}} ->
+            Reply = try gen_statem:call(Pid,{command,Cmd,Hash},15000)
+                    catch exit:_ -> {error,task_unavailable} end,
+            {reply,Reply,S};
+        {true,{ok,_J},error} -> {reply,{error,task_terminal},S};
+        _ -> {reply,{error,not_found},S}
+    end;
+handle_call(_,_From,S) -> {reply,{error,bad_request},S}.
+handle_cast(_,S) -> {noreply,S}.
+handle_info({'DOWN',Mon,process,_Pid,_Reason},S) ->
+    Matches = [Id || {Id,{_,M}} <- maps:to_list(S),M =:= Mon],
+    lists:foreach(fun(Id) ->
+        %% No external action is retried after an unexpected worker exit.
+        [J] = [T || T <- damage_agent_store:all(),maps:get(id,T) =:= Id],
+        case damage_agent_policy:terminal(maps:get(status,J)) of
+            true -> ok;
+            false ->
+                {ok,_} = damage_agent_store:save(J#{status => interrupted,
+                    interrupted_phase => maps:get(interrupted_phase,J,maps:get(status,J)),recovery_reason => worker_exited},
+                    interrupted,#{reason => worker_exited})
+        end
+    end,Matches),
+    %% Keep interrupted tasks commandable without restarting their operations.
+    S0 = lists:foldl(fun maps:remove/2,S,Matches),
+    S1 = lists:foldl(fun(Id,Acc) ->
+        [J] = [T || T <- damage_agent_store:all(),maps:get(id,T) =:= Id],
+        case maps:get(status,J) of
+            interrupted -> element(2,launch(J#{recovery => true},Acc));
+            _ -> Acc
+        end
+    end,S0,Matches),
+    {noreply,S1};
+handle_info(_,S) -> {noreply,S}.
+terminate(_,_) -> ok.
+code_change(_,S,_) -> {ok,S}.
+
+launch(J,S) ->
+    case damage_agent_jobs_sup:start_task(J) of
+        {ok,Pid} -> Mon = erlang:monitor(process,Pid),
+                    {{ok,public(J)},S#{maps:get(id,J) => {Pid,Mon}}};
+        {error,_} ->
+            %% A supervisor/admission failure does not close a financial hold.
+            %% Preserve the checkpoint for service restart/operator recovery.
+            BudgetState = maps:get(status,maps:get(budget,J,#{}),disabled),
+            HasAccounting = not lists:member(BudgetState,[disabled,unprepared,unreserved]),
+            Status = case HasAccounting of true -> interrupted; false -> failed end,
+            Phase = maps:get(interrupted_phase,J,maps:get(status,J)),
+            {ok,Failed} = damage_agent_store:save((maps:remove(recovery,J))#{status => Status,
+                interrupted_phase => Phase,recovery_reason => worker_start_failed},
+                worker_start_failed,#{reason => worker_start_failed}),
+            {{ok,public(Failed)},S}
+    end.
+summary(J) ->
+    S = maps:with([id,template,status,created_at,updated_at,iteration,llm_calls,
+                   action_calls,deadline,reason,policy_hash,audit_head,execution_status],J),
+    S#{budget => damage_agent_budget:view(J)}.
+public(J) ->
+    Base = maps:without([owner,request_id,request_hash,observations,artifacts,recovery,
+                         budget,accounting_resume_phase,accounting_rate],J),
+    Base#{budget => damage_agent_budget:view(J),
+          accounting_complete => maps:get(status,maps:get(budget,J,#{}),disabled) =:= complete,
+          receipt_state => case maps:get(status,maps:get(budget,J,#{}),disabled) of
+              complete -> onchain_included; _ -> offchain_draft_or_absent
+          end, artifacts => maps:map(fun(_K,A) -> maps:remove(content,A) end,maps:get(artifacts,J,#{}))}.
+
+format_status(Status) -> maps:map(fun(log,_) -> []; (_,_) -> redacted end,Status).
+
+
+initialise_and_create(Owner, Profile, Job) ->
+    case damage_agent_budget:initial(Owner, Profile, maps:get(id,Job), maps:get(request_id,Job)) of
+        {ok, Budget} -> damage_agent_store:create(Job#{budget => Budget});
+        E -> E
     end.
 
-pause_agent(#{requester := Requester, agent_id := AgentId}) ->
-    {ok, AgentRegistryCt} = agent_registry_ct(Requester),
-    damage_ae:contract_call(
-        damage,
-        AgentRegistryCt,
-        "pause_agent",
-        [AgentId]
-    );
-pause_agent(AgentId) ->
-    {error, {missing_requester, {pause_agent, AgentId}}}.
+%% Legacy management API and supervised tasks now share this facade.
+%% Management calls are never made available as model-selected capabilities.
+create_agent(Request) -> damage_agent_chain:management(register, Request).
+fund_agent(Request, Amount) when is_map(Request) ->
+    damage_agent_chain:management(fund, Request#{amount => Amount});
+fund_agent(_, _) -> {error, missing_requester}.
+pause_agent(Request) -> damage_agent_chain:management(pause, Request).
+revoke_agent(Request) -> damage_agent_chain:management(revoke, Request).
 
-revoke_agent(#{requester := Requester, agent_id := AgentId}) ->
-    {ok, AgentRegistryCt} = agent_registry_ct(Requester),
-    damage_ae:contract_call(
-        damage,
-        AgentRegistryCt,
-        "revoke_agent",
-        [AgentId]
-    );
-revoke_agent(AgentId) ->
-    {error, {missing_requester, {revoke_agent, AgentId}}}.
+%% Migration: create_job now returns an inspectable job descriptor rather than a
+%% private record. A job must select a reviewed template; raw generated Gherkin
+%% cannot bypass its capabilities, verifier, budget, or identity binding.
+create_job(AgentId, R) when is_binary(AgentId), is_map(R) ->
+    try
+        Owner = maps:get(requester, R), Template = maps:get(template, R),
+        {ok, P} = damage_agent_policy:template(Owner, Template),
+        Options = proplists:get_value(accounting, maps:get(config,P), []),
+        AgentId = proplists:get_value(agent_id, Options),
+        true = maps:get(context, R, #{}) =:= #{},
+        case maps:find(feature_data, R) of
+            {ok, Feature} ->
+                true = is_binary(Feature),
+                true = lists:any(fun({_K,A}) ->
+                    proplists:get_value(type,A) =:= bdd andalso
+                    proplists:get_value(feature,A) =:= Feature
+                end, proplists:get_value(actions,maps:get(config,P)));
+            error -> ok
+        end,
+        Goal = maps:get(objective, R, <<"Execute the approved task and satisfy its acceptance gate.">>),
+        Key = maps:get(job_id, R, string:lowercase(binary:encode_hex(crypto:strong_rand_bytes(16)))),
+        true = damage_agent_codec:text(Goal,4096),
+        true = damage_agent_codec:text(Key,128),
+        {ok, #{agent_id => AgentId, requester => Owner, template => Template,
+               objective => Goal, job_id => Key,
+               input_hash => damage_agent_codec:hash([AgentId,Owner,Template,Goal,Key]),
+               estimated_cost => proplists:get_value(max_cost_units,Options),
+               unit => damage_base_units}}
+    catch _:_ -> {error, approved_budgeted_template_required}
+    end;
+create_job(_, _) -> {error, invalid_agent_job}.
 
-authorize(#agent_job{
-    agent_id = AgentId,
-    requester = Requester,
-    estimated_cost = Cost,
-    context = Context
-}) ->
-    Method = maps:get(method, Context, <<"bdd_execute">>),
-    {ok, AgentPolicyCt} = agent_policy_ct(Requester),
-    case
-        damage_ae:contract_call(
-            damage,
-            AgentPolicyCt,
-            "authorize_method",
-            [AgentId, Method, Cost]
-        )
-    of
-        #{<<"return_type">> := <<"ok">>, <<"return_value">> := true} ->
-            ok;
-        Other ->
-            {error, {unauthorized, Other}}
+%% Returns acceptance, not a synchronous execution/settlement receipt.
+execute_job(AgentId, R) ->
+    case create_job(AgentId,R) of
+        {ok,J} -> start(maps:get(requester,J),maps:get(template,J),
+                        maps:get(objective,J),maps:get(job_id,J));
+        E -> E
     end.
 
-reserve(
-    #agent_job{
-        job_id = JobId,
-        agent_id = AgentId,
-        requester = Requester,
-        estimated_cost = Cost
-    } = Job
-) ->
-    {ok, AgentTreasuryCt} = agent_treasury_ct(Requester),
-    case
-        damage_ae:contract_call(
-            damage,
-            AgentTreasuryCt,
-            "reserve",
-            [JobId, AgentId, Cost]
-        )
-    of
-        #{<<"return_type">> := <<"ok">>} ->
-            {ok, Job#agent_job{reservation_id = JobId}};
-        Other ->
-            {error, {reserve_failed, Other}}
+%% The former public writer allowed arbitrary caller-supplied costs/statuses.
+%% Only the persisted settlement pipeline can author an accounting receipt.
+write_receipt(_Receipt, _Result) -> {error, receipt_managed_by_task_lifecycle}.
+
+
+behaviour_identity(P) ->
+    Features = [proplists:get_value(feature,A) || {_K,A} <-
+        proplists:get_value(actions,maps:get(config,P)), proplists:get_value(type,A) =:= bdd],
+    case Features of
+        [Feature] -> #{kind => bdd_feature_sha256, hash =>
+            string:lowercase(binary:encode_hex(crypto:hash(sha256,Feature)))};
+        _ -> #{kind => agent_policy_sha256, hash => maps:get(hash,P)}
     end.
-
-run_reserved_job(#agent_job{} = Job) ->
-    Start = erlang:system_time(second),
-    Config = damage_run_config:agent_run(Job),
-    DryRunConfig = [{dry_run, true} | Config],
-    DryRunResult = damage:execute_data(
-        DryRunConfig, Job#agent_job.context, Job#agent_job.feature_data
-    ),
-    EstimatedCost = estimate_cost(DryRunResult),
-    Job2 = Job#agent_job{estimated_cost = EstimatedCost},
-    case damage:execute_data(Config, Job2#agent_job.context, Job2#agent_job.feature_data) of
-        Result ->
-            End = erlang:system_time(second),
-            finalize_execution(Job2, Result, Start, End)
-    end.
-
-estimate_cost(_DryRunResult) ->
-    1.
-
-finalize_execution(Job, Result, Start, End) ->
-    Status = map_result_status(Result),
-    ReportHash = report_hash(Result),
-    OutputHash = damage_utils:sha256_hex(term_to_binary(Result)),
-    Receipt = #{
-        receipt_id => damage_utils:uuid(),
-        agent_id => Job#agent_job.agent_id,
-        job_id => Job#agent_job.job_id,
-        requester => Job#agent_job.requester,
-        executor => damage_accounts:node_account(),
-        feature_hash => Job#agent_job.feature_hash,
-        report_hash => ReportHash,
-        input_hash => Job#agent_job.input_hash,
-        output_hash => OutputHash,
-        cost => Job#agent_job.estimated_cost,
-        status => Status,
-        started_at => Start,
-        ended_at => End
-    },
-    ok = settle(Job#agent_job.requester, Job#agent_job.job_id, Job#agent_job.estimated_cost),
-    ok = write_receipt(Receipt, Result),
-    {ok, #{receipt => Receipt, result => Result}}.
-
-settle(Requester, JobId, Cost) ->
-    {ok, AgentTreasuryCt} = agent_treasury_ct(Requester),
-    case
-        damage_ae:contract_call(
-            damage,
-            AgentTreasuryCt,
-            "settle",
-            [JobId, Cost]
-        )
-    of
-        #{<<"return_type">> := <<"ok">>} ->
-            ok;
-        Other ->
-            {error, {settle_failed, Other}}
-    end.
-
-write_receipt(Receipt, _Result) ->
-    Requester = maps:get(requester, Receipt),
-    {ok, ExecutionLedgerCt} = agent_execution_ledger_ct(Requester),
-    case
-        damage_ae:contract_call(
-            damage,
-            ExecutionLedgerCt,
-            "write_receipt",
-            [
-                maps:get(receipt_id, Receipt),
-                maps:get(agent_id, Receipt),
-                maps:get(job_id, Receipt),
-                maps:get(requester, Receipt),
-                maps:get(executor, Receipt),
-                maps:get(feature_hash, Receipt),
-                maps:get(report_hash, Receipt),
-                maps:get(input_hash, Receipt),
-                maps:get(output_hash, Receipt),
-                maps:get(cost, Receipt),
-                maps:get(status, Receipt),
-                maps:get(started_at, Receipt),
-                maps:get(ended_at, Receipt)
-            ]
-        )
-    of
-        #{<<"return_type">> := <<"ok">>} ->
-            ok;
-        Other ->
-            {error, {write_receipt_failed, Other}}
-    end.
-
-map_result_status({parse_error, _, _}) -> error;
-map_result_status({error, _}) -> error;
-map_result_status(_Other) -> passed.
-
-report_hash(Result) ->
-    damage_utils:sha256_hex(term_to_binary(Result)).
-
-agent_registry_ct(Requester) ->
-    user_contract_ct(Requester, <<"agent_registry">>).
-
-agent_policy_ct(Requester) ->
-    user_contract_ct(Requester, <<"agent_policy">>).
-
-agent_treasury_ct(Requester) ->
-    user_contract_ct(Requester, <<"agent_treasury">>).
-
-agent_execution_ledger_ct(Requester) ->
-    user_contract_ct(Requester, <<"agent_execution_ledger">>).
-
-user_contract_ct(Requester0, Name) ->
-    Requester = to_bin(Requester0),
-    case damage_node_registry:get_registry_ct_from_node_registry(Requester) of
-        {ok, RegistryCt} ->
-            KeyPair = identity_server:get_account(Requester),
-            account_registry:get_contract(KeyPair, RegistryCt, Name);
-        Error ->
-            Error
-    end.
-
-to_bin(V) when is_binary(V) -> V;
-to_bin(V) when is_list(V) -> list_to_binary(V);
-to_bin(V) when is_atom(V) -> atom_to_binary(V, utf8);
-to_bin(V) -> list_to_binary(io_lib:format("~p", [V])).

@@ -1617,8 +1617,40 @@ step_modules_for_context(Context) ->
         steps_utils:step_module_allowed(Module, Context)
     ].
 
+%% New modules may opt in to exact signature dispatch. Consult this only
+%% after role filtering, and never execute a step to discover whether it matches.
+%% Legacy broad step_dry/6 handlers otherwise claim unrelated monitor steps and
+%% silently underquote multi-request probes. Preserve legacy order when none of
+%% the allowed modules explicitly owns this signature.
+explicit_step_modules(Parts, Modules) ->
+    Explicit = [M || M <- Modules,
+        erlang:function_exported(M, matches_step, 1),
+        M:matches_step(Parts) =:= true],
+    case Explicit of
+        [] -> Modules;
+        _ -> Explicit
+    end.
+
+-ifdef(TEST).
+monitor_explicit_dry_dispatch_test() ->
+    {module, steps_monitor} = code:ensure_loaded(steps_monitor),
+    Legacy = steps_arch_aur_ebpf,
+    Modules = [Legacy, steps_monitor, steps_utils],
+    Parts = ["I run the", "node-exposure", "monitor with options"],
+    ?assertEqual([steps_monitor], explicit_step_modules(Parts, Modules)),
+    ?assertEqual(Modules, explicit_step_modules(["unrelated legacy step"], Modules)),
+    %% A role-filtered module must never be reintroduced.
+    ?assertEqual([Legacy], explicit_step_modules(Parts, [Legacy])),
+    [Selected] = explicit_step_modules(Parts, Modules),
+    Base = steps_utils:step_dry([], #{}, <<"When">>, 1, Parts, <<"{}">>),
+    Quoted = execute_step_function([{dry_run, true}], #{public_key => <<"ak_test">>},
+        {<<"When">>, 1, Parts, <<"{}">>}, Selected),
+    ?assertEqual(4 * maps:get(step_spend, Base), maps:get(step_spend, Quoted)),
+    ?assertNot(maps:is_key(monitor_result, Quoted)).
+-endif.
+
 execute_step_resolved(Config, Context, Step, LineNo, StepKeyWord, Body1, Args2) ->
-    StepModules = step_modules_for_context(Context),
+    StepModules = explicit_step_modules(Body1, step_modules_for_context(Context)),
     case
         lists:foldl(
             fun

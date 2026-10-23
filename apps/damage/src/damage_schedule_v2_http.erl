@@ -18,6 +18,26 @@
 trails() ->
     [
         trails:trail(
+            "/api/schedules/v2/templates",
+            ?MODULE,
+            #{action => templates},
+            #{get => #{tags => ?TRAILS_TAG, produces => ["application/json"]}}
+        ),
+        trails:trail(
+            "/api/schedules/v2/templates/render",
+            ?MODULE,
+            #{action => render_template},
+            #{post => #{tags => ?TRAILS_TAG, produces => ["application/json"]}}
+        ),
+        trails:trail(
+            "/api/schedules/v2/operations", ?MODULE, #{action => operations},
+            #{get => #{tags => ?TRAILS_TAG, produces => ["application/json"]}}
+        ),
+        trails:trail(
+            "/api/schedules/v2/operations/:operation_id", ?MODULE, #{action => operation},
+            #{get => #{tags => ?TRAILS_TAG, produces => ["application/json"]}}
+        ),
+        trails:trail(
             "/api/schedules/v2",
             ?MODULE,
             #{action => schedules},
@@ -115,7 +135,7 @@ is_authorized(Req, State) ->
 allowed_methods(Req, #{action := schedules} = State) ->
     {[<<"GET">>, <<"POST">>], Req, State};
 allowed_methods(Req, #{action := Action} = State) when
-    Action =:= status; Action =:= analytics; Action =:= schedule; Action =:= runs
+    Action =:= operations; Action =:= operation; Action =:= templates; Action =:= status; Action =:= analytics; Action =:= schedule; Action =:= runs
 ->
     {[<<"GET">>], Req, State};
 allowed_methods(Req, State) ->
@@ -127,6 +147,14 @@ content_types_provided(Req, State) ->
 content_types_accepted(Req, State) ->
     {[{{<<"application">>, <<"json">>, '*'}, from_json}], Req, State}.
 
+to_json(Req, #{action := operations, public_key := Owner} = State) ->
+    reply_result(damage_schedule_v2:operations(Owner), Req, State);
+to_json(Req, #{action := operation, public_key := Owner} = State) ->
+    Id = cowboy_req:binding(operation_id, Req),
+    reply_result(damage_schedule_v2:operation(Owner, Id), Req, State);
+to_json(Req0, #{action := templates} = State) ->
+    Req = cowboy_req:set_resp_header(<<"cache-control">>, <<"private, no-store">>, Req0),
+    {jsx:encode(#{status => <<"ok">>, data => damage_schedule_templates:catalog()}), Req, State};
 to_json(Req, #{action := status, public_key := Owner} = State) ->
     Custodial = is_custodial_request(State, Owner),
     Body =
@@ -168,6 +196,24 @@ to_json(Req, #{action := analytics, public_key := Owner} = State) ->
 to_json(Req, State) ->
     {jsx:encode(#{status => <<"notok">>, error => <<"unsupported_get">>}), Req, State}.
 
+from_json(Req0, #{action := render_template} = State) ->
+    %% Binary keys only; never intern untrusted parameter names as atoms.
+    %% This route builds a draft and cannot schedule, contact a host or spend.
+    case cowboy_req:read_body(Req0, #{length => 8192, period => 5000}) of
+        {ok, Raw, Req} when byte_size(Raw) =< 8192 ->
+            Parsed = try jsx:decode(Raw, [return_maps]) catch _:_ -> invalid end,
+            case Parsed of
+                #{<<"template_id">> := Id, <<"params">> := Params} ->
+                    case damage_schedule_templates:render(Id, Params) of
+                        {ok, Draft} -> reply_json(200, Draft#{status => <<"ok">>}, Req, State);
+                        {error, Why} -> reply_json(400,
+                            #{status => <<"notok">>, error => Why}, Req, State)
+                    end;
+                _ -> reply_json(400, #{status => <<"notok">>, error => <<"invalid_json">>}, Req, State)
+            end;
+        {_, _, Req} -> reply_json(413,
+            #{status => <<"notok">>, error => <<"body_too_large">>}, Req, State)
+    end;
 from_json(Req, #{action := setup, public_key := Owner} = State) ->
     Reply0 =
         case maps:get(node_admin, State, false) orelse is_custodial_request(State, Owner) of
@@ -191,12 +237,8 @@ from_json(Req0, #{action := preview, public_key := Owner} = State) ->
     end);
 from_json(Req0, #{action := schedules, public_key := Owner} = State) ->
     with_json_body(Req0, State, fun(Json, Req) ->
-        Reply =
-            case ensure_request_vault(State, Owner) of
-                ok -> damage_schedule_v2:create(Owner, Json);
-                {error, _} = Error -> Error
-            end,
-        reply_result(Reply, Req, State)
+        %% Setup and chain waits belong to the journalled worker.
+        reply_result(damage_schedule_v2:create(Owner, Json), Req, State)
     end);
 from_json(Req0, #{action := submit_tx, public_key := Owner} = State) ->
     with_json_body(Req0, State, fun(Json, Req) ->
@@ -219,23 +261,33 @@ from_json(Req, State) ->
 
 with_json_body(Req0, State, Fun) ->
     case cowboy_req:read_body(Req0) of
-        {ok, <<>>, Req} ->
-            Fun(#{}, Req);
+        {ok, <<>>, Req} -> invoke_json_handler(Fun, #{}, Req, State);
         {ok, Raw, Req} ->
-            try jsx:decode(Raw, [{labels, atom}, return_maps]) of
-                Json when is_map(Json) -> Fun(Json, Req);
-                _ ->
-                    reply_json(
-                        400, #{status => <<"notok">>, error => <<"invalid_json">>}, Req, State
-                    )
-            catch
-                _:_ ->
-                    reply_json(
-                        400, #{status => <<"notok">>, error => <<"invalid_json">>}, Req, State
-                    )
+            %% Never intern untrusted keys; normalize_input/1 handles known keys.
+            Decoded = try jsx:decode(Raw, [return_maps]) of
+                Json when is_map(Json) -> {ok, Json};
+                _ -> {error, invalid_json}
+            catch _:_ -> {error, invalid_json}
+            end,
+            case Decoded of
+                {ok, JsonMap} -> invoke_json_handler(Fun, JsonMap, Req, State);
+                {error, _} -> reply_json(400,
+                    #{status => <<"notok">>, error => <<"invalid_json">>}, Req, State)
             end;
         {more, _Raw, Req} ->
             reply_json(413, #{status => <<"notok">>, error => <<"body_too_large">>}, Req, State)
+    end.
+
+invoke_json_handler(Fun, Json, Req, State) ->
+    try Fun(Json, Req) of
+        Reply -> Reply
+    catch
+        exit:{timeout, _} ->
+            reply_result({error, schedule_operation_outcome_unknown}, Req, State);
+        exit:{noproc, _} ->
+            reply_result({error, schedule_service_unavailable}, Req, State);
+        _:_ -> reply_json(500,
+            #{status => <<"notok">>, error => <<"schedule_request_failed">>}, Req, State)
     end.
 
 json_result({ok, Value}, Req, State) ->
@@ -243,6 +295,22 @@ json_result({ok, Value}, Req, State) ->
 json_result({error, Reason}, Req, State) ->
     {jsx:encode(#{status => <<"notok">>, error => term_bin(Reason)}), Req, State}.
 
+reply_result({ok, #{operation_id := _, status := running} = Op}, Req, State) ->
+    reply_json(202, Op, Req, State);
+reply_result({ok, #{operation_id := _} = Op}, Req, State) ->
+    reply_json(200, Op, Req, State);
+reply_result({error, Reason}, Req, State) when
+    Reason =:= schedule_operation_in_progress;
+    Reason =:= pending_schedule_requires_reconciliation;
+    Reason =:= idempotency_conflict
+->
+    reply_json(409, #{status => <<"notok">>, error => atom_to_binary(Reason, utf8)}, Req, State);
+reply_result({error, Reason}, Req, State) when
+    Reason =:= schedule_service_unavailable; Reason =:= schedule_service_busy
+->
+    reply_json(503, #{status => <<"notok">>, error => atom_to_binary(Reason, utf8)}, Req, State);
+reply_result({error, schedule_operation_outcome_unknown}, Req, State) ->
+    reply_json(504, #{status => <<"notok">>, error => <<"schedule_operation_outcome_unknown">>}, Req, State);
 reply_result({ok, Value}, Req, State) ->
     reply_json(200, normalize_ok(Value), Req, State);
 reply_result({error, forbidden}, Req, State) ->
@@ -258,24 +326,6 @@ reply_result({error, schedule_v2_contract_not_configured}, Req, State) ->
     );
 reply_result({error, Reason}, Req, State) ->
     reply_json(400, #{status => <<"notok">>, error => term_bin(Reason)}, Req, State).
-
-ensure_request_vault(State, Owner) ->
-    case damage_schedule_v2_contract:contract_address() of
-        {ok, _Contract} ->
-            ok;
-        {error, schedule_v2_contract_not_configured} ->
-            case is_custodial_request(State, Owner) of
-                true ->
-                    case damage_schedule_v2:setup_vault() of
-                        {ok, _Contract} -> ok;
-                        {error, _} = Error -> Error
-                    end;
-                false ->
-                    {error, schedule_v2_contract_not_configured}
-            end;
-        {error, _} = Error ->
-            Error
-    end.
 
 is_custodial_request(State, Owner) ->
     case maps:get(auth_mode, State, undefined) of
@@ -318,6 +368,7 @@ qs_int(Key, Qs, Default) ->
 
 jsonable(M) when is_map(M) ->
     maps:from_list([{json_key(K), jsonable(V)} || {K, V} <- maps:to_list(M)]);
+jsonable([]) -> [];
 jsonable(L) when is_list(L) ->
     case io_lib:printable_unicode_list(L) of
         true -> unicode:characters_to_binary(L);
