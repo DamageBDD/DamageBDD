@@ -7,7 +7,7 @@ catalog() ->
         {ok, Resolved} = ecai_ollama_pool:evaluation_configurations(),
         Allowed = maps:get(<<"target_ids">>, ecai_eval_policy:node()),
         Nodes = [parse_node(maps:merge(maps:get(client_opts, N, #{}), N)) ||
-                    {I, N} <- maps:to_list(Resolved), lists:member(I, Allowed)],
+                    {I, N} <- maps:to_list(Resolved), lists:member(I, Allowed), maps:get(enabled, N, true)],
         {ok, Nodes}
     catch _:_ -> {error, invalid_evaluation_target_configuration} end.
 resolve(Id) ->
@@ -19,15 +19,15 @@ resolve(Id) ->
 parse_node(L) when is_list(L) -> parse_node(maps:from_list(L));
 parse_node(N) when is_map(N) ->
     Id = ecai_eval_util:text(ecai_eval_util:bin(maps:get(id, N)), 128),
-    PB = ecai_eval_util:enum(ecai_eval_util:bin(maps:get(provider, N, ollama)), [<<"ollama">>, <<"openai">>]),
-    Provider = case PB of <<"ollama">> -> ollama; <<"openai">> -> openai end,
+    PB = ecai_eval_util:enum(ecai_eval_util:bin(maps:get(provider, N, ollama)), [<<"ollama">>, <<"openai">>, <<"anthropic">>]),
+    Provider = case PB of <<"ollama">> -> ollama; <<"openai">> -> openai; <<"anthropic">> -> anthropic end,
     Model = ecai_eval_util:text(ecai_eval_util:bin(maps:get(default_model, N, maps:get(model, N, <<>>))), 256),
-    Host = maps:get(host, N, case Provider of ollama -> "localhost"; openai -> "api.openai.com" end),
+    Host = maps:get(host, N, case Provider of ollama -> "localhost"; openai -> "api.openai.com"; anthropic -> "api.anthropic.com" end),
     HB = ecai_eval_util:bin(Host),
     Remote = not lists:member(HB, [<<"localhost">>, <<"127.0.0.1">>, <<"::1">>]),
-    Port = maps:get(port, N, case Provider of ollama -> 11434; openai -> 443 end),
+    Port = maps:get(port, N, case Provider of ollama -> 11434; _ -> 443 end),
     ecai_eval_util:integer(Port, 1, 65535),
-    Transport = maps:get(transport, N, case Provider of ollama -> tcp; openai -> tls end),
+    Transport = maps:get(transport, N, case Provider of ollama -> tcp; _ -> tls end),
     %% Remote evaluation transport must authenticate peers (default TLS settings).
     ecai_eval_util:require(not Remote orelse Transport =:= tls, remote_tls_required),
     TLSOpts = maps:get(tls_opts, N, []),
@@ -38,7 +38,7 @@ parse_node(N) when is_map(N) ->
     Fingerprint = ecai_eval_util:hash(Base#{<<"host">> => HB, <<"port">> => Port,
         <<"transport">> => ecai_eval_util:bin(Transport),
         <<"base_path">> => ecai_eval_util:bin(maps:get(base_path, N, "/v1")),
-        <<"temperature">> => maps:get(temperature, N, case Provider of ollama -> 0; openai -> null end),
+        <<"temperature">> => maps:get(temperature, N, case Provider of ollama -> 0; _ -> null end),
         <<"reasoning_effort">> => ecai_eval_util:bin(maps:get(reasoning_effort, N, unspecified))}),
     SafeOpts = maps:with([auth, tls_opts, proxy, base_path, temperature, reasoning_effort,
                          organization, organization_env, project, project_env, connect_timeout], N),

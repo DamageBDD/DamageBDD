@@ -7,6 +7,10 @@
     status/0,
     evaluation_configurations/0,
     refresh/0,
+    reconfigure/4,
+    validate_nodes/1,
+    inherited_nodes/0,
+    chat_messages/3,
     capacity/1,
     inference_available/4,
     generate_json/2,
@@ -40,7 +44,7 @@
 -define(DEFAULT_CLUSTER_ATTEMPTS, 3).
 -define(RECEIPT_TABLE, ecai_inference_receipts_dets).
 -define(RECEIPT_FILE, "inference_receipts.dets").
--define(ROLES, [learning, synthesis, audit, patch, chat]).
+-define(ROLES, [learning, synthesis, audit, patch, chat, bdd]).
 
 -record(state, {
     nodes = #{},
@@ -51,7 +55,9 @@
     failure_threshold = ?DEFAULT_FAILURE_THRESHOLD,
     last_probe_at = undefined,
     receipt_tab = undefined,
-    receipt_file = undefined
+    receipt_file = undefined,
+    probe_timer = undefined,
+    config_revision = 0
 }).
 
 start_link() -> start_link(#{}).
@@ -61,6 +67,16 @@ start_link(Opts) -> gen_server:start_link({local, ?SERVER}, ?MODULE, Opts, []).
 %% This internal API returns credential REFERENCES; it is not exposed over HTTP.
 evaluation_configurations() ->
     normalize_nodes(configured_nodes(#{})).
+
+%% Trusted BEAM-only transaction: validation and disk commit precede activation.
+%% Active leases retain their endpoint/options; stale probes cannot mark a new
+%% configuration healthy. No arbitrary function is accepted by the HTTP layer.
+reconfigure(Nodes, Runtime, Revision, Commit) when is_function(Commit, 0) ->
+    gen_server:call(?SERVER, {reconfigure, Nodes, Runtime, Revision, Commit}, infinity).
+validate_nodes(Nodes) -> normalize_nodes(Nodes).
+inherited_nodes() -> legacy_configured_nodes(#{}).
+chat_messages(Role, Messages, Opts) when is_list(Messages), is_map(Opts) ->
+    run_native_request(messages, Role, #{messages => Messages}, Opts).
 
 status() -> gen_server:call(?SERVER, status).
 refresh() -> gen_server:cast(?SERVER, refresh).
@@ -133,6 +149,7 @@ init(Opts) ->
                             )
                         ),
                         receipt_tab = ReceiptTab,
+                        config_revision = ecai_llm_settings:revision(),
                         receipt_file = ReceiptFile
                     },
                     self() ! probe_all,
@@ -140,6 +157,26 @@ init(Opts) ->
             end
     end.
 
+handle_call({reconfigure, RawNodes, Runtime, Revision, Commit}, _From, State) ->
+    case normalize_nodes(RawNodes) of
+        {error, _} = Error -> {reply, Error, State};
+        {ok, Candidate} ->
+            case Commit() of
+                ok ->
+                    Nodes = maps:map(fun(Id, N) ->
+                        Active = length([ok || {LeaseId, _, _} <- maps:values(State#state.leases),
+                                               LeaseId =:= Id]),
+                        N#{inflight => Active}
+                    end, Candidate),
+                    New = State#state{nodes = Nodes, config_revision = Revision,
+                        health_interval_ms = maps:get(<<"health_interval_ms">>, Runtime),
+                        health_timeout_ms = maps:get(<<"health_timeout_ms">>, Runtime),
+                        failure_threshold = maps:get(<<"failure_threshold">>, Runtime)},
+                    self() ! probe_all,
+                    {reply, ok, New};
+                {error, _} = Error -> {reply, Error, State}
+            end
+    end;
 handle_call(status, _From, State) ->
     {reply, status_map(State), State};
 handle_call({capacity, Role}, _From, State) ->
@@ -153,7 +190,7 @@ handle_call({inference_available, Role, Provider0, Model0, Digest0}, _From, Stat
         maps:values(State#state.nodes)
     ),
     {reply, Reply, State};
-handle_call({checkout, Role, Provider, Model, Exclude}, _From, State0) ->
+handle_call({checkout, Role, Provider, Model, Exclude}, {Owner, _}, State0) ->
     case select_node(Role, Provider, Model, Exclude, State0) of
         {error, _} = Error ->
             {reply, Error, State0};
@@ -168,7 +205,8 @@ handle_call({checkout, Role, Provider, Model, Exclude}, _From, State0) ->
             },
             Nodes = (State0#state.nodes)#{Id => Node},
             Lease = lease_map(LeaseRef, Role, Model, Node),
-            Leases = (State0#state.leases)#{LeaseRef => Id},
+            Monitor = erlang:monitor(process, Owner),
+            Leases = (State0#state.leases)#{LeaseRef => {Id, maps:get(config_token, Node), Monitor}},
             {reply, {ok, Lease}, State0#state{nodes = Nodes, leases = Leases, seq = Seq}}
     end;
 handle_call({receipt_claim, RequestId, Meta}, _From, State) ->
@@ -185,24 +223,36 @@ handle_call(_Request, _From, State) ->
     {reply, {error, unsupported_call}, State}.
 
 handle_cast(refresh, State) ->
-    self() ! probe_all,
+    self() ! probe_now,
     {noreply, State};
 handle_cast({checkin, LeaseRef, Outcome}, State) ->
     {noreply, checkin_lease(LeaseRef, Outcome, State)};
 handle_cast({release, LeaseRef}, State) ->
     {noreply, release_lease(LeaseRef, State)};
-handle_cast({probe_result, Id, Result, DurationMs}, State) ->
-    {noreply, apply_probe(Id, Result, DurationMs, State)};
+handle_cast({probe_result, Id, Token, Result, DurationMs}, State) ->
+    case maps:find(Id, State#state.nodes) of
+        {ok, #{config_token := Token}} ->
+            {noreply, apply_probe(Id, Result, DurationMs, State)};
+        _ -> {noreply, State}
+    end;
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
 handle_info(probe_all, State0) ->
+    case State0#state.probe_timer of undefined -> ok; T -> erlang:cancel_timer(T) end,
+    Timer = erlang:send_after(State0#state.health_interval_ms, self(), probe_all),
+    handle_info(probe_now, State0#state{probe_timer = Timer});
+handle_info(probe_now, State0) ->
     maps:foreach(
         fun(_Id, Node) -> launch_probe(Node, State0#state.health_timeout_ms) end,
         State0#state.nodes
     ),
-    erlang:send_after(State0#state.health_interval_ms, self(), probe_all),
     {noreply, State0#state{last_probe_at = now_iso8601()}};
+handle_info({'DOWN', Monitor, process, _Pid, _Reason}, State) ->
+    case [Ref || {Ref, {_, _, M}} <- maps:to_list(State#state.leases), M =:= Monitor] of
+        [Ref] -> {noreply, release_lease(Ref, State)};
+        _ -> {noreply, State}
+    end;
 handle_info(_Info, State) ->
     {noreply, State}.
 
@@ -534,6 +584,9 @@ handle_billing_result(
 invoke_client(Kind, Prompt, ClientOpts) ->
     try
         Result = case Kind of
+            messages ->
+                ecai_ollama_client:evaluation_chat_with_meta(
+                    maps:get(messages, maps:get(native_request, ClientOpts)), ClientOpts);
             json ->
                 ecai_ollama_client:generate_json_with_meta(Prompt, ClientOpts);
             text ->
@@ -603,7 +656,14 @@ enrich_meta(Role, Lease, ClientMeta) ->
         model_revision => maps:get(model_revision, Lease, undefined)
     }.
 
+configured_nodes(#{nodes := Nodes}) -> legacy_configured_nodes(#{nodes => Nodes});
 configured_nodes(Opts) ->
+    case ecai_llm_settings:nodes() of
+        {ok, Nodes} -> Nodes; %% An explicitly empty registry MUST NOT enable fallback.
+        inherited -> legacy_configured_nodes(Opts)
+    end.
+
+legacy_configured_nodes(Opts) ->
     Nodes0 = maps:get(
         nodes,
         Opts,
@@ -668,6 +728,8 @@ normalize_node(Node0) when is_map(Node0) ->
     ),
     #{
         id => Id,
+        enabled => maps:get(enabled, Node0, true),
+        config_token => erlang:unique_integer([positive, monotonic]),
         provider => Provider,
         host => Host,
         port => Port,
@@ -702,6 +764,10 @@ provider_node_defaults(ollama) ->
         transport => tcp,
         proxy => direct
     };
+provider_node_defaults(anthropic) ->
+    #{host => "api.anthropic.com", port => 443, transport => tls, proxy => direct,
+      base_path => "/v1", auth => #{type => bearer_env, env => "ANTHROPIC_API_KEY"},
+      max_output_tokens => 4096, max_response_bytes => 8388608, response_decode => json_binary};
 provider_node_defaults(openai) ->
     #{
         host => "api.openai.com",
@@ -730,6 +796,7 @@ node_default_model(Node, Provider, Models) ->
 
 provider_default_model(ollama) ->
     to_binary(application:get_env(ecai, code_ollama_model, "qwen3-coder:30b"));
+provider_default_model(anthropic) -> <<>>;
 provider_default_model(openai) ->
     to_binary(application:get_env(ecai, code_openai_model, "gpt-5.6-sol")).
 
@@ -744,6 +811,8 @@ node_client_opts(Node, Defaults, Provider) ->
         store,
         timeout,
         connect_timeout,
+        max_response_bytes,
+        response_decode,
         tls_opts,
         reasoning_effort,
         max_output_tokens,
@@ -767,6 +836,8 @@ node_auth(Node, _Provider, _Default) when is_map_key(api_key_secret, Node) ->
         scope => node,
         name => maps:get(api_key_secret, Node)
     };
+node_auth(_Node, anthropic, undefined) ->
+    #{type => bearer_env, env => "ANTHROPIC_API_KEY"};
 node_auth(_Node, openai, undefined) ->
     #{type => bearer_env, env => "OPENAI_API_KEY"};
 node_auth(_Node, _Provider, Default) ->
@@ -844,6 +915,7 @@ select_node(Role, Provider, Model, Exclude, State) ->
     end.
 
 eligible(Node, Role, Provider, Model, Exclude) ->
+    maps:get(enabled, Node, true) andalso
     not lists:member(maps:get(id, Node), Exclude) andalso
         health_ready(Node) andalso
         provider_matches(Node, Provider) andalso
@@ -854,6 +926,7 @@ eligible(Node, Role, Provider, Model, Exclude) ->
 any_role_model_candidate(Nodes, Role, Provider, Model, Exclude) ->
     lists:any(
         fun(Node) ->
+            maps:get(enabled, Node, true) andalso
             not lists:member(maps:get(id, Node), Exclude) andalso
                 maps:get(health, Node, unknown) =/= down andalso
                 provider_matches(Node, Provider) andalso
@@ -880,6 +953,7 @@ supports_model(Node, Model) ->
     ConfiguredOk andalso DiscoveredOk andalso digest_matches(Node, Model).
 
 inference_matches(Node, Role, Provider, Model, Digest) ->
+    maps:get(enabled, Node, true) andalso
     health_ready(Node) andalso
         provider_matches(Node, Provider) andalso
         lists:member(Role, maps:get(roles, Node, [])) andalso
@@ -893,6 +967,7 @@ inference_digest_matches(Node, undefined, Digest) ->
 inference_digest_matches(Node, Model, Digest) ->
     case {maps:get(provider, Node, ollama), Digest} of
         {openai, _} -> true;
+        {anthropic, _} -> true;
         {ollama, <<>>} -> true;
         {ollama, _} -> model_digest(Node, Model) =:= Digest
     end.
@@ -962,7 +1037,8 @@ release_lease(LeaseRef, State0) ->
     case maps:take(LeaseRef, State0#state.leases) of
         error ->
             State0;
-        {Id, Leases} ->
+        {{Id, _Token, Monitor}, Leases} ->
+            erlang:demonitor(Monitor, [flush]),
             case maps:find(Id, State0#state.nodes) of
                 error ->
                     State0#state{leases = Leases};
@@ -977,38 +1053,24 @@ release_lease(LeaseRef, State0) ->
     end.
 
 checkin_lease(LeaseRef, Outcome, State0) ->
-    case maps:take(LeaseRef, State0#state.leases) of
-        error ->
-            State0;
-        {Id, Leases} ->
-            case maps:find(Id, State0#state.nodes) of
-                error ->
-                    State0#state{leases = Leases};
-                {ok, Node0} ->
-                    Inflight = max(0, maps:get(inflight, Node0, 0) - 1),
-                    Duration = maps:get(duration_ms, Outcome, undefined),
-                    Node1 = update_latency(Node0#{inflight => Inflight}, Duration),
-                    Node =
-                        case maps:get(ok, Outcome, false) of
-                            true ->
-                                Node1#{health => healthy, failures => 0, last_error => undefined};
-                            false ->
-                                Failures = maps:get(failures, Node1, 0) + 1,
-                                Health =
-                                    case Failures >= State0#state.failure_threshold of
-                                        true -> down;
-                                        false -> degraded
-                                    end,
-                                Node1#{
-                                    health => Health,
-                                    failures => Failures,
-                                    last_error => maps:get(error, Outcome, request_failed)
-                                }
-                        end,
-                    State0#state{
-                        nodes = (State0#state.nodes)#{Id => Node},
-                        leases = Leases
-                    }
+    case maps:find(LeaseRef, State0#state.leases) of
+        error -> State0;
+        {ok, {Id, Token, _Monitor}} ->
+            Released = release_lease(LeaseRef, State0),
+            case maps:find(Id, Released#state.nodes) of
+                {ok, #{config_token := Token} = N0} ->
+                    N1 = update_latency(N0, maps:get(duration_ms, Outcome, undefined)),
+                    N = case maps:get(ok, Outcome, false) of
+                        true -> N1#{health => healthy, failures => 0, last_error => undefined};
+                        false ->
+                            F = maps:get(failures, N1, 0) + 1,
+                            H = case F >= Released#state.failure_threshold of
+                                true -> down; false -> degraded end,
+                            N1#{health => H, failures => F,
+                                last_error => maps:get(error, Outcome, request_failed)}
+                    end,
+                    Released#state{nodes = (Released#state.nodes)#{Id => N}};
+                _ -> Released %% Old endpoint's outcome cannot alter new health.
             end
     end.
 
@@ -1025,18 +1087,21 @@ update_latency(Node, Duration) when is_integer(Duration), Duration >= 0 ->
 update_latency(Node, _) ->
     Node.
 
+launch_probe(#{enabled := false}, _Timeout) -> ok;
 launch_probe(Node, Timeout) ->
     Parent = self(),
     Id = maps:get(id, Node),
+    Token = maps:get(config_token, Node),
     ProbeOpts = maps:merge(
         maps:get(client_opts, Node, #{}),
         maps:with([provider, host, port, transport, proxy], Node)
     ),
     spawn(fun() ->
         Started = erlang:monotonic_time(millisecond),
-        Result = ecai_ollama_client:probe(ProbeOpts#{health_timeout => Timeout}),
+        Result = try ecai_ollama_client:probe(ProbeOpts#{health_timeout => Timeout})
+                 catch _:_ -> {error, probe_failed} end,
         Duration = max(0, erlang:monotonic_time(millisecond) - Started),
-        gen_server:cast(Parent, {probe_result, Id, Result, Duration})
+        gen_server:cast(Parent, {probe_result, Id, Token, Result, Duration})
     end),
     ok.
 
@@ -1118,6 +1183,7 @@ status_map(State) ->
     ),
     #{
         nodes => Nodes,
+        config_revision => State#state.config_revision,
         node_count => length(Nodes),
         healthy => length([N || N <- Nodes, maps:get(health, N) =:= healthy]),
         degraded => length([N || N <- Nodes, maps:get(health, N) =:= degraded]),
@@ -1135,6 +1201,7 @@ public_node(Node) ->
     Public = maps:with(
         [
             id,
+            enabled,
             provider,
             host,
             port,
@@ -1171,6 +1238,7 @@ role_capacity(Role, Nodes) ->
     lists:sum([
         maps:get(max_inflight, N, 1)
      || N <- maps:values(Nodes),
+        maps:get(enabled, N, true),
         maps:get(health, N, unknown) =/= down,
         lists:member(Role, maps:get(roles, N, []))
     ]).
@@ -1342,6 +1410,8 @@ output_options(Opts) ->
 
 definitely_not_sent({ollama_request_failed, Reason}) ->
     pre_send_transport_error(Reason);
+definitely_not_sent({anthropic_request_failed, Reason}) ->
+    pre_send_transport_error(Reason);
 definitely_not_sent({openai_request_failed, Reason}) ->
     pre_send_transport_error(Reason);
 definitely_not_sent({missing_auth_environment_variable, _}) ->
@@ -1366,6 +1436,11 @@ definitely_not_sent(invalid_native_chat_messages) ->
     true;
 definitely_not_sent(invalid_native_generate_prompt) ->
     true;
+definitely_not_sent(invalid_bearer_token) -> true;
+definitely_not_sent(anthropic_api_key_required) -> true;
+definitely_not_sent(invalid_anthropic_request) -> true;
+definitely_not_sent(invalid_anthropic_temperature) -> true;
+definitely_not_sent(anthropic_tools_not_supported) -> true;
 definitely_not_sent(empty_bearer_token) ->
     true;
 definitely_not_sent(_) ->
@@ -1392,6 +1467,7 @@ receipt_error_tag({Tag, _, _, _}) when is_atom(Tag) ->
 receipt_error_tag(_) ->
     inference_error.
 
+default_billing_sensitive(anthropic, _Host) -> true;
 default_billing_sensitive(openai, _Host) ->
     true;
 default_billing_sensitive(ollama, Host) ->
@@ -1409,6 +1485,9 @@ sha256_hex(Bin) when is_binary(Bin) ->
      || <<B>> <= crypto:hash(sha256, Bin)
     ]).
 
+normalize_provider(anthropic) -> anthropic;
+normalize_provider(<<"anthropic">>) -> anthropic;
+normalize_provider("anthropic") -> anthropic;
 normalize_provider(ollama) -> ollama;
 normalize_provider(openai) -> openai;
 normalize_provider(<<"ollama">>) -> ollama;

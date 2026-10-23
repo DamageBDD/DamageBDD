@@ -617,7 +617,7 @@ ollama_audit(Prompt, State) ->
             undefined -> Opts0;
             Model -> Opts0#{model => to_binary(Model)}
         end,
-    ecai_ollama_pool:generate_json(audit, Prompt, Opts).
+    ecai_ollama_pool:generate_json(audit, Prompt, ecai_llm_settings:code_options(Opts)).
 
 %%====================================================================
 %% Reconciliation and persistence

@@ -797,6 +797,9 @@ requested_provider(any) -> any;
 requested_provider(undefined) -> any;
 requested_provider(Value) -> inference_provider(Value).
 
+inference_provider(anthropic) -> anthropic;
+inference_provider(<<"anthropic">>) -> anthropic;
+inference_provider("anthropic") -> anthropic;
 inference_provider(openai) -> openai;
 inference_provider(ollama) -> ollama;
 inference_provider(<<"openai">>) -> openai;
@@ -1037,7 +1040,7 @@ resolve_capacity_reserve(Opts) ->
     end.
 
 ollama_opts(Opts) ->
-    maps:get(ollama, Opts, #{}).
+    ecai_llm_settings:code_options(maps:get(ollama, Opts, #{})).
 
 runtime_policy_status() ->
     case ecai_code_runtime_config:learning_admission() of

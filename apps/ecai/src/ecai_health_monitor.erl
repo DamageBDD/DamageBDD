@@ -330,7 +330,7 @@ model_resolution(Prompt, Opts) ->
         provider => maps:get(provider, Opts)
     },
     InferenceOpts = maybe_put(model, maps:get(model, Opts), InferenceOpts0),
-    try ecai_ollama_pool:generate_json(audit, Prompt, InferenceOpts) of
+    try ecai_ollama_pool:generate_json(audit, Prompt, ecai_llm_settings:code_options(InferenceOpts)) of
         {ok, Resolution, Meta} when is_map(Resolution), is_map(Meta) ->
             {ok, Resolution, Meta};
         {ok, Resolution, Meta} when is_map(Resolution) ->

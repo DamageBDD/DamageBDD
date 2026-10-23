@@ -863,7 +863,7 @@ patch_inference_opts(Opts) ->
     ).
 
 patch_inference(Prompt, InferenceOpts) ->
-    try ecai_ollama_pool:generate_json(patch, Prompt, InferenceOpts) of
+    try ecai_ollama_pool:generate_json(patch, Prompt, ecai_llm_settings:code_options(InferenceOpts)) of
         Result ->
             Result
     catch

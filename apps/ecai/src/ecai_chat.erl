@@ -274,7 +274,7 @@ infer_reply(SessionID, UserID, Query0, History0, ProjectInstructions0,
     %% project instructions; retrieved answers remain context, never final output.
     Prompt = build_rag_prompt_full(SessionID, UserID, Query, Context, ProjectInstructions),
     RequestSystemPrompt = personality_system_prompt(SystemPrompt, PersonalityPrompt),
-    case call_ollama(Host, Port, Model, RequestSystemPrompt, Prompt) of
+    case call_model(Host, Port, Model, RequestSystemPrompt, Prompt) of
         {ok, AIReply} ->
             _ = maybe_self_store_if(SelfStore, SessionID, UserID, Query, AIReply, State),
             {reply, {ok, AIReply}, State};
@@ -454,6 +454,20 @@ default_system_prompt() ->
 %%====================================================================
 %% Ollama
 %%====================================================================
+
+%% Explicit node-admin opt-in. Account personality/project instructions remain
+%% system context; the browser cannot choose a provider or credentials.
+call_model(Host, Port, Model, SystemPrompt, Prompt) ->
+    case ecai_llm_settings:route_chat() of
+        false -> call_ollama(Host, Port, Model, SystemPrompt, Prompt);
+        true ->
+            try ecai_ollama_pool:generate_text(chat, Prompt, #{system => SystemPrompt,
+                    timeout => 45000, queue_timeout_ms => 5000, cluster_attempts => 1,
+                    max_output_tokens => 4096, max_response_bytes => 1048576}) of
+                {ok, Text, _} -> {ok, Text};
+                _ -> {error, chat_provider_unavailable}
+            catch _:_ -> {error, chat_provider_unavailable} end
+    end.
 
 call_ollama(Host, Port, Model, SystemPrompt, Prompt) ->
     Body =

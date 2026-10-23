@@ -23,6 +23,7 @@
 -export([
     init_db/0,
     store_secret/2,
+    sync/0,
     retrieve_secret/1,
     delete_secret/1,
     delete_secret/2,
@@ -895,6 +896,14 @@ store_secret(Name, Encrypted) ->
             dets:insert(DetsFile, {Name, Encrypted});
         {error, _} = Error ->
             Error
+    end.
+
+%% Durability barrier for callers that persist references in a separate store.
+%% Never exposes vault contents, key material or the internal DETS handle.
+sync() ->
+    case open_secrets_dets() of
+        {ok, Tab} -> dets:sync(Tab);
+        {error, _} = Error -> Error
     end.
 
 %% Retrieve encrypted secret from dets

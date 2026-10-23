@@ -41,7 +41,7 @@ learn_module(App, Analysis, Opts) when is_map(Analysis), is_map(Opts) ->
         Source,
         <<"\n">>
     ]),
-    case ecai_ollama_pool:generate_json(learning, Prompt, Opts) of
+    case ecai_ollama_pool:generate_json(learning, Prompt, ecai_llm_settings:code_options(Opts)) of
         {ok, Card0, Inference} ->
             Card = Card0#{
                 <<"schema_version">> => 1,
@@ -79,7 +79,7 @@ synthesize_application(App, Cards, GraphSummary, Opts) ->
         jsx:encode(json_safe(GraphSummary)),
         <<"\n">>
     ]),
-    case ecai_ollama_pool:generate_json(synthesis, Prompt, Opts) of
+    case ecai_ollama_pool:generate_json(synthesis, Prompt, ecai_llm_settings:code_options(Opts)) of
         {ok, Card0, Inference} ->
             {ok, Card0#{
                 <<"schema_version">> => 1,
@@ -106,7 +106,7 @@ synthesize_global(AppCards, Opts) when is_map(AppCards) ->
         jsx:encode(json_safe(AppCards)),
         <<"\n">>
     ]),
-    case ecai_ollama_pool:generate_json(synthesis, Prompt, Opts) of
+    case ecai_ollama_pool:generate_json(synthesis, Prompt, ecai_llm_settings:code_options(Opts)) of
         {ok, Card0, Inference} ->
             {ok, Card0#{
                 <<"schema_version">> => 1,

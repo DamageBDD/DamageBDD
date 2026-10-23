@@ -161,7 +161,7 @@ async def main():
           const state={view:'overview'}, VIEW_NAMES={code:'Code learning & repair',overview:'Overview'};
           const $=id=>document.getElementById(id), put=(id,value)=>{$(id).textContent=value;};
           const modelInternals=window.mi, mathPaths=null, evaluation=null, personalities=null,
-                videoStudio=null, marketMaker=null;
+                videoStudio=null, marketMaker=null, llmSettings=null, knowledgeSearch={setVisible(){}};
           const location={hash:''}, history={replaceState(a,b,hash){location.hash=hash;}};
           const closeNav=()=>{}, stopStream=()=>{}, refreshView=async()=>{}, toast=()=>{}, showError=()=>'';
           NAVIGATION

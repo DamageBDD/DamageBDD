@@ -22,6 +22,9 @@
 
 trails() ->
     [
+        trail("/ecai/admin/llm/settings", llm_settings, get),
+        trail("/ecai/admin/llm/settings/update", llm_settings_update, post),
+        trail("/ecai/admin/llm/probe", llm_probe, post),
         trail("/ecai/admin/code/status", status, get),
         trail("/ecai/admin/code/settings", settings, get),
         trail("/ecai/admin/code/model-internals", model_internals, get),
@@ -58,6 +61,8 @@ trail(Path, Action, Method) ->
 init(Req, State) -> {cowboy_rest, Req, State}.
 is_authorized(Req, State) -> damage_http:is_authorized(Req, State).
 allowed_methods(Req, #{action := Action} = State) when
+    Action =:= llm_settings_update;
+    Action =:= llm_probe;
     Action =:= learn;
     Action =:= settings_update;
     Action =:= model_internals_update;
@@ -102,7 +107,7 @@ from_json(Req, State) ->
                         {ok, TokenAuth} ->
                             case actor(TokenAuth) of
                                 {ok, Actor} ->
-                                    case read_json(Req) of
+                                    case read_admin_json(Req, State) of
                                         {ok, Body, Req1} ->
                                             safely(
                                                 fun() -> respond_post(Req1, State, Actor, Body) end,
@@ -151,6 +156,8 @@ actor_enabled(State) ->
             {error, authenticated_admin_required}
     end.
 
+respond_get(Req, #{action := llm_settings} = State, _Actor) ->
+    reply(Req, 200, #{ok => true, llm_settings => ecai_llm_settings:status()}, State);
 respond_get(Req, #{action := status} = State, _Actor) ->
     Data = #{
         learning => ecai_codebase_learning:status(),
@@ -232,6 +239,18 @@ respond_get(Req, #{action := reviews} = State, _Actor) ->
 respond_get(Req, #{action := review} = State, Actor) ->
     as_result(Req, State, ecai_code_review_queue:get(cowboy_req:binding(id, Req), Actor), 200).
 
+respond_post(Req, #{action := llm_settings_update} = State, Actor, Body) ->
+    case ecai_llm_settings:update(Body, Actor) of
+        {ok, _} -> reply(Req, 200, #{ok => true, llm_settings => ecai_llm_settings:status()}, State);
+        {error, stale_revision} -> reply(Req, 409, #{ok => false, error => stale_revision}, State);
+        {error, Why} -> reply(Req, 422, #{ok => false, error => Why}, State)
+    end;
+respond_post(Req, #{action := llm_probe} = State, _Actor, Body) ->
+    case ecai_llm_settings:probe(Body) of
+        {ok, Data} -> reply(Req, 200, #{ok => true, probe => Data}, State);
+        {error, stale_revision} -> reply(Req, 409, #{ok => false, error => stale_revision}, State);
+        {error, Why} -> reply(Req, 422, #{ok => false, error => Why}, State)
+    end;
 respond_post(Req, #{action := model_internals_update} = State, Actor, Body) ->
     model_internals_result(Req, State, ecai_model_internals:update(Body, Actor));
 respond_post(Req, #{action := model_internals_preview} = State, _Actor, Body) ->
@@ -439,6 +458,20 @@ as_result(Req, State, {error, not_found}, _Code) ->
 as_result(Req, State, {error, Error}, _Code) ->
     reply(Req, 409, #{ok => false, error => Error}, State).
 
+%% Provider forms may contain up to 32 connections. Other code-admin routes
+%% retain the existing 8 KiB limit. Body length is not an authorization check.
+read_admin_json(Req, #{action := Action}) when
+    Action =:= llm_settings_update; Action =:= llm_probe ->
+    case cowboy_req:read_body(Req, #{length => 131072, period => 5000}) of
+        {ok, Bin, Req1} when byte_size(Bin) =< 131072 ->
+            try jsx:decode(Bin, [return_maps]) of
+                M when is_map(M) -> {ok, M, Req1};
+                _ -> {error, 400, json_object_required, Req1}
+            catch _:_ -> {error, 400, invalid_json, Req1} end;
+        {_, _, Req1} -> {error, 413, request_too_large, Req1}
+    end;
+read_admin_json(Req, _) -> read_json(Req).
+
 read_json(Req0) ->
     case cowboy_req:read_body(Req0, #{length => ?LIMIT, period => 5000}) of
         {ok, Bin, Req1} when byte_size(Bin) =< ?LIMIT ->
@@ -459,7 +492,11 @@ safely(Fun, Req, State) ->
         Fun()
     catch
         Class:Reason ->
-            logger:warning("ECAI code admin request failed class=~p reason=~p", [Class, Reason]),
+            case maps:get(action, State, undefined) of
+                A when A =:= llm_settings; A =:= llm_settings_update; A =:= llm_probe ->
+                    logger:warning("ECAI LLM administration unavailable class=~p", [Class]);
+                _ -> logger:warning("ECAI code admin request failed class=~p reason=~p", [Class, Reason])
+            end,
             reply(Req, 503, #{ok => false, error => service_unavailable}, State)
     end.
 

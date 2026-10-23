@@ -17,7 +17,8 @@
 ]).
 
 -ifdef(TEST).
--export([decode_json/1, ollama_generation_options/1]).
+-export([decode_json/1, ollama_generation_options/1, anthropic_payload/3,
+         decode_anthropic_response/3, anthropic_headers/1, anthropic_native_options/1]).
 -endif.
 
 -define(DEFAULT_HOST, "localhost").
@@ -27,7 +28,7 @@
 -define(DEFAULT_CONNECT_TIMEOUT, 5000).
 
 %% Backwards-compatible raw inference client. Despite the historical module name,
-%% requests can target either native Ollama or the OpenAI Responses API. Pool
+%% requests can target native Ollama, OpenAI Responses or Anthropic Messages. Pool
 %% selection belongs in ecai_ollama_pool.
 
 defaults() ->
@@ -89,6 +90,7 @@ evaluation_chat_with_meta(Messages, Opts0) when is_list(Messages), is_map(Opts0)
                 Error -> Error
             end;
         openai -> openai_request(Messages, false, Opts);
+        anthropic -> anthropic_request(Messages, false, Opts);
         _ -> {error, evaluation_provider_not_supported}
     end.
 
@@ -104,6 +106,7 @@ probe(Opts0) when is_map(Opts0) ->
     case maps:get(provider, Opts) of
         ollama -> ollama_probe(Opts);
         openai -> openai_probe(Opts);
+        anthropic -> anthropic_probe(Opts);
         Provider -> {error, {unsupported_inference_provider, Provider}}
     end.
 
@@ -113,6 +116,7 @@ request(Prompt0, JsonMode, Opts0) ->
     case maps:get(provider, Opts) of
         ollama -> ollama_request(Prompt, JsonMode, Opts);
         openai -> openai_request(Prompt, JsonMode, Opts);
+        anthropic -> anthropic_request(Prompt, JsonMode, Opts);
         Provider -> {error, {unsupported_inference_provider, Provider}}
     end.
 
@@ -121,6 +125,11 @@ native_request(Kind, Request0, Opts0) ->
     case maps:get(provider, Opts) of
         ollama -> ollama_native_request(Kind, Request0, Opts);
         openai -> openai_native_request(Kind, Request0, Opts);
+        anthropic ->
+            case anthropic_native_options(Request0) of
+                ok -> anthropic_native_request(Kind, Request0, Opts);
+                {error, _} = Error -> Error
+            end;
         Provider -> {error, {unsupported_inference_provider, Provider}}
     end.
 
@@ -129,7 +138,9 @@ provider_defaults(Opts0) ->
     Base =
         case Provider of
             ollama -> defaults();
-            openai -> openai_defaults()
+            openai -> openai_defaults();
+            anthropic -> anthropic_defaults();
+            _ -> #{}
         end,
     maps:merge(Base, Opts0#{provider => Provider}).
 
@@ -149,6 +160,17 @@ openai_defaults() ->
         store => false
     }.
 
+anthropic_defaults() ->
+    #{provider => anthropic, host => "api.anthropic.com", port => 443,
+      transport => tls, proxy => direct, base_path => "/v1",
+      timeout => ?DEFAULT_TIMEOUT, connect_timeout => ?DEFAULT_CONNECT_TIMEOUT,
+      auth => #{type => bearer_env, env => "ANTHROPIC_API_KEY"},
+      max_output_tokens => 4096, max_response_bytes => 8388608,
+      response_decode => json_binary}.
+
+normalize_provider(anthropic) -> anthropic;
+normalize_provider(<<"anthropic">>) -> anthropic;
+normalize_provider("anthropic") -> anthropic;
 normalize_provider(ollama) -> ollama;
 normalize_provider(openai) -> openai;
 normalize_provider(<<"ollama">>) -> ollama;
@@ -293,7 +315,7 @@ ollama_native_request(Kind, Request0, Opts) ->
                     request_opts(Opts, maps:get(timeout, Opts))
                 )
             of
-                {ok, #{status := Status, json := Json, body := RawBody}} when
+                {ok, #{status := Status, json := Json, body := _}} when
                     Status >= 200, Status < 300, is_map(Json)
                 ->
                     Normalized = json_binary_keys(Json),
@@ -552,6 +574,7 @@ auth_headers(Opts) ->
         {ok, AuthHeaders} -> {ok, AuthHeaders ++ optional_openai_headers(Opts)}
     end.
 
+default_auth(anthropic) -> #{type => bearer_env, env => "ANTHROPIC_API_KEY"};
 default_auth(openai) -> #{type => bearer_env, env => "OPENAI_API_KEY"};
 default_auth(_) -> none.
 
@@ -644,9 +667,10 @@ result_tag(Term) when is_tuple(Term) -> {tuple, tuple_size(Term)};
 result_tag(_) -> other.
 bearer_header(Token0) ->
     Token = trim_binary(to_binary(Token0)),
-    case Token of
-        <<>> -> {error, empty_bearer_token};
-        _ -> {ok, [{<<"authorization">>, <<"Bearer ", Token/binary>>}]}
+    case byte_size(Token) > 0 andalso byte_size(Token) =< 8192 andalso
+         binary:match(Token, [<<"\r">>, <<"\n">>, <<0>>]) =:= nomatch of
+        true -> {ok, [{<<"authorization">>, <<"Bearer ", Token/binary>>}]};
+        false -> {error, invalid_bearer_token}
     end.
 
 optional_openai_headers(Opts) ->
@@ -693,8 +717,8 @@ public_auth(none) ->
     none;
 public_auth(undefined) ->
     undefined;
-public_auth(Other) ->
-    #{type => unknown, value => to_binary(io_lib:format("~p", [Other]))}.
+public_auth(_) ->
+    #{type => unknown}.
 
 decode_ollama_response(JsonMode, Json, RawBody, WallMs) when is_map(Json) ->
     case mget(<<"response">>, Json, undefined) of
@@ -985,3 +1009,162 @@ to_binary(A) when is_atom(A) -> atom_to_binary(A, utf8);
 to_binary(I) when is_integer(I) -> integer_to_binary(I);
 to_binary(F) when is_float(F) -> float_to_binary(F, [compact]);
 to_binary(V) -> iolist_to_binary(io_lib:format("~p", [V])).
+
+
+%% Native Anthropic Messages adapter. No tools, arbitrary headers or browser
+%% credentials. The shared env/file/node-vault resolver supplies x-api-key.
+anthropic_headers(Opts) ->
+    case resolve_auth(maps:get(auth, Opts, default_auth(anthropic))) of
+        {ok, [{<<"authorization">>, <<"Bearer ", Key/binary>>}]} ->
+            {ok, [{<<"x-api-key">>, Key}, {<<"anthropic-version">>, <<"2023-06-01">>},
+                  {<<"accept">>, <<"application/json">>}]};
+        {ok, _} -> {error, anthropic_api_key_required};
+        {error, _} = Error -> Error
+    end.
+
+anthropic_probe(Opts) ->
+    case anthropic_headers(Opts) of
+        {ok, Headers} ->
+            case damage_gun:get(maps:get(host, Opts), maps:get(port, Opts),
+                    api_path(Opts, "/models?limit=1000"), Headers,
+                    request_opts(Opts, maps:get(health_timeout, Opts, 5000))) of
+                {ok, #{status := 200, json := #{<<"data">> := Entries} = Json}}
+                  when is_list(Entries) ->
+                    %% Never treat an incomplete list as authoritative availability.
+                    case maps:get(<<"has_more">>, Json, false) of
+                        true -> {error, anthropic_model_list_incomplete};
+                        false ->
+                            Models = maps:from_list([{Id, #{provider => anthropic,
+                                digest => <<>>, created => maps:get(<<"created_at">>, M, undefined)}}
+                                || M <- Entries, is_map(M),
+                                   Id <- [maps:get(<<"id">>, M, undefined)], is_binary(Id)]),
+                            {ok, #{provider => anthropic, models => Models}}
+                    end;
+                {ok, #{status := Status}} -> {error, {anthropic_http_status, Status}};
+                {error, Reason} -> {error, {anthropic_request_failed, Reason}}
+            end;
+        Error -> Error
+    end.
+
+anthropic_request(Prompt, JsonMode, Opts) ->
+    case {anthropic_headers(Opts), anthropic_payload(Prompt, JsonMode, Opts)} of
+        {{error, _} = Error, _} -> Error;
+        {_, {error, _} = Error} -> Error;
+        {{ok, Headers}, {ok, Payload}} ->
+            Started = erlang:monotonic_time(millisecond),
+            case damage_gun:post(maps:get(host, Opts), maps:get(port, Opts),
+                    api_path(Opts, "/messages"),
+                    [{<<"content-type">>, <<"application/json">>} | Headers],
+                    jsx:encode(Payload), request_opts(Opts, maps:get(timeout, Opts))) of
+                {ok, #{status := Status, json := Json}} when Status >= 200, Status < 300 ->
+                    case decode_anthropic_response(Json, elapsed_ms(Started), Opts) of
+                        {ok, Text, Meta} -> finish_decoded_response(JsonMode, Text, Meta);
+                        Error -> Error
+                    end;
+                {ok, #{status := Status}} -> {error, {anthropic_http_status, Status}};
+                {error, Reason} -> {error, {anthropic_request_failed, Reason}}
+            end
+    end.
+
+anthropic_payload(Prompt, JsonMode, Opts) ->
+    try
+        {Messages, Systems} = anthropic_messages(Prompt),
+        Model = to_binary(maps:get(model, Opts)),
+        true = byte_size(Model) > 0,
+        Max = maps:get(max_output_tokens, Opts, 4096),
+        true = is_integer(Max) andalso Max > 0,
+        System0 = to_binary(maps:get(system, Opts, <<>>)),
+        Hint = case JsonMode of
+            true -> <<"Return only one valid JSON object. No markdown or commentary.">>;
+            false -> <<>>
+        end,
+        System = iolist_to_binary(lists:join(<<"\n\n">>,
+            [S || S <- [System0 | Systems] ++ [Hint], S =/= <<>>])),
+        Base = #{<<"model">> => Model, <<"max_tokens">> => Max,
+                 <<"messages">> => Messages, <<"stream">> => false},
+        WithSystem = case System of <<>> -> Base; _ -> Base#{<<"system">> => System} end,
+        WithTemp = case maps:get(temperature, Opts, undefined) of
+            undefined -> WithSystem;
+            T when is_number(T), T >= 0, T =< 1 -> WithSystem#{<<"temperature">> => T};
+            _ -> throw(invalid_anthropic_temperature)
+        end,
+        {ok, WithTemp}
+    catch
+        throw:Why -> {error, Why};
+        _:_ -> {error, invalid_anthropic_request}
+    end.
+
+anthropic_messages(Prompt) when is_binary(Prompt) ->
+    {[#{<<"role">> => <<"user">>, <<"content">> => Prompt}], []};
+anthropic_messages(Messages) when is_list(Messages), Messages =/= [] ->
+    {Conversation, Systems} = lists:foldl(fun(M, {Cs, Ss}) ->
+        true = is_map(M),
+        true = maps:get(<<"tool_calls">>, M, []) =:= [],
+        true = maps:get(<<"images">>, M, []) =:= [],
+        Content = maps:get(<<"content">>, M), true = is_binary(Content),
+        case maps:get(<<"role">>, M) of
+            <<"system">> -> {Cs, [Content | Ss]};
+            <<"developer">> -> {Cs, [Content | Ss]};
+            R when R =:= <<"user">>; R =:= <<"assistant">> ->
+                {[#{<<"role">> => R, <<"content">> => Content} | Cs], Ss};
+            _ -> throw(anthropic_tools_not_supported)
+        end
+    end, {[], []}, Messages),
+    true = Conversation =/= [],
+    {lists:reverse(Conversation), lists:reverse(Systems)}.
+
+decode_anthropic_response(#{<<"stop_reason">> := <<"max_tokens">>}, _, _) ->
+    {error, anthropic_truncated};
+decode_anthropic_response(#{<<"stop_reason">> := Stop, <<"content">> := Blocks} = Json,
+                         WallMs, _Opts)
+  when (Stop =:= <<"end_turn">> orelse Stop =:= <<"stop_sequence">>), is_list(Blocks) ->
+    case Blocks =/= [] andalso lists:all(fun
+            (#{<<"type">> := <<"text">>, <<"text">> := T}) when is_binary(T) -> true;
+            (_) -> false
+         end, Blocks) of
+        true ->
+            Text = iolist_to_binary([maps:get(<<"text">>, B) || B <- Blocks]),
+            Usage = maps:get(<<"usage">>, Json, #{}),
+            Meta = #{provider => anthropic, model => maps:get(<<"model">>, Json, <<>>),
+                response_id => maps:get(<<"id">>, Json, undefined), done_reason => Stop,
+                input_tokens => maps:get(<<"input_tokens">>, Usage, undefined),
+                output_tokens => maps:get(<<"output_tokens">>, Usage, undefined),
+                wall_duration_ms => WallMs},
+            case Text of <<>> -> {error, anthropic_empty_output}; _ -> {ok, Text, Meta} end;
+        false -> {error, anthropic_unsupported_content}
+    end;
+decode_anthropic_response(_, _, _) -> {error, anthropic_invalid_response}.
+
+%% Reject native features this text-only adapter cannot faithfully translate.
+%% Connection options, not unvalidated native payload options, govern Claude.
+anthropic_native_options(Request) ->
+    Unsupported = [<<"tools">>, <<"images">>, <<"options">>, <<"format">>,
+                   <<"context">>, <<"suffix">>, <<"raw">>, <<"think">>],
+    case [K || K <- Unsupported,
+               not lists:member(mget(K, Request, undefined), [undefined, null, false, [], #{}, <<>>])] of
+        [] -> ok;
+        [K | _] -> {error, {unsupported_native_option, anthropic, K}}
+    end.
+
+anthropic_native_request(chat, Request, Opts0) ->
+    case mget(<<"tools">>, Request, []) of
+        [] ->
+            Opts = maybe_native_system(Opts0, mget(<<"system">>, Request, <<>>)),
+            case anthropic_request(mget(<<"messages">>, Request, []), false, Opts) of
+                {ok, Text, Meta} ->
+                    {ok, synthetic_chat_response(Text, Meta, maps:get(model, Opts)), Meta};
+                Error -> Error
+            end;
+        _ -> {error, anthropic_tools_not_supported}
+    end;
+anthropic_native_request(generate, Request, Opts0) ->
+    case mget(<<"prompt">>, Request, undefined) of
+        Prompt when is_binary(Prompt) ->
+            Opts = maybe_native_system(Opts0, mget(<<"system">>, Request, <<>>)),
+            case anthropic_request(Prompt, false, Opts) of
+                {ok, Text, Meta} ->
+                    {ok, synthetic_generate_response(Text, Meta, maps:get(model, Opts)), Meta};
+                Error -> Error
+            end;
+        _ -> {error, invalid_native_generate_prompt}
+    end.

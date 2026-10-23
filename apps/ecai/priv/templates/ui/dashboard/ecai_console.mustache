@@ -8,6 +8,7 @@
   <meta name="theme-color" content="#101b32">
   <title>{{brand_name}} · Control plane</title>
   {{#has_brand_favicon}}<link rel="icon" href="{{brand_favicon}}">{{/has_brand_favicon}}
+  <link rel="stylesheet" href="/static/css/ecai-llm-settings.css?v=llm-settings-v1">
   <link rel="stylesheet" href="/static/css/ecai-model-internals.css?v=model-internals-v1&theme=semantic-v2">
   <link rel="stylesheet" href="/static/css/ecai-console.css?v=personality-conversations-v1-knowledge-v2&index-mint=index-mint-v1&theme=semantic-v2&chat=wide-v2">
   <link rel="stylesheet" href="/static/css/ecai-personalities.css?v=personalities-v1&theme=semantic-v2">
@@ -73,6 +74,7 @@
             <button type="button" class="nav-link" data-view="account"><span class="nav-icon" aria-hidden="true">⚙</span>Account settings</button>
             <button type="button" data-view="compute" class="nav-link"><span class="nav-icon" aria-hidden="true">⌁</span>Compute</button>
             <button type="button" data-view="keys" class="nav-link"><span class="nav-icon" aria-hidden="true">⌑</span>API keys</button>
+            <button type="button" class="nav-link" data-view="ai-providers" id="llmSettingsNav" hidden><span class="nav-icon" aria-hidden="true">⌘</span>AI providers &amp; roles</button>
             <button type="button" class="nav-link" data-view="node-settings"><span class="nav-icon" aria-hidden="true">▣</span>Node settings</button>
           </div>
           <button type="button" class="node-mark" data-settings-go="node-settings" aria-label="Open node settings"><span class="node-dot" id="sidebarStatusDot" aria-hidden="true"></span><span id="sidebarNodeState" role="status" aria-live="polite" aria-atomic="true">Node not checked</span><span class="node-version">{{node_version}}</span></button>
@@ -280,8 +282,8 @@
 
         <section class="view" data-panel="chat" aria-labelledby="chatTitle" hidden>
           <div class="page-intro"><div class="eyebrow">CONVERSATION</div><h1 id="chatTitle">Speak to the knowledge layer</h1><p>Signed-in conversations are durable, searchable through the private ECAI term index and can be grouped into projects. Guest chat remains an isolated session. Replies depend on the configured backend and are not cryptographic proofs.</p></div>
-          <div class="chat-workspace" id="chatWorkspace">
-            <aside class="surface chat-history-panel" id="chatHistoryPanel" aria-label="Conversation history">
+          <div class="chat-workspace chat-workspace--integrated">
+            <aside class="chat-history-panel" id="chatHistoryPanel" aria-label="Conversation history">
               <div class="chat-history-actions">
                 <button type="button" class="button button-primary chat-new-button" id="newChatBtn">＋ New chat</button>
                 <button type="button" class="chat-search-button" id="chatSearchBtn"><span aria-hidden="true">⌕</span><span>Search chats</span><kbd>⌘K</kbd></button>
@@ -297,7 +299,7 @@
                 <div id="chatHistoryList" class="chat-history-list"><div class="chat-history-empty">Sign in to keep account-scoped history.</div></div>
               </div>
             </aside>
-            <div class="surface chat-layout">
+            <div class="chat-layout">
               <div class="chat-toolbar">
                 <button type="button" class="chat-history-toggle chat-nav-toggle" id="chatNavToggle" aria-label="Expand main navigation" aria-pressed="false" title="Expand main navigation">◨</button>
                 <button type="button" class="chat-history-toggle" id="chatHistoryToggle" aria-controls="chatHistoryPanel" aria-expanded="true" aria-label="Toggle conversation history">☰</button>
@@ -647,6 +649,7 @@
           </div>
           </div>
           <section id="modelInternalsPanel" class="model-internals" role="tabpanel" aria-labelledby="codeModelInternalsTab" hidden>
+            <div><button type="button" class="text-button" data-go="ai-providers">Configure AI providers &amp; roles →</button></div>
             <div class="mi-heading"><div><div class="eyebrow">INFERENCE CONTROL · NODE POLICY</div><h2>Model Internals</h2><p>Control the interfaces this node actually exposes. Keep deeper runtime hooks explicit, isolated and testable.</p></div><button type="button" id="miRefresh" class="button button-outline button-sm">Refresh telemetry</button></div>
             <div id="miNotice" class="mi-notice" role="status" aria-live="polite">Checking administrator access…</div>
             <div class="mi-summary" aria-label="Inference policy status">
@@ -749,6 +752,73 @@
           <div class="page-intro"><div class="eyebrow">REFERENCE &amp; EXECUTION</div><h1 id="apiTitle">API explorer</h1><p>Browse the routes exported by this ECAI node and make authenticated same-origin requests.</p></div>
           <div class="api-explorer"><section class="surface api-list-panel"><label for="apiFilter" class="sr-only">Filter endpoints</label><input id="apiFilter" class="api-filter" type="search" placeholder="⌕  Filter endpoints"><div id="apiRoutes" class="api-route-list" aria-label="API endpoints"></div></section><section class="surface panel-pad api-request-panel"><div class="panel-heading"><div><div class="eyebrow">REQUEST</div><h2 id="apiRequestTitle">Choose an endpoint</h2></div><span class="status-tag" id="apiMethodTag">REST</span></div><p id="apiRequestDescription" class="context-hint">Select a route on the left to inspect its parameters.</p><form id="apiRequestForm" class="stack-form"><div id="apiPathParams"></div><div id="apiQueryParams"></div><div id="apiRequestBodyWrapper" hidden><label for="apiRequestBody">JSON body</label><textarea id="apiRequestBody" class="code-input" rows="9" spellcheck="false"></textarea></div><div class="inline-actions"><button type="submit" id="apiRequestSubmit" class="button button-primary" disabled>Send request ↗</button><button type="button" id="apiCopyResponse" class="button button-outline" disabled>Copy response</button></div></form><div class="form-meta"><span id="apiResponseMeta" role="status">No request sent.</span></div><pre id="apiResponse" class="code-display">Select an endpoint to get started.</pre></section></div>
         </section>
+        <section class="view llm-settings" data-panel="ai-providers" aria-labelledby="llmSettingsTitle" hidden>
+          <div class="page-intro"><div class="eyebrow">SETTINGS · NODE-WIDE INFERENCE</div><h1 id="llmSettingsTitle">AI providers &amp; roles</h1><p>Connect Ollama, OpenAI and Claude. Assign workloads to the existing ECAI inference pool without changing execution or review permissions.</p></div>
+          <div id="llmNotice" class="llm-notice" role="status" aria-live="polite">Sign in with a server-authorized node administrator account.</div>
+          <div class="llm-summary">
+            <article class="surface llm-stat"><span>Configuration</span><strong id="llmRevision">—</strong><small id="llmSource">Not loaded</small></article>
+            <article class="surface llm-stat"><span>Runtime</span><strong id="llmRuntimeState">Not checked</strong><small id="llmRuntimeRevision">No provider request made</small></article>
+            <article class="surface llm-stat"><span>Connections</span><strong id="llmConnectionCount">—</strong><small>Credentials stay on the server</small></article>
+          </div>
+          <form id="llmForm" autocomplete="off">
+            <div class="llm-toolbar"><span id="llmDraftState">No draft</span><div class="inline-actions"><button type="button" id="llmRefresh" class="button button-outline">Refresh</button><button type="button" id="llmDiscard" class="button button-outline" disabled>Discard edits</button><button type="submit" id="llmSave" class="button button-primary" disabled>Save &amp; apply</button></div></div>
+            <fieldset id="llmFields" disabled>
+              <legend class="sr-only">Node inference configuration</legend>
+              <div class="llm-workspace">
+                <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">CONNECTIONS</div><h2>Provider registry</h2></div></div>
+                  <div class="llm-add"><label for="llmAddProvider" class="sr-only">New provider</label><select id="llmAddProvider"><option value="ollama">Ollama</option><option value="openai">OpenAI</option><option value="anthropic">Claude / Anthropic</option></select><button type="button" id="llmAdd" class="button button-outline">Add</button></div>
+                  <div id="llmConnectionList" class="llm-connection-list" aria-label="Configured connections"></div>
+                  <p class="context-hint">A connection is one endpoint and model policy. Several connections can use the same provider.</p>
+                </section>
+                <section class="surface panel-pad"><div class="panel-heading"><h2 id="llmEditorTitle">Connection details</h2><button type="button" id="llmRemove" class="text-button" disabled>Remove</button></div>
+                  <p id="llmEmpty" class="context-hint">Add or select a connection.</p>
+                  <div id="llmEditor" hidden>
+                    <div class="llm-field-grid">
+                      <label>Connection ID<input id="llmId" maxlength="128" pattern="[A-Za-z0-9_.:\-]+" required></label>
+                      <label>Provider<select id="llmProvider"><option value="ollama">Ollama</option><option value="openai">OpenAI Responses</option><option value="anthropic">Claude / Anthropic Messages</option></select></label>
+                      <label>Host<input id="llmHost" maxlength="253" required spellcheck="false"></label>
+                      <label>Port<input id="llmPort" type="number" min="1" max="65535" required></label>
+                      <label>Transport<select id="llmTransport"><option value="tcp">HTTP · approved local / LAN</option><option value="tls">HTTPS · TLS</option></select></label>
+                      <label class="llm-toggle"><input id="llmEnabled" type="checkbox">Enable this connection</label>
+                      <label class="llm-wide">Default model<input id="llmModel" list="llmDiscoveredModels" maxlength="256" placeholder="Select a discovered model or enter its exact ID" required><datalist id="llmDiscoveredModels"></datalist></label>
+                      <label class="llm-wide">Allowed models<input id="llmModels" placeholder="all, or a comma-separated model list" required></label>
+                      <label>Credential source<select id="llmAuthType"><option value="inherited">Keep deployment credential</option><option value="environment">Server environment variable</option><option value="vault">Saved node-vault reference</option><option value="none">No credential · local Ollama</option></select></label>
+                      <label>Credential reference<input id="llmCredentialRef" maxlength="256" spellcheck="false"></label>
+                      <label class="llm-wide">Replace API key · optional<input id="llmApiKey" type="password" autocomplete="new-password" maxlength="8192" placeholder="Write-only: blank preserves the selected credential"></label>
+                    </div>
+                    <p id="llmKeyState" class="context-hint">No replacement key queued.</p>
+                    <p class="context-hint">New keys are encrypted in DamageBDD’s node-scoped vault. Secrets are never returned. New LAN endpoints must be approved in server configuration.</p>
+                    <details class="llm-advanced"><summary>Scheduling &amp; request limits</summary><div class="llm-field-grid">
+                      <label>Concurrent requests<input id="llmInflight" type="number" min="1" max="64" required></label>
+                      <label>Scheduling weight<input id="llmWeight" type="number" min="1" max="100" required></label>
+                      <label>Request timeout · ms<input id="llmTimeout" type="number" min="1000" max="1800000" required></label>
+                      <label>Connect timeout · ms<input id="llmConnectTimeout" type="number" min="100" max="30000" required></label>
+                      <label>Maximum output tokens<input id="llmOutputTokens" type="number" min="1" max="32768" placeholder="Provider default"></label>
+                      <label>Temperature<input id="llmTemperature" type="number" min="0" max="2" step="any" placeholder="Provider default"></label>
+                    </div></details>
+                    <div class="llm-probe"><button type="button" id="llmProbe" class="button button-outline">Test &amp; list models</button><p id="llmProbeResult" class="context-hint" role="status">Tests use the saved connection. No text-generation request is sent.</p></div>
+                  </div>
+                </section>
+              </div>
+              <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">ROLE ASSIGNMENTS</div><h2>Which connection does each job?</h2></div><button type="button" class="text-button" data-go="code/model-internals">Model Internals →</button></div>
+                <p class="context-hint">Checked connections are eligible for the role. The existing scheduler selects by health, capacity and weight—not column order. Each connection uses its default model unless a workload explicitly pins a model.</p>
+                <div class="llm-table-wrap"><table class="llm-role-table"><thead><tr><th scope="col">Connection</th><th scope="col">Learning</th><th scope="col">Audit</th><th scope="col">Repair</th><th scope="col">Synthesis</th><th scope="col">Chat</th><th scope="col">DamageBDD AI</th></tr></thead><tbody id="llmRoleRows"></tbody></table></div>
+                <fieldset class="llm-remote"><legend>Allow non-loopback processing for these roles</legend><div id="llmRemoteRoles" class="llm-role-checks"></div><p class="context-hint">Remote providers receive the selected plaintext. A local Ollama endpoint can itself forward to cloud models; disable that separately when required. These settings never override private-corpus destination permissions.</p></fieldset>
+                <label class="llm-toggle"><input type="checkbox" id="llmRouteChat">Use the shared Chat role for ECAI dashboard conversations</label>
+                <p class="context-hint">Off preserves the existing chat worker’s Ollama settings. On uses this registry without falling back to the legacy chat endpoint when unavailable.</p>
+              </section>
+              <details class="surface panel-pad llm-advanced"><summary>Backend runtime configuration</summary><p class="context-hint">These are shared defaults. Workload-specific request deadlines and output limits can take precedence. Model Internals tuning remains a separate policy.</p><div class="llm-field-grid llm-runtime-fields">
+                <label>Health interval · ms<input id="llmHealthInterval" type="number" min="5000" max="3600000" required></label>
+                <label>Health timeout · ms<input id="llmHealthTimeout" type="number" min="1000" max="30000" required></label>
+                <label>Failure threshold<input id="llmFailureThreshold" type="number" min="1" max="10" required></label>
+                <label>Queue timeout · ms<input id="llmQueueTimeout" type="number" min="1000" max="1800000" required></label>
+                <label>Maximum routing attempts<input id="llmAttempts" type="number" min="1" max="5" required></label>
+              </div><p class="context-hint">These controls update the existing code_model_* runtime settings. A save does not cancel active requests. Billing-sensitive failures retain the existing no-ambiguous-retry protections.</p></details>
+            </fieldset>
+          </form>
+          <section class="surface panel-pad"><div class="eyebrow">DAMAGEBDD INTEGRATION</div><h2>AI profiles</h2><div id="llmDamageProfiles" class="llm-profile-list">Not loaded.</div><p class="context-hint">Profiles using damage_ai_ecai use the DamageBDD AI role. Existing damage_ai_openai profiles and agent backends stay unchanged. Account allowlists, skill contracts and execution gates remain in DamageBDD.</p></section>
+        </section>
+
         <!-- Sidebar settings launchers reuse the existing account and admin handlers. -->
         <section class="view settings-workspace" data-panel="account" aria-labelledby="accountSettingsTitle" hidden>
           <div class="page-intro"><div class="eyebrow">SETTINGS · YOUR ACCOUNT</div><h1 id="accountSettingsTitle">Account settings</h1><p>Manage your session and find account-scoped preferences in one place.</p></div>
@@ -793,6 +863,7 @@
             </section>
             <section class="settings-card" aria-labelledby="nodeSettingsControlsTitle">
               <h2 id="nodeSettingsControlsTitle">Administrator controls</h2>
+              <button type="button" class="settings-link" data-go="ai-providers"><strong>AI providers &amp; roles</strong><small>Connect models and expose the shared backend configuration.</small></button>
               <p id="nodeSettingsRestricted">This session does not have administrator access. Sign in with an authorized account to see available node controls.</p>
               <div id="nodeSettingsCode" hidden>
                 <p id="nodeSettingsCodeNotice">Open the existing runtime settings in Code learning &amp; repair.</p>
@@ -820,6 +891,6 @@
   <script type="module" src="/static/js/ecai-compute-settings.js?v=compute-only-v1&aws-setup=automatic-aws-v1"></script>
   <script type="module" src="/static/js/ecai-keys.js"></script>
   <script type="module" src="/static/js/ecai-index-mint-settings.js?v=index-mint-settings-v1"></script>
-  <script type="module" src="/static/js/ecai-console.js?v=model-internals-v1-personality-conversations-v1-personalities-v1-video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-explorer-v2-eval-v1-source-retrieval-v1-knowledge-v2-compute-only-v1&index-mint=index-mint-v1-sidebar-settings-v1&chat=wide-v2"></script>
+  <script type="module" src="/static/js/ecai-console.js?v=llm-settings-v1-model-internals-v1-personality-conversations-v1-personalities-v1-video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-explorer-v2-eval-v1-source-retrieval-v1-knowledge-v2-compute-only-v1&index-mint=index-mint-v1-sidebar-settings-v1&chat=wide-v2"></script>
 </body>
 </html>

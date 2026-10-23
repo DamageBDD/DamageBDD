@@ -1,3 +1,4 @@
+import {initLlmSettings} from "/static/js/ecai-llm-settings.js?v=llm-settings-v1";
 import "/static/js/ecai-console-settings.js?v=sidebar-settings-v1";
 import {initKnowledgeSearch} from "/static/js/ecai-knowledge-search.js?v=knowledge-v2";
 import {initIndexSamples} from "/static/js/ecai-index-samples.js?v=samples-v1";
@@ -19,6 +20,9 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
 
   const $ = (id) => document.getElementById(id);
   const routes = [
+    {group: "AI providers & roles", method: "GET", path: "/ecai/admin/llm/settings", description: "Node-admin provider configuration, runtime revision and redacted diagnostics."},
+    {group: "AI providers & roles", method: "POST", path: "/ecai/admin/llm/settings/update", description: "Persist a revision-checked provider configuration. Use Settings → AI providers & roles to build it.", body: {revision: 0, config: {}}},
+    {group: "AI providers & roles", method: "POST", path: "/ecai/admin/llm/probe", description: "Discover models for a saved approved connection; no generation request.", body: {revision: 0, id: "local"}},
     { group: "Model Internals", method: "GET", path: "/ecai/admin/code/model-internals", description: "Node-admin policy, wired capabilities and sanitized inference telemetry." },
     { group: "Model Internals", method: "POST", path: "/ecai/admin/code/model-internals/update", description: "Replace a validated inference policy using its expected revision. Use the Model Internals form to build the full config.", body: {revision: 0, config: {}} },
     { group: "Model Internals", method: "POST", path: "/ecai/admin/code/model-internals/preview", description: "Validate draft overrides without calling a model or spending. Use the Model Internals form to build the full config.", body: {provider: "ollama", role: "patch", config: {}} },
@@ -154,13 +158,14 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     ask: { question: "What is known about this topic?", destination: "local" }
   };
   const marketExamples = { claim: { miner_ak: "ak_..." }, submit: { miner_ak: "ak_...", attestation: "attestation", evidence_ref: "" }, pay: { admin_ak: "ak_..." } };
-  const VIEW_NAMES = { account: "Account settings", "node-settings": "Node settings", personalities: "AI personalities", evaluation: "LLM evaluation", math: "Mathematical paths", overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing", compute: "Compute", keys: "API keys" };
+  const VIEW_NAMES = { "ai-providers": "AI providers & roles", account: "Account settings", "node-settings": "Node settings", personalities: "AI personalities", evaluation: "LLM evaluation", math: "Mathematical paths", overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing", compute: "Compute", keys: "API keys" };
   let mathPaths = null;
   let evaluation = null;
   let personalities = null;
   let videoStudio = null;
   let marketMaker = null;
   let modelInternals = null;
+  let llmSettings = null;
   const state = {
     authenticated: false, sessionMode: "anonymous", authEpoch: 0, email: "", view: "overview", jobs: [], presets: [], marketJobs: [],
     nodeAdmin: false, codeAdmin: false, codeFeatureConfigured: false, adminProbeSequence: 0, codeQueue: {}, codeRepairs: [], codeReviews: [], codeReview: null, codeReviewOpenId: "", codeReviewLoadSerial: 0, codeDiffFiles: [], codeDiffSelectedFile: "0",
@@ -667,6 +672,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
       videoStudio?.reset();
       marketMaker?.reset();
       modelInternals?.reset();
+      llmSettings?.reset();
       if (state.authenticated) setAuthenticated(false);
       observedToken = token;
       document.dispatchEvent(new CustomEvent("ecai:identity-changed"));
@@ -856,6 +862,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     const fragment = internalsVisible ? "code/model-internals" : view;
     if (location.hash !== `#${fragment}`) history.replaceState(null, "", `#${fragment}`);
     modelInternals?.setVisible(internalsVisible);
+    llmSettings?.setVisible(view === "ai-providers");
     closeNav();
     window.EcaiConsoleSettings?.navigated(view, previous);
     window.EcaiIndexPool?.setVisible(view === "network");
@@ -2803,11 +2810,13 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
   // Server-derived session claims control *navigation only*. Privileged
   // requests remain checked independently by DamageBDD and ECAI on the server.
   function showCodeAdminNavigation() {
+    $("llmSettingsNav").hidden = !(state.authenticated && (state.nodeAdmin || state.codeAdmin));
     $("codeAdminNav").hidden = !(state.authenticated && (state.nodeAdmin || state.codeAdmin));
     $("indexPoolNav").hidden = !(state.authenticated && state.nodeAdmin);
     window.EcaiIndexPool?.setSession(state.authenticated, state.nodeAdmin);
     window.EcaiConsoleSettings?.refresh();
     modelInternals?.accessChanged();
+    llmSettings?.accessChanged();
   }
   function setCodeActionsEnabled(allowed) {
     for (const id of ["codeLearn", "codeScan", "codeIntegrate", "codeProposeSubmit", "codeSettingsSave",
@@ -3535,6 +3544,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
       return;
     }
     switch (state.view) {
+      case "ai-providers": await llmSettings?.refresh(); break;
       case "overview": await refreshOverview(); break;
       case "search": await knowledgeSearch.run(); break;
       case "chat": await refreshChatWorkspace(); break;
@@ -3731,6 +3741,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     mathPaths = initMathPaths({request, currentToken, managedSession, openLogin, toast});
     videoStudio = initVideoStudio({request, currentToken, managedSession, openLogin, toast});
     marketMaker = initMarketMaker({request, canManage: () => managedSession() && state.nodeAdmin, openLogin});
+    llmSettings = initLlmSettings({request, canManage: () => managedSession() && (state.nodeAdmin || state.codeAdmin)});
     modelInternals = initModelInternals({request, canManage: () => managedSession() && (state.nodeAdmin || state.codeAdmin)});
     const codeTabs = [...document.querySelectorAll("[data-code-section]")];
     codeTabs.forEach((tab, index) => {
