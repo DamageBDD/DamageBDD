@@ -335,7 +335,7 @@ store_persistent_reply(Principal, ConversationId, Reply0, UserMessage, Options, 
             Base = #{ok => true, reply => Reply, conversation => Conversation,
                 user_message => UserMessage, assistant_message => AssistantMessage},
             Payload = case SearchMeta of
-                #{selection := Selection} -> Base#{retrieval => SearchMeta, selection => Selection};
+                #{selection := SearchSelection} -> Base#{retrieval => SearchMeta, selection => SearchSelection};
                 _ -> Base
             end,
             {ok, 200, Payload, Req};

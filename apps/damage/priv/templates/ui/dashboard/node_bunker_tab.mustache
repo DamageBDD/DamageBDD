@@ -1,0 +1,67 @@
+<section class="workspace-page bunker-workspace" data-bunker-root aria-labelledby="bunker-heading">
+  <div class="workspace-heading bunker-heading">
+    <div><p class="bunker-eyebrow">NODE ADMINISTRATION / NOSTR</p><h1 id="bunker-heading">Bunker verification</h1>
+      <p>See what has been checked, repeat the checks, and complete the original handover.</p></div>
+    <div class="bunker-actions"><button type="button" class="workspace-button" data-bunker-action="health">Check health</button>
+      <button type="button" class="workspace-button bunker-primary" data-bunker-action="verify">Verify signing</button></div>
+  </div>
+  <p id="bunker-message" role="status" aria-live="polite">Loading recorded evidence…</p>
+  <div class="bunker-summary" id="bunker-summary" aria-label="Verification summary"></div>
+  <nav class="bunker-tabs" aria-label="Bunker views">
+    <button type="button" data-bunker-tab="overview" aria-pressed="true">Overview</button>
+    <button type="button" data-bunker-tab="setup" aria-pressed="false">Setup</button>
+    <button type="button" data-bunker-tab="evidence" aria-pressed="false">Evidence</button>
+    <button type="button" data-bunker-tab="recovery" aria-pressed="false">Recovery &amp; handover</button>
+  </nav>
+  <section data-bunker-pane="overview">
+    <article class="workspace-card bunker-card"><h2>Required controls</h2>
+      <p>Results describe the named controls at the recorded time. Run a fresh check after deployment or policy changes.</p>
+      <div class="bunker-scroll"><table><thead><tr><th>Control</th><th>Result</th><th>Next action</th></tr></thead><tbody id="bunker-checks"></tbody></table></div>
+    </article>
+  </section>
+  <section data-bunker-pane="setup" hidden>
+    <article class="workspace-card bunker-card"><h2>Commissioning checklist</h2>
+      <ol class="bunker-steps">
+        <li><strong>Confirm deployment and identity.</strong> Compare the signing public key below with your independently recorded key.</li>
+        <li><strong>Connect AWS custody.</strong> Configure the agreed secret ARN, region, account and EC2 role through your approved release configuration. This page never accepts a passphrase or nsec.</li>
+        <li><strong>Connect relays.</strong> Use explicit WSS relay addresses. Verify signing checks each configured relay separately.</li>
+        <li><strong>Confirm clients and policy.</strong> The diagnostic client is the existing damage_nostr identity and must already be authorised. No client is added automatically.</li>
+        <li><strong>Verify and hand over.</strong> Complete signing, restart and recovery checks, then attach operator acceptance references.</li>
+      </ol>
+      <dl id="bunker-setup" class="bunker-config"></dl>
+    </article>
+  </section>
+  <section data-bunker-pane="evidence" hidden>
+    <article class="workspace-card bunker-card"><div class="bunker-row"><h2>Relay verification</h2><button type="button" class="workspace-button" id="bunker-export">Export evidence</button></div>
+      <p>Each probe checks the transport signatures, response correlation, exact signed payload and matching audit records. Signed diagnostic articles are not published by this workflow.</p>
+      <div class="bunker-scroll"><table><thead><tr><th>Relay</th><th>Probe</th><th>Result</th><th>Correlation</th></tr></thead><tbody id="bunker-exchanges"></tbody></table></div>
+      <details><summary>Report details</summary><pre id="bunker-report-detail"></pre></details>
+    </article>
+  </section>
+  <section data-bunker-pane="recovery" hidden>
+    <article class="workspace-card bunker-card"><h2>Closing checklist</h2><div class="bunker-scroll"><table><thead><tr><th>Requirement</th><th>Result</th><th>Next action</th></tr></thead><tbody id="bunker-closing-checks"></tbody></table></div></article>
+    <article class="workspace-card bunker-card"><h2>Controlled verification</h2>
+      <div class="bunker-maintenance">
+        <div><h3>1. Restart under the runtime role</h3><p>Briefly interrupts signing, then repeats the live relay checks after a fresh AWS bootstrap.</p><button type="button" class="workspace-button" data-bunker-action="restart">Restart &amp; verify</button></div>
+        <div><h3>2. Rehearse the pending version</h3><p>An AWS administrator prepares a distinct AWSPENDING version containing the existing unlock value. This checks an isolated encrypted-vault copy. It does not promote a version or change the signing identity.</p><button type="button" class="workspace-button" data-bunker-action="pending">Check pending version</button></div>
+        <div><h3>3. Verify promotion and restore</h3><p>After the AWS administrator promotes the tested version to AWSCURRENT, verify an encrypted backup restored to an isolated copy. The live vault is never replaced.</p><button type="button" class="workspace-button" data-bunker-action="recovery">Verify current version &amp; restore</button></div>
+      </div>
+      <p>After promotion, run <strong>Restart &amp; verify</strong> again so the service proves it can start with the promoted version.</p>
+      <div id="bunker-maintenance-results"></div>
+    </article>
+    <article class="workspace-card bunker-card"><h2>Operator acceptance</h2>
+      <p>These are attributed operator declarations, separate from automated checks. Reference the supporting ticket, audit record or signed acceptance. Do not enter credentials.</p>
+      <form id="bunker-acceptance">
+        <label>Effective IAM permissions reviewed<input name="iam_reviewed" required minlength="8" maxlength="256" placeholder="Evidence reference"></label>
+        <label>Temporary administrator access removed<input name="temporary_admin_removed" required minlength="8" maxlength="256" placeholder="Evidence reference"></label>
+        <label>Andrew's external client accepted<input name="external_client_accepted" required minlength="8" maxlength="256" placeholder="External smoke-test / acceptance reference"></label>
+        <label>Recovery custodian and retained backup confirmed<input name="recovery_custodian_confirmed" required minlength="8" maxlength="256" placeholder="Custodian / backup evidence reference"></label>
+        <button type="submit" class="workspace-button bunker-primary" id="bunker-accept">Record handover acceptance</button>
+      </form>
+      <p id="bunker-acceptance-state"></p>
+    </article>
+  </section>
+  <dialog id="bunker-confirm"><form method="dialog"><h2 id="bunker-confirm-title">Confirm maintenance</h2>
+    <p id="bunker-confirm-text"></p><div class="bunker-actions"><button value="cancel" class="workspace-button">Cancel</button><button value="proceed" class="workspace-button bunker-primary">Proceed</button></div>
+  </form></dialog>
+</section>

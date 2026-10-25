@@ -68,6 +68,15 @@ probe(Config0) ->
 %% in long-lived OTP state.
 -spec with_runtime(term(), fun((map()) -> term())) -> term().
 with_runtime(Config0, Fun) when is_function(Fun, 1) ->
+    %% A maintenance probe can overlap an automatic custody restart. Keep the
+    %% short-lived AWS application ownership/teardown interval serialized.
+    case global:trans({?MODULE, self()}, fun() -> with_runtime_locked(Config0, Fun) end,
+        [node()], 0) of
+        aborted -> {error, aws_runtime_busy};
+        Result -> Result
+    end.
+
+with_runtime_locked(Config0, Fun) ->
     Config = damage_nsecbunker_config:normalize(Config0),
     ?LOG_INFO(
         "AWS nsecbunker runtime bootstrap begin config=~p",

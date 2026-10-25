@@ -146,6 +146,7 @@ render_full_page(Ctx) ->
     NodeTransactionsTab = render_tpl(?TPL("node_transactions_tab.mustache"), Ctx),
     NodeChannelsTab = render_tpl(?TPL("node_channels_tab.mustache"), Ctx),
     NodeClnAdminTab = render_tpl(?TPL("node_cln_admin.mustache"), Ctx),
+    NodeBunkerTab = render_tpl(?TPL("node_bunker_tab.mustache"), Ctx),
     NodeTaxReportsTab =
         case maps:get(tax_admin, Ctx, false) of
             true -> render_tpl(?TPL("node_tax_reports_tab.mustache"), Ctx);
@@ -184,6 +185,7 @@ render_full_page(Ctx) ->
         node_transactions_tab => NodeTransactionsTab,
         node_channels_tab => NodeChannelsTab,
         node_cln_admin_tab => NodeClnAdminTab,
+        node_bunker_tab => NodeBunkerTab,
         node_tax_reports_tab => NodeTaxReportsTab
     },
     render_tpl(?TPL("page_shell.mustache"), PageCtx).

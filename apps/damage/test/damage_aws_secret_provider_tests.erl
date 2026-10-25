@@ -140,3 +140,25 @@ base_dependencies() ->
                 #{}}
         end
     }.
+
+runtime_fetch_cannot_be_redirected_to_pending_test() ->
+    D = (base_dependencies())#{version_stage => <<"AWSPENDING">>},
+    ?assertMatch({ok,_,#{version_stages := [<<"AWSCURRENT">>]}},
+        damage_aws_secret_provider:fetch_vault_passphrase(config(),D)).
+
+pending_rehearsal_requests_and_validates_pending_test() ->
+    D = (base_dependencies())#{get_secret => fun(fake_client,Input) ->
+        ?assertEqual(<<"AWSPENDING">>,maps:get(<<"VersionStage">>,Input)),
+        {ok,#{<<"SecretString">>=><<"ephemeral-test-value">>,<<"VersionId">>=><<"pending-2">>,
+            <<"VersionStages">>=>[<<"AWSPENDING">>]},#{}}
+    end},
+    ?assertEqual({ok,<<"pending-2">>}, damage_aws_secret_provider:with_pending_passphrase(config(),D,
+        fun(_Pass,Meta) -> {ok,maps:get(version_id,Meta)} end)).
+
+pending_rehearsal_does_not_accept_current_label_test() ->
+    D = (base_dependencies())#{get_secret => fun(fake_client,_) ->
+        {ok,#{<<"SecretString">>=><<"test-value">>,<<"VersionId">>=><<"current-1">>,
+            <<"VersionStages">>=>[<<"AWSCURRENT">>]},#{}}
+    end},
+    ?assertMatch({error,_},damage_aws_secret_provider:with_pending_passphrase(config(),D,
+        fun(_,_) -> error(must_not_be_called) end)).

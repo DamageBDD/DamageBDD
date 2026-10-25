@@ -311,13 +311,10 @@ handle_call(
     State = #state{vault = Vault, ready = true}
 ) ->
     Reply =
-        case
-            damage_nip46:decode_event(Event, fun(ClientPubkey, Ciphertext) ->
-                damage_nsecbunker_vault:nip44_decrypt(Vault, ClientPubkey, Ciphertext)
-            end)
-        of
+        case decode_verified_nip46(Event, Vault) of
             {ok, Request} ->
-                route_encrypted_request(Request, State);
+                route_encrypted_request(Request#{request_event_id => maps:get(id,
+                    damage_nostr_event:normalize_event(Event), <<>>)}, State);
             {error, Reason} ->
                 {error, Reason}
         end,
@@ -341,7 +338,9 @@ handle_call(
             bunker_pubkey_hex =>
                 maps:get(bunker_pubkey_hex, Policy, <<>>),
             authorized_clients =>
-                maps:get(authorized_clients, Policy, [])
+                maps:get(authorized_clients, Policy, []),
+            policy_fingerprint => damage_nostr_event:lower_hex(
+                crypto:hash(sha256,term_to_binary(Policy,[deterministic])))
         },
         State};
 handle_call(Other, _From, State) ->
@@ -410,31 +409,76 @@ route_plain_request(Request, State = #state{config = Config, policy = Policy, va
     VaultState = damage_nsecbunker_vault:guard_state(Vault),
     case damage_nsecbunker_gate:preflight(Request, VaultState, Policy, NowUnix) of
         {ok, AuditHints} ->
-            write_audit(Config, AuditHints),
-            execute_request(Request, State);
+            audited_execute(Config, AuditHints, Request, State);
         {duplicate_same_payload, AuditHints} ->
-            write_audit(Config, AuditHints),
-            execute_request(Request, State);
+            audited_execute(Config, AuditHints, Request, State);
         {error, Reason, AuditLine} ->
-            write_audit(Config, AuditLine),
-            {ok, damage_nip46:encode_response_map(Request, <<>>, damage_nip46:format_error(Reason))}
+            case write_audit(Config, AuditLine) of
+                ok -> {ok, damage_nip46:encode_response_map(Request, <<>>, damage_nip46:format_error(Reason))};
+                {error, _} -> {error, audit_unavailable}
+            end
     end.
 
-route_encrypted_request(Request, State = #state{vault = Vault}) ->
+audited_execute(Config, AuditHints, Request, State) ->
+    case write_audit(Config, AuditHints) of
+        ok -> execute_request(Request, State);
+        {error, _} -> {error, audit_unavailable}
+    end.
+
+%% Validate the signed transport envelope before decrypting or trusting its
+%% author/timestamp. Relay delivery alone is not authentication.
+decode_verified_nip46(Event, Vault) ->
+    case damage_nostr_event:verify(Event) of
+        {ok, Verified} -> damage_nip46:decode_event(Verified, fun(ClientPubkey, Ciphertext) ->
+            damage_nsecbunker_vault:nip44_decrypt(Vault, ClientPubkey, Ciphertext)
+        end);
+        {error, _} -> {error, invalid_nip46_event_signature}
+    end.
+
+route_encrypted_request(Request, State = #state{vault = Vault, config = Config}) ->
     case route_plain_request(Request, State) of
         {ok, ResponseMap} ->
             ClientPubkey = maps:get(requester_pubkey, Request, <<>>),
             case damage_nip46:encode_encrypted_response(ResponseMap, ClientPubkey, Vault) of
                 {ok, Ciphertext} ->
-                    damage_nsecbunker_vault:sign_event(
+                    Signed = damage_nsecbunker_vault:sign_event(
                         Vault, damage_nostr_event:nip46_response_event(ClientPubkey, Ciphertext)
-                    );
+                    ),
+                    case Signed of
+                        {ok, ResponseEvent} ->
+                            Row = damage_nsecbunker_audit:transport_line(#{
+                                ts_unix => erlang:system_time(second),
+                                requester_pubkey => ClientPubkey,
+                                request_id => maps:get(request_id, Request, <<>>),
+                                method => maps:get(method, Request, <<>>),
+                                decision => case maps:get(error, ResponseMap, <<>>) of
+                                    <<>> -> <<"allowed">>;
+                                    _ -> <<"rejected">>
+                                end,
+                                bunker_pubkey => maps:get(pubkey, ResponseEvent, <<>>),
+                                request_event_id => maps:get(request_event_id, Request, <<>>),
+                                response_event_id => maps:get(id, ResponseEvent, <<>>),
+                                signed_event_id => response_signed_event_id(ResponseMap)
+                            }),
+                            case write_audit(Config, Row) of
+                                ok -> Signed;
+                                {error, _} -> {error, audit_unavailable}
+                            end;
+                        _ -> Signed
+                    end;
                 {error, Reason} ->
                     {error, Reason}
             end;
         Error ->
             Error
     end.
+
+response_signed_event_id(#{result := Result}) when is_map(Result) ->
+    maps:get(id, Result, maps:get(<<"id">>, Result, <<>>));
+response_signed_event_id(#{result := Result}) when is_binary(Result) ->
+    try response_signed_event_id(#{result => jsx:decode(Result, [return_maps])})
+    catch _:_ -> <<>> end;
+response_signed_event_id(_) -> <<>>.
 
 execute_request(#{method := <<"connect">>} = Request, _State) ->
     {ok, damage_nip46:encode_response_map(Request, <<"ack">>, <<>>)};
@@ -818,8 +862,9 @@ write_audit(Config, #{audit_line := AuditLine}) ->
     write_audit(Config, AuditLine);
 write_audit(Config, AuditLine) when is_binary(AuditLine) ->
     Path = maps:get(audit_log, Config, damage_nsecbunker_config:default_audit_log()),
-    _ = file:write_file(path_list(Path), AuditLine, [append]),
-    ok;
+    %% Fail closed if the decision cannot be durably recorded. sync closes the
+    %% window where a successful signature has no corresponding audit evidence.
+    file:write_file(path_list(Path), AuditLine, [append, sync]);
 write_audit(_Config, _Other) ->
     ok.
 

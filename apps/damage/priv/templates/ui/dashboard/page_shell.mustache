@@ -141,6 +141,9 @@
           <div id="node-cln-admin-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-node-cln-admin" hidden>
             {{{node_cln_admin_tab}}}
           </div>
+          <div id="node-bunker-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-node-bunker" hidden>
+            {{{node_bunker_tab}}}
+          </div>
           {{/node_admin}}
           {{#tax_admin}}
           <div id="node-tax-reports-tab" class="dashboard-panel" data-dashboard-view tabindex="-1" role="region" aria-labelledby="dashboard-link-node-tax-reports" hidden>
@@ -185,6 +188,8 @@
     <script type="module" src="/static/js/billing.js"></script>
     <script type="module" src="/static/js/bdd-composer.js"></script>
     {{#node_admin}}
+    <link rel="stylesheet" href="/static/css/node-bunker.css">
+    <script type="module" src="/static/js/node-bunker.js"></script>
     <script src="/static/js/node-admin.js"></script>
     <script>
       document.addEventListener("DOMContentLoaded", () => {
