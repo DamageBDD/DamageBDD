@@ -2,7 +2,7 @@
 %% All filesystem paths are operator configuration; clients supply logical IDs.
 %% Reads never enqueue jobs, fetch remote URLs, pay invoices or submit NFTs.
 -module(ecai_knowledge).
--export([search/1, search/2, source/2, context/3, status/1, disk_indexes/0, index_catalog/1, validate_indexes/1]).
+-export([search/1, search/2, source/2, context/3, context/4, authorize_indexes/2, status/1, disk_indexes/0, index_catalog/1, validate_indexes/1]).
 
 search(Query) -> search(Query, #{}).
 search(Query, Opts) when is_binary(Query), byte_size(Query) > 0,
@@ -160,12 +160,39 @@ file_state(Path) when is_binary(Path); is_list(Path) ->
     case filelib:is_regular(Path) of true -> ready; false -> not_ready end;
 file_state(_) -> not_ready.
 
+%% Compatibility: existing RAG callers retain their old legacy semantics.
 context(Principal, Query, K) ->
-    case search(Query, #{principal => Principal, limit => K, matching => legacy}) of
-        {ok, #{results := Hits}} ->
-            [(maps:get(record,H))#{source_ref => maps:get(source_ref,H),
-                retrieval_live => maps:get(live,H,false), retrieval_index => maps:get(index,H)} || H <- Hits];
+    case context(Principal, Query, K, #{matching => legacy}) of
+        {ok, Sources, _Meta} -> Sources;
         _ -> []
+    end.
+
+%% The conversation API uses this path. The same index authorization, matching
+%% and publication boundaries apply as to /ecai/knowledge/search.
+context(Principal, Query, K, Opts) when is_map(Opts) ->
+    Options = #{principal => Principal, limit => K,
+        matching => maps:get(matching, Opts, bool_prefix),
+        indexes => maps:get(indexes, Opts, all)},
+    case search(Query, Options) of
+        {ok, #{results := Hits} = Result} ->
+            Sources = [(maps:get(record, H))#{source_ref => maps:get(source_ref, H),
+                retrieval_live => maps:get(live, H, false),
+                retrieval_index => maps:get(index, H)} || H <- Hits],
+            {ok, Sources, maps:with([selection, matching, count, backends, partial], Result)};
+        Error -> Error
+    end;
+context(_, _, _, _) -> {error, invalid_query}.
+
+%% Preflight authorization without query workers. Invalid or unauthorized
+%% selections must fail BEFORE the durable conversation appends the user turn.
+authorize_indexes(Principal, Requested) ->
+    case validate_indexes(Requested) of
+        {ok, Canonical} ->
+            case search_indexes(Principal, Canonical) of
+                {ok, _Authorized, _Status} -> {ok, Canonical};
+                Error -> Error
+            end;
+        Error -> Error
     end.
 
 %% Ref is the object returned with a search hit. SHA-256 pins the returned

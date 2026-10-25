@@ -24,6 +24,7 @@
   <link rel="stylesheet" href="/static/css/ecai-keys.css?theme=semantic-v2">
   <link rel="stylesheet" href="/static/css/ecai-index-mint-settings.css?v=index-mint-settings-v1&theme=semantic-v2">
   <link rel="stylesheet" href="/static/css/ecai-knowledge-workspace.css?v=knowledge-v2&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-conversation-indexes.css?v=chat-indexes-v1">
   <link rel="stylesheet" href="/static/css/ecai-aws-setup.css?v=automatic-aws-v1&theme=semantic-v2">
   <link rel="stylesheet" href="/static/css/ecai-sidebar-settings.css?v=sidebar-settings-v1&theme=semantic-v2">
   <link rel="stylesheet" href="/api/themes/css?app=ecai">
@@ -318,6 +319,19 @@
                 <button type="button" class="text-button" data-go="personalities">Explore personalities ↗</button>
                 <p id="chatPersonalityStatus" class="chat-personality-status" role="status" aria-live="polite">Guest conversations use ECAI default.</p>
               </div>
+              <details id="chatIndexes" class="knowledge-indexes chat-indexes" aria-label="Conversation knowledge sources">
+                <summary><span>Knowledge indexes for this conversation</span><span id="chatIndexSummary" class="knowledge-index-summary">All indexes</span></summary>
+                <div class="knowledge-index-body">
+                  <p class="context-hint">Choose which sources the model can retrieve. Conversation history is separate. Funded indexes are restricted to your account.</p>
+                  <div class="knowledge-index-toolbar" role="group" aria-label="Conversation index selection">
+                    <button type="button" class="button button-outline button-sm" id="chatIndexAll" aria-pressed="true">All indexes</button>
+                    <button type="button" class="button button-outline button-sm" id="chatIndexNone" aria-pressed="false">Clear selection</button>
+                    <button type="button" class="button button-outline button-sm" id="chatIndexRefresh">Refresh list</button>
+                  </div>
+                  <p id="chatIndexStatus" class="context-hint" role="status" aria-live="polite">Expand to load the indexes available to this account.</p>
+                  <div id="chatIndexChoices" class="knowledge-index-choices" aria-busy="false"></div>
+                </div>
+              </details>
               <div class="chat-messages" id="chatMessages" aria-live="polite"><div class="chat-welcome"><div class="welcome-icon">e·</div><h2>Ask a question</h2><p>Guest messages use a temporary session. Sign in to keep searchable conversation history.</p></div></div>
               <form id="chatForm" class="composer chat-composer">
                 <input id="chatFileInput" type="file" hidden multiple accept=".txt,.md,.markdown,.org,.json,.jsonl,.csv,.tsv,.yaml,.yml,.html,.xml,.log,text/plain,text/markdown,text/csv,application/json">
@@ -336,7 +350,7 @@
                   </div>
                 </div>
               </form>
-              <div class="form-meta"><span id="chatStatus" role="status">Ready</span><span>Saved + privately indexed when signed in</span></div>
+              <div class="form-meta"><span id="chatStatus" role="status">Ready</span><span id="chatRetrievalStatus" class="chat-retrieval-hint" role="status" aria-live="polite">Scope: all indexes · matching: final-word prefix</span><span>Saved + privately indexed when signed in</span></div>
             </div>
           </div>
           <dialog id="chatSearchDialog" class="chat-dialog">

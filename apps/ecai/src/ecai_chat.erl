@@ -83,16 +83,22 @@ get_reply(SessionID, UserID, UserMessage, Options) when is_map(Options) ->
     ),
     SelfStore = maps:get(self_store, Options, true) =/= false,
     PersonalityRef = maps:get(personality_ref, Options, <<"default">>),
-    poolboy:transaction(
-        ?MODULE,
-        fun(Worker) ->
-            gen_server:call(
-                Worker,
-                {infer, SessionID, UserID, UserMessage, History, ProjectInstructions, SelfStore, PersonalityRef},
-                ?DEFAULT_TIMEOUT
-            )
-        end
-    ).
+    Indexes = maps:get(indexes, Options, all),
+    IncludeMeta = maps:get(include_retrieval_meta, Options, false) =:= true,
+    Check = case Indexes of
+        all -> {ok, all};
+        _ -> ecai_knowledge:validate_indexes(Indexes)
+    end,
+    case Check of
+        {ok, Canonical} ->
+            poolboy:transaction(?MODULE, fun(Worker) ->
+                gen_server:call(Worker,
+                    {infer, SessionID, UserID, UserMessage, History,
+                     ProjectInstructions, SelfStore, PersonalityRef, Canonical, IncludeMeta},
+                    ?DEFAULT_TIMEOUT)
+            end);
+        Error -> Error
+    end.
 
 %%====================================================================
 %% gen_server callbacks
@@ -189,6 +195,13 @@ handle_call(
                  <<"default">>}, From, State);
 handle_call(
     {infer, SessionID, UserID, Query0, History, Instructions, SelfStore, PersonalityRef},
+    From, State
+) ->
+    handle_call({infer, SessionID, UserID, Query0, History, Instructions,
+                 SelfStore, PersonalityRef, all, false}, From, State);
+handle_call(
+    {infer, SessionID, UserID, Query0, History, Instructions, SelfStore,
+     PersonalityRef, Indexes, IncludeMeta},
     _From, State
 ) ->
     %% Resolve on every request using the authenticated account. Browser-supplied
@@ -196,7 +209,7 @@ handle_call(
     case resolve_request_personality(UserID, PersonalityRef) of
         {ok, PersonalityPrompt} ->
             infer_reply(SessionID, UserID, Query0, History, Instructions,
-                        SelfStore, PersonalityPrompt, State);
+                        SelfStore, PersonalityPrompt, Indexes, IncludeMeta, State);
         {error, _} = Error -> {reply, Error, State}
     end;
 handle_call(Request, _From, State) ->
@@ -219,7 +232,7 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 infer_reply(SessionID, UserID, Query0, History0, ProjectInstructions0,
-            SelfStore, PersonalityPrompt,
+            SelfStore, PersonalityPrompt, Indexes, IncludeMeta,
     State = #state{
         points = Points,
         messages = Messages,
@@ -231,6 +244,7 @@ infer_reply(SessionID, UserID, Query0, History0, ProjectInstructions0,
     }
 ) ->
     Query = normalize_text(Query0),
+    RetrievalQuery = retrieval_query(Query),
     History = normalize_history_context(History0),
     ProjectInstructions = normalize_project_instructions(ProjectInstructions0),
     %% -------------------------
@@ -249,36 +263,34 @@ infer_reply(SessionID, UserID, Query0, History0, ProjectInstructions0,
     end,
 
     %% -------------------------
-    %% 2. DISK + IPFS RETRIEVAL
+    %% 2. UNIFIED INDEX RETRIEVAL
     %% -------------------------
-    %% Uses your new disk index + docstore
-    DiskContext =
-        case
-            ecai_otp_compat:catch_value(fun() ->
-                ecai_knowledge:context(
-                    case SelfStore of false -> UserID; _ -> undefined end,
-                    Query, TopK)
-            end)
-        of
-            Sources when is_list(Sources) -> Sources;
-            _ -> []
-        end,
-
-    %% -------------------------
-    %% 3. MERGE CONTEXTS
-    %% -------------------------
-    Context = history_context(History) ++ merge_contexts(ChatContext, DiskContext),
-
-    %% Always apply the current request's system prompt. Replaying an old answer
-    %% bypasses personality selection (including switching back to default) and
-    %% project instructions; retrieved answers remain context, never final output.
-    Prompt = build_rag_prompt_full(SessionID, UserID, Query, Context, ProjectInstructions),
-    RequestSystemPrompt = personality_system_prompt(SystemPrompt, PersonalityPrompt),
-    case call_model(Host, Port, Model, RequestSystemPrompt, Prompt) of
-        {ok, AIReply} ->
-            _ = maybe_self_store_if(SelfStore, SessionID, UserID, Query, AIReply, State),
-            {reply, {ok, AIReply}, State};
-        {error, _} = Error -> {reply, Error, State}
+    %% The knowledge API owns index validation, funded-index authorization and
+    %% query semantics. Do not silently erase invalid scopes/retrieval failures.
+    Principal = case SelfStore of false -> UserID; _ -> undefined end,
+    Retrieval = ecai_otp_compat:catch_value(fun() ->
+        ecai_knowledge:context(Principal, RetrievalQuery, TopK,
+            #{indexes => Indexes, matching => bool_prefix})
+    end),
+    case Retrieval of
+        {ok, DiskContext, SearchMeta} ->
+            Context = history_context(History) ++ merge_contexts(ChatContext, DiskContext),
+            %% Keep the configured model router and the current request's
+            %% personality/system policy; sources are data, never authority.
+            Prompt = build_rag_prompt_full(SessionID, UserID, Query, Context, ProjectInstructions),
+            RequestSystemPrompt = personality_system_prompt(SystemPrompt, PersonalityPrompt),
+            case call_model(Host, Port, Model, RequestSystemPrompt, Prompt) of
+                {ok, AIReply} ->
+                    _ = maybe_self_store_if(SelfStore, SessionID, UserID, Query, AIReply, State),
+                    Result = case IncludeMeta of
+                        true -> {ok, AIReply, SearchMeta};
+                        false -> {ok, AIReply}
+                    end,
+                    {reply, Result, State};
+                {error, _} = Error -> {reply, Error, State}
+            end;
+        {error, _} = Error -> {reply, Error, State};
+        _ -> {reply, {error, knowledge_unavailable}, State}
     end.
 
 resolve_request_personality(UserID, Ref) when is_binary(Ref) ->
@@ -396,9 +408,10 @@ build_rag_prompt_full(SessionID, UserID, Query, Context, ProjectInstructions) ->
                             );
                         doc ->
                             io_lib:format(
-                                "[S~p][DOC cid=~s]\n~s\n\n",
+                                "[S~p][DOC index=~s cid=~s]\n~s\n\n",
                                 [
                                     Idx,
+                                    maps:get(index, Item, <<>>),
                                     maps:get(cid, Item, <<>>),
                                     maps:get(text, Item, <<>>)
                                 ]
@@ -540,6 +553,26 @@ ollama_error(_Json, RawBody) ->
 %% Utilities
 %%====================================================================
 
+%% The knowledge engine enforces a maximum of 16 ANDed search terms. A
+%% conversational prompt can be much longer and include function words; use a
+%% bounded retrieval-only query while keeping the complete user question for
+%% the model. Never convert an empty selector into the all-index default.
+retrieval_query(Query) ->
+    try
+        Tokens = ecai_tokenizer:tokens(Query),
+        Stop = [<<"a">>, <<"an">>, <<"and">>, <<"are">>, <<"about">>,
+            <<"can">>, <<"could">>, <<"did">>, <<"do">>, <<"does">>,
+            <<"explain">>, <<"for">>, <<"from">>, <<"how">>, <<"in">>,
+            <<"is">>, <<"me">>, <<"of">>, <<"on">>, <<"please">>,
+            <<"show">>, <<"tell">>, <<"that">>, <<"the">>, <<"this">>,
+            <<"to">>, <<"was">>, <<"what">>, <<"when">>, <<"where">>,
+            <<"which">>, <<"who">>, <<"why">>, <<"with">>, <<"you">>],
+        Candidates = [T || T <- Tokens, byte_size(T) =< 128,
+            not lists:member(T, Stop)],
+        Terms = case Candidates of [] -> Tokens; _ -> Candidates end,
+        iolist_to_binary(lists:join(<<" ">>, lists:sublist(Terms, 8)))
+    catch _:_ -> <<>> end.
+
 normalize_text(Text) when is_binary(Text) ->
     binary:replace(Text, <<"\r\n">>, <<"\n">>, [global]);
 normalize_text(Text) when is_list(Text) ->
@@ -639,8 +672,15 @@ merge_contexts(Chat, Disk) ->
         [
             #{
                 type => doc,
-                cid => maps:get(cid, M, <<>>),
-                text => maps:get(text, M, <<>>)
+                cid => to_bin(maps:get(cid, M, <<>>)),
+                index => to_bin(maps:get(retrieval_index, M, <<>>)),
+                %% Some published records have title/description but no `text`.
+                %% Do not turn a real search hit into an empty model source.
+                text => clip_text(iolist_to_binary([
+                    to_bin(maps:get(title, M, maps:get(name, M, <<>>))), <<"\n">>,
+                    to_bin(maps:get(description, M, <<>>)), <<"\n">>,
+                    to_bin(maps:get(text, M, maps:get(abstract, M, <<>>)))
+                ]), 4096)
             }
          || M <- Disk
         ],

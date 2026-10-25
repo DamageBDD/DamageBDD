@@ -1,6 +1,6 @@
 import {initLlmSettings} from "/static/js/ecai-llm-settings.js?v=llm-settings-v1";
 import "/static/js/ecai-console-settings.js?v=sidebar-settings-v1";
-import {initKnowledgeSearch} from "/static/js/ecai-knowledge-search.js?v=knowledge-v2";
+import {initKnowledgeSearch, initKnowledgeIndexSelection} from "/static/js/ecai-knowledge-search.js?v=knowledge-v2";
 import {initIndexSamples} from "/static/js/ecai-index-samples.js?v=samples-v1";
 import {initModelInternals} from "/static/js/ecai-model-internals.js?v=model-internals-v1";
 import {initPersonalities} from "/static/js/ecai-personalities.js?v=personalities-v1";
@@ -684,6 +684,8 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     videoStudio?.accountChanged();
     marketMaker?.accessChanged();
     if (tokenChanged) {
+      chatIndexChooser.reset();
+      chatScopeCapabilityEpoch = -1;
       resetChat();
       if (state.view === "chat") void task(refreshChatWorkspace);
     }
@@ -963,6 +965,31 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     });
   });
   const knowledgeSearch = initKnowledgeSearch({ request, showError, authEpoch: () => state.authEpoch });
+  const chatIndexChooser = initKnowledgeIndexSelection({
+    root: document, request, showError, authEpoch: () => state.authEpoch, timeoutMs: 12000,
+    isActive: () => state.view === "chat" && document.visibilityState !== "hidden",
+    onChange: () => {
+      put("chatRetrievalStatus", `Scope: ${chatIndexChooser.label()} · applies to the next reply`);
+    },
+    ids: {
+      searchIndexes: "chatIndexes", searchIndexChoices: "chatIndexChoices",
+      searchIndexSummary: "chatIndexSummary", searchIndexStatus: "chatIndexStatus",
+      searchIndexAll: "chatIndexAll", searchIndexNone: "chatIndexNone",
+      searchIndexRefresh: "chatIndexRefresh"
+    }
+  });
+  let chatScopeCapabilityEpoch = -1;
+  async function assertChatScopedBackend() {
+    // Do not submit an explicit index selection to old backends that might
+    // silently drop it and search all indexes instead.
+    if (chatScopeCapabilityEpoch === state.authEpoch) return;
+    const data = await request("/ecai/chat", {ignoreAuth: true});
+    if (data?.retrieval?.index_selection !== true) {
+      throw new Error("Conversation index selection requires the updated ECAI backend. No message was sent.");
+    }
+    chatScopeCapabilityEpoch = state.authEpoch;
+  }
+
   initIndexSamples({
     request, showError, authEpoch: () => state.authEpoch, managedSession,
     goSearch: (query) => { navigate("search"); void knowledgeSearch.setQuery(query); },
@@ -1482,16 +1509,34 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     const current = () => epoch === state.authEpoch && serial === state.chatViewEpoch;
     const message = $("chatPrompt").value.trim();
     if (!message && !state.chatAttachments.length) return;
+    const indexSelection = chatIndexChooser.body();
+    const selectionKey = chatIndexChooser.key();
     const outgoing = chatOutbound(message);
     if (new TextEncoder().encode(outgoing).length > 16384) {
       put("chatStatus", "Message exceeds 16 KiB in UTF-8. Reduce the attachments.");
       return;
     }
+    if (Object.hasOwn(indexSelection, "indexes")) {
+      state.chatBusy = true;
+      chatIndexChooser.lock(true);
+      renderChatThreadControls();
+      try { await assertChatScopedBackend(); }
+      catch (error) {
+        put("chatStatus", showError(error));
+        state.chatBusy = false; chatIndexChooser.lock(false); renderChatThreadControls();
+        return;
+      }
+      if (!current() || selectionKey !== chatIndexChooser.key()) {
+        state.chatBusy = false; chatIndexChooser.lock(false); renderChatThreadControls();
+        return;
+      }
+      state.chatBusy = false; chatIndexChooser.lock(false);
+    }
     $("chatPrompt").value = "";
     sizeChatPrompt();
     addChatMessage(message || `[${state.chatAttachments.length} attached text file(s)]`, "user");
-    state.chatBusy = true; renderChatThreadControls();
-    put("chatStatus", state.authenticated ? "Searching conversation and knowledge context…" : "Retrieving a reply…");
+    state.chatBusy = true; renderChatThreadControls(); chatIndexChooser.lock(true);
+    put("chatStatus", state.authenticated ? "Searching selected knowledge context…" : "Retrieving a reply…");
     const pending = addChatMessage("Working on your reply…", "agent", {pending:true});
     try {
       let response;
@@ -1499,16 +1544,32 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
         const conversationId = await ensurePersistentConversation();
         if (!current()) return;
         response = expectSuccess(await request(`/ecai/conversations/${encodeURIComponent(conversationId)}/messages`, {
-          method: "POST", body: {message:outgoing}
+          method: "POST", body: {message:outgoing, ...indexSelection}
         }));
       } else {
         response = expectSuccess(await request("/ecai/chat", {method: "POST", body: {
-          session_id: state.chatSession, user_id: state.chatUser, message:outgoing
+          session_id: state.chatSession, user_id: state.chatUser, message:outgoing, ...indexSelection
         }, ignoreAuth: true}));
       }
       if (!current()) return;
+      if (selectionKey !== chatIndexChooser.key() ||
+          !chatIndexChooser.accepts(response)) {
+        throw new Error("The backend did not confirm the selected indexes; check conversation history before retrying.");
+      }
       pending.remove();
       addChatMessage(response.reply ?? "Empty response", "agent");
+      const retrieval = response.retrieval;
+      if (retrieval && typeof retrieval === "object") {
+        const count = Math.max(0, Number(retrieval.count) || 0);
+        const stateText = retrieval.partial ? " · partial backend coverage" : "";
+        const selected = retrieval.selection?.mode === "selected"
+          ? `${(retrieval.selection.indexes || []).length} selected` : "all indexes";
+        const summary = `${count} knowledge source${count === 1 ? "" : "s"} · ${selected}${stateText}`;
+        $("chatRetrievalStatus").textContent = summary;
+        $("chatRetrievalStatus").dataset.partial = String(Boolean(retrieval.partial));
+        chatIndexChooser.observe(retrieval.backends);
+      }
+
       state.chatAttachments = []; renderChatAttachments();
       if (response.conversation) {
         const conversation = response.conversation;
@@ -1529,6 +1590,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
       }
     } finally {
       pending.remove();
+      chatIndexChooser.lock(false);
       if (current()) { state.chatBusy = false; renderChatThreadControls(); $("chatPrompt").focus(); }
     }
   }
@@ -3723,7 +3785,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     $("apiCopyResponse").addEventListener("click", copyResponse);
     window.addEventListener("hashchange", () => navigate(location.hash.slice(1)));
     window.addEventListener("beforeunload", () => {
-      knowledgeSearch.dispose(); stopStream(); disconnectSocket(); videoStudio?.dispose(); marketMaker?.dispose(); mathPaths?.dispose(); evaluation?.dispose(); personalities?.dispose(); clearInterval(state.poller);
+      knowledgeSearch.dispose(); chatIndexChooser.dispose(); stopStream(); disconnectSocket(); videoStudio?.dispose(); marketMaker?.dispose(); mathPaths?.dispose(); evaluation?.dispose(); personalities?.dispose(); clearInterval(state.poller);
       clearInterval(state.telemetryPoller); clearInterval(state.clockTicker);
     });
     document.addEventListener("visibilitychange", () => {

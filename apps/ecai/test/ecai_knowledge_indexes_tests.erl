@@ -13,6 +13,25 @@ selection_shape_test() ->
     end,[null,false,<<"shared">>,#{},[shared],[12],[<<>>],[binary:copy(<<"a">>,129)],
         lists:duplicate(129,<<"shared">>)]).
 
+chat_context_scopes_source_and_matching_test() ->
+    with_shared(fun(_Ctx, _Tag) ->
+        {ok, Sources, Meta} = ecai_knowledge:context(undefined, <<"redire">>, 5,
+            #{indexes => [<<"shared">>], matching => bool_prefix}),
+        [Source] = Sources,
+        ?assertEqual(<<"shared">>, maps:get(retrieval_index, Source)),
+        ?assertEqual(<<"Redirect test">>, maps:get(title, Source)),
+        ?assertEqual(bool_prefix, maps:get(matching, Meta)),
+        ?assertEqual(#{mode => selected, indexes => [<<"shared">>]},
+            maps:get(selection, Meta)),
+        ?assertEqual(false, maps:get(partial, Meta)),
+        ?assertEqual({error, invalid_index_selection},
+            ecai_knowledge:authorize_indexes(undefined, [<<"pool:owner-private">>])),
+        {ok, [], EmptyMeta} = ecai_knowledge:context(undefined, <<"redire">>, 5,
+            #{indexes => [], matching => bool_prefix}),
+        ?assertEqual([], maps:get(backends, EmptyMeta)),
+        ?assertEqual(0, maps:get(count, EmptyMeta))
+    end).
+
 empty_selection_has_no_backend_work_test() ->
     %% No lookup of even the operator's disk config should occur for [].
     with_env(knowledge_disk_indexes,deliberately_invalid,fun() ->

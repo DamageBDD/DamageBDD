@@ -45,11 +45,11 @@ export function normalizeIndexCatalog(data) {
   return [...entries.values()];
 }
 
-function initKnowledgeIndexSelection({ root, request, authEpoch, isActive, onChange, showError, timeoutMs }) {
-  const $ = (id) => root.getElementById(id);
+export function initKnowledgeIndexSelection({ root, request, authEpoch, isActive, onChange, showError, timeoutMs, ids = {} }) {
+  const $ = (id) => root.getElementById(ids[id] || id);
   const panel = $("searchIndexes"), choices = $("searchIndexChoices"), caption = $("searchIndexSummary");
   const message = $("searchIndexStatus"), all = $("searchIndexAll"), none = $("searchIndexNone"), refresh = $("searchIndexRefresh");
-  let selection = null, entries = [], attempted = false, loaded = false, pending = null, generation = 0, disposed = false;
+  let selection = null, entries = [], attempted = false, loaded = false, pending = null, generation = 0, disposed = false, locked = false;
   const listeners = [], rows = new Map();
   const listen = (target, type, fn) => { if (target) { target.addEventListener(type, fn); listeners.push(() => target.removeEventListener(type, fn)); } };
   const el = (tag, cls, value) => {
@@ -65,10 +65,12 @@ function initKnowledgeIndexSelection({ root, request, authEpoch, isActive, onCha
     if (none) none.setAttribute("aria-pressed", String(selection?.length === 0));
     for (const [id, {input, row}] of rows) {
       input.checked = selection === null || selection.includes(id);
+      input.disabled = locked;
       row.classList.toggle("is-selected", input.checked);
     }
   }
   function choose(next) {
+    if (locked) { summarize(); return; }
     try { searchIndexSelectionBody(next); }
     catch (error) { if (message) message.textContent = "Select at most 128 indexes, or use All indexes."; summarize(); return; }
     selection = next === null ? null : [...new Set(next)].sort();
@@ -107,9 +109,9 @@ function initKnowledgeIndexSelection({ root, request, authEpoch, isActive, onCha
     if (!shown.length) fragment.append(el("p", "context-hint", loaded ? "No indexes are listed for this session." : "Expand this panel to load the index list."));
     choices.replaceChildren(fragment); summarize();
   }
-  function stop() { generation++; pending?.abort(); pending = null; if (refresh) refresh.disabled = false; choices?.setAttribute("aria-busy", "false"); }
+  function stop() { generation++; pending?.abort(); pending = null; if (refresh) refresh.disabled = locked; choices?.setAttribute("aria-busy", "false"); }
   async function load(force = false) {
-    if (!panel || !choices || disposed || !isActive() || (attempted && !force)) return;
+    if (!panel || !choices || disposed || locked || !isActive() || (attempted && !force)) return;
     stop(); attempted = true;
     const seq = generation, epoch = authEpoch(), controller = new AbortController(); pending = controller;
     let timedOut = false;
@@ -133,7 +135,7 @@ function initKnowledgeIndexSelection({ root, request, authEpoch, isActive, onCha
       }
     } finally {
       clearTimeout(timer);
-      if (seq === generation) { pending = null; if (refresh) refresh.disabled = false; choices.setAttribute("aria-busy", "false"); }
+      if (seq === generation) { pending = null; if (refresh) refresh.disabled = locked; choices.setAttribute("aria-busy", "false"); }
     }
   }
   listen(panel, "toggle", () => { if (panel.open) void load(); });
@@ -151,6 +153,13 @@ function initKnowledgeIndexSelection({ root, request, authEpoch, isActive, onCha
       return selection === null || (data?.selection?.mode === "selected" &&
         Array.isArray(data.selection.indexes) && JSON.stringify([...data.selection.indexes].sort()) === JSON.stringify(selection));
     },
+    lock(on) {
+      locked = Boolean(on);
+      if (all) all.disabled = locked;
+      if (none) none.disabled = locked;
+      if (refresh) refresh.disabled = locked || Boolean(pending);
+      summarize();
+    },
     observe(states) {
       for (const item of Array.isArray(states) ? states : []) {
         const row = rows.get(item.id); if (!row) continue;
@@ -159,7 +168,7 @@ function initKnowledgeIndexSelection({ root, request, authEpoch, isActive, onCha
     },
     reset() { stop(); selection = null; entries = []; attempted = false; loaded = false; render();
       if (message) message.textContent = "Index selection reset for this session.";
-      queueMicrotask(() => { if (isActive()) void load(); }); },
+      queueMicrotask(() => { if (isActive() && panel?.open) void load(); }); },
     suspend() { if (pending) { stop(); attempted = false; } },
     dispose() { disposed = true; stop(); for (const remove of listeners) remove(); }
   };
