@@ -12,7 +12,9 @@ import {initAuthUI} from "/ecai/auth-assets/js/auth-ui.js?v=ecai-browser-v1";
 import {initVideoStudio} from "/static/js/ecai-video.js?v=video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-explorer-v2";
 import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1";
 
-import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explorer-v2";
+import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-guided-journey-v1";
+import {initMathKernel} from "/static/js/ecai-math-kernel.js?v=elliptic-kernel-v1";
+import {initMath3D} from "/static/js/ecai-math-3d.js?v=geometry-lab-v1";
 
 /* ECAI Control Plane. Uses only routes exported by the current ECAI Cowboy handlers. */
 (() => {
@@ -160,6 +162,8 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
   const marketExamples = { claim: { miner_ak: "ak_..." }, submit: { miner_ak: "ak_...", attestation: "attestation", evidence_ref: "" }, pay: { admin_ak: "ak_..." } };
   const VIEW_NAMES = { "ai-providers": "AI providers & roles", account: "Account settings", "node-settings": "Node settings", personalities: "AI personalities", evaluation: "LLM evaluation", math: "Mathematical paths", overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing", compute: "Compute", keys: "API keys" };
   let mathPaths = null;
+  let mathKernel = null;
+  let math3D = null;
   let evaluation = null;
   let personalities = null;
   let videoStudio = null;
@@ -869,6 +873,8 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     window.EcaiConsoleSettings?.navigated(view, previous);
     window.EcaiIndexPool?.setVisible(view === "network");
     mathPaths?.setVisible(view === "math");
+    mathKernel?.setVisible(view === "math");
+    math3D?.setVisible(view === "math");
     evaluation?.setVisible(view === "evaluation");
     personalities?.setVisible(view === "personalities");
     videoStudio?.setVisible(view === "video");
@@ -3785,7 +3791,7 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     $("apiCopyResponse").addEventListener("click", copyResponse);
     window.addEventListener("hashchange", () => navigate(location.hash.slice(1)));
     window.addEventListener("beforeunload", () => {
-      knowledgeSearch.dispose(); chatIndexChooser.dispose(); stopStream(); disconnectSocket(); videoStudio?.dispose(); marketMaker?.dispose(); mathPaths?.dispose(); evaluation?.dispose(); personalities?.dispose(); clearInterval(state.poller);
+      knowledgeSearch.dispose(); chatIndexChooser.dispose(); stopStream(); disconnectSocket(); videoStudio?.dispose(); marketMaker?.dispose(); mathPaths?.dispose(); mathKernel?.dispose(); math3D?.dispose(); evaluation?.dispose(); personalities?.dispose(); clearInterval(state.poller);
       clearInterval(state.telemetryPoller); clearInterval(state.clockTicker);
     });
     document.addEventListener("visibilitychange", () => {
@@ -3801,6 +3807,8 @@ import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-samples-explor
     personalities = initPersonalities({request, currentToken, managedSession, openLogin});
     evaluation = initEvaluation({request, currentToken, managedSession, isAdmin: () => state.nodeAdmin, openLogin});
     mathPaths = initMathPaths({request, currentToken, managedSession, openLogin, toast});
+    mathKernel = initMathKernel();
+    math3D = initMath3D();
     videoStudio = initVideoStudio({request, currentToken, managedSession, openLogin, toast});
     marketMaker = initMarketMaker({request, canManage: () => managedSession() && state.nodeAdmin, openLogin});
     llmSettings = initLlmSettings({request, canManage: () => managedSession() && (state.nodeAdmin || state.codeAdmin)});

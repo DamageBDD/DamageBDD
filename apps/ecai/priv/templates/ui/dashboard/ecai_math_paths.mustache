@@ -1,8 +1,116 @@
 <section class="view math-workspace" data-panel="math" aria-labelledby="mathTitle" hidden>
-  <div class="page-intro math-intro"><div><div class="eyebrow">EXACT OBJECTS · REPLAYABLE EVIDENCE</div><h1 id="mathTitle">Mathematical paths</h1><p>Explore exact isogenies, trace rational points, and challenge every claim.</p></div><span id="mathStatus" class="status-tag">No path loaded</span></div>
-  <p id="mathNotice" class="context-hint" role="status" aria-live="polite">Sign in with a managed account to run the mathematical pathfinder.</p>
-  <section class="surface panel-pad math-library" aria-labelledby="mathLibraryTitle">
-    <div class="panel-heading"><div><div class="eyebrow">13 CURATED EXAMPLES · NO LOGIN TO EXPLORE</div><h2 id="mathLibraryTitle">A mathematician’s workbench</h2></div><span class="status-tag math-status-preview">Public sample library</span></div>
+  <div class="page-intro math-intro"><div><div class="eyebrow">A GUIDED JOURNEY · INTUITION → EXACT ALGEBRA → EVIDENCE</div><h1 id="mathTitle">Mathematical paths</h1><p>Explore curves in 2D and 3D, then choose an exact mathematical question, follow the transformation, and challenge its proof. Start without an account; node-based searches and replays require managed sign-in.</p></div><span id="mathStatus" class="status-tag">No path loaded</span></div>
+  <nav class="math-journey" aria-label="Explore Mathematical Paths in five stages">
+    <ol class="math-journey-steps">
+      <li><button type="button" data-math-jump="mathKernel" aria-current="step"><span class="math-journey-number">01</span><span><strong>Visualize</strong><small>2D and 3D geometry</small></span><span class="math-journey-arrow" aria-hidden="true">↘</span></button></li>
+      <li><button type="button" data-math-jump="mathLibrary"><span class="math-journey-number">02</span><span><strong>Experiment</strong><small>Choose an exact example</small></span><span class="math-journey-arrow" aria-hidden="true">↘</span></button></li>
+      <li><button type="button" data-math-jump="mathBuilderDisclosure"><span class="math-journey-number">03</span><span><strong>Explore</strong><small>Search over ℚ</small></span><span class="math-journey-arrow" aria-hidden="true">↘</span></button></li>
+      <li><button type="button" data-math-jump="mathResults"><span class="math-journey-number">04</span><span><strong>Verify</strong><small>Inspect &amp; replay</small></span><span class="math-journey-arrow" aria-hidden="true">↘</span></button></li>
+      <li><button type="button" data-math-jump="mathECAIBridge"><span class="math-journey-number">05</span><span><strong>Connect</strong><small>How ECAI uses it</small></span></button></li>
+    </ol>
+  </nav>
+  <div class="math-guide-key" role="note"><span><strong>Illustration:</strong> browser-only floating-point 2D/3D geometry</span><span><strong>Exact preview:</strong> supplied rational maps, not rechecked here</span><span><strong>Checked:</strong> native node replay with reported limits</span></div>
+  <section class="surface panel-pad math-primer" aria-labelledby="mathPrimerTitle">
+    <div class="panel-heading"><div><div class="eyebrow">THREE IDEAS TO CARRY THROUGH THE JOURNEY</div><h2 id="mathPrimerTitle">What is an elliptic kernel?</h2></div></div>
+    <p>A curve is a set of mathematical points. An <em>isogeny kernel</em> is a finite subgroup of points sent to the identity by a group-preserving map between elliptic curves. That is different from the <em>Fourier kernel</em> (complex rotating basis functions) used to draw the image below.</p>
+    <div class="math-primer-grid">
+      <article><span class="math-concept-symbol">E / P</span><h3>Start with a curve and a point</h3><p>The animation samples a real curve, E(ℝ). Native pathfinding instead represents exact rational curves and points over ℚ, with no rounding of coefficients.</p><a href="https://doc.sagemath.org/html/en/reference/arithmetic_curves/index.html" target="_blank" rel="noopener noreferrer">Elliptic curves · SageMath ↗</a></article>
+      <article><span class="math-concept-symbol">φ / ker φ</span><h3>Move between curves</h3><p>An isogeny φ: E → E′ is an algebraic group-preserving map; its kernel specifies which source points map to the identity. ECAI searches bounded degree-2 kernels and verifies the resulting rational maps.</p><a href="https://doc.sagemath.org/html/en/reference/arithmetic_curves/sage/schemes/elliptic_curves/ell_curve_isogeny.html" target="_blank" rel="noopener noreferrer">Isogenies and kernels · SageMath ↗</a></article>
+      <article><span class="math-concept-symbol">✓ / ?</span><h3>Separate proof from search</h3><p>Polynomial identities can be replayed exactly for supplied maps. A bounded search finds paths within its declared limits; not finding a path does not prove none exists.</p><button type="button" class="math-text-jump" data-math-jump="mathResults">See the evidence workbench ↘</button></article>
+    </div>
+  </section>
+  <section class="surface panel-pad math-kernel" id="mathKernel" aria-labelledby="mathKernelTitle">
+    <div class="panel-heading math-kernel-heading">
+      <div><div class="eyebrow">STEP 01 · GET AN INTUITION · PUBLIC / BROWSER ONLY</div><h2 id="mathKernelTitle">Watch a curve become an image</h2></div>
+      <span class="status-tag">Public · runs locally</span>
+    </div>
+    <p class="context-hint math-kernel-intro">A real point moves along <strong>y² = x³ − 4x</strong>. Its oval is reshaped into wings or petals; a finite Fourier series draws that contour one rotating vector at a time. Try the original oval first, then the dragonfly. Increase <strong>Fourier order</strong> to sharpen the approximation. This stage is visual intuition, not an isogeny or semantic proof.</p>
+    <div class="math-kernel-visual">
+      <div class="math-kernel-stage-heading">
+        <span>Rotating Fourier vectors → reconstructed image</span>
+        <div class="math-kernel-legend" aria-hidden="true"><span><i></i> Trace</span><span><i></i> Vectors</span></div>
+      </div>
+      <canvas id="mathKernelStage" role="img" aria-label="Fourier epicycles progressively reconstructing a shape derived from a real elliptic-curve oval" width="1100" height="550"></canvas>
+      <div class="math-kernel-controls">
+        <div class="math-kernel-buttons">
+          <button type="button" class="button button-primary" id="mathKernelPlay" aria-pressed="false">Play</button>
+          <button type="button" class="button button-outline" id="mathKernelReset">↺ Reset</button>
+        </div>
+        <div class="math-kernel-control"><label for="mathKernelTerms">Fourier order <output id="mathKernelTermsLabel" for="mathKernelTerms">12</output></label>
+          <input id="mathKernelTerms" type="range" min="1" max="80" step="1" value="12">
+          <label class="math-kernel-check"><input id="mathKernelAuto" type="checkbox" checked> Refine after each trace</label></div>
+        <div class="math-kernel-control"><label for="mathKernelSpeed">Trace speed <output id="mathKernelSpeedLabel" for="mathKernelSpeed">1×</output></label>
+          <input id="mathKernelSpeed" type="range" min="0.25" max="4" step="0.25" value="1"></div>
+        <div class="math-kernel-control"><label for="mathKernelShape">Generated shape</label>
+          <select id="mathKernelShape"><option value="dragonfly">Dragonfly · curve-derived wings</option><option value="flower">Six-petal flower</option><option value="oval">Original real oval</option></select></div>
+      </div>
+    </div>
+    <div class="math-kernel-details">
+      <article class="math-kernel-detail" aria-labelledby="mathKernelCurveTitle"><h3 id="mathKernelCurveTitle">01 / Weierstrass source</h3>
+        <p class="math-kernel-equation">E : y² = x³ − 4x</p>
+        <canvas id="mathKernelCurve" role="img" aria-label="Real bounded component of the elliptic curve with its moving point" width="340" height="140"></canvas>
+        <p class="math-kernel-fine"><span id="mathKernelPoint">P = (0.00, 0.00)</span> · Real curve point</p></article>
+      <article class="math-kernel-detail" aria-labelledby="mathKernelFourierTitle"><h3 id="mathKernelFourierTitle">02 / Fourier spectrum</h3>
+        <p class="math-kernel-equation">z<sub>N</sub>(t) = Σ c<sub>k</sub>e<sup>2πikt</sup></p>
+        <canvas id="mathKernelSpectrum" role="img" aria-label="Magnitudes of Fourier coefficients, showing the current included harmonics" width="340" height="140"></canvas>
+        <p class="math-kernel-fine">Finite sampling → complex coefficients → continuous-time reconstruction</p></article>
+      <article class="math-kernel-detail" aria-labelledby="mathKernelMapTitle"><h3 id="mathKernelMapTitle">03 / Where the paths diverge</h3>
+        <pre class="math-kernel-map">P ∈ E(ℝ)
+↓ affine drawing transform
+contour z(t)
+↓ discrete Fourier transform
+Σ cₖ exp(2πikt)
+↓ continuous trace
+image</pre>
+        <p class="math-kernel-fine">An actual degree-2 isogeny with kernel {O, (0,0)} maps E to E′: y² = x³ + 16x using x′ = x − 4/x and y′ = y(1 + 4/x²) for x ≠ 0. That algebraic map is <em>not</em> the Fourier renderer.</p></article>
+    </div>
+    <p class="context-hint math-kernel-disclaimer">The wings use affine transformations of sampled elliptic-curve points; the dragonfly body is an illustrative primitive. Fourier coefficients reconstruct the <em>drawing</em>, not a new curve or a semantic relationship. The exact isogenies later in this guide are separate computations.</p>
+    <div class="math-stage-next"><span><strong>Keep exploring the geometry.</strong> Move from a flat contour to a 3D mesh before starting the exact-algebra workbench. <a href="https://www.3blue1brown.com/lessons/fourier-series/" target="_blank" rel="noopener noreferrer">How rotating vectors draw shapes ↗</a></span><button type="button" class="button button-primary button-sm" data-math-jump="math3DWorkbench">Next: explore 3D geometry →</button></div>
+  </section>
+  <section class="surface panel-pad math-3d" id="math3DWorkbench" aria-labelledby="math3DTitle">
+    <div class="panel-heading">
+      <div><div class="eyebrow">STEP 01B · EXPERIMENT WITH 3D GEOMETRY · LOCAL / NO WALLET</div><h2 id="math3DTitle">Geometric experiment workbench</h2></div>
+      <span class="status-tag">Deterministic visual model</span>
+    </div>
+    <p class="math-stage-description">Go beyond the flat Fourier trace. Sample the real Weierstrass curve <strong>E: y² = x³ − 4x</strong>, lift its geometry into a triangular 3D mesh, and orbit the resulting object. The dragonfly wings have a curve-derived profile; the torus follows a deformed oval and the helix uses the oval to modulate its radius. Drag to rotate, scroll to zoom, or use arrow keys with the canvas focused.</p>
+    <div class="math-3d-layout">
+      <div class="math-3d-viewport">
+        <canvas id="math3DStage" width="1100" height="710" tabindex="0" role="img" aria-label="Three-dimensional orbital viewer showing a procedural object derived from elliptic-curve samples"></canvas>
+        <div class="math-3d-stats"><span><strong id="math3DVertices">—</strong> vertices</span><span><strong id="math3DFaces">—</strong> triangles</span><span>Source: E(ℝ)</span></div>
+      </div>
+      <div class="math-3d-controls">
+        <label for="math3DShape">Object to reconstruct</label>
+        <select id="math3DShape"><option value="dragonfly">3D dragonfly · curved wings</option><option value="elliptic-torus">Elliptic torus · surface + braid</option><option value="double-helix">Double helix · paired strands</option></select>
+        <label for="math3DDetail">Mesh detail <output id="math3DDetailLabel" for="math3DDetail">22</output></label>
+        <input type="range" id="math3DDetail" min="10" max="40" step="2" value="22">
+        <label for="math3DTwist">Lift / twist <output id="math3DTwistLabel" for="math3DTwist">1</output></label>
+        <input type="range" id="math3DTwist" min="0" max="5" step="0.5" value="1">
+        <label class="math-3d-inline-check"><input type="checkbox" id="math3DEdges" checked> Show triangle edges</label>
+        <div class="math-3d-actions"><button type="button" class="button button-outline button-sm" id="math3DPlay">Auto rotate</button><button type="button" class="button button-outline button-sm" id="math3DReset">Reset camera</button></div>
+        <div class="math-3d-experiment"><strong>Preserve this experiment</strong><p>Make an OBJ mesh, a deterministic parameter/provenance manifest, a preview PNG and an AEX-141 metadata template.</p>
+          <button type="button" class="button button-primary" id="math3DPrepare">Prepare experiment for mint →</button>
+          <p class="math-3d-status" id="math3DStatus" role="status" aria-live="polite">Local geometry preview · not minted</p>
+        </div>
+      </div>
+    </div>
+    <div class="math-3d-receipt" id="math3DReceipt" hidden>
+      <h3>Experiment artifact · prepared locally</h3>
+      <p>A reproducible geometry claim is ready to export. <strong>No IPFS upload, payment, signature or blockchain transaction has occurred.</strong></p>
+      <dl><dt>Experiment SHA-256</dt><dd id="math3DExperimentId"></dd><dt>Mesh SHA-256</dt><dd id="math3DMeshHash"></dd></dl>
+      <div class="math-3d-export-actions">
+        <button type="button" class="button button-outline button-sm" id="math3DExportOBJ">Download 3D mesh (.obj)</button>
+        <button type="button" class="button button-outline button-sm" id="math3DExportJSON">Download experiment (.json)</button>
+        <button type="button" class="button button-outline button-sm" id="math3DExportPNG">Save preview (.png)</button>
+        <button type="button" class="button button-outline button-sm" id="math3DExportNFT">AEX-141 metadata template</button>
+      </div>
+      <p class="math-3d-mint-note"><strong>Mint handoff:</strong> Pin the OBJ and the experiment manifest to IPFS. Replace the placeholder CIDs in the exported metadata, pin that metadata, and mint through an authorized AEX-141 contract using a wallet. Its <code>mint</code> extension and metadata type must match the deployed collection. ECAI's current index-artifact mint-review API is <em>not</em> an experiment minting API. <a href="https://docs.aeternity.com/developer-documentation/aexs/aexs/aex-141" target="_blank" rel="noopener noreferrer">AEX-141 spec ↗</a> · <a href="https://github.com/aeternity/aex141-nft-collection-example" target="_blank" rel="noopener noreferrer">Reference contract / viewer ↗</a></p>
+    </div>
+    <p class="context-hint">What is (and is not) verified: the mathematical source points are sampled in floating point; model surfaces are deterministic parametric lifts. A geometry hash lets others compare the exact exported mesh bytes. It does <em>not</em> establish an algebraic isogeny, a proof of geometric uniqueness, a semantic equivalence or a DamageBDD execution report. Visit the exact pathfinder below for those distinct questions.</p>
+    <div class="math-stage-next"><span><strong>From 3D geometry to algebraic evidence.</strong> See the distinction between a visual transformation and a rational map on elliptic curves. <a href="https://threejs.org/docs/pages/OrbitControls" target="_blank" rel="noopener noreferrer">3D orbital controls ↗</a></span><button type="button" class="button button-primary button-sm" data-math-jump="mathLibrary">Next: inspect an exact example →</button></div>
+  </section>
+  <section class="surface panel-pad math-library" id="mathLibrary" aria-labelledby="mathLibraryTitle">
+    <div class="panel-heading"><div><div class="eyebrow">STEP 02 · INVESTIGATE AN EXACT CANDIDATE · PUBLIC</div><h2 id="mathLibraryTitle">Choose a problem to investigate</h2></div><span class="status-tag math-status-preview">Public sample library</span></div>
+    <p class="math-stage-description">Every example names a source curve, a proposed path of rational maps, and a mathematical question. Selecting one loads a <strong>local, unverified-on-this-node preview</strong>; it does not run a node job. Try the default example, select arrows in the path below, or pick a deliberately invalid map to see what can fail.</p>
     <div class="math-sample-toolbar">
       <label for="mathSampleSelect">Choose a mathematical problem<select id="mathSampleSelect" aria-label="Choose a mathematical sample"></select></label>
       <div class="inline-actions"><button type="button" id="mathSamplePrevious" class="button button-outline button-sm" aria-label="Previous example">←</button><button type="button" id="mathSampleNext" class="button button-outline button-sm" aria-label="Next example">→</button><button type="button" id="mathSampleReset" class="button button-outline button-sm">Reset example</button></div>
@@ -13,10 +121,13 @@
     <div class="inline-actions"><button type="button" id="mathSampleEdit" class="text-button">Use these endpoints in the editor ↗</button><button type="button" id="mathSampleLink" class="text-button">Copy example link</button></div>
     <p id="mathSampleMode" class="context-hint"></p>
     <details id="mathGalleryDisclosure"><summary>Browse the complete collection</summary><label class="math-gallery-search">Filter examples<input id="mathSampleFilter" type="search" placeholder="Try: degree 5, kernel, rational, non-CM…" maxlength="80"></label><div id="mathCatalog" class="math-catalog"></div><p id="mathCatalogCount" class="context-hint"></p></details>
+    <div class="math-stage-next"><span><strong>Two ways forward.</strong> Open the editor to search for a new path, or jump straight to inspect the selected sample and its stated evidence limits.</span><div class="math-stage-actions"><button type="button" class="button button-primary button-sm" data-math-jump="mathBuilderDisclosure">Next: search for a path →</button><button type="button" class="button button-outline button-sm" data-math-jump="mathResults">Inspect this example ↓</button></div></div>
   </section>
-  <details class="surface panel-pad math-builder" id="mathBuilderDisclosure"><summary id="mathBuildSummary">Edit a problem or import your own path</summary>
+  <p id="mathNotice" class="context-hint math-job-notice" role="status" aria-live="polite">Sign in with a managed account to run the mathematical pathfinder.</p>
+  <details class="surface panel-pad math-builder" id="mathBuilderDisclosure"><summary id="mathBuildSummary"><span class="math-step-kicker">STEP 03 · BOUNDED SEARCH · MANAGED SIGN-IN TO RUN</span><strong>Find a new transformation, or replay a supplied path</strong><span class="math-summary-chevron" aria-hidden="true">⌄</span></summary>
   <section aria-labelledby="mathBuildTitle">
-    <div class="panel-heading"><div><div class="eyebrow">RATIONAL ELLIPTIC CURVES</div><h2 id="mathBuildTitle">Find a connection over Q</h2></div><button type="button" id="mathDemo" class="button button-outline button-sm" disabled>Run explicit demo</button></div>
+    <div class="panel-heading"><div><div class="eyebrow">RATIONAL ELLIPTIC CURVES · EXACT ARITHMETIC</div><h2 id="mathBuildTitle">Find a connection over ℚ</h2></div><button type="button" id="mathDemo" class="button button-outline button-sm" disabled>Run explicit demo</button></div>
+    <p class="math-stage-description">Choose <strong>Explore from source</strong> to enumerate reachable curve models, or <strong>Connect two curves</strong> to search for a checked path between endpoints. The Erlang pathfinder uses exact rational arithmetic and bounded candidate degree-2 kernels. The outcome is evidence within the chosen search limits—not a complete classification.</p>
     <form id="mathDiscoverForm" class="stack-form">
       <div class="math-mode-row"><label>Question<select id="mathMode" name="operation"><option value="explore" selected>Explore from source · no target</option><option value="discover">Connect two given curves</option></select></label><p id="mathQuestionHint" class="context-hint">Which models can we reach, and which are non-isomorphic to the source over Q?</p></div>
       <div class="math-curve-inputs">
@@ -42,7 +153,10 @@
       <p class="context-hint">Enter integers or fractions, such as -1 or 3/5; no floating-point coefficients. Discovery considers bounded rational degree-2 kernels, not every possible isogeny.</p>
     </form>
     <div class="math-import-row"><label class="math-file-label" for="mathImportFile">Replay an existing path JSON<input id="mathImportFile" type="file" accept=".json,application/json" disabled></label><button type="button" id="mathImport" class="button button-outline button-sm" disabled>Import &amp; check</button><span class="context-hint">Path files only · up to 192 KiB · submitted flags are not trusted</span></div>
+    <div class="math-stage-next"><span><strong>Already have a path?</strong> Import it for a fresh native check, then compare the transformed objects, rational points and algebraic identities below. <a href="https://doc.sagemath.org/html/en/reference/arithmetic_curves/sage/schemes/elliptic_curves/ell_curve_isogeny.html" target="_blank" rel="noopener noreferrer">Learn about rational isogeny maps ↗</a></span><button type="button" class="button button-primary button-sm" data-math-jump="mathResults">Next: inspect &amp; verify →</button></div>
   </section></details>
+  <div id="mathResults" class="math-results-stage" aria-labelledby="mathResultsTitle">
+    <div class="surface panel-pad math-stage-header"><div class="eyebrow">STEP 04 · FOLLOW THE OBJECTS · INTERROGATE THE EVIDENCE</div><h2 id="mathResultsTitle">Inspect the path, then ask what was proved</h2><p>A selected sample shows <strong>supplied candidate maps</strong> and locally computed point examples. A completed node job adds fresh algebraic replay and job provenance. Select a <strong>curve</strong> or <strong>arrow</strong>, follow a rational point, then check the Verification and Search &amp; bounds tabs. An attractive graph is never itself a proof.</p></div>
   <section id="mathExploration" class="surface panel-pad math-exploration" aria-labelledby="mathExploreTitle" hidden>
     <div class="panel-heading"><div><div class="eyebrow">NO PRESELECTED DESTINATION</div><h2 id="mathExploreTitle">Reachable models</h2></div><button type="button" id="mathExploreExport" class="button button-outline button-sm" disabled>Export exploration JSON</button></div>
     <p id="mathExploreScope" class="context-hint" role="status"></p>
@@ -56,20 +170,20 @@
       <div class="panel-heading"><div><div class="eyebrow">SELECTED PATH</div><h2 id="mathPathTitle">Objects and transformations</h2></div><button type="button" id="mathReplay" class="button button-outline button-sm" disabled>Replay checks ↻</button></div>
       <div id="mathMetrics" class="math-metrics" aria-label="Path summary"></div>
       <div id="mathGraph" class="math-path-graph" aria-label="Ordered mathematical path"><div class="empty-state">Run a discovery or import a path to see its exact curve models and maps.</div></div>
-      <p class="context-hint">Select a curve or arrow to inspect it. Layout shows composition order, not mathematical distance. The path is not a global minimum-degree claim.</p>
+      <p class="context-hint">Follow the arrows in order, then select an arrow to see its exact rational map. This layout is a composition order, not a geometric distance or global shortest path.</p>
   <section class="surface panel-pad math-point-lab" aria-labelledby="mathPointTitle">
     <div class="panel-heading"><div><div class="eyebrow">EXACT LOCAL EXPERIMENT · NO SERVER JOB</div><h2 id="mathPointTitle">Follow a rational point</h2></div><button type="button" id="mathSageExport" class="button button-outline button-sm">Export SageMath check</button></div>
     <div id="mathPointPresets" class="math-point-presets" aria-label="Suggested rational points"></div>
     <form id="mathPointForm" class="math-point-form"><label>x<input id="mathPointX" value="12" maxlength="130" required></label><label>y<input id="mathPointY" value="36" maxlength="130" required></label><label class="math-infinity-label"><input id="mathPointInfinity" type="checkbox"> Point at infinity O</label><button type="submit" id="mathPointEvaluate" class="button button-primary">Trace through maps →</button></form>
     <div id="mathPointResult" class="math-point-result" role="status" aria-live="polite"></div>
     <div class="math-scalar-row"><label>Compare on the source curve<select id="mathPointScalar"><option value="2">[2]P</option><option value="3">[3]P</option><option value="4">[4]P</option></select></label><button type="button" id="mathPointMultiply" class="button button-outline button-sm">Calculate by group law</button><output id="mathScalarResult"></output></div>
-    <p class="context-hint">Fractions use bounded BigInt arithmetic, never floating-point rounding. A point experiment checks that point only; it is not an all-points isogeny proof. Live replay checks the full polynomial identities.</p>
+    <p class="context-hint">Fractions use bounded BigInt arithmetic, never floating-point rounding. A point experiment tests one example, not an all-points proof. Native replay checks the polynomial identities for the maps; <a href="https://doc.sagemath.org/html/en/reference/arithmetic_curves/index.html" target="_blank" rel="noopener noreferrer">SageMath explains elliptic-curve point arithmetic ↗</a>.</p>
   </section>
     </section>
     <section class="surface panel-pad math-inspector" aria-labelledby="mathInspectorTitle"><div class="eyebrow">INSPECTOR</div><h2 id="mathInspectorTitle">Select an object</h2><div id="mathInspectorBody" class="math-inspector-body"><p class="context-hint">Equations, exact coefficients and replay checks appear here.</p></div></section>
   </div>
   <section class="surface panel-pad math-evidence" aria-labelledby="mathEvidenceTitle">
-    <div class="panel-heading"><div><div class="eyebrow">SCOPE MATTERS</div><h2 id="mathEvidenceTitle">Evidence, not a universal badge</h2></div><div class="inline-actions"><button type="button" id="mathExport" class="button button-outline button-sm" disabled>Export path JSON</button><button type="button" id="mathBundle" class="button button-outline button-sm" disabled>Export evidence bundle</button></div></div>
+    <div class="panel-heading"><div><div class="eyebrow">EXACT CLAIMS HAVE EXPLICIT LIMITS</div><h2 id="mathEvidenceTitle">Verification, search bounds &amp; provenance</h2></div><div class="inline-actions"><button type="button" id="mathExport" class="button button-outline button-sm" disabled>Export path JSON</button><button type="button" id="mathBundle" class="button button-outline button-sm" disabled>Export evidence bundle</button></div></div>
     <div class="math-tabs" role="tablist" aria-label="Mathematical evidence">
       <button type="button" id="mathTabChecks" role="tab" aria-selected="true" aria-controls="mathChecks" data-math-tab="mathChecks">Verification</button>
       <button type="button" id="mathTabSearch" role="tab" aria-selected="false" aria-controls="mathSearch" data-math-tab="mathSearch" tabindex="-1">Search &amp; bounds</button>
@@ -79,5 +193,18 @@
     <div id="mathSearch" role="tabpanel" aria-labelledby="mathTabSearch" class="math-tab-panel" hidden>No search data loaded.</div>
     <div id="mathRun" role="tabpanel" aria-labelledby="mathTabRun" class="math-tab-panel" hidden>No run selected.</div>
   </section>
-  <section class="surface panel-pad math-history" aria-labelledby="mathJobsTitle"><div class="panel-heading"><div><div class="eyebrow">THIS ACCOUNT · THIS NODE</div><h2 id="mathJobsTitle">Recent mathematical jobs</h2></div><button type="button" id="mathRefresh" class="text-button">Refresh ↻</button></div><p class="context-hint">Jobs are volatile: up to 8 per account, 32 per node, one hour. A node restart clears them. Export artifacts to keep your evidence.</p><div id="mathJobs" class="math-jobs"><div class="empty-state">No jobs loaded.</div></div></section>
+    <div class="math-stage-next"><span><strong>What does this prove for ECAI?</strong> It establishes algebraic relationships between specified elliptic curves. Meaning, retrieval quality and behavior verification need their own definitions and evidence.</span><button type="button" class="button button-primary button-sm" data-math-jump="mathECAIBridge">Next: connect to ECAI →</button></div>
+  </div>
+  <section class="surface panel-pad math-ecai-bridge" id="mathECAIBridge" aria-labelledby="mathECAIBridgeTitle">
+    <div class="panel-heading"><div><div class="eyebrow">STEP 05 · ARCHITECTURAL CONTEXT · KNOW WHAT IS CONNECTED</div><h2 id="mathECAIBridgeTitle">Where this mathematics fits in ECAI</h2></div></div>
+    <p class="math-stage-description">ECAI combines knowledge indexing, retrieval with source provenance, typed relations and review surfaces. This mathematical workbench demonstrates a separate, exact transformation-and-checking capability. A verified curve map is <strong>not automatically a verified relationship between documents, concepts or behaviors</strong>.</p>
+    <div class="math-bridge-grid">
+      <article><span class="math-bridge-status">Browser demonstration</span><h3>Shape reconstruction</h3><p><strong>Here:</strong> elliptic-curve samples → drawing transforms → Fourier contour. The renderer explains geometric composition; it stores no knowledge, defines no semantic relation and submits no server job.</p><button type="button" class="math-text-jump" data-math-jump="mathKernel">Return to the animation ↗</button></article>
+      <article><span class="math-bridge-status">Native math workbench</span><h3>Exact relations between curves</h3><p><strong>Here:</strong> <code>ecai_math_curve</code>, <code>ecai_math_isogeny</code> and <code>ecai_math_pathfinder</code> represent curves, find bounded rational maps and check algebraic identities. Results are scoped to the job and its bounds.</p><button type="button" class="math-text-jump" data-math-jump="mathResults">Inspect mathematical evidence ↗</button></article>
+      <article><span class="math-bridge-status">ECAI knowledge workflows</span><h3>Sources, retrieval &amp; typed relations</h3><p><strong>Elsewhere in ECAI:</strong> indexed documents retain source identities; retrieval provides supporting records; typed relation rules and reviews supply application meaning. These mechanisms are separate from Fourier drawing and curve-path proofs.</p><button type="button" class="math-text-jump" data-go="search">Open ECAI knowledge search ↗</button></article>
+      <article><span class="math-bridge-status math-bridge-research">Research boundary</span><h3>From semantic claims to algebra</h3><p><strong>Not established by this demo:</strong> an explicit versioned mapping from semantic objects to curve data, relation-preservation rules, and a replayable binding back to source evidence or DamageBDD behaviors. Those need separate tests and proofs.</p><a href="https://damagebdd.com/ecai/" target="_blank" rel="noopener noreferrer">ECAI architecture &amp; capability matrix ↗</a></article>
+    </div>
+    <div class="math-reading"><h3>Further reading</h3><p><a href="https://doc.sagemath.org/html/en/reference/arithmetic_curves/index.html" target="_blank" rel="noopener noreferrer">Elliptic curves and rational points ↗</a><a href="https://doc.sagemath.org/html/en/reference/arithmetic_curves/sage/schemes/elliptic_curves/ell_curve_isogeny.html" target="_blank" rel="noopener noreferrer">Isogeny maps and kernels ↗</a><a href="https://www.3blue1brown.com/lessons/fourier-series/" target="_blank" rel="noopener noreferrer">Fourier rotating vectors ↗</a><a href="https://damagebdd.com/ecai/" target="_blank" rel="noopener noreferrer">ECAI documented architecture ↗</a></p></div>
+  </section>
+  <section class="surface panel-pad math-history" aria-labelledby="mathJobsTitle"><div class="panel-heading"><div><div class="eyebrow">ADVANCED · THIS ACCOUNT · THIS NODE</div><h2 id="mathJobsTitle">Recent mathematical jobs</h2></div><button type="button" id="mathRefresh" class="text-button">Refresh ↻</button></div><p class="context-hint">Jobs are volatile: up to 8 per account, 32 per node, one hour. A node restart clears them. Export artifacts to keep your evidence.</p><div id="mathJobs" class="math-jobs"><div class="empty-state">No jobs loaded.</div></div></section>
 </section>

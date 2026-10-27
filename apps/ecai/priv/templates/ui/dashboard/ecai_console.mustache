@@ -13,7 +13,9 @@
   <link rel="stylesheet" href="/static/css/ecai-console.css?v=personality-conversations-v1-knowledge-v2&index-mint=index-mint-v1&theme=semantic-v2&chat=wide-v2">
   <link rel="stylesheet" href="/static/css/ecai-personalities.css?v=personalities-v1&theme=semantic-v2">
   <link rel="stylesheet" href="/static/css/ecai-eval.css?v=eval-v1&theme=semantic-v2">
-  <link rel="stylesheet" href="/static/css/ecai-math-paths.css?v=math-samples-explorer-v2&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-math-paths.css?v=math-guided-journey-v1&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-math-kernel.css?v=elliptic-kernel-v1">
+  <link rel="stylesheet" href="/static/css/ecai-math-3d.css?v=geometry-lab-v1">
   <link rel="stylesheet" href="/static/css/ecai-video.css?theme=semantic-v2">
   <link rel="stylesheet" href="/static/css/ecai-market-maker.css?theme=semantic-v2">
   <link rel="stylesheet" href="/ecai/auth-assets/css/auth.css">
@@ -283,7 +285,7 @@
 
         <section class="view" data-panel="chat" aria-labelledby="chatTitle" hidden>
           <div class="page-intro"><div class="eyebrow">CONVERSATION</div><h1 id="chatTitle">Speak to the knowledge layer</h1><p>Signed-in conversations are durable, searchable through the private ECAI term index and can be grouped into projects. Guest chat remains an isolated session. Replies depend on the configured backend and are not cryptographic proofs.</p></div>
-          <div class="chat-workspace chat-workspace--integrated">
+          <div class="chat-workspace chat-workspace--integrated" id="chatWorkspace">
             <aside class="chat-history-panel" id="chatHistoryPanel" aria-label="Conversation history">
               <div class="chat-history-actions">
                 <button type="button" class="button button-primary chat-new-button" id="newChatBtn">＋ New chat</button>
@@ -905,6 +907,6 @@
   <script type="module" src="/static/js/ecai-compute-settings.js?v=compute-only-v1&aws-setup=automatic-aws-v1"></script>
   <script type="module" src="/static/js/ecai-keys.js"></script>
   <script type="module" src="/static/js/ecai-index-mint-settings.js?v=index-mint-settings-v1"></script>
-  <script type="module" src="/static/js/ecai-console.js?v=llm-settings-v1-model-internals-v1-personality-conversations-v1-personalities-v1-video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-explorer-v2-eval-v1-source-retrieval-v1-knowledge-v2-compute-only-v1&index-mint=index-mint-v1-sidebar-settings-v1&chat=wide-v2"></script>
+  <script type="module" src="/static/js/ecai-console.js?v=llm-settings-v1-model-internals-v1-personality-conversations-v1-personalities-v1-video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-explorer-v2-kernel-v1-eval-v1-source-retrieval-v1-knowledge-v2-compute-only-v1&index-mint=index-mint-v1-sidebar-settings-v1&chat=wide-v2"></script>
 </body>
 </html>

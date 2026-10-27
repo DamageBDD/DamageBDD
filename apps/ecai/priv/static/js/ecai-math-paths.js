@@ -76,7 +76,7 @@ export function initMathPaths({request, currentToken, managedSession, openLogin,
     if(Number(limit.value)>Number(limit.max))limit.value=limit.max;
     $('mathTimeBudget').hidden=!explore;
     $('mathDiscoverForm').elements.namedItem('timeout_ms').disabled=!explore;
-    put('mathBuildTitle',explore?'Explore from one curve over Q':'Find a connection over Q');
+    put('mathBuildTitle',explore?'Explore from one curve over ℚ':'Find a connection over ℚ');
     put('mathDiscover',explore?'Explore from source →':'Discover & verify →');
     put('mathQuestionHint',explore?'Which models can we reach, and which are non-isomorphic to the source over Q?':'Find a checked degree-2 transformation path between the two given models.');
   }
@@ -443,6 +443,29 @@ export function initMathPaths({request, currentToken, managedSession, openLogin,
     setTimeout(()=>{URL.revokeObjectURL(url);downloads.delete(url);},10000);
   }
   for(const sample of MATH_SAMPLES.samples) {const option=node('option','',`${sample.title} · deg ${sample.path.total_degree}`);option.value=sample.id;$('mathSampleSelect').append(option);}
+  // Journey buttons scroll to native sections without changing #math (the console router's hash).
+  // The exact workbench and browser-only animation retain their own independent lifecycles.
+  const mathSteps = [...root.querySelectorAll('.math-journey [data-math-jump]')];
+  const stepIds = new Set([...mathSteps.map(button => button.dataset.mathJump), "math3DWorkbench"]);
+  function jumpToMathStep(id) {
+    if (!stepIds.has(id)) return;
+    const destination = $(id);
+    if (!destination || !root.contains(destination)) return;
+    if (destination.tagName === 'DETAILS') destination.open = true;
+    for (const button of mathSteps) {
+      if (button.dataset.mathJump === (id === "math3DWorkbench" ? "mathKernel" : id)) button.setAttribute('aria-current','step');
+      else button.removeAttribute('aria-current');
+    }
+    const anchor = destination.matches('details') ? destination.querySelector('summary') : destination.querySelector('h2');
+    if (anchor) {
+      anchor.setAttribute('tabindex','-1');
+      anchor.focus({preventScroll:true});
+    }
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    destination.scrollIntoView({behavior:reduced ? 'instant' : 'smooth',block:'start'});
+  }
+  for (const button of root.querySelectorAll('[data-math-jump]'))
+    on(button,'click',()=>jumpToMathStep(button.dataset.mathJump));
   on($('mathSampleSelect'),'change',()=>loadSample($('mathSampleSelect').value));
   on($('mathSampleFilter'),'input',renderCatalog);
   on($('mathCatalog'),'click',event=>{const b=event.target.closest('[data-sample-id]');if(b)loadSample(b.dataset.sampleId);});
