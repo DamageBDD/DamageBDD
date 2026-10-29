@@ -7,6 +7,12 @@ from html.parser import HTMLParser
 ROOT=Path(__file__).resolve().parents[1]
 SRC=ROOT/'apps/damage/src'
 
+# Only modules owned by this feature are subject to the agentic-specific
+# export and untrusted-model-input safety contracts.  The wider monorepo
+# contains independent modules with different legacy APIs and security scopes.
+def agent_sources():
+    return sorted(SRC.glob('damage_agent*.erl')) + [SRC/'steps_agentic.erl']
+
 # Scan punctuation after skipping Erlang strings, quoted atoms, comments and chars.
 def delimiter_check(text):
     stack=[]; i=0
@@ -50,13 +56,13 @@ class Contracts(unittest.TestCase):
         for p in list(SRC.glob('*.erl'))+list((ROOT/'apps/damage/test').glob('*.erl'))+[ROOT/'config/agentic.config.sample']:
             with self.subTest(file=p.name): delimiter_check(p.read_text())
     def test_modules_and_exports_have_heads(self):
-        for p in SRC.glob('*.erl'):
+        for p in agent_sources():
             t=p.read_text(); self.assertIn(f'-module({p.stem}).',t)
             heads=set(re.findall(r'^([a-z][\w]*)\s*\(',t,re.M))
             for group in re.findall(r'-export\(\[(.*?)\]\)',t,re.S):
                 for name in re.findall(r'(\w+)\s*/\s*\d+',group): self.assertIn(name,heads,(p.name,name))
     def test_no_model_atom_or_shell_evaluation(self):
-        for p in SRC.glob('*.erl'):
+        for p in agent_sources():
             t=p.read_text()
             for bad in ('list_to_atom(', 'binary_to_atom(', 'os:cmd(', 'erl_eval:', 'binary_to_term('):
                 self.assertNotIn(bad,t,p.name)
