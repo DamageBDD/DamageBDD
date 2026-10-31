@@ -1,0 +1,7 @@
+-module(erm_dj_ektoplazm).
+-export([discover/0,fetch_release/1]).
+discover()->timer:sleep(150),{ok,[<<"https://ektoplazm.com/free-music/fixture">>]}.
+fetch_release(<<"https://ektoplazm.com/free-music/crash">>)->erlang:exit(self(),kill);
+fetch_release(URL)->{ok,#{id=><<"release">>,title=><<"Fixture album">>,artist=><<"Fixture artist">>,source=>ektoplazm,
+ source_url=>URL,license=>#{id=><<"CC-BY-4.0">>,url=><<"https://creativecommons.org/licenses/by/4.0/">>},
+ license_evidence=>#{page_url=>URL,html_sha256=>binary:encode_hex(crypto:hash(sha256,<<"test">>))},tags=>[<<"ambient">>],tracks=>[],downloads=>[]}}.

@@ -1,0 +1,13 @@
+{
+  "inputs": [
+    {
+      "filename": "latest-ecai-qwen-profiles.tar.gz",
+      "sha256": "7f442cc81ce6ea2e21badf6102db578ab02e41d900075c848b83347bc0c1d627"
+    },
+    {
+      "filename": "latest-erm.tar(20261023-015241).gz",
+      "sha256": "3e0db12bceac530311b03be7733af561db943236676d11a2a75a2e45958ba5b2"
+    }
+  ],
+  "source_snapshot_note": "Patch targets these supplied snapshots, not an inspected live Git checkout."
+}

@@ -17,6 +17,7 @@
                 inets,
                 ssl,
                 crypto,
+                gun,
                 jsx,
                 cowboy,
                 trails,
@@ -33,6 +34,8 @@
                 %% the complete protocol in doc/gtknode4_protocol.md. Enable it
                 %% in sys.config with the local/fake/visual examples supplied
                 %% by this integration bundle.
+                %% ECDJ starts idle; source fetches happen only on explicit calls.
+                {dj, #{enabled => false, commercial => false}},
                 {display_manager, [
                     {mode, disabled},
                     {default_session, "herbstluftwm"},

@@ -70,7 +70,7 @@ init([]) ->
                         MediaSpecs = media_specs(),
                         LegacySpecs = legacy_specs(),
                         OptionalSpecs = [optional_services_child_spec()],
-                        [erm_voice_events:child_spec()] ++ MediaSpecs ++ erm_tts:child_specs() ++ whisper_child_specs() ++ LegacySpecs ++
+                        [erm_voice_events:child_spec()] ++ dj_specs() ++ MediaSpecs ++ erm_tts:child_specs() ++ whisper_child_specs() ++ LegacySpecs ++
                             OptionalSpecs
                 end,
 
@@ -465,6 +465,12 @@ wait_unregistered(Name, Attempts) ->
 %%%===================================================================
 %%% GTK-independent media workers
 %%%===================================================================
+
+dj_specs() ->
+    case application:get_env(erm, dj, #{}) of
+        #{enabled := true} -> [erm_dj:child_spec()];
+        _ -> []
+    end.
 
 media_specs() ->
     case media_enabled() of
