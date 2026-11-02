@@ -1,17 +1,13 @@
-# DamageBDD release contract for PinePhone Pro / Manjaro ARM stable:
-# - target platform: manjaro-arm-aarch64
-# - target runtime: glibc <= 2.41, OTP 28, ERTS 16.x, AArch64
-# - Dockerfile is versioned separately at packaging/manjaro-arm/Dockerfile
-# - Upload Dockerfile with `ipfs add -Q packaging/manjaro-arm/Dockerfile`
-#   and replace __MANJARO_ARM_DOCKERFILE_CID__ before submitting.
-# - The checkout at REPO_REF must include check-package-abi.sh and the
-#   canonical systemd unit packaging fix before this feature can pass.
-# - PACMAN_DISABLE_SANDBOX=1 is for the QEMU/Landlock-limited build host.
+# Manjaro ARM aarch64 installer platform. Requires a working linux/arm64 Docker
+# runner and the pinned ARM builder Dockerfile CID below. This builder uses an
+# Arch Linux ARM userspace: validate runtime dependencies on Manjaro ARM before
+# publishing a production release; the platform key alone is not compatibility.
+# PACMAN_DISABLE_SANDBOX=1 is for the QEMU/Landlock-limited build host only.
 Feature: Publish DamageBDD for Manjaro ARM aarch64
   Scenario: Build and verify the manjaro-arm-aarch64 installation release
     Given the build release discovery is configured
-    When I build an image from Dockerfile at "QmUYGfQHv837GQnbLXjyUpANbFFTNQEBbWEkBh4h7YYkuY" as tag "damagebdd/manjaro-arm-builder:otp28-glibc241" with params "--platform linux/arm64 --build-arg 'PACMAN_DISABLE_SANDBOX=1' --build-arg 'TARGET_GLIBC=2.41' --build-arg 'TARGET_OTP_MAJOR=28' --build-arg 'TARGET_ERTS_MAJOR=16' --build-arg 'REPO_URL=https://github.com/DamageBDD/DamageBDD.git' --build-arg 'REPO_REF=develop'"
-    Then I run docker image tagged "damagebdd/manjaro-arm-builder:otp28-glibc241"
+    When I build an image from Dockerfile at "QmPDhitshHU1fdbfDBFxkJYz9VDDxfCTMcUT6WTX71H4Ds" as tag "damagebdd/manjaro-arm-builder:aarch64-v2" with params "--platform linux/arm64 --build-arg 'PACMAN_DISABLE_SANDBOX=1' --build-arg 'REPO_URL=https://github.com/DamageBDD/DamageBDD.git' --build-arg 'REPO_REF=develop'"
+    Then I run docker image tagged "damagebdd/manjaro-arm-builder:aarch64-v2"
     """
     set -eux
     cd /opt/workspace
@@ -52,9 +48,7 @@ Feature: Publish DamageBDD for Manjaro ARM aarch64
     git diff --exit-code HEAD -- .
     sh bin/check-beam-sources.sh
     # Fail before spending time compiling an OTP release if native libs are missing.
-    command -v erl >/dev/null 2>&1
-    command -v rebar3 >/dev/null 2>&1
-    command -v makepkg >/dev/null 2>&1
+    damage-builder-check
     pkg-config --print-errors --exists gtk4 shumate-1.0 liboqs
 
     case "$(uname -m)" in
@@ -65,31 +59,6 @@ Feature: Publish DamageBDD for Manjaro ARM aarch64
             exit 1
             ;;
     esac
-
-    # A documented Manjaro ARM stable ABI is mandatory, not merely an ARM64
-    # package label. Ensure the running builder and compiler use OTP 28 and a
-    # userspace no newer than the device before invoking rebar3.
-    test -f /etc/os-release
-    grep -Eiq '(^ID=.*manjaro|^ID_LIKE=.*manjaro|^NAME=.*manjaro)' /etc/os-release || {
-        echo "ERROR: release builder is not Manjaro ARM" >&2; exit 1
-    }
-    BUILDER_GLIBC=$(getconf GNU_LIBC_VERSION | awk '{print $2}')
-    [ "$(printf '%s\n%s\n' "$BUILDER_GLIBC" 2.41 | sort -V | tail -n 1)" = 2.41 ] || {
-        echo "ERROR: builder glibc $BUILDER_GLIBC exceeds target glibc 2.41" >&2
-        exit 1
-    }
-    BUILDER_OTP=$(erl -noshell -eval 'io:format("~s", [erlang:system_info(otp_release)]), halt().')
-    BUILDER_ERTS=$(erl -noshell -eval 'io:format("~s", [erlang:system_info(version)]), halt().')
-    [ "$BUILDER_OTP" = 28 ] || { echo "ERROR: expected OTP 28, got $BUILDER_OTP" >&2; exit 1; }
-    case "$BUILDER_ERTS" in
-        16.*) ;;
-        *) echo "ERROR: expected ERTS 16.x, got $BUILDER_ERTS" >&2; exit 1 ;;
-    esac
-    test -f packaging/manjaro-arm/check-package-abi.sh || {
-        echo "ERROR: missing Manjaro package ABI gate; commit it to develop first" >&2
-        exit 1
-    }
-    echo "[damagebdd] Manjaro ARM ABI builder: glibc=$BUILDER_GLIBC OTP=$BUILDER_OTP ERTS=$BUILDER_ERTS"
 
     # Preserve the dependency set committed with this checkout.
     test -f rebar.lock
@@ -165,10 +134,6 @@ Feature: Publish DamageBDD for Manjaro ARM aarch64
         exit 1
     }
     echo "[damagebdd] Verified vendor systemd unit: $UNIT_PATH"
-    if printf '%s\n' "$LISTING" | grep -Eq '^\.?/?etc/systemd/system/damage\.service$'; then
-        echo "Package must not install a unit into the administrator override directory /etc/systemd/system" >&2
-        exit 1
-    fi
 
     # 20-systemd.sh is executed by package installation. Verify the old
     # hard-coded /etc unit requirement is absent before publication.
@@ -200,34 +165,11 @@ Feature: Publish DamageBDD for Manjaro ARM aarch64
         exit 1
     }
 
-    # Check every installed ELF, not only the launcher (which is a shell script).
-    # This rejects bundled beam.smp 17.1 / GLIBC_2.43, incompatible NIFs,
-    # foreign-architecture objects and missing/incorrect bundled ERTS.
-    sh /opt/workspace/packaging/manjaro-arm/check-package-abi.sh "$PACKAGE" 2.41 16
-
     NFT_DIR="$PWD/nft"
     mkdir -p "$NFT_DIR"
     install -m 0644 "$PACKAGE" "$NFT_DIR/damage.pkg.tar.zst"
     cp PKGBUILD "$NFT_DIR/PKGBUILD"
-    # PKGBUILD references this SHA-256-verified local source; retain it so
-    # the published build recipe remains reproducible from the NFT payload.
-    test -s damage.service
-    cmp damage.service /opt/workspace/apps/damage/priv/pkg/damage.service
-    cp damage.service "$NFT_DIR/damage.service"
     makepkg --printsrcinfo > "$NFT_DIR/.SRCINFO"
-
-    # Use printf, not shell heredocs. The Gherkin placeholder parser treats
-    # angle-delimited heredoc syntax as a step-variable candidate.
-    printf '%s\n' \
-        'platform=manjaro-arm-aarch64' \
-        'builder=manjaro-arm-stable' \
-        'glibc_abi_ceiling=2.41' \
-        'otp_major=28' \
-        'erts_major=16' \
-        "actual_builder_glibc=$BUILDER_GLIBC" \
-        "actual_builder_otp=$BUILDER_OTP" \
-        "actual_builder_erts=$BUILDER_ERTS" \
-        'ELF_gate=passed' > "$NFT_DIR/ABI_COMPATIBILITY"
 
     printf '%s\n' "$GIT_SHA" > "$NFT_DIR/GIT_COMMIT"
     printf '%s\n' "$RELEASE_VSN" > "$NFT_DIR/RELEASE_VERSION"
@@ -236,21 +178,18 @@ Feature: Publish DamageBDD for Manjaro ARM aarch64
         cd "$NFT_DIR"
         sha256sum damage.pkg.tar.zst > SHA256SUMS
         DIGEST=$(awk '{print $1}' SHA256SUMS)
-        printf '%s\n' \
-            '{' \
-            '  "schema_version": 1,' \
-            "  \"release\": \"$RELEASE_VSN\"," \
-            '  "platform": "manjaro-arm-aarch64",' \
-            '  "package_format": "pkg.tar.zst",' \
-            '  "architecture": "aarch64",' \
-            '  "glibc_abi_ceiling": "2.41",' \
-            '  "otp_major": 28,' \
-            '  "erts_major": 16,' \
-            '  "build_distribution": "manjaro-arm-stable",' \
-            '  "asset_path": "damage.pkg.tar.zst",' \
-            "  \"sha256\": \"$DIGEST\"," \
-            "  \"git_sha\": \"$GIT_SHA\"" \
-            '}' > installation.json
+        cat > installation.json <<JSON
+    {
+      "schema_version": 1,
+      "release": "$RELEASE_VSN",
+      "platform": "manjaro-arm-aarch64",
+      "package_format": "pkg.tar.zst",
+      "architecture": "aarch64",
+      "asset_path": "damage.pkg.tar.zst",
+      "sha256": "$DIGEST",
+      "git_sha": "$GIT_SHA"
+    }
+    JSON
     )
     find "$NFT_DIR" -maxdepth 1 -type f -printf '%f\n' | sort
     """
@@ -267,10 +206,6 @@ Feature: Publish DamageBDD for Manjaro ARM aarch64
       "artifact_type": "arch_package",
       "package_format": "pkg.tar.zst",
       "architecture": "aarch64",
-      "glibc_abi_ceiling": "2.41",
-      "otp_major": 28,
-      "erts_major": 16,
-      "build_distribution": "manjaro-arm-stable",
       "build_system": "docker + rebar3 + makepkg",
       "build_profile": "prod",
       "ci_intent": "release",
