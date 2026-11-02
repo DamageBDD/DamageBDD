@@ -14,7 +14,7 @@ def module_url(source):
     return 'data:text/javascript;base64,' + base64.b64encode(source.encode()).decode()
 
 def build():
-    css = '\n'.join((APP / 'priv/static/css' / name).read_text() for name in ('ecai-console.css', 'ecai-math-paths.css'))
+    css = '\n'.join((APP / 'priv/static/css' / name).read_text() for name in ('ecai-console.css', 'ecai-math-paths.css', 'ecai-math-kernel.css'))
     panel = (APP / 'priv/templates/ui/dashboard/ecai_math_paths.mustache').read_text()
     module = module_url((APP / 'priv/static/js/ecai-math-paths.js').read_text())
     return '''<!doctype html><html lang="en"><head><meta charset="utf-8">

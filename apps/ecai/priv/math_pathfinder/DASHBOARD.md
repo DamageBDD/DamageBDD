@@ -10,6 +10,57 @@ is not the earlier standalone HTML prototype. Open `/dashboard#math` after deplo
 and restarting the updated release. The supplied source archive was
 `latest-ecai.tar(1).gz` and contained `apps/ecai`, not the whole DamageBDD release.
 
+## Five-stage guided exploration in `#math`
+
+The Math view now leads a visitor through **01 Visualize → 02 Experiment →
+03 Explore → 04 Verify → 05 Connect to ECAI**, with working in-view jump buttons,
+next-step actions, a short mathematical primer, and external concept references.
+The animation precedes the exact sample library. Existing example selection,
+bounded native jobs, point inspector, verification and export flows remain.
+Navigation preserves the console's `#math` hash and does not trigger a node job.
+
+Stage 05 explicitly distinguishes the operational ECAI retrieval/typed-relation
+stack from exact mathematical pathfinding, and identifies a versioned
+semantic-to-curve encoding and relation-preservation proof as work still needed.
+The concepts link to SageMath, Fourier educational material, and the current
+[public ECAI architecture guide](https://damagebdd.com/ecai/).
+
+See `apps/ecai/docs/MATH_GUIDED_EXPLORATION.md` for a complete user journey,
+implementation map, mathematical scope, validation and developer notes.
+
+## Elliptic Kernel visualizer in `#math`
+
+The public Mathematical Paths view now contains an interactive **Elliptic curve →
+continuous image** visualization, immediately after the sample workbench.
+The supported URLs remain `/dashboard#math` and, when the console is the
+application's default page, `/#math`. No new HTTP route, login, server job,
+Lightning charge or independent proof is involved.
+
+- `priv/templates/ui/dashboard/ecai_math_paths.mustache` mounts the native widget.
+- `priv/static/css/ecai-math-kernel.css` scopes the controls and responsive canvas.
+- `priv/static/js/ecai-math-kernel.js` supplies the independently testable math
+  helpers and `initMathKernel` controller used by `ecai-console.js`.
+- Play/Pause, reset, order 1–80, auto-refinement, trace speed and shape select
+  work in-browser. The 2D canvases resize to the available width.
+- The controller stops animation when the Math view is hidden, the tab is hidden,
+  or the widget leaves the viewport; it cleans up observers/listeners on unload.
+  Reduced-motion preference starts in the paused state.
+
+**Mathematical scope:** `y² = x³ − 4x` supplies the real oval sampled for the
+illustration. Affine drawing transforms generate wing/petal contours, and a
+finite discrete Fourier transform supplies a continuously evaluated Fourier
+series to trace the picture. That Fourier transform is **not** the rational
+2-isogeny from the source curve to `y² = x³ + 16x`, nor is it a semantic
+embedding or a substitute for the native pathfinder's exact proofs.
+
+Smoke tests (from the umbrella repository root):
+
+```bash
+node --test apps/ecai/test/math_dashboard/kernel.test.mjs
+python3 apps/ecai/test/math_dashboard/kernel_browser_test.py
+python3 apps/ecai/test/math_dashboard/console_browser_test.py
+```
+
 ## Install and run
 
 From the DamageBDD repository root:
@@ -69,7 +120,7 @@ scaling isomorphism.
 
 Verification, search/bounds, and run/provenance are separate tabs. The last tab
 shows this mathematical job, not a fabricated association with a DamageBDD run.
-No geometric curve plots or invented search-branch animation are included.
+The exact isogeny path graph still has no invented search-branch animation or proof-by-picture. The separate browser-only visualizer above it includes an illustrative real-curve plot, not evidence from a pathfinder job.
 
 ### Import your earlier successful path
 

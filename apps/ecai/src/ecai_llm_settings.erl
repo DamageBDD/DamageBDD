@@ -1,10 +1,11 @@
-%% Node-wide provider registry. Only ecai_code_admin_http exposes mutations.
+%% Node-wide provider registry. Mutations require authenticated node-admin HTTP gates.
 %% No caller-selected Erlang terms, modules, HTTP headers or TLS options.
 -module(ecai_llm_settings).
 -compile({no_auto_import, [nodes/0]}).
 -behaviour(gen_server).
 -export([start_link/0, start_link/1, child_spec/0, status/0, update/2,
-         probe/1, nodes/0, revision/0, route_chat/0, code_options/1, validate/2]).
+         probe/1, nodes/0, revision/0, route_chat/0, code_options/1, validate/2,
+         bdd_status/0, bdd_options/0, update_bdd/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
          code_change/3, format_status/1]).
 -define(KEY, {?MODULE, active}).
@@ -33,6 +34,11 @@ status() ->
     S = gen_server:call(?MODULE, status),
     S#{pool => pool_status(), damage_profiles => damage_profiles()}.
 update(Body, Actor) -> gen_server:call(?MODULE, {update, Body, Actor}, infinity).
+%% BDD authoring uses the same registry/role gate; never fall back to a raw
+%% client while this service is unavailable. No endpoint or secret is public.
+bdd_status() -> gen_server:call(?MODULE, bdd_status, 5000).
+bdd_options() -> gen_server:call(?MODULE, bdd_options, 5000).
+update_bdd(Body, Actor) -> gen_server:call(?MODULE, {update_bdd, Body, Actor}, 10000).
 probe(Body) ->
     %% Networking happens outside the registry process, against a saved target.
     case gen_server:call(?MODULE, {probe_options, Body}) of
@@ -67,6 +73,35 @@ init(Opts) ->
             end;
         Error -> {stop, Error}
     end.
+handle_call(bdd_status, _From, S) ->
+    Snap = maps:get(snapshot, S), C = maps:get(config, Snap),
+    Nodes = [maps:with([<<"id">>, <<"provider">>, <<"default_model">>, <<"models">>], N)
+             || N <- maps:get(<<"connections">>, C), maps:get(<<"enabled">>, N),
+                lists:member(<<"bdd">>, maps:get(<<"roles">>, N))],
+    {reply, #{revision => maps:get(revision, Snap), route => bdd_route(C),
+              connections => Nodes, role => bdd,
+              remote_allowed => lists:member(<<"bdd">>, maps:get(<<"remote_roles">>, C))}, S};
+handle_call(bdd_options, _From, S) ->
+    Snap = maps:get(snapshot, S), Route = bdd_route(maps:get(config, Snap)),
+    Provider = case maps:get(<<"provider">>, Route) of
+        <<"any">> -> any; Value -> provider(Value)
+    end,
+    Model = maps:get(<<"model">>, Route),
+    Opts = #{provider => Provider, routing_revision => maps:get(revision, Snap)},
+    {reply, case Model of <<>> -> Opts; _ -> Opts#{model => Model} end, S};
+handle_call({update_bdd, Body, Actor}, _From, S) ->
+    %% Serialize the partial update with full registry updates. The revision
+    %% covers BOTH route and connections, so a stale editor cannot move traffic.
+    try
+        exact(Body, [<<"revision">>, <<"route">>]),
+        Snap = maps:get(snapshot, S), C = maps:get(config, Snap),
+        Full = #{<<"revision">> => maps:get(<<"revision">>, Body),
+                 <<"config">> => C#{<<"bdd_route">> => maps:get(<<"route">>, Body)}},
+        case safe_update(Full, Actor, S) of
+            {ok, New} -> {reply, {ok, maps:get(revision, New)}, S#{snapshot => New}};
+            Error -> {reply, Error, S}
+        end
+    catch throw:Why -> {reply, {error, Why}, S}; _:_ -> {reply, {error, invalid_bdd_route}, S} end;
 handle_call(status, _From, S) ->
     {reply, maps:get(snapshot, S), S};
 handle_call({update, Body, Actor}, _From, S) ->
@@ -115,7 +150,11 @@ safe_update(Body, Actor, S) ->
         need(is_binary(Actor) andalso byte_size(Actor) > 0 andalso byte_size(Actor) =< 256, invalid_actor),
         Current = maps:get(snapshot, S),
         need(maps:get(<<"revision">>, Body) =:= maps:get(revision, Current), stale_revision),
-        Config0 = maps:get(<<"config">>, Body), Base = maps:get(base, S),
+        InputConfig = maps:get(<<"config">>, Body),
+        %% Older provider UIs omit bdd_route; preserve the saved preference.
+        Config0 = InputConfig#{<<"bdd_route">> => maps:get(<<"bdd_route">>, InputConfig,
+                                  bdd_route(maps:get(config, Current)))},
+        Base = maps:get(base, S),
         {ok, _} = check_validation(validate(Config0, Base)),
         validate_credential_changes(Config0, maps:get(config, Current)),
         need(whereis(ecai_ollama_pool) =/= undefined, inference_pool_unavailable),
@@ -160,7 +199,9 @@ check_validation(Ok) -> Ok.
 
 validate(C, Base) ->
     try
-        exact(C, [<<"connections">>, <<"runtime">>, <<"remote_roles">>, <<"route_chat">>]),
+        exact(maps:remove(<<"bdd_route">>, C),
+              [<<"connections">>, <<"runtime">>, <<"remote_roles">>, <<"route_chat">>]),
+        validate_bdd_route(bdd_route(C)),
         bool(maps:get(<<"route_chat">>, C)),
         RemoteRoles = roles(maps:get(<<"remote_roles">>, C)),
         Connections = maps:get(<<"connections">>, C),
@@ -507,3 +548,12 @@ bin(B) when is_binary(B) -> B;
 bin(A) when is_atom(A) -> atom_to_binary(A, utf8);
 bin(L) when is_list(L) -> unicode:characters_to_binary(L).
 timestamp() -> list_to_binary(calendar:system_time_to_rfc3339(erlang:system_time(second), [{offset, "Z"}])).
+
+%% Preference is a filter within the existing bdd role, never a new permission.
+%% An unavailable explicit route fails; it does not fall back to another provider.
+bdd_route(C) -> maps:get(<<"bdd_route">>, C, #{<<"provider">> => <<"any">>, <<"model">> => <<>>}).
+validate_bdd_route(R) ->
+    exact(R, [<<"provider">>, <<"model">>]),
+    case maps:get(<<"provider">>, R) of <<"any">> -> ok; P -> provider(P) end,
+    case maps:get(<<"model">>, R) of <<>> -> ok; M -> text(M, 256) end,
+    ok.

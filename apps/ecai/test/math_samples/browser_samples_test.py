@@ -17,7 +17,7 @@ def shell():
     text=re.sub(r'<script\b[^>]*>.*?</script>','',text,flags=re.S)
     text=re.sub(r'<link\b[^>]*>','',text)
     text=re.sub(r'\{\{\{?.*?\}\}\}?','',text)
-    css=''.join((APP/f'priv/static/css/{name}').read_text() for name in ['ecai-console.css','ecai-math-paths.css'])
+    css=''.join((APP/f'priv/static/css/{name}').read_text() for name in ['ecai-console.css','ecai-math-paths.css','ecai-math-kernel.css'])
     return text.replace('</head>','<style>'+css+'</style></head>')
 
 async def boot(page,query=''):
@@ -25,7 +25,7 @@ async def boot(page,query=''):
     await page.evaluate('(q)=>window.__sampleSearch=q',query)
     await page.evaluate("""()=>{for(const e of document.querySelectorAll('[data-panel]')){e.hidden=e.dataset.panel!=='math';e.classList.toggle('is-visible',e.dataset.panel==='math');}
       for(const e of document.querySelectorAll('[data-view]'))e.classList.toggle('is-active',e.dataset.view==='math');
-      document.querySelector('#ecaiConsole').dataset.activeView='math';document.querySelector('#viewBreadcrumb').textContent='Mathematical paths';document.querySelector('#topbarRuntime').textContent='Public sample preview';}""")
+      document.querySelector('#ecaiConsole').dataset.activeView='math';document.querySelector('#viewBreadcrumb').textContent='Mathematical paths';document.querySelector('#topbarRuntime') && (document.querySelector('#topbarRuntime').textContent='Public sample preview');}""")
     await page.evaluate('(f)=>{window.__fixture=f;'+MOCK+'}',fixture())
     await page.evaluate("""async url=>{const m=await import(url);window.__math=m.initMathPaths({sampleSearch:window.__sampleSearch,request:(...args)=>window.__request(...args),
       currentToken:()=>window.__managed?'fixture-token':'',managedSession:()=>window.__managed,

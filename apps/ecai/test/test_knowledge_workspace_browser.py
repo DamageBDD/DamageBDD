@@ -132,6 +132,7 @@ export async function logoutActiveSession(){TokenManager.logout()}
 INIT_STUB = "export function NAME(){return new Proxy({}, {get:()=>()=>{}})}"
 INITIALIZERS = {"ecai-model-internals.js": "initModelInternals", "ecai-personalities.js": "initPersonalities",
                 "ecai-eval.js": "initEvaluation", "ecai-math-paths.js": "initMathPaths",
+                "ecai-math-kernel.js": "initMathKernel",
                 "ecai-video.js": "initVideoStudio", "ecai-market-maker.js": "initMarketMaker"}
 
 

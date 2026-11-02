@@ -214,6 +214,8 @@ render_dashboard_page("ecai_console.mustache", Ctx) ->
     AuthHtml = damage_utils:load_template(damage, "ui/dashboard/auth_modal.mustache", AuthCtx),
     %% The Video Studio markup lives in the console template itself. Older
     %% running ecai_dashboard beams therefore cannot omit it accidentally.
+    Routing = damage_utils:load_template(damage, "ui/dashboard/bdd_routing.mustache", Ctx),
+    Agents = damage_utils:load_template(damage, "ui/dashboard/agents_tab.mustache", Ctx#{bdd_routing => Routing}),
     MarketMaker = render_tpl(?DASH_TPL("ecai_market_maker.mustache"), Ctx),
     ComputeSettings = render_tpl(?DASH_TPL("compute_settings.mustache"), Ctx),
     MathPaths = render_tpl(?DASH_TPL("ecai_math_paths.mustache"), Ctx),
@@ -224,6 +226,8 @@ render_dashboard_page("ecai_console.mustache", Ctx) ->
         ?DASH_TPL("ecai_console.mustache"),
         Ctx#{
             browser_auth_modal => AuthHtml,
+            agents_panel => Agents,
+            bdd_routing => Routing,
             market_maker_panel => MarketMaker,
             compute_settings_panel => ComputeSettings,
             math_paths_panel => MathPaths,

@@ -629,7 +629,7 @@ checkout_wait(Role, Provider, Model, Exclude, Deadline) ->
 
 client_opts(Lease, Opts) ->
     NodeOpts = maps:get(client_opts, Lease, #{}),
-    Merged0 = maps:merge(NodeOpts, Opts),
+    Merged0 = bounded_client_opts(maps:merge(NodeOpts, Opts), NodeOpts, Opts),
     Merged1 = Merged0#{
         provider => maps:get(provider, Lease),
         host => maps:get(host, Lease),
@@ -1521,3 +1521,14 @@ to_binary(L) when is_list(L) -> unicode:characters_to_binary(L);
 to_binary(A) when is_atom(A) -> atom_to_binary(A, utf8);
 to_binary(I) when is_integer(I) -> integer_to_binary(I);
 to_binary(V) -> iolist_to_binary(io_lib:format("~p", [V])).
+
+%% Authoring clients can tighten node limits but cannot raise operator caps.
+%% Other existing workloads retain their established merge semantics.
+bounded_client_opts(Merged, NodeOpts, #{enforce_node_limits := true}) ->
+    lists:foldl(fun(Key, Acc) ->
+        case {maps:get(Key, NodeOpts, undefined), maps:get(Key, Acc, undefined)} of
+            {N, R} when is_integer(N), N > 0, is_integer(R), R > 0 -> Acc#{Key => min(N,R)};
+            _ -> Acc
+        end
+    end, Merged, [timeout, connect_timeout, max_output_tokens, max_response_bytes]);
+bounded_client_opts(Merged, _, _) -> Merged.

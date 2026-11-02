@@ -148,7 +148,7 @@ async def main():
         harness="""() => {
           const state={view:'overview'}, VIEW_NAMES={'ai-providers':'AI providers & roles',overview:'Overview'};
           const $=id=>document.getElementById(id),put=(id,v)=>{$(id).textContent=v;};
-          const llmSettings=window.settings,modelInternals=null,mathPaths=null,evaluation=null,
+          const llmSettings=window.settings,modelInternals=null,mathPaths=null,mathKernel=null,math3D=null,agentWorkspace=null,bddRouting=null,evaluation=null,
             personalities=null,videoStudio=null,marketMaker=null,knowledgeSearch={setVisible(){}};
           const location={hash:''}, history={replaceState(a,b,hash){location.hash=hash;}};
           const closeNav=()=>{},stopStream=()=>{},toast=()=>{},showError=()=>'',refreshView=()=>settings.refresh();

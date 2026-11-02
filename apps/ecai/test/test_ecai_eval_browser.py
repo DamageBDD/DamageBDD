@@ -34,10 +34,25 @@ const report={...target,complete:true,run_id:'run-001',suite_id:suite.id,targets
 const run={id:'run-001',suite_id:suite.id,created_at_ms:1792281600000,cancelled:false,split:'test',...target};
 window.fixture={managed:true,admin:true,token:'fixture-alice',calls:[],delaySettings:0,failRun:false,settings:s,runs:[run],suite,reviewed:false};
 window.XSS=0;
+const profileTemplate={schema:'ecai-qwen-profile/v1',name:'Grounded answers',objective:'Use references and identify missing evidence.',model:'Qwen/Qwen3.5-4B',model_revision:null,quantization:'unspecified',tags:['grounding'],intervention:{kind:'unconfigured'},evaluation_notes:'Synthetic fixture. Discover on dev; freeze before holdout.'};
+fixture.profiles=[];fixture.delayProfiles=0;
 async function fixtureRequest(path,options={}) {
  const f=window.fixture, body=typeof options.body==='string'?JSON.parse(options.body):options.body;
  f.calls.push({path,body,token:f.token});
  const out=x=>({ok:true,data:structuredClone(x)});
+ if(path==='/ecai/eval/profiles'){
+   if(body){const p={id:'profile-'+f.profiles.length,spec:structuredClone(body),created_at_ms:1792281600000,comparisons:[]};f.profiles.push(p);return out(p);}
+   const items=f.profiles.map(p=>({...p,status:p.comparisons.length?'comparison_linked':p.spec.intervention.kind==='unconfigured'?'draft':'recipe_saved',comparison_count:p.comparisons.length}));
+   const copy={items,templates:['Grounded answers','Erlang patch discipline','Tool contract discipline','Calibrated abstention'].map(name=>({...profileTemplate,name})),capabilities:{activation_steering:false,reason:'Activation steering is not connected. Linked comparisons are observational.'}};
+   if(f.delayProfiles)await new Promise(r=>setTimeout(r,f.delayProfiles));return out(copy);
+ }
+ if(path.startsWith('/ecai/eval/profiles/')){
+   const id=path.split('/')[4],p=f.profiles.find(p=>p.id===id);if(!p)throw new Error('not_found');
+   if(path.endsWith('/comparisons')){if(!p.spec.model_revision)throw new Error('profile_revision_required');
+     p.comparisons.push({...body,split:'test',comparison:{pairs:2,counts:{candidate_improvement:1,candidate_regression:0}},baseline_metrics:{pass_bps:5000},candidate_metrics:{pass_bps:10000},settings_match:false,steering_attested:false});}
+   if(path.endsWith('/evidence'))return out({manifest_bytes:JSON.stringify(p),sha256:'fixture-only',signed:false});
+   return out(p);
+ }
  if(path==='/ecai/eval/settings'){
    const copy=structuredClone(f.settings);
    if(body){if(body.version!==f.settings.version){const e=new Error('version_conflict');e.status=409;e.body={error:'version_conflict'};throw e;}
@@ -189,6 +204,97 @@ class EvaluationBrowserTests(unittest.TestCase):
         self.tab('account');self.page.evaluate('fixture.settings.version=99')
         self.page.locator('#evalAccountForm button').click()
         expect(self.page.locator('#evalStatus')).to_contain_text('version_conflict')
+    def save_profile(self, name='Erlang scoped patches', revision='fixture-revision'):
+        self.tab('profiles')
+        self.page.locator('#evalProfileTemplates button').nth(1).click()
+        self.page.locator('#evalProfileName').fill(name)
+        self.page.locator('#evalProfileRevision').fill(revision)
+        self.page.locator('#evalProfileForm button[type=submit]').click()
+        expect(self.page.locator('#evalStatus')).to_contain_text('snapshot saved')
+    def test_profile_templates_save_without_inference(self):
+        self.save_profile()
+        expect(self.page.locator('#evalProfileTemplates article')).to_have_count(4)
+        expect(self.page.locator('#evalProfileList article')).to_have_count(1)
+        expect(self.page.locator('#evalProfileState')).to_have_text('Draft objective')
+        self.assertEqual([],self.calls('/ecai/eval/runs'))
+        body=self.calls('/ecai/eval/profiles')[-1]['body']
+        self.assertEqual('ecai-qwen-profile/v1',body['schema'])
+        self.assertNotIn('owner',body);self.assertNotIn('verified',body)
+        self.page.locator('#evalProfileSearch').fill('does not exist')
+        expect(self.page.locator('#evalProfileList')).to_contain_text('No profiles match')
+    def test_profile_xss_and_new_version_does_not_inherit_evidence(self):
+        self.save_profile('<img src=x onerror="window.XSS=1">')
+        expect(self.page.locator('#evalProfileList img')).to_have_count(0)
+        self.assertEqual(0,self.page.evaluate('window.XSS'))
+        self.page.locator('#evalProfileEdit').click()
+        self.page.locator('#evalProfileName').fill('Changed objective')
+        self.page.locator('#evalProfileForm button[type=submit]').click()
+        expect(self.page.locator('#evalProfileList article')).to_have_count(2)
+        self.assertEqual([],self.page.evaluate('fixture.profiles[1].comparisons'))
+    def test_profile_recipe_kind_mismatch_rejected_before_request(self):
+        self.save_profile()
+        before=len(self.calls('/ecai/eval/profiles'))
+        self.page.locator('#evalProfileIntervention').fill('{"kind":"vector"}')
+        self.page.locator('#evalProfileForm button[type=submit]').click()
+        expect(self.page.locator('#evalStatus')).to_contain_text('kind must match')
+        self.assertEqual(before,len(self.calls('/ecai/eval/profiles')))
+    def test_profile_comparison_is_not_verified(self):
+        self.save_profile()
+        self.page.locator('#evalProfileDetailPanel details').last.locator('summary').click()
+        for suffix,value in [('Baseline','run-a'),('Candidate','run-b'),('BaselineTarget','qwen'),('CandidateTarget','qwen')]:
+            self.page.locator('#evalProfile'+suffix).fill(value)
+        self.page.locator('#evalProfileLinkNote').fill('Synthetic comparison with different limits.')
+        self.page.locator('#evalProfileLinkForm button').click()
+        expect(self.page.locator('#evalStatus')).to_contain_text('remains unattested')
+        expect(self.page.locator('#evalProfileState')).to_have_text('Comparison linked')
+        expect(self.page.locator('#evalProfileComparisons')).to_contain_text('Settings differ')
+        expect(self.page.locator('#evalProfileComparisons')).to_contain_text('Steering not attested')
+    def test_profiles_clear_on_logout_including_late_response(self):
+        self.save_profile('SECRET_PROFILE_FIXTURE')
+        self.page.evaluate('fixture.delayProfiles=180')
+        self.page.locator('#evalProfilesRefresh').click()
+        self.page.evaluate('fixture.managed=false;fixture.token=null;workspace.reset()')
+        self.page.wait_for_timeout(250)
+        self.assertNotIn('SECRET_PROFILE_FIXTURE',self.page.locator('body').inner_text())
+        expect(self.page.locator('#evalProfileList')).to_be_empty()
+        expect(self.page.locator('#evalProfileTemplates')).to_be_empty()
+        expect(self.page.locator('#evalProfileDetailPanel')).to_be_hidden()
+    def test_profiles_mobile_and_screenshots(self):
+        self.save_profile()
+        self.page.evaluate('window.scrollTo(0,0)')
+        out=os.environ.get('ECAI_EVAL_SCREENSHOTS')
+        if out:
+            Path(out).mkdir(parents=True,exist_ok=True)
+            self.page.screenshot(path=str(Path(out)/'qwen-profiles-desktop.png'),full_page=True)
+        self.page.set_viewport_size({'width':390,'height':844})
+        self.assertFalse(self.page.evaluate('document.documentElement.scrollWidth>window.innerWidth'))
+        if out:self.page.screenshot(path=str(Path(out)/'qwen-profiles-mobile.png'),full_page=True)
+    def test_profile_recipe_export_round_trip(self):
+        self.save_profile()
+        with self.page.expect_download() as download:
+            self.page.locator('#evalProfileExport').click()
+        spec=json.loads(Path(download.value.path()).read_text())
+        self.assertEqual('ecai-qwen-profile/v1',spec['schema'])
+        self.assertNotIn('comparisons',spec)
+        spec['name']='Imported recipe'
+        self.page.locator('#evalProfileFile').set_input_files({'name':'recipe.json','mimeType':'application/json','buffer':json.dumps(spec).encode()})
+        expect(self.page.locator('#evalProfileName')).to_have_value('Imported recipe')
+        self.assertEqual(1,len(self.calls('/ecai/eval/profiles')))
+    def test_profile_oversized_import_rejected(self):
+        self.tab('profiles')
+        self.page.locator('#evalProfileFile').set_input_files({'name':'large.json','mimeType':'application/json','buffer':b' '*65537})
+        expect(self.page.locator('#evalStatus')).to_contain_text('exceeds 64 KiB')
+        self.assertEqual([],self.calls('/ecai/eval/profiles'))
+    def test_older_catalogue_response_cannot_hide_new_snapshot(self):
+        self.save_profile()
+        self.page.evaluate('fixture.delayProfiles=250')
+        self.page.locator('#evalProfilesRefresh').click()
+        self.page.evaluate('fixture.delayProfiles=0')
+        self.page.locator('#evalProfileName').fill('New snapshot during refresh')
+        self.page.locator('#evalProfileForm button[type=submit]').click()
+        expect(self.page.locator('#evalProfileList article')).to_have_count(2)
+        self.page.wait_for_timeout(300)
+        expect(self.page.locator('#evalProfileList article')).to_have_count(2)
     def test_mobile_layout_and_screenshots(self):
         self.page.evaluate('fixture.suite.name="Synthetic dialogue acceptance"')
         self.page.evaluate('workspace.refresh()')

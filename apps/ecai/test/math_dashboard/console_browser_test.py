@@ -15,7 +15,7 @@ async def main():
     shell=re.sub(r'<script\b[^>]*>.*?</script>','',shell,flags=re.S)
     shell=re.sub(r'<link\b[^>]*>','',shell)
     shell=re.sub(r'\{\{\{?.*?\}\}\}?','',shell)
-    css=''.join((APP/f'priv/static/css/{name}').read_text() for name in ('ecai-console.css','ecai-math-paths.css','ecai-eval.css'))
+    css=''.join((APP/f'priv/static/css/{name}').read_text() for name in ('ecai-console.css','ecai-math-paths.css','ecai-math-kernel.css','ecai-eval.css'))
     shell=shell.replace('</head>','<style>'+css+'</style></head>')
     token=module_url('''export const TokenManager={
       session:()=>window.__managed?{mode:window.__mode,email:'test@example.invalid',address:'ak-test'}:null,
@@ -23,19 +23,33 @@ async def main():
       refreshSession:async()=>{},logout(){window.__managed=false;document.dispatchEvent(new Event('auth:changed'));}};
       export async function logoutActiveSession(){TokenManager.logout();}''')
     auth=module_url('export function initAuthUI(){}')
-    stub='const empty=()=>({reset(){},dispose(){},setVisible(){},accountChanged(){},accessChanged(){},refresh:async()=>{}});'
+    stub='const empty=()=>new Proxy({}, {get:(_,key)=>key==="refresh"||key==="run"?async()=>{}:()=>{}});'
     video=module_url(stub+'export const initVideoStudio=empty;')
     mm=module_url(stub+'export const initMarketMaker=empty;')
+    llm=module_url(stub+'export const initLlmSettings=empty;')
+    internals=module_url(stub+'export const initModelInternals=empty;')
+    personalities=module_url(stub+'export const initPersonalities=empty;')
+    knowledge=module_url(stub+'export const initKnowledgeSearch=empty;export const initKnowledgeIndexSelection=empty;')
+    samples=module_url('export function initIndexSamples(){}')
+    sidebar=module_url('')
     math=module_url((APP/'priv/static/js/ecai-math-paths.js').read_text())
+    kernel=module_url((APP/'priv/static/js/ecai-math-kernel.js').read_text())
     evaluation=module_url((APP/'priv/static/js/ecai-eval.js').read_text())
     console=(APP/'priv/static/js/ecai-console.js').read_text()
     for pattern,replacement in [
+        (r'"/static/js/ecai-llm-settings.js[^\"]*"',repr(llm)),
+        (r'"/static/js/ecai-console-settings.js[^\"]*"',repr(sidebar)),
+        (r'"/static/js/ecai-knowledge-search.js[^\"]*"',repr(knowledge)),
+        (r'"/static/js/ecai-index-samples.js[^\"]*"',repr(samples)),
+        (r'"/static/js/ecai-model-internals.js[^\"]*"',repr(internals)),
+        (r'"/static/js/ecai-personalities.js[^\"]*"',repr(personalities)),
         (r'"/ecai/auth-assets/js/wallet-switcher.js"',repr(token)),
         (r'"/ecai/auth-assets/js/auth-ui.js[^\"]*"',repr(auth)),
         (r'"/static/js/ecai-video.js[^\"]*"',repr(video)),
         (r'"/static/js/ecai-market-maker.js[^\"]*"',repr(mm)),
         (r'"/static/js/ecai-eval.js[^\"]*"',repr(evaluation)),
-        (r'"/static/js/ecai-math-paths.js[^\"]*"',repr(math))]:
+        (r'"/static/js/ecai-math-paths.js[^\"]*"',repr(math)),
+        (r'"/static/js/ecai-math-kernel.js[^\"]*"',repr(kernel))]:
         console,n=re.subn(pattern,lambda m:replacement,console);assert n==1,pattern
     console="const location=window.__location;const history=window.__history;\n"+console
     async with async_playwright() as pw:
@@ -74,6 +88,9 @@ async def main():
         assert not errors,errors
         assert await p.evaluate('window.__location.hash')=='#math'
         assert await p.locator('#mathSampleSelect').input_value()=='doubling-6'
+        assert await p.locator('#mathKernel').is_visible()
+        assert await p.locator('#mathKernelStage').evaluate('(el)=>el.width>0')
+        await p.locator('#sidebarMoreTools').evaluate('(el)=>el.open=true')
         await p.locator('[data-view=math]').click()
         assert await p.locator('[data-panel=math]').is_visible()
         assert await p.locator('[data-panel=overview]').is_hidden()
@@ -108,6 +125,7 @@ async def main():
         await p.locator('[data-view=evaluation]').click()
         assert await p.locator('[data-panel=evaluation]').is_visible()
         assert await p.locator('[data-panel=math]').is_hidden()
+        assert await p.locator('#mathKernel').get_attribute('data-animating')=='false'
         assert await p.locator('#viewBreadcrumb').inner_text()=='LLM evaluation'
         assert await p.evaluate('window.__location.hash')=='#evaluation'
         assert await p.locator('#evalAccess').is_visible()
@@ -136,6 +154,8 @@ async def main():
         await p.locator('[data-view=math]').click()
         assert await p.locator('[data-panel=math]').is_visible()
         assert await p.locator('#mathSampleSelect').input_value()=='doubling-6'
+        assert await p.locator('#mathKernel').is_visible()
+        assert await p.locator('#mathKernelStage').evaluate('(el)=>el.width>0')
         assert not errors,errors
         await p.evaluate("window.dispatchEvent(new Event('beforeunload'))")
         await b.close()

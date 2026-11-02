@@ -57,13 +57,13 @@ async def main():
             shell=shell.replace('{{{'+key+'}}}',(APP/f'priv/templates/ui/dashboard/{name}.mustache').read_text())
         shell=re.sub(r'<script\b[^>]*>.*?</script>','',shell,flags=re.S)
         shell=re.sub(r'<link\b[^>]*>','',shell);shell=re.sub(r'\{\{\{?.*?\}\}\}?','',shell)
-        css=(APP/'priv/static/css/ecai-console.css').read_text()+(APP/'priv/static/css/ecai-math-paths.css').read_text()
+        css=(APP/'priv/static/css/ecai-console.css').read_text()+(APP/'priv/static/css/ecai-math-paths.css').read_text()+(APP/'priv/static/css/ecai-math-kernel.css').read_text()
         shell=shell.replace('</head>','<style>'+css+'</style></head>')
         await page.set_content(shell)
         await page.evaluate("""()=>{for(const e of document.querySelectorAll('[data-panel]')){e.hidden=e.dataset.panel!=='math';e.classList.toggle('is-visible',e.dataset.panel==='math');}
         for(const e of document.querySelectorAll('[data-view]'))e.classList.toggle('is-active',e.dataset.view==='math');
         document.querySelector('#ecaiConsole').dataset.activeView='math';document.querySelector('#viewBreadcrumb').textContent='Mathematical paths';
-        document.querySelector('#topbarRuntime').textContent='Preview · synthetic API';} """)
+        document.querySelector('#topbarRuntime') && (document.querySelector('#topbarRuntime').textContent='Preview · synthetic API');} """)
         await page.evaluate('(fixture)=>{window.fixture=fixture;'+MOCK+'}',job(explore()))
         module=module_url((APP/'priv/static/js/ecai-math-paths.js').read_text())
         await page.evaluate("""async url=>{const m=await import(url);window.ui=m.initMathPaths({request:req,currentToken:()=>managed?'test-token':'',managedSession:()=>managed,openLogin:()=>{},toast:()=>{}});ui.setVisible(true);} """,module)

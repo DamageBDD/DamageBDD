@@ -44,6 +44,10 @@ class ConsoleContractTests(unittest.TestCase):
         cls.html = cls.html.replace('{{{math_paths_panel}}}', (APP/'priv/templates/ui/dashboard/ecai_math_paths.mustache').read_text(encoding='utf-8'))
         cls.html = cls.html.replace('{{{evaluation_panel}}}', (APP/'priv/templates/ui/dashboard/ecai_eval.mustache').read_text(encoding='utf-8'))
         cls.html = cls.html.replace('{{{personalities_panel}}}', (APP/'priv/templates/ui/dashboard/ecai_personalities.mustache').read_text(encoding='utf-8'))
+        damage = APP.parent / 'damage/priv/templates/ui/dashboard'
+        route = (damage/'bdd_routing.mustache').read_text()
+        agents = (damage/'agents_tab.mustache').read_text().replace('{{{bdd_routing}}}', route)
+        cls.html = cls.html.replace('{{{agents_panel}}}', agents).replace('{{{bdd_routing}}}', route)
         cls.markup = Elements()
         cls.markup.feed(cls.html)
 
@@ -56,7 +60,9 @@ class ConsoleContractTests(unittest.TestCase):
                 # Dynamic Cowboy theme route, not a file in priv/static.
                 self.assertIn('"/api/themes/css", damage_theme_http', (APP/'src/ecai_app.erl').read_text())
                 continue
-            if path.startswith('/ecai/auth-assets/'):
+            if path.startswith('/ecai/agent-assets/'):
+                source = APP.parent / 'damage/priv/static' / path.removeprefix('/ecai/agent-assets/')
+            elif path.startswith('/ecai/auth-assets/'):
 
                 source = APP.parent / 'damage/priv/static' / path.removeprefix('/ecai/auth-assets/')
                 if not (APP.parent / 'damage/priv/static').exists():
@@ -74,7 +80,7 @@ class ConsoleContractTests(unittest.TestCase):
 
     def test_dashboard_views_have_navigation(self):
         views = {'overview','search','chat','video','indexing','wikimedia',
-                 'personalities','knowledge','marketplace','market-maker','math','evaluation','operations','code','api','network','compute','keys'}
+                 'personalities','knowledge','marketplace','market-maker','math','evaluation','operations','code','api','network','compute','keys','account','node-settings','ai-providers','agents'}
         self.assertEqual(set(self.markup.views), views)
         # Compute and Keys are rendered as dashboard fragments into the shell.
         self.assertEqual(set(self.markup.panels), views - {'compute', 'keys'})
@@ -83,7 +89,7 @@ class ConsoleContractTests(unittest.TestCase):
 
     def test_api_catalog_matches_cowboy_routes(self):
         catalog = set(re.findall(r'method:\s*"(GET|POST|SSE|WS)",\s*path:\s*"([^"]+)"', self.js))
-        self.assertEqual(len(catalog), 122)
+        self.assertEqual(len(catalog), 127)
         declared = {
             ('GET', '/ecai/admin/code/model-internals'),
             ('POST', '/ecai/admin/code/model-internals/update'),
@@ -100,6 +106,11 @@ class ConsoleContractTests(unittest.TestCase):
             ('POST','/ecai/search'), ('GET','/ecai/chat'), ('POST','/ecai/chat'),
             ('POST','/v1/chat/completions'), ('POST','/ecai/ekef'),
             ('WS','/ecai/ws/'),
+            ('GET','/ecai/admin/llm/settings'),
+            ('POST','/ecai/admin/llm/settings/update'),
+            ('POST','/ecai/admin/llm/probe'),
+            ('POST','/ecai/compute/mint-policy'),
+            ('POST','/ecai/compute/budget'),
         }
         declared |= {('POST',f'/ecai/private/:corpus/{action}') for action in ('index','search','fetch','ask')}
         declared |= {('GET',f'/ecai/wikimedia/{action}') for action in ('sources','plan','search','doctor')}

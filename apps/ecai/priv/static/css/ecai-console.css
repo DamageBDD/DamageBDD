@@ -978,3 +978,15 @@ input::placeholder,textarea::placeholder { color: var(--muted); opacity: 1; }
     padding: 0 10px 8px;
   }
 }
+
+/* Distinguish conversation history from the active thread in the flush view.
+   Mobile history is a drawer and retains its own border. */
+@media (min-width: 981px) {
+  #ecaiConsole[data-active-view="chat"] .chat-workspace .chat-layout.surface {
+    border-left: 2px solid color-mix(in srgb, var(--theme-accent, #9bd46c) 24%, var(--theme-border, #45546d));
+    box-shadow: -9px 0 20px -19px var(--theme-text, #dce6fa);
+  }
+  #ecaiConsole[data-active-view="chat"] .chat-workspace .chat-history-panel.surface {
+    border-right: 0;
+  }
+}

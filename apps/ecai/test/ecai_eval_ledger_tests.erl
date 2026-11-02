@@ -7,6 +7,7 @@
 ledger_test_() ->
     {timeout, 45, {foreach, fun setup/0, fun cleanup/1,
         [fun(C) -> ?_test(tenant_isolation(C)) end,
+         fun(C) -> ?_test(profile_tenant_and_restart(C)) end,
          fun(C) -> ?_test(settings_cas(C)) end,
          fun(C) -> ?_test(review_required(C)) end,
          fun(C) -> ?_test(idempotency(C)) end,
@@ -70,6 +71,17 @@ tenant_isolation(_) ->
     ?assertEqual({error,not_found}, request(suite,<<"bob">>,#{<<"id">> => Id})),
     ?assertEqual({ok,[]}, request(suites,<<"bob">>,#{})),
     ?assertEqual({error,not_found},request(approve_suite,<<"bob">>,#{<<"id">> => Id,<<"owner">> => <<"alice">>,<<"note">> => <<"Forged">>})).
+profile_tenant_and_restart(C) ->
+    Spec = hd(ecai_eval_profiles:templates()),
+    {ok,P} = request(import_profile,<<"alice">>,Spec), Id = maps:get(<<"id">>,P),
+    ?assertEqual({ok,P},request(import_profile,<<"alice">>,Spec)),
+    ?assertEqual({error,not_found},request(profile,<<"bob">>,#{<<"id">> => Id})),
+    ?assertEqual({error,not_found},request(profile_evidence,<<"bob">>,#{<<"id">> => Id})),
+    {ok,B} = request(profiles,<<"bob">>,#{}), ?assertEqual([],maps:get(<<"items">>,B)),
+    restart(C), ?assertEqual({ok,P},request(profile,<<"alice">>,#{<<"id">> => Id})),
+    {ok,E} = request(profile_evidence,<<"alice">>,#{<<"id">> => Id}),
+    ?assertEqual(ecai_eval_util:hex(crypto:hash(sha256,maps:get(<<"manifest_bytes">>,E))),maps:get(<<"sha256">>,E)),
+    ?assertEqual(0,atomics:get(maps:get(calls,C),1)).
 settings_cas(_) ->
     prefs(10),
     ?assertEqual({error,version_conflict},request(save_settings,<<"alice">>,#{<<"version">> => 0,<<"changes">> => #{}})),

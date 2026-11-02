@@ -98,6 +98,51 @@ operation(save_settings, O, B, S) ->
     V = maps:get(<<"version">>, Old), ecai_eval_util:require(maps:get(<<"version">>, B) =:= V, version_conflict),
     Pref = ecai_eval_policy:validate(maps:get(<<"changes">>, B), maps:get(<<"preferences">>, Old)),
     New = #{<<"version">> => V+1, <<"preferences">> => Pref}, put(T, {account, O}, New), {New, S};
+operation(profiles, O, B, S) ->
+    ecai_eval_util:keys(B, []), T = maps:get(table, S),
+    Items = [ecai_eval_profiles:summary(R) || {{profile, Who, _}, R} <- rows(T, profile), Who =:= O],
+    {#{<<"items">> => lists:sort(fun(A, C) -> {maps:get(<<"created_at_ms">>, A), maps:get(<<"id">>, A)} >
+        {maps:get(<<"created_at_ms">>, C), maps:get(<<"id">>, C)} end, Items),
+       <<"templates">> => ecai_eval_profiles:templates(), <<"capabilities">> => ecai_eval_profiles:capabilities()}, S};
+operation(import_profile, O, B, S) ->
+    Spec = ecai_eval_profiles:normalize(B), T = maps:get(table, S),
+    Id = ecai_eval_util:hash(Spec), K = {profile, O, Id},
+    case get(T, K, undefined) of
+        undefined ->
+            All = rows(T, profile),
+            ecai_eval_util:require(length(All) < 500, node_profile_capacity),
+            ecai_eval_util:require(length([ok || {{profile, Who, _}, _} <- All, Who =:= O]) < 100, account_profile_capacity),
+            R = #{<<"id">> => Id, <<"spec">> => Spec, <<"created_at_ms">> => ecai_eval_util:now_ms(), <<"comparisons">> => []},
+            put(T, K, R), {R, S};
+        R -> {R, S}
+    end;
+operation(profile, O, B, S) ->
+    ecai_eval_util:keys(B, [<<"id">>]),
+    {found(get(maps:get(table, S), {profile, O, maps:get(<<"id">>, B)}, undefined)), S};
+operation(profile_comparison, O, B, S) ->
+    ecai_eval_util:keys(B, [<<"id">>, <<"baseline">>, <<"candidate">>, <<"baseline_target">>,
+        <<"candidate_target">>, <<"selection_method">>, <<"note">>]), T = maps:get(table, S),
+    Id = maps:get(<<"id">>, B), K = {profile, O, Id}, R = found(get(T, K, undefined)),
+    A = own_run(T, O, maps:get(<<"baseline">>, B)), C = own_run(T, O, maps:get(<<"candidate">>, B)),
+    Evidence = ecai_eval_profiles:comparison(R, A, maps:get(<<"baseline_target">>, B), report(A, T),
+        C, maps:get(<<"candidate_target">>, B), report(C, T)),
+    Method = ecai_eval_util:enum(maps:get(<<"selection_method">>, B), [<<"fixed">>, <<"ecai_selected">>, <<"lookup_selected">>]),
+    Payload = Evidence#{<<"selection_method">> => Method, <<"note">> => ecai_eval_util:text(maps:get(<<"note">>, B), 4096)},
+    EId = ecai_eval_util:hash(Payload), Old = maps:get(<<"comparisons">>, R),
+    case lists:any(fun(E) -> maps:get(<<"id">>, E) =:= EId end, Old) of
+        true -> {R, S};
+        false ->
+            ecai_eval_util:require(length(Old) < 32, profile_comparison_capacity),
+            E = Payload#{<<"id">> => EId, <<"recorded_at_ms">> => ecai_eval_util:now_ms()},
+            New = R#{<<"comparisons">> => [E | Old]}, put(T, K, New), {New, S}
+    end;
+operation(profile_evidence, O, B, S) ->
+    ecai_eval_util:keys(B, [<<"id">>]),
+    R = found(get(maps:get(table, S), {profile, O, maps:get(<<"id">>, B)}, undefined)),
+    Bytes = ecai_eval_util:json(#{<<"schema">> => <<"ecai-qwen-catalogue-evidence/v1">>,
+        <<"profile">> => R, <<"capabilities">> => ecai_eval_profiles:capabilities()}),
+    {#{<<"manifest_bytes">> => Bytes, <<"sha256">> => ecai_eval_util:hex(crypto:hash(sha256, Bytes)),
+       <<"signed">> => false, <<"claim">> => <<"Integrity receipt; not proof of steering execution or behavioural correctness.">>}, S};
 operation(suites, O, B, S) ->
     ecai_eval_util:keys(B, []), T = maps:get(table, S),
     {[suite_summary(R) || {{suite, Who, _}, R} <- rows(T, suite), Who =:= O], S};

@@ -1,3 +1,5 @@
+import {mountAgentWorkspace} from "/ecai/agent-assets/js/agent-workspace.js";
+import {mountBddRouting} from "/ecai/agent-assets/js/bdd-routing.js";
 import {initLlmSettings} from "/static/js/ecai-llm-settings.js?v=llm-settings-v1";
 import "/static/js/ecai-console-settings.js?v=sidebar-settings-v1";
 import {initKnowledgeSearch, initKnowledgeIndexSelection} from "/static/js/ecai-knowledge-search.js?v=knowledge-v2";
@@ -15,6 +17,7 @@ import {initMarketMaker} from "/static/js/ecai-market-maker.js?v=market-maker-v1
 import {initMathPaths} from "/static/js/ecai-math-paths.js?v=math-guided-journey-v1";
 import {initMathKernel} from "/static/js/ecai-math-kernel.js?v=elliptic-kernel-v1";
 import {initMath3D} from "/static/js/ecai-math-3d.js?v=geometry-lab-v1";
+import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
 
 /* ECAI Control Plane. Uses only routes exported by the current ECAI Cowboy handlers. */
 (() => {
@@ -160,16 +163,18 @@ import {initMath3D} from "/static/js/ecai-math-3d.js?v=geometry-lab-v1";
     ask: { question: "What is known about this topic?", destination: "local" }
   };
   const marketExamples = { claim: { miner_ak: "ak_..." }, submit: { miner_ak: "ak_...", attestation: "attestation", evidence_ref: "" }, pay: { admin_ak: "ak_..." } };
-  const VIEW_NAMES = { "ai-providers": "AI providers & roles", account: "Account settings", "node-settings": "Node settings", personalities: "AI personalities", evaluation: "LLM evaluation", math: "Mathematical paths", overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing", compute: "Compute", keys: "API keys" };
+  const VIEW_NAMES = { agents: "Agents", "ai-providers": "AI providers & roles", account: "Account settings", "node-settings": "Node settings", personalities: "AI personalities", evaluation: "LLM evaluation", math: "Mathematical paths", orbital: "Orbital verification", overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing", compute: "Compute", keys: "API keys" };
   let mathPaths = null;
   let mathKernel = null;
   let math3D = null;
+  let orbital = null;
   let evaluation = null;
   let personalities = null;
   let videoStudio = null;
   let marketMaker = null;
   let modelInternals = null;
   let llmSettings = null;
+  let agentWorkspace = null, bddRouting = null;
   const state = {
     authenticated: false, sessionMode: "anonymous", authEpoch: 0, email: "", view: "overview", jobs: [], presets: [], marketJobs: [],
     nodeAdmin: false, codeAdmin: false, codeFeatureConfigured: false, adminProbeSequence: 0, codeQueue: {}, codeRepairs: [], codeReviews: [], codeReview: null, codeReviewOpenId: "", codeReviewLoadSerial: 0, codeDiffFiles: [], codeDiffSelectedFile: "0",
@@ -637,7 +642,7 @@ import {initMath3D} from "/static/js/ecai-math-3d.js?v=geometry-lab-v1";
   function currentToken() { return TokenManager.getToken(); }
   function managedSession() { return state.authenticated && state.sessionMode === "custodial"; }
   const WALLET_PUBLIC_REQUESTS = new Set([
-    "GET /ecai/auth/session", "GET /ecai/chat", "POST /ecai/chat",
+    "GET /ecai/auth/session", "GET /ai/bdd/routing", "GET /ecai/chat", "POST /ecai/chat",
     "POST /ecai/search", "POST /ecai/knowledge/search", "POST /ecai/knowledge/source",
     "GET /ecai/knowledge/indexes",
     "GET /yelp/status", "GET /ecai/personalities"
@@ -677,6 +682,7 @@ import {initMath3D} from "/static/js/ecai-math-3d.js?v=geometry-lab-v1";
       marketMaker?.reset();
       modelInternals?.reset();
       llmSettings?.reset();
+      agentWorkspace?.reset(); bddRouting?.reset();
       if (state.authenticated) setAuthenticated(false);
       observedToken = token;
       document.dispatchEvent(new CustomEvent("ecai:identity-changed"));
@@ -684,6 +690,7 @@ import {initMath3D} from "/static/js/ecai-math-3d.js?v=geometry-lab-v1";
     state.sessionMode = session?.mode || "anonymous";
     state.email = session?.email || session?.address || "";
     setAuthenticated(Boolean(session), state.email);
+    void agentWorkspace?.accessChanged();
     mathPaths?.accessChanged(); evaluation?.accessChanged(); personalities?.accessChanged();
     videoStudio?.accountChanged();
     marketMaker?.accessChanged();
@@ -741,6 +748,7 @@ import {initMath3D} from "/static/js/ecai-math-3d.js?v=geometry-lab-v1";
     put("consoleSessionKind", !on ? "" : state.sessionMode === "wallet" ? "Wallet · restricted" : "Managed account");
     put("authIdentity", on ? (state.email || "DamageBDD session") : "Guest access");
     if (!on) {
+      agentWorkspace?.reset(); bddRouting?.reset();
       state.adminProbeSequence++;
       state.nodeAdmin = false; state.codeAdmin = false; state.codeFeatureConfigured = false;
       clearCodeReviewFocus(); state.codeRepairs = []; state.codeReviews = [];
@@ -869,12 +877,15 @@ import {initMath3D} from "/static/js/ecai-math-3d.js?v=geometry-lab-v1";
     if (location.hash !== `#${fragment}`) history.replaceState(null, "", `#${fragment}`);
     modelInternals?.setVisible(internalsVisible);
     llmSettings?.setVisible(view === "ai-providers");
+    void agentWorkspace?.setVisible(view === "agents");
+    if (view === "ai-providers") void bddRouting?.refresh();
     closeNav();
     window.EcaiConsoleSettings?.navigated(view, previous);
     window.EcaiIndexPool?.setVisible(view === "network");
     mathPaths?.setVisible(view === "math");
     mathKernel?.setVisible(view === "math");
     math3D?.setVisible(view === "math");
+    orbital?.setVisible(view === "orbital");
     evaluation?.setVisible(view === "evaluation");
     personalities?.setVisible(view === "personalities");
     videoStudio?.setVisible(view === "video");
@@ -3607,12 +3618,13 @@ import {initMath3D} from "/static/js/ecai-math-3d.js?v=geometry-lab-v1";
       window.EcaiConsoleSettings?.refresh();
       return;
     }
-    if (state.sessionMode === "wallet" && !["overview", "search", "chat", "api", "math", "personalities"].includes(state.view)) {
+    if (state.sessionMode === "wallet" && !["overview", "search", "chat", "api", "math", "orbital", "personalities"].includes(state.view)) {
       applyConsoleCapabilities();
       return;
     }
     switch (state.view) {
-      case "ai-providers": await llmSettings?.refresh(); break;
+      case "agents": break; // shared workspace owns its bounded visible-only poller
+      case "ai-providers": await llmSettings?.refresh(); await bddRouting?.refresh(); break;
       case "overview": await refreshOverview(); break;
       case "search": await knowledgeSearch.run(); break;
       case "chat": await refreshChatWorkspace(); break;
@@ -3791,7 +3803,8 @@ import {initMath3D} from "/static/js/ecai-math-3d.js?v=geometry-lab-v1";
     $("apiCopyResponse").addEventListener("click", copyResponse);
     window.addEventListener("hashchange", () => navigate(location.hash.slice(1)));
     window.addEventListener("beforeunload", () => {
-      knowledgeSearch.dispose(); chatIndexChooser.dispose(); stopStream(); disconnectSocket(); videoStudio?.dispose(); marketMaker?.dispose(); mathPaths?.dispose(); mathKernel?.dispose(); math3D?.dispose(); evaluation?.dispose(); personalities?.dispose(); clearInterval(state.poller);
+      agentWorkspace?.dispose(); bddRouting?.dispose();
+      knowledgeSearch.dispose(); chatIndexChooser.dispose(); stopStream(); disconnectSocket(); videoStudio?.dispose(); marketMaker?.dispose(); mathPaths?.dispose(); mathKernel?.dispose(); math3D?.dispose(); orbital?.dispose(); evaluation?.dispose(); personalities?.dispose(); clearInterval(state.poller);
       clearInterval(state.telemetryPoller); clearInterval(state.clockTicker);
     });
     document.addEventListener("visibilitychange", () => {
@@ -3809,8 +3822,12 @@ import {initMath3D} from "/static/js/ecai-math-3d.js?v=geometry-lab-v1";
     mathPaths = initMathPaths({request, currentToken, managedSession, openLogin, toast});
     mathKernel = initMathKernel();
     math3D = initMath3D();
+    orbital = initOrbitalVerification();
     videoStudio = initVideoStudio({request, currentToken, managedSession, openLogin, toast});
     marketMaker = initMarketMaker({request, canManage: () => managedSession() && state.nodeAdmin, openLogin});
+    agentWorkspace = mountAgentWorkspace(document.querySelector('[data-panel="agents"] [data-agent-workspace]'), {request, canUse: managedSession});
+    bddRouting = mountBddRouting(document.querySelector('#providerBddRouting [data-bdd-routing]'), {request});
+    document.addEventListener('damage:bdd-routing-changed', () => { void llmSettings?.refresh(); });
     llmSettings = initLlmSettings({request, canManage: () => managedSession() && (state.nodeAdmin || state.codeAdmin)});
     modelInternals = initModelInternals({request, canManage: () => managedSession() && (state.nodeAdmin || state.codeAdmin)});
     const codeTabs = [...document.querySelectorAll("[data-code-section]")];

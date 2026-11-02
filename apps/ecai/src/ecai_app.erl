@@ -96,6 +96,9 @@ get_trails() ->
     Handlers =
         [
             ecai_api,
+            damage_agent_http,
+            damage_bdd_routing_http,
+            damage_bdd_http,
             ecai_auth_http,
             ecai_eval_http,
             ecai_personality_http,
@@ -127,6 +130,10 @@ get_trails() ->
             })
         ] ++ damage_browser_auth_http:trails(ecai),
     AuthAssets = ecai_auth_http:asset_routes(),
+    AgentAssets = [{"/ecai/agent-assets/" ++ Path, cowboy_static,
+                    {priv_file, damage, "static/" ++ Path}} || Path <- [
+        "js/agent-workspace.js", "js/agent-tasks.js", "js/bdd-routing.js",
+        "css/agent-workspace.css"]],
     Trails =
         [
             {"/terms", cowboy_static, {priv_file, ecai, "static/terms.html"}},
@@ -134,7 +141,7 @@ get_trails() ->
             {"/ecai/ws/", ecai_ws, #{}},
             {"/api/themes/css", damage_theme_http, #{action => css}},
             {"/api/themes/branding", damage_theme_http, #{action => branding}}
-        ] ++ AuthAssets ++ AccountRoutes ++ trails:trails(Handlers),
+        ] ++ AgentAssets ++ AuthAssets ++ AccountRoutes ++ trails:trails(Handlers),
     trails:store(Trails),
     trails:single_host_compile(Trails).
 

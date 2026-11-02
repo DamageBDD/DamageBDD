@@ -16,6 +16,7 @@
   <link rel="stylesheet" href="/static/css/ecai-math-paths.css?v=math-guided-journey-v1&theme=semantic-v2">
   <link rel="stylesheet" href="/static/css/ecai-math-kernel.css?v=elliptic-kernel-v1">
   <link rel="stylesheet" href="/static/css/ecai-math-3d.css?v=geometry-lab-v1">
+  <link rel="stylesheet" href="/static/css/ecai-orbital.css?v=otv001-v1">
   <link rel="stylesheet" href="/static/css/ecai-video.css?theme=semantic-v2">
   <link rel="stylesheet" href="/static/css/ecai-market-maker.css?theme=semantic-v2">
   <link rel="stylesheet" href="/ecai/auth-assets/css/auth.css">
@@ -29,6 +30,7 @@
   <link rel="stylesheet" href="/static/css/ecai-conversation-indexes.css?v=chat-indexes-v1">
   <link rel="stylesheet" href="/static/css/ecai-aws-setup.css?v=automatic-aws-v1&theme=semantic-v2">
   <link rel="stylesheet" href="/static/css/ecai-sidebar-settings.css?v=sidebar-settings-v1&theme=semantic-v2">
+  <link rel="stylesheet" href="/ecai/agent-assets/css/agent-workspace.css?v=dashboard-agents-v1">
   <link rel="stylesheet" href="/api/themes/css?app=ecai">
 </head>
 <body>
@@ -46,6 +48,7 @@
             <div class="sidebar-label" id="navWorkspaceLabel">WORKSPACE</div>
             <button type="button" data-view="overview" class="nav-link is-active" aria-current="page"><span class="nav-icon" aria-hidden="true">◫</span>Overview</button>
             <button type="button" data-view="chat" class="nav-link"><span class="nav-icon" aria-hidden="true">▤</span>Conversation</button>
+            <button type="button" data-view="agents" class="nav-link"><span class="nav-icon" aria-hidden="true">▣</span>Agents</button>
             <button type="button" data-view="search" class="nav-link"><span class="nav-icon" aria-hidden="true">⌕</span>Knowledge search</button>
           </div>
           <div class="sidebar-group" role="group" aria-labelledby="navKnowledgeLabel">
@@ -63,6 +66,7 @@
             <summary>More tools</summary>
             <button type="button" data-view="evaluation" class="nav-link"><span class="nav-icon" aria-hidden="true">✓</span>LLM evaluation</button>
             <button type="button" data-view="math" class="nav-link"><span class="nav-icon" aria-hidden="true">↝</span>Mathematical paths</button>
+            <button type="button" data-view="orbital" class="nav-link"><span class="nav-icon" aria-hidden="true">◎</span>Orbital verification <small>OTV-001</small></button>
             <button type="button" data-view="marketplace" class="nav-link"><span class="nav-icon" aria-hidden="true">◇</span>Marketplace</button>
             <button type="button" data-view="market-maker" class="nav-link"><span class="nav-icon" aria-hidden="true">◈</span>Market Maker</button>
             <button type="button" data-view="network" class="nav-link" id="indexPoolNav" hidden><span class="nav-icon" aria-hidden="true">ϟ</span>Funded indexing</button>
@@ -110,6 +114,7 @@
           <div><strong>Wallet identity verified · restricted session</strong><p>Public search and conversation are available. Indexing, private corpora, node administration and Lightning rewards require managed email sign-in. Connecting a wallet does not authorize payments or link it to an email account.</p></div>
           <button type="button" id="walletManagedLogin" class="button button-outline button-sm">Sign in with email</button>
         </aside>
+        <section class="view" data-panel="agents" aria-label="Agent workspace" hidden>{{{agents_panel}}}</section>
         <section class="view is-visible" data-panel="overview" aria-labelledby="overviewTitle">
           <div class="welcome-banner">
             <div>
@@ -757,6 +762,86 @@
         {{{personalities_panel}}}
 
         {{{math_paths_panel}}}
+        <!-- OTV-001 lives inside the existing ECAI control plane. Synthetic, public, no API calls. -->
+        <section class="view otv-view" data-panel="orbital" id="otvChallenge" aria-labelledby="otvTitle" hidden>
+          <div class="otv-hero">
+            <div class="otv-hero-copy">
+              <div class="otv-eyebrow"><span class="otv-signal"></span> OPEN ENGINEERING CHALLENGE <span class="otv-separator">/</span> OTV-001</div>
+              <h1 id="otvTitle">Make every failure <span>reproducible.</span></h1>
+              <p>A public orbital-transfer <strong>verification benchmark</strong>: synthetic state transitions, deliberately injected faults, explainable invariant checks and portable evidence. Designed to invite independent engineers to break the model—not to simulate Starship flight.</p>
+              <div class="otv-hero-actions">
+                <button type="button" class="otv-primary" id="otvPresent">Present challenge <span aria-hidden="true">↗</span></button>
+                <button type="button" class="otv-ghost" id="otvCopyPitch">Copy technical pitch</button>
+              </div>
+            </div>
+            <div class="otv-hero-side" aria-label="Benchmark scope">
+              <span class="otv-hero-mark">OTV<span>001</span></span>
+              <span class="otv-hero-aside">OPEN TESTBED<br>NOT FLIGHT DATA</span>
+            </div>
+          </div>
+          <div class="otv-context-bar"><span><span class="otv-live-dot"></span> DETERMINISTIC LOCAL SIMULATOR</span><span>6 INVARIANTS</span><span>96 SYNTHETIC FRAMES</span><span>NO PROPRIETARY DATA</span></div>
+          <div class="otv-main-grid">
+            <section class="otv-card otv-stage-card" aria-labelledby="otvStageTitle">
+              <div class="otv-card-head"><div><span class="otv-overline">01 / VISUAL STATE</span><h2 id="otvStageTitle">Orbital transfer demonstrator</h2></div><span class="otv-chip">3D · ORBIT / ZOOM</span></div>
+              <div class="otv-scene-wrap">
+                <canvas id="otvScene" width="1080" height="620" tabindex="0" role="img" aria-label="Interactive 3D view of two generic reservoir modules connected by a flow line. Drag to orbit, use the mouse wheel to zoom."></canvas>
+                <div class="otv-scene-top"><span>SYNTHETIC TRANSFER / NOT TO SCALE</span><span id="otvSceneMode">NOMINAL</span></div>
+                <div class="otv-scene-label otv-scene-left">SOURCE <strong id="otvSourceMass">100.000</strong></div>
+                <div class="otv-scene-label otv-scene-right">RECEIVER <strong id="otvReceiverMass">12.000</strong></div>
+                <div class="otv-scene-bottom"><span id="otvSceneValve">VALVE: CLOSED</span><span>DRAG · ORBIT &nbsp; / &nbsp; SCROLL · ZOOM</span></div>
+              </div>
+              <div class="otv-timeline"><div class="otv-timeline-top"><span>REPLAY POSITION</span><output id="otvFrameLabel" for="otvFrame">T+000 / 095</output></div><input id="otvFrame" type="range" min="0" max="95" value="0" step="1" aria-label="Choose telemetry frame"></div>
+            </section>
+            <aside class="otv-card otv-control-card" aria-labelledby="otvControlsTitle">
+              <div class="otv-card-head"><div><span class="otv-overline">02 / TEST EXECUTION</span><h2 id="otvControlsTitle">Inject a failure</h2></div></div>
+              <p class="otv-small">Change one condition. The verifier checks all six invariants over the same deterministic synthetic trace.</p>
+              <label for="otvScenario">Scenario</label>
+              <select id="otvScenario">
+                <option value="nominal">Nominal transfer</option>
+                <option value="leak" selected>Unaccounted transfer loss</option>
+                <option value="valve-stuck">Valve command mismatch</option>
+                <option value="thermal">Thermal excursion</option>
+                <option value="pressure">Pressure excursion</option>
+                <option value="sensor-drift">Sensor drift</option>
+                <option value="event-reorder">Out-of-order telemetry</option>
+              </select>
+              <label for="otvSeed">Deterministic seed</label>
+              <input id="otvSeed" type="number" value="1729" min="0" max="999999999" step="1" inputmode="numeric">
+              <p class="otv-small" id="otvScenarioDescription">A portion of outgoing mass does not reach the receiving reservoir.</p>
+              <div class="otv-control-actions"><button type="button" id="otvRun" class="otv-primary">Run verification <span aria-hidden="true">▶</span></button><button type="button" id="otvPause" class="otv-ghost">Pause</button></div>
+              <div class="otv-divider"></div>
+              <div class="otv-result-top"><span>VERIFICATION RESULT</span><span id="otvResultStatus" class="otv-status">—</span></div>
+              <p id="otvResultSummary" class="otv-result-summary" role="status" aria-live="polite">Select a scenario and run the verifier.</p>
+              <div class="otv-mini-data"><div><span>First detected violation</span><strong id="otvFirstFault">—</strong></div><div><span>Seed / events</span><strong id="otvSeedEvents">1729 / 96</strong></div></div>
+              <div class="otv-divider"></div>
+              <div class="otv-export-head">EXPORT REPRODUCIBLE EVIDENCE</div>
+              <div class="otv-export-actions"><button type="button" id="otvExportEvidence" class="otv-ghost">Evidence JSON ↓</button><button type="button" id="otvExportFeature" class="otv-ghost">BDD blueprint ↓</button></div>
+              <p class="otv-fine">Evidence is SHA-256 hashed locally. It is not signed, independently attested, or executed by DamageBDD nodes yet.</p>
+            </aside>
+          </div>
+          <div class="otv-stats" aria-label="Verification summary">
+            <article class="otv-stat"><span>CHECKS / INVARIANT TYPES</span><strong id="otvChecks">06</strong><small>Dimensionless benchmark rules</small></article>
+            <article class="otv-stat"><span>FAILED INVARIANTS</span><strong id="otvFailures">—</strong><small id="otvFailuresNote">Awaiting run</small></article>
+            <article class="otv-stat"><span>PEAK MASS RESIDUAL</span><strong id="otvResidual">—</strong><small>Normalised mass units</small></article>
+            <article class="otv-stat"><span>EVIDENCE DIGEST</span><strong class="otv-hash" id="otvDigest">—</strong><small>SHA-256 · local only</small></article>
+          </div>
+          <div class="otv-lower-grid">
+            <section class="otv-card otv-telemetry" aria-labelledby="otvTelemetryTitle"><div class="otv-card-head"><div><span class="otv-overline">03 / REPLAYABLE TELEMETRY</span><h2 id="otvTelemetryTitle">Mass balance and constraint violations</h2></div></div>
+              <div class="otv-chart-key"><span><i class="otv-key-cyan"></i> Source mass</span><span><i class="otv-key-amber"></i> Receiver reported</span><span><i class="otv-key-red"></i> Mass residual</span></div>
+              <canvas id="otvChart" width="1050" height="310" role="img" aria-label="Deterministic chart of source mass, measured receiving-reservoir mass and mass-balance residual across the transfer"></canvas>
+              <p class="otv-fine">Mass units are arbitrary. Each signal uses its own visual axis; rules evaluate unscaled values.</p>
+            </section>
+            <section class="otv-card otv-findings" aria-labelledby="otvFindingsTitle"><div class="otv-card-head"><div><span class="otv-overline">04 / EXPLAINABLE VERIFICATION</span><h2 id="otvFindingsTitle">Invariant findings</h2></div></div>
+              <div id="otvFindings" class="otv-findings-list" aria-live="polite"><p>Run a scenario to inspect rule-level evidence.</p></div>
+            </section>
+            <section class="otv-card otv-ecai" aria-labelledby="otvEcaiTitle"><div class="otv-card-head"><div><span class="otv-overline">05 / RETRIEVAL WORKBENCH</span><h2 id="otvEcaiTitle">ECAI hypothesis lane</h2></div><span class="otv-chip">LOCAL INDEX</span></div>
+              <p class="otv-small">Comparable failure signatures from a local reference atlas. This is a deterministic stand-in for the proposed ECAI retrieval integration, <strong>not native curve retrieval</strong>.</p>
+              <div id="otvAnalogues" class="otv-analogues">No failure signature to retrieve.</div>
+              <div class="otv-next"><span class="otv-next-title">ENGINEERING BRIDGE</span><p>ECAI: candidate retrieval and counterexample search. DamageBDD: independent execution, signed test reports and cross-node replay. Both are proposed next-stage integrations.</p></div>
+            </section>
+          </div>
+          <footer class="otv-footer"><span>OTV-001 · Independent public research demonstrator</span><span>NOT SPACEX-AFFILIATED · NO FLIGHT DATA · NO SAFETY CERTIFICATION</span></footer>
+        </section>
 
         {{{evaluation_panel}}}
 
@@ -832,6 +917,7 @@
               </div><p class="context-hint">These controls update the existing code_model_* runtime settings. A save does not cancel active requests. Billing-sensitive failures retain the existing no-ambiguous-retry protections.</p></details>
             </fieldset>
           </form>
+          <div id="providerBddRouting">{{{bdd_routing}}}</div>
           <section class="surface panel-pad"><div class="eyebrow">DAMAGEBDD INTEGRATION</div><h2>AI profiles</h2><div id="llmDamageProfiles" class="llm-profile-list">Not loaded.</div><p class="context-hint">Profiles using damage_ai_ecai use the DamageBDD AI role. Existing damage_ai_openai profiles and agent backends stay unchanged. Account allowlists, skill contracts and execution gates remain in DamageBDD.</p></section>
         </section>
 
@@ -907,6 +993,6 @@
   <script type="module" src="/static/js/ecai-compute-settings.js?v=compute-only-v1&aws-setup=automatic-aws-v1"></script>
   <script type="module" src="/static/js/ecai-keys.js"></script>
   <script type="module" src="/static/js/ecai-index-mint-settings.js?v=index-mint-settings-v1"></script>
-  <script type="module" src="/static/js/ecai-console.js?v=llm-settings-v1-model-internals-v1-personality-conversations-v1-personalities-v1-video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-explorer-v2-kernel-v1-eval-v1-source-retrieval-v1-knowledge-v2-compute-only-v1&index-mint=index-mint-v1-sidebar-settings-v1&chat=wide-v2"></script>
+  <script type="module" src="/static/js/ecai-console.js?v=dashboard-agents-v1-llm-settings-v1-model-internals-v1-personality-conversations-v1-personalities-v1-video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-explorer-v2-kernel-v1-eval-v1-source-retrieval-v1-knowledge-v2-compute-only-v1&index-mint=index-mint-v1-sidebar-settings-v1&chat=wide-v2&orbital=otv001-v1"></script>
 </body>
 </html>

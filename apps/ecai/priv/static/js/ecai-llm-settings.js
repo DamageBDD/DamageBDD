@@ -6,7 +6,7 @@ export function initLlmSettings({request, canManage}) {
   const root = document.querySelector('[data-panel="ai-providers"]');
   if (!root) return {refresh() {}, reset() {}, accessChanged() {}, setVisible() {}};
   const roles = [["learning", "Learning"], ["audit", "Audit"], ["patch", "Repair"],
-    ["synthesis", "Synthesis"], ["chat", "Chat"], ["bdd", "DamageBDD AI"]];
+    ["synthesis", "Synthesis"], ["chat", "Chat"], ["bdd", "BDD authoring & AI profiles"]];
   const providers = {ollama: "Ollama", openai: "OpenAI", anthropic: "Claude / Anthropic"};
   const fields = {id: "llmId", provider: "llmProvider", host: "llmHost", port: "llmPort",
     transport: "llmTransport", default_model: "llmModel", models: "llmModels", enabled: "llmEnabled",

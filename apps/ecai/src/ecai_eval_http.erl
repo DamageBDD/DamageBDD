@@ -4,6 +4,10 @@
 trails() ->
     [trail("/ecai/eval/settings", settings, [get, post]),
      trail("/ecai/eval/admin/settings", admin_settings, [get, post]),
+     trail("/ecai/eval/profiles", profiles, [get, post]),
+     trail("/ecai/eval/profiles/:id/comparisons", profile_comparison, [post]),
+     trail("/ecai/eval/profiles/:id/evidence", profile_evidence, [get]),
+     trail("/ecai/eval/profiles/:id", profile, [get]),
      trail("/ecai/eval/suites", suites, [get, post]),
      trail("/ecai/eval/suites/:id/approve", approve_suite, [post]),
      trail("/ecai/eval/suites/:id", suite, [get]),
@@ -56,7 +60,8 @@ route(Action, <<"GET">>, O, Admin, Req, State) ->
 route(Action, <<"POST">>, O, Admin, Req0, State) ->
     case read_json(Req0, case Action of suites -> 2*1024*1024; _ -> 65536 end) of
         {ok, Input, Req} ->
-            Op = case Action of settings -> save_settings; suites -> import_suite; runs -> submit; _ -> Action end,
+            Op = case Action of settings -> save_settings; suites -> import_suite; runs -> submit;
+                profiles -> import_profile; _ -> Action end,
             %% Path IDs are authoritative; conflicting JSON IDs are rejected.
             try bindings(Op, Req, Input) of B -> result(call(Op, O, Admin, B), Req, State)
             catch throw:{eval_error, Why} -> result({error, Why}, Req, State) end;
@@ -64,6 +69,7 @@ route(Action, <<"POST">>, O, Admin, Req0, State) ->
     end.
 bindings(Action, Req, B) ->
     Keys = case Action of attempt -> [id, task_id];
+        profile -> [id]; profile_comparison -> [id]; profile_evidence -> [id];
         suite -> [id]; run -> [id]; evidence -> [id]; cancel -> [id]; approve_suite -> [id]; _ -> [] end,
     lists:foldl(fun(K, Acc) ->
         KB = atom_to_binary(K, utf8), V = cowboy_req:binding(K, Req),

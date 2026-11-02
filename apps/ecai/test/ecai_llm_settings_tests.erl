@@ -94,7 +94,22 @@ settings_roundtrip() ->
             #{<<"revision">> => 1, <<"config">> => Empty}, <<"unit-operator">>)),
         ?assertEqual({ok, []}, ecai_llm_settings:nodes()),
         ?assertEqual([], maps:get(nodes, ecai_ollama_pool:status())),
-        ?assertEqual({ok, #{}}, ecai_ollama_pool:evaluation_configurations())
+        ?assertEqual({ok, #{}}, ecai_ollama_pool:evaluation_configurations()),
+        Route = #{<<"provider">> => <<"ollama">>, <<"model">> => <<"explicit-model">>},
+        ?assertEqual({ok,3},ecai_llm_settings:update_bdd(
+            #{<<"revision">> => 2,<<"route">> => Route},<<"unit-operator">>)),
+        ?assertEqual(#{provider => ollama,model => <<"explicit-model">>,routing_revision => 3},
+            ecai_llm_settings:bdd_options()),
+        ?assertMatch(#{connections := [],remote_allowed := false},ecai_llm_settings:bdd_status()),
+        ?assertEqual({error,stale_revision},ecai_llm_settings:update_bdd(
+            #{<<"revision">> => 2,<<"route">> => Route},<<"unit-operator">>)),
+        %% An older provider editor must not reset a saved authoring preference.
+        ?assertMatch({ok,#{revision := 4}},ecai_llm_settings:update(
+            #{<<"revision">> => 3,<<"config">> => maps:remove(<<"bdd_route">>,Empty)},<<"unit-operator">>)),
+        ?assertMatch(#{route := Route},ecai_llm_settings:bdd_status()),
+        ok = gen_server:stop(ecai_llm_settings),
+        {ok,_} = ecai_llm_settings:start_link(#{file => File}),
+        ?assertMatch(#{route := Route,revision := 4},ecai_llm_settings:bdd_status())
     after
         stop(ecai_ollama_pool), stop(ecai_llm_settings),
         [restore(K, V) || {K,V} <- Before],
@@ -104,3 +119,13 @@ settings_roundtrip() ->
 stop(Name) -> case whereis(Name) of undefined -> ok; _ -> gen_server:stop(Name) end.
 restore(K, undefined) -> application:unset_env(ecai, K);
 restore(K, {ok, V}) -> application:set_env(ecai, K, V).
+
+
+bdd_route_validation_test_() ->
+    C = config(connection()),
+    Route = #{<<"provider">> => <<"ollama">>, <<"model">> => <<>>},
+    [?_assertMatch({ok,_},ecai_llm_settings:validate(C#{<<"bdd_route">> => Route},[])),
+     ?_assertMatch({ok,_},ecai_llm_settings:validate(C#{<<"bdd_route">> => Route#{<<"provider">> => <<"any">>}},[])),
+     ?_assertMatch({error,_},ecai_llm_settings:validate(C#{<<"bdd_route">> => Route#{<<"host">> => <<"attacker.invalid">>}},[])),
+     ?_assertMatch({error,_},ecai_llm_settings:validate(C#{<<"bdd_route">> => Route#{<<"provider">> => <<"arbitrary">>}},[])),
+     ?_assertMatch({error,_},ecai_llm_settings:validate(C#{<<"bdd_route">> => Route#{<<"model">> => binary:copy(<<"x">>,257)}},[]))].

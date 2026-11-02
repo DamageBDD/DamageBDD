@@ -4,7 +4,8 @@ export function initEvaluation({request, currentToken, managedSession, isAdmin, 
   const root = document.querySelector('[data-panel="evaluation"]');
   if (!root) return {refresh:async()=>{}, reset(){}, accessChanged(){}, setVisible(){}, dispose(){}};
   const state = {epoch:0, visible:false, loading:false, disposed:false, controllers:new Set(), snapshot:null,
-    node:null, selectedRun:null, runData:null, review:null, timer:null, fields:new Map(), nodeFields:new Map()};
+    node:null, selectedRun:null, runData:null, review:null, timer:null, fields:new Map(), nodeFields:new Map(),
+    profiles:null, profile:null, profileRequest:0, profileListRequest:0};
   const esc = encodeURIComponent;
   function el(tag, text, cls) {const x=document.createElement(tag); if(text!==undefined)x.textContent=String(text); if(cls)x.className=cls; return x;}
   function status(text='', error=false) {$('evalStatus').textContent=text; $('evalStatus').dataset.error=String(error);}
@@ -37,6 +38,7 @@ export function initEvaluation({request, currentToken, managedSession, isAdmin, 
     root.querySelectorAll('[data-eval-tab]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.evalTab===name)));
     if(name==='reviews')void act(loadReviews);
     if(name==='node')void act(loadNode);
+    if(name==='profiles')void act(loadProfiles);
   }
   function accessChanged() {
     const yes=!!managedSession();$('evalAccess').hidden=yes;$('evalWorkspace').hidden=!yes;$('evalNodeTab').hidden=!yes||!isAdmin();
@@ -132,6 +134,86 @@ export function initEvaluation({request, currentToken, managedSession, isAdmin, 
     $('evalNodeFields').replaceChildren();state.nodeFields.clear();
     for(const f of n.fields){const data=field(f.name,f.value,{...f,node:true,kind:f.type});state.nodeFields.set(f.name,data);$('evalNodeFields').append(data.label);}
   }
+  const profileLabels={draft:'Draft objective',recipe_saved:'Recipe saved',comparison_linked:'Comparison linked'};
+  const profilePlan='Discover on development cases only. Freeze the recipe before test/holdout evaluation. Compare no steering, fixed steering, ECAI-selected steering and simple lookup using identical context and generation limits. Measure scenario pass rate, regressions, latency and cost when available.';
+  function profileStatus(p) {return p.comparisons?.length?'comparison_linked':p.spec.intervention.kind==='unconfigured'?'draft':'recipe_saved';}
+  async function loadProfiles() {
+      const seq=++state.profileListRequest,data=await api('/profiles');
+      if(seq!==state.profileListRequest)return;state.profiles=data;
+      $('evalProfileCapability').textContent=data.capabilities.reason;
+      const host=$('evalProfileTemplates');host.replaceChildren();
+      for(const spec of data.templates){const card=el('article',undefined,'eval-profile-card');
+        card.append(el('h3',spec.name),el('p',spec.objective),button('Start draft',()=>fillProfileDraft(spec)));host.append(card);}
+      const metrics=$('evalProfileMetrics');metrics.replaceChildren();
+      for(const [label,value] of [['Saved profiles',data.items.length],['Defined recipes',data.items.filter(p=>p.spec.intervention.kind!=='unconfigured').length],
+        ['Linked comparisons',data.items.reduce((n,p)=>n+p.comparison_count,0)],['Executable here',0]]){
+        const box=el('div',undefined,'eval-metric');box.append(el('strong',value),el('span',label));metrics.append(box);}
+      renderProfiles();
+  }
+  function renderProfiles() {
+    const host=$('evalProfileList');host.replaceChildren();if(!state.profiles)return;
+    const query=$('evalProfileSearch').value.trim().toLowerCase(),filter=$('evalProfileFilter').value;
+    const items=state.profiles.items.filter(p=>(filter==='all'||p.status===filter)&&
+      [p.spec.name,p.spec.objective,p.spec.model,...p.spec.tags].join(' ').toLowerCase().includes(query));
+    if(!items.length){host.append(el('p',state.profiles.items.length?'No profiles match these filters.':'No saved profiles yet. Start with a hypothesis above or create a draft.','context-hint'));return;}
+    for(const p of items){const s=p.spec,card=el('article',undefined,'eval-profile-card'),tags=el('div',undefined,'eval-profile-tags');
+      for(const tag of s.tags)tags.append(el('span',tag));
+      card.append(el('span',profileLabels[p.status]||p.status,'status-tag'),el('h3',s.name),el('p',s.objective),
+        el('p',`${s.model} · ${s.quantization} · ${s.model_revision?'Revision recorded':'Revision not pinned'}`,'context-hint'),tags,
+        el('p',`${p.comparison_count} linked comparison(s) · Steering not attested`,'context-hint'),button('Inspect profile',()=>openProfile(p.id)));
+      host.append(card);}
+  }
+  async function openProfile(id) {
+    const seq=++state.profileRequest,p=await api(`/profiles/${esc(id)}`);
+    if(seq!==state.profileRequest)return;renderProfile(p);
+  }
+  function renderProfile(p) {
+    state.profile=p;$('evalProfileDetailPanel').hidden=false;
+    $('evalProfileTitle').textContent=p.spec.name;$('evalProfileObjective').textContent=p.spec.objective;
+    $('evalProfileState').textContent=profileLabels[profileStatus(p)];
+    $('evalProfileIdentity').textContent=`${p.spec.model} · Revision: ${p.spec.model_revision||'not pinned'} · ${p.spec.quantization} · Profile ${p.id}`;
+    showJSON('evalProfileSpec',p.spec);$('evalProfileComparisonDetail').hidden=true;$('evalProfileComparisonDetail').replaceChildren();
+    const percent=n=>`${(n/100).toFixed(1)}%`;
+    table('evalProfileComparisons',['Split / method','Baseline → candidate','Paired changes','Conditions','Inspect'],p.comparisons.map(c=>{
+      const counts=c.comparison.counts;
+      return [ `${c.split} / ${c.selection_method}`,`${percent(c.baseline_metrics.pass_bps)} → ${percent(c.candidate_metrics.pass_bps)}`,
+        `${counts.candidate_improvement||0} improved · ${counts.candidate_regression||0} regressed · ${c.comparison.pairs} pairs`,
+        `${c.settings_match?'Settings match':'Settings differ'} · Steering not attested`,button('Evidence',()=>{
+          showJSON('evalProfileComparisonDetail',c);$('evalProfileComparisonDetail').hidden=false;
+        }) ];
+    }));
+  }
+  function fillProfileDraft(spec) {
+    $('evalProfileName').value=spec.name;$('evalProfileGoal').value=spec.objective;
+    $('evalProfileModel').value=spec.model;$('evalProfileRevision').value=spec.model_revision||'';
+    $('evalProfileQuantization').value=spec.quantization;$('evalProfileTags').value=spec.tags.join(', ');
+    $('evalProfileKind').value=spec.intervention.kind;
+    $('evalProfileIntervention').value=JSON.stringify(spec.intervention,null,2);$('evalProfileNotes').value=spec.evaluation_notes;
+    $('evalProfileEditor').scrollIntoView({block:'start'});$('evalProfileName').focus();
+    status('Draft loaded. Saving creates a snapshot; no model request is sent.');
+  }
+  function profileDraft() {
+    const intervention=JSON.parse($('evalProfileIntervention').value);
+    if(intervention?.kind!==$('evalProfileKind').value)throw new Error('Intervention kind must match the selected kind.');
+    const draft={schema:'ecai-qwen-profile/v1',name:$('evalProfileName').value.trim(),objective:$('evalProfileGoal').value.trim(),
+      model:$('evalProfileModel').value.trim(),model_revision:$('evalProfileRevision').value.trim()||null,
+      quantization:$('evalProfileQuantization').value.trim(),tags:$('evalProfileTags').value.split(',').map(t=>t.trim()).filter(Boolean),
+      intervention,evaluation_notes:$('evalProfileNotes').value.trim()};
+    if(new TextEncoder().encode(JSON.stringify(draft)).length>65536)throw new Error('Profile exceeds 64 KiB.');
+    return draft;
+  }
+  function exportJSON(value,name) {
+    const url=URL.createObjectURL(new Blob([JSON.stringify(value,null,2)],{type:'application/json'}));
+    const a=el('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+  function importProfileDraft(spec) {
+    if(spec?.schema!=='ecai-qwen-profile/v1'||typeof spec.name!=='string'||typeof spec.objective!=='string'||
+      typeof spec.model!=='string'||typeof spec.quantization!=='string'||typeof spec.evaluation_notes!=='string'||
+      !(spec.model_revision===null||typeof spec.model_revision==='string')||!Array.isArray(spec.tags)||
+      !spec.tags.every(t=>typeof t==='string')||!['unconfigured','neurons','vector'].includes(spec.intervention?.kind))
+      throw new Error('Import a recipe exported as ecai-qwen-profile/v1.');
+    fillProfileDraft(spec);
+  }
   async function sample(name) {
     const epoch=state.epoch;const resp=await fetch(`/static/eval/${name}.json`,{mode:'same-origin',cache:'no-store'});
     if(!resp.ok)throw new Error('Example not available');const text=await resp.text();if(epoch!==state.epoch)return;
@@ -151,6 +233,41 @@ export function initEvaluation({request, currentToken, managedSession, isAdmin, 
   $('evalLoadTrading').addEventListener('click',()=>void act(()=>sample('paper-trading')));
   $('evalDatasetFile').addEventListener('change',()=>void act(async()=>{const file=$('evalDatasetFile').files?.[0];if(!file)return;if(file.size>2097152)throw new Error('Dataset exceeds 2 MiB');const epoch=state.epoch;const text=await file.text();if(epoch===state.epoch)$('evalDatasetInput').value=text;}));
   $('evalOutcomeFilter').addEventListener('change',renderCases);
+  $('evalProfileSearch').addEventListener('input',renderProfiles);
+  $('evalProfileFilter').addEventListener('change',renderProfiles);
+  $('evalProfilesRefresh').addEventListener('click',()=>void act(loadProfiles));
+  $('evalProfileNew').addEventListener('click',()=>fillProfileDraft({name:'',objective:'',model:'Qwen/Qwen3.5-4B',model_revision:null,
+    quantization:'unspecified',tags:[],intervention:{kind:'unconfigured'},evaluation_notes:profilePlan}));
+  $('evalProfileEdit').addEventListener('click',()=>{if(state.profile)fillProfileDraft(state.profile.spec);});
+  $('evalProfileKind').addEventListener('change',()=>{
+    const kind=$('evalProfileKind').value,base={kind,hook:'mlp.down_proj.output',token_scope:'generated',normalization:'residual_norm'};
+    const recipe=kind==='unconfigured'?{kind}:kind==='neurons'?{...base,neurons:[]}:
+      {...base,hook:'residual.post_layer',layer:null,vector_sha256:'',dose_milli:0};
+    $('evalProfileIntervention').value=JSON.stringify(recipe,null,2);
+  });
+  $('evalProfileFile').addEventListener('change',()=>void act(async()=>{
+    const file=$('evalProfileFile').files?.[0];if(!file)return;if(file.size>65536)throw new Error('Profile exceeds 64 KiB.');
+    const epoch=state.epoch,text=await file.text();if(epoch===state.epoch&&!state.disposed)importProfileDraft(JSON.parse(text));
+  }));
+  $('evalProfileExport').addEventListener('click',()=>{if(state.profile)exportJSON(state.profile.spec,`qwen-profile-${state.profile.id}.json`);});
+  $('evalProfileReceipt').addEventListener('click',()=>void act(async()=>{
+    const id=state.profile?.id;if(id)exportJSON(await api(`/profiles/${esc(id)}/evidence`),`qwen-profile-evidence-${id}.json`);
+  }));
+  $('evalProfileUseComparison').addEventListener('click',()=>{
+    for(const suffix of ['Baseline','BaselineTarget','Candidate','CandidateTarget'])$('evalProfile'+suffix).value=$('eval'+suffix).value;
+    status('Copied comparison IDs. Review both arms and add observations before linking.');
+  });
+  onForm('evalProfileForm',async()=>{
+    const p=await api('/profiles',profileDraft());++state.profileRequest;renderProfile(p);await loadProfiles();
+    status('Profile snapshot saved. Activation steering is not connected; no model request was sent.');
+  });
+  onForm('evalProfileLinkForm',async()=>{
+    const id=state.profile?.id;if(!id)throw new Error('Inspect a saved profile first.');
+    const p=await api(`/profiles/${esc(id)}/comparisons`,{baseline:$('evalProfileBaseline').value.trim(),candidate:$('evalProfileCandidate').value.trim(),
+      baseline_target:$('evalProfileBaselineTarget').value.trim(),candidate_target:$('evalProfileCandidateTarget').value.trim(),
+      selection_method:$('evalProfileMethod').value,note:$('evalProfileLinkNote').value.trim()});
+    if(state.profile?.id===id)renderProfile(p);await loadProfiles();status('Observed comparison linked. Steering execution remains unattested.');
+  });
   $('evalEvidence').addEventListener('click',()=>void act(downloadEvidence));
   $('evalCancel').addEventListener('click',()=>void act(async()=>{if(state.selectedRun&&confirm('Cancel remaining work? A dispatched request may already be billable.')){await api(`/runs/${esc(state.selectedRun)}/cancel`,{});await refresh();}}));
   onForm('evalImportForm',async()=>{const raw=$('evalDatasetInput').value;if(new TextEncoder().encode(raw).length>2097152)throw new Error('Dataset exceeds 2 MiB');const s=await api('/suites',JSON.parse(raw));$('evalApproveId').value=s.id;status('Snapshot saved. Annotation approval is required before running it.');await refresh();});
@@ -165,8 +282,13 @@ export function initEvaluation({request, currentToken, managedSession, isAdmin, 
   onForm('evalCompareForm',async()=>showJSON('evalComparison',await api('/compare',{baseline:$('evalBaseline').value.trim(),candidate:$('evalCandidate').value.trim(),baseline_target:$('evalBaselineTarget').value.trim(),candidate_target:$('evalCandidateTarget').value.trim()})));
   function reset() {
     state.epoch++;for(const c of state.controllers)c.abort();state.controllers.clear();state.loading=false;state.snapshot=null;state.node=null;state.selectedRun=null;state.runData=null;state.review=null;state.fields.clear();state.nodeFields.clear();
-    for(const id of ['evalRunList','evalSuiteList','evalReviewList','evalReviewDetail','evalAccountFields','evalNodeFields','evalEffective','evalSuiteDetail','evalTrial','evalCases','evalTargets','evalMetrics','evalFindings','evalComparison'])$(id).replaceChildren();
+    state.profiles=null;state.profile=null;state.profileRequest++;state.profileListRequest++;
+    for(const id of ['evalRunList','evalSuiteList','evalReviewList','evalReviewDetail','evalAccountFields','evalNodeFields','evalEffective','evalSuiteDetail','evalTrial','evalCases','evalTargets','evalMetrics','evalFindings','evalComparison',
+      'evalProfileTemplates','evalProfileList','evalProfileMetrics','evalProfileTitle','evalProfileObjective','evalProfileIdentity','evalProfileState',
+      'evalProfileSpec','evalProfileComparisons','evalProfileComparisonDetail'])$(id).replaceChildren();
     for(const form of root.querySelectorAll('form'))form.reset();$('evalRunSuite').replaceChildren();$('evalDatasetInput').value='';$('evalRunKey').value=newKey();$('evalReportPanel').hidden=true;status();accessChanged();
+    $('evalProfileDetailPanel').hidden=true;$('evalProfileCapability').textContent='Open the catalogue to load profiles.';
+    $('evalProfileSearch').value='';$('evalProfileFilter').value='all';$('evalProfileFile').value='';
   }
   function setVisible(visible) {state.visible=visible;accessChanged();if(visible&&managedSession())void act(refresh);}
   state.timer=setInterval(()=>{if(state.visible&&!document.hidden&&managedSession())void act(refresh);},5000);
