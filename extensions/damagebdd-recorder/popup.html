@@ -1,0 +1,15 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DamageBDD Recorder</title><link rel="stylesheet" href="ui.css"></head>
+<body class="popup"><main>
+  <header class="brand"><span class="logo">D<span class="logo-mark">.</span></span><span class="brand-name">Damage<span>BDD</span><small>RECORDER</small></span><button class="icon-button" id="openEditor" title="Open feature editor" aria-label="Open feature editor">↗</button></header>
+  <section class="popup-hero"><div class="eyebrow">BROWSER TO BEHAVIOUR</div><h1>Show it once.<br><span>Test it forever.</span></h1><p>Turn what you do in a browser into plain-language tests your team can replay.</p></section>
+  <section class="panel"><div class="section-heading"><h2>Your recording</h2><span class="state-pill" id="statePill">Ready</span></div><div class="target"><span class="target-icon">◎</span><div><strong id="siteName">Current browser tab</strong><small id="siteUrl">Choose a page to record</small></div></div>
+    <div class="record-row" id="recordRow"><span class="step-number" id="stepCount">0</span><span class="muted">steps captured</span><span id="recordHint" class="record-hint">Nothing recorded yet</span></div>
+    <p class="message hidden" id="message" role="status"></p>
+    <button class="primary-button wide" id="startButton"><span class="record-dot"></span> Start recording</button>
+    <div class="two-buttons hidden" id="controls"><button class="outline-button" id="pauseButton">Pause</button><button class="primary-button" id="stopButton">Finish recording</button></div>
+    <button class="light-button wide hidden" id="assertButton">✚ Add a text assertion</button>
+    <button class="light-button wide" id="reviewButton">View & edit Gherkin <span>→</span></button>
+  </section>
+  <section class="guide"><div class="eyebrow">THREE EASY STEPS</div><div class="guide-item"><i>1</i><p><strong>Record</strong><small>Click, type and navigate naturally.</small></p></div><div class="guide-item"><i>2</i><p><strong>Review</strong><small>Make each step clear and meaningful.</small></p></div><div class="guide-item"><i>3</i><p><strong>Replay</strong><small>Export a .feature file for DamageBDD.</small></p></div></section>
+  <footer class="popup-footer"><span>● Local-first · No automatic uploads</span><a href="https://damagebdd.com" target="_blank" rel="noreferrer">damagebdd.com ↗</a></footer>
+</main><script type="module" src="popup.js"></script></body></html>

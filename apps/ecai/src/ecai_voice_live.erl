@@ -103,6 +103,7 @@ handle_info(next_tick, S) ->
 handle_info({voice_result, Ref, Result}, S = #{worker := {_, Ref, _}}) ->
     N = maps:get(counter, S),
     io:format("~n[ECAI voice sample ~B] ~tp~n", [N, Result]),
+    ecai_voice_ui:result(?MODULE, Result),
     S1 = S#{result => Result},
     {noreply, S1};
 handle_info({'DOWN', Ref, process, Pid, Reason}, S = #{worker := {Pid, _, Ref}}) ->
@@ -184,7 +185,8 @@ execute(#{opts := O, profile := Profile, dir := Dir}, N) ->
             Error ->
                 erlang:error({invalid_capture, Error})
         end,
-        Result = ecai_voice:identify(Profile, {wav, Sample}, maps:get(backend, O)),
+        Result = ecai_voice_ui:work(?MODULE, fun() ->
+            ecai_voice:identify(Profile, {wav, Sample}, maps:get(backend, O)) end),
         ok = file:write_file(Base ++ ".result.term", io_lib:format("~tp.~n", [Result]), [exclusive]),
         Result
     after
@@ -203,15 +205,24 @@ command(Name, Args, Timeout) ->
                 stderr_to_stdout,
                 {args, Args}
             ]),
-            await_port(Port, erlang:monotonic_time(millisecond) + Timeout)
+            Token = ecai_voice_ui:begin_audio(?MODULE, Name, Args),
+            try
+                Result = await_port(Port, erlang:monotonic_time(millisecond) + Timeout, Token),
+                ecai_voice_ui:end_audio(Token, ok), Result
+            catch C:E:Stack ->
+                ecai_voice_ui:end_audio(Token, error), erlang:raise(C,E,Stack)
+            after
+                try port_close(Port) catch error:badarg -> ok end
+            end
     end.
-await_port(Port, Deadline) ->
+await_port(Port, Deadline, Token) ->
     Remaining = max(0, Deadline - erlang:monotonic_time(millisecond)),
+    case Remaining of 0 -> erlang:error(audio_command_timeout); _ -> ok end,
     receive
-        {Port, {data, _}} -> await_port(Port, Deadline);
+        {Port, {data, _}} -> await_port(Port, Deadline, Token);
         {Port, {exit_status, 0}} -> ok;
         {Port, {exit_status, Code}} -> erlang:error({audio_command_failed, Code})
-    after Remaining ->
-        port_close(Port),
-        erlang:error(audio_command_timeout)
+    after min(Remaining, 100) ->
+        ecai_voice_ui:tick(Token),
+        await_port(Port, Deadline, Token)
     end.

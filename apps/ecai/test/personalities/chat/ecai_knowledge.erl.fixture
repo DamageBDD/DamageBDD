@@ -1,0 +1,11 @@
+%% Test-only unified search stub. No external search or network calls.
+-module(ecai_knowledge).
+-export([validate_indexes/1, context/4]).
+validate_indexes(all) -> {ok, all};
+validate_indexes(Ids) when is_list(Ids) -> {ok, Ids};
+validate_indexes(_) -> {error, invalid_index_selection}.
+context(_Principal, _Query, _K, #{indexes := Indexes, matching := bool_prefix}) ->
+    Mode = case Indexes of all -> all; _ -> selected end,
+    Ids = case Indexes of all -> []; _ -> Indexes end,
+    {ok, [], #{selection => #{mode => Mode, indexes => Ids},
+        matching => bool_prefix, count => 0, partial => false, backends => []}}.

@@ -1,0 +1,4 @@
+-module(playlist).
+-export([add_files/1,sync_current_path/1]).
+add_files(Paths)->whereis(playlist)!{added,Paths},{ok,Paths}.
+sync_current_path(Path)->{ok,Path}.

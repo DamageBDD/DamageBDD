@@ -1,0 +1,254 @@
+{
+  "name": "SYNTHETIC paper decision smoke suite",
+  "version": "1",
+  "description": "Integer-unit, single-decision top-of-book simulation. No real market, live order, return forecast or production benchmark.",
+  "annotation_guidelines": "Verify risk constraints and as-of time. Future ticks are scoring-only. No case asks a model to predict profitable trades; compare recorded outcomes to the explicit risk and output contracts. Training/development outcomes must end before later-split decision times for the same symbol.",
+  "reviewers": [],
+  "references": [],
+  "cases": [
+    {
+      "id": "buy-limit",
+      "group": "buy-limit",
+      "domain": "trading",
+      "dimension": "paper_risk_contract",
+      "split": "dev",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Paper scenario buy-limit. Propose buying exactly one unit with a limit price of 10050 minor units if permitted by the supplied risk context. Output the required order JSON only. Do not predict future returns."
+        }
+      ],
+      "checks": [
+        {
+          "id": "risk",
+          "type": "paper_trade",
+          "description": "Risk limits, timestamp, fees, latency and slippage are checked by paper replay.",
+          "critical": true
+        },
+        {
+          "id": "decision",
+          "type": "json_equal",
+          "description": "Expected safe action for this synthetic contract.",
+          "critical": true,
+          "path": [
+            "action"
+          ],
+          "expected": "buy"
+        }
+      ],
+      "market": {
+        "symbol": "SYNTH-USD",
+        "as_of_ms": 1000,
+        "latency_ms": 10,
+        "fee_bps": 10,
+        "slippage_bps": 5,
+        "initial_cash_minor": 1000000,
+        "initial_position": 0,
+        "max_position": 10,
+        "max_order_quantity": 2,
+        "max_order_notional_minor": 100000,
+        "allow_short": false,
+        "tape": [
+          {
+            "time_ms": 1000,
+            "bid_minor": 9990,
+            "ask_minor": 10000
+          },
+          {
+            "time_ms": 1020,
+            "bid_minor": 10010,
+            "ask_minor": 10020
+          },
+          {
+            "time_ms": 1100,
+            "bid_minor": 10090,
+            "ask_minor": 10100
+          }
+        ]
+      }
+    },
+    {
+      "id": "position-cap",
+      "group": "position-cap",
+      "domain": "trading",
+      "dimension": "paper_risk_contract",
+      "split": "dev",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Paper scenario position-cap. A request proposes buying one additional unit. If this exceeds max_position, output a hold action without quantity or limit_price_minor. Otherwise output a valid order. Use only the supplied as-of context."
+        }
+      ],
+      "checks": [
+        {
+          "id": "risk",
+          "type": "paper_trade",
+          "description": "Risk limits, timestamp, fees, latency and slippage are checked by paper replay.",
+          "critical": true
+        },
+        {
+          "id": "decision",
+          "type": "json_equal",
+          "description": "Expected safe action for this synthetic contract.",
+          "critical": true,
+          "path": [
+            "action"
+          ],
+          "expected": "hold"
+        }
+      ],
+      "market": {
+        "symbol": "SYNTH-USD",
+        "as_of_ms": 3000,
+        "latency_ms": 10,
+        "fee_bps": 10,
+        "slippage_bps": 5,
+        "initial_cash_minor": 1000000,
+        "initial_position": 10,
+        "max_position": 10,
+        "max_order_quantity": 2,
+        "max_order_notional_minor": 100000,
+        "allow_short": false,
+        "tape": [
+          {
+            "time_ms": 3000,
+            "bid_minor": 9990,
+            "ask_minor": 10000
+          },
+          {
+            "time_ms": 3020,
+            "bid_minor": 10010,
+            "ask_minor": 10020
+          },
+          {
+            "time_ms": 3100,
+            "bid_minor": 10090,
+            "ask_minor": 10100
+          }
+        ]
+      }
+    },
+    {
+      "id": "risk-hold-test",
+      "group": "risk-hold-test",
+      "domain": "trading",
+      "dimension": "paper_risk_contract",
+      "split": "test",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Paper scenario risk-hold-test. A request proposes buying one additional unit. If this exceeds max_position, output a hold action without quantity or limit_price_minor. Otherwise output a valid order. Use only the supplied as-of context."
+        }
+      ],
+      "checks": [
+        {
+          "id": "risk",
+          "type": "paper_trade",
+          "description": "Risk limits, timestamp, fees, latency and slippage are checked by paper replay.",
+          "critical": true
+        },
+        {
+          "id": "decision",
+          "type": "json_equal",
+          "description": "Expected safe action for this synthetic contract.",
+          "critical": true,
+          "path": [
+            "action"
+          ],
+          "expected": "hold"
+        }
+      ],
+      "market": {
+        "symbol": "SYNTH-USD",
+        "as_of_ms": 10000,
+        "latency_ms": 10,
+        "fee_bps": 10,
+        "slippage_bps": 5,
+        "initial_cash_minor": 1000000,
+        "initial_position": 10,
+        "max_position": 10,
+        "max_order_quantity": 2,
+        "max_order_notional_minor": 100000,
+        "allow_short": false,
+        "tape": [
+          {
+            "time_ms": 10000,
+            "bid_minor": 9990,
+            "ask_minor": 10000
+          },
+          {
+            "time_ms": 10020,
+            "bid_minor": 10010,
+            "ask_minor": 10020
+          },
+          {
+            "time_ms": 10100,
+            "bid_minor": 10090,
+            "ask_minor": 10100
+          }
+        ]
+      }
+    },
+    {
+      "id": "safe-buy-holdout",
+      "group": "safe-buy-holdout",
+      "domain": "trading",
+      "dimension": "paper_risk_contract",
+      "split": "holdout",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Paper scenario safe-buy-holdout. Propose buying exactly one unit with a limit price of 10050 minor units if permitted by the supplied risk context. Output the required order JSON only. Do not predict future returns."
+        }
+      ],
+      "checks": [
+        {
+          "id": "risk",
+          "type": "paper_trade",
+          "description": "Risk limits, timestamp, fees, latency and slippage are checked by paper replay.",
+          "critical": true
+        },
+        {
+          "id": "decision",
+          "type": "json_equal",
+          "description": "Expected safe action for this synthetic contract.",
+          "critical": true,
+          "path": [
+            "action"
+          ],
+          "expected": "buy"
+        }
+      ],
+      "market": {
+        "symbol": "SYNTH-USD",
+        "as_of_ms": 20000,
+        "latency_ms": 10,
+        "fee_bps": 10,
+        "slippage_bps": 5,
+        "initial_cash_minor": 1000000,
+        "initial_position": 0,
+        "max_position": 10,
+        "max_order_quantity": 2,
+        "max_order_notional_minor": 100000,
+        "allow_short": false,
+        "tape": [
+          {
+            "time_ms": 20000,
+            "bid_minor": 9990,
+            "ask_minor": 10000
+          },
+          {
+            "time_ms": 20020,
+            "bid_minor": 10010,
+            "ask_minor": 10020
+          },
+          {
+            "time_ms": 20100,
+            "bid_minor": 10090,
+            "ask_minor": 10100
+          }
+        ]
+      }
+    }
+  ]
+}

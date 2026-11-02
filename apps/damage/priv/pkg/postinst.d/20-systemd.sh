@@ -9,7 +9,9 @@ APP="${APP:-damage}"
 PREFIX="${PREFIX:-/opt}"
 INSTALL_DIR="${INSTALL_DIR:-${PREFIX%/}/${APP}}"
 SERVICE_NAME="${SERVICE_NAME:-$APP}"
-SERVICE_FILE="${SERVICE_FILE:-/etc/systemd/system/${SERVICE_NAME}.service}"
+# Packaged vendor unit. /etc/systemd/system is reserved for administrator overrides.
+# The same destination is used by the rebar3_pkg FPM and native Arch builders.
+SERVICE_FILE="${SERVICE_FILE:-/usr/lib/systemd/system/${SERVICE_NAME}.service}"
 CONFIG_FILE="${CONFIG_FILE:-/etc/${APP}/${APP}.config}"
 VAR_DIR="${VAR_DIR:-/var/lib/${APP}}"
 # Use the *service user's* XDG home, never the package manager's inherited
@@ -172,21 +174,25 @@ EOF_XDG_CONFIG
 }
 
 verify_unit() {
-    if [ ! -f "$SERVICE_FILE" ]; then
-        log "ERROR: canonical systemd unit missing from package: $SERVICE_FILE"
+    # Never create the unit or chmod an operator override during post-install.
+    # Packaging owns the vendor file and its permissions.
+    if [ -L "$SERVICE_FILE" ] || [ ! -f "$SERVICE_FILE" ] || [ ! -s "$SERVICE_FILE" ]; then
+        log "ERROR: packaged systemd unit missing or empty: $SERVICE_FILE"
         return 1
     fi
-    chmod 0644 "$SERVICE_FILE"
+    log "Verified packaged systemd unit: $SERVICE_FILE"
 }
 
 init_install_log
 log "Starting service configuration for $SERVICE_NAME"
 
+# Fail before mutating configuration if the package lacks its canonical unit.
+verify_unit
+
 # Configuration is useful even in containers/chroots and must not depend on a
 # running systemd instance.
 write_default_config
 write_node_xdg_config
-verify_unit
 
 if is_container; then
     log "Container detected; leaving packaged unit/config in place without systemctl actions"

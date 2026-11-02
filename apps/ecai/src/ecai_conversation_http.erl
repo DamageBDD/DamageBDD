@@ -30,6 +30,9 @@ trails() ->
         trail("/ecai/conversations/search", conversation_search, #{
             post => op("Search private conversation history with the ECAI term index.")
         }),
+        trail("/ecai/conversations/personalities", conversation_personalities, #{
+            get => op("List the default and this account's purchased AI personalities.")
+        }),
         trail("/ecai/conversations/:id", conversation, #{
             get => op("Load one authenticated conversation and its messages."),
             patch => op("Rename, move, pin or archive a conversation."),
@@ -68,6 +71,8 @@ allowed_methods(Req, State = #{action := conversations}) ->
     {[<<"GET">>, <<"POST">>, <<"OPTIONS">>], Req, State};
 allowed_methods(Req, State = #{action := conversation_search}) ->
     {[<<"POST">>, <<"OPTIONS">>], Req, State};
+allowed_methods(Req, State = #{action := conversation_personalities}) ->
+    {[<<"GET">>, <<"OPTIONS">>], Req, State};
 allowed_methods(Req, State = #{action := conversation}) ->
     {[<<"GET">>, <<"PATCH">>, <<"DELETE">>, <<"OPTIONS">>], Req, State};
 allowed_methods(Req, State = #{action := conversation_message}) ->
@@ -117,6 +122,15 @@ with_principal(Req, State, Fun) ->
             reply_error(unauthenticated, Req, State)
     end.
 
+get_action(conversation_personalities, Principal, Req) ->
+    case ecai_personalities:owned_personalities(Principal) of
+        {ok, #{items := Items}} when is_list(Items) ->
+            Public = [maps:with([ref, personality_id, name, version, package_sha256], I)
+                      || I <- Items, is_map(I)],
+            {ok, 200, #{ok => true, items => Public}, Req};
+        {error, Reason} -> {error, Reason, Req};
+        _ -> {error, personality_unavailable, Req}
+    end;
 get_action(conversations, Principal, Req) ->
     ProjectId = qs_project(Req),
     Limit = qs_limit(Req, 50),
@@ -146,13 +160,16 @@ get_action(_, _Principal, Req) ->
     {error, method_not_allowed, Req}.
 
 write_action(conversations, Principal, Data, Req) ->
-    case only_keys(Data, [<<"project_id">>, <<"title">>]) of
+    case only_keys(Data, [<<"project_id">>, <<"title">>, <<"personality_ref">>]) of
         true ->
             ProjectId = nullable_binary(maps:get(<<"project_id">>, Data, undefined)),
             Title = maps:get(<<"title">>, Data, <<>>),
+            PersonalityRef = maps:get(<<"personality_ref">>, Data, <<"default">>),
             case is_binary(Title) of
                 true ->
-                    case ecai_conversation_store:create_conversation(Principal, ProjectId, Title) of
+                    case ecai_conversation_store:create_conversation(
+                        Principal, ProjectId, Title, PersonalityRef
+                    ) of
                         {ok, Conversation} -> {ok, 201, #{ok => true, conversation => Conversation}, Req};
                         {error, Reason} -> {error, Reason, Req}
                     end;
@@ -184,7 +201,7 @@ write_action(conversation, Principal, Data, Req) ->
 write_action(conversation_message, Principal, Data, Req) ->
     Id = cowboy_req:binding(id, Req),
     case valid_message(Data) of
-        {ok, Message} -> send_persistent_message(Principal, Id, Message, Req);
+        {ok, Message, Indexes} -> send_persistent_message(Principal, Id, Message, Indexes, Req);
         {error, Reason} -> {error, Reason, Req}
     end;
 write_action(projects, Principal, Data, Req) ->
@@ -229,16 +246,36 @@ delete_action(project, Principal, Req) ->
 delete_action(_, _Principal, Req) ->
     {error, method_not_allowed, Req}.
 
-send_persistent_message(Principal, ConversationId, Message, Req) ->
-    ContextLimit = application:get_env(ecai, conversation_history_context_messages, 12),
-    case ecai_conversation_store:context(Principal, ConversationId, Message, ContextLimit) of
-        {error, Reason} ->
-            {error, Reason, Req};
-        {ok, Context} ->
+send_persistent_message(Principal, ConversationId, Message, Indexes, Req) ->
+    %% Fail closed for unknown/unowned funded IDs before durable append.
+    Authorization = case Indexes of
+        all -> {ok, all};
+        _ -> ecai_knowledge:authorize_indexes(Principal, Indexes)
+    end,
+    case Authorization of
+        {ok, Canonical} ->
+            ContextLimit = application:get_env(ecai, conversation_history_context_messages, 12),
+            case ecai_conversation_store:context(Principal, ConversationId, Message, ContextLimit) of
+                {error, Reason} -> {error, Reason, Req};
+                {ok, Context} ->
+                    PersonalityRef = maps:get(personality_ref, Context, <<"default">>),
+                    case validate_personality(Principal, PersonalityRef) of
+                        ok -> send_validated_message(Principal, ConversationId, Message,
+                                                     Context, PersonalityRef, Canonical, Req);
+                        {error, Reason} -> {error, Reason, Req}
+                    end
+            end;
+        {error, Reason} -> {error, Reason, Req}
+    end.
+
+send_validated_message(Principal, ConversationId, Message, Context, PersonalityRef, Indexes, Req) ->
             History = maps:get(recent, Context, []) ++ maps:get(related, Context, []),
             Options = #{
                 history_context => History,
                 project_instructions => maps:get(project_instructions, Context, <<>>),
+                personality_ref => PersonalityRef,
+                indexes => Indexes,
+                include_retrieval_meta => true,
                 self_store => false
             },
             %% Persist the user turn before generation so a backend failure cannot
@@ -252,36 +289,62 @@ send_persistent_message(Principal, ConversationId, Message, Req) ->
                     send_persistent_reply(
                         Principal, ConversationId, Message, UserMessage, Options, Req
                     )
-            end
-    end.
+            end.
+
+validate_personality(Principal, Ref) when is_binary(Ref), byte_size(Ref) > 0,
+                                        byte_size(Ref) =< 256 ->
+    try ecai_personalities:resolve_personality(Principal, Ref) of
+        {ok, #{ref := Ref}} -> ok;
+        {error, Why} when Why =:= invalid_personality; Why =:= personality_not_owned;
+                          Why =:= personality_unavailable -> {error, Why};
+        _ -> {error, personality_unavailable}
+    catch _:_ -> {error, personality_unavailable} end;
+validate_personality(_, _) -> {error, invalid_personality}.
 
 send_persistent_reply(Principal, ConversationId, Message, UserMessage, Options, Req) ->
     case ecai_otp_compat:catch_value(fun() ->
         ecai_chat:get_reply(ConversationId, Principal, Message, Options)
     end) of
+        {ok, Reply0, SearchMeta} when is_map(SearchMeta) ->
+            store_persistent_reply(Principal, ConversationId, Reply0,
+                UserMessage, Options, SearchMeta, Req);
         {ok, Reply0} ->
-            Reply = to_bin(Reply0),
-            Meta = #{backend => <<"ecai_chat">>},
-            case ecai_conversation_store:append_message(
-                Principal, ConversationId, <<"assistant">>, Reply, Meta
-            ) of
-                {ok, #{conversation := Conversation, message := AssistantMessage}} ->
-                    {ok, 200, #{
-                        ok => true,
-                        reply => Reply,
-                        conversation => Conversation,
-                        user_message => UserMessage,
-                        assistant_message => AssistantMessage
-                    }, Req};
-                {error, Reason} -> {error, Reason, Req}
+            %% Compatibility for existing test doubles and unfiltered clients.
+            %% An explicit scope must never be silently ignored by an old worker.
+            case maps:get(indexes, Options, all) of
+                all -> store_persistent_reply(Principal, ConversationId, Reply0,
+                    UserMessage, Options, undefined, Req);
+                _ -> {error, chat_unavailable, Req}
             end;
         {error, Reason} -> {error, {chat_failed, Reason}, Req};
         {'EXIT', Reason} -> {error, {chat_failed, Reason}, Req};
         Other -> {error, {chat_failed, Other}, Req}
     end.
 
+store_persistent_reply(Principal, ConversationId, Reply0, UserMessage, Options, SearchMeta, Req) ->
+    Reply = to_bin(Reply0),
+    Meta0 = #{backend => <<"ecai_chat">>,
+              personality_ref => maps:get(personality_ref, Options, <<"default">>)},
+    Meta = case SearchMeta of
+        #{selection := Selection} -> Meta0#{retrieval_selection => Selection};
+        _ -> Meta0
+    end,
+    case ecai_conversation_store:append_message(Principal, ConversationId,
+        <<"assistant">>, Reply, Meta) of
+        {ok, #{conversation := Conversation, message := AssistantMessage}} ->
+            Base = #{ok => true, reply => Reply, conversation => Conversation,
+                user_message => UserMessage, assistant_message => AssistantMessage},
+            Payload = case SearchMeta of
+                #{selection := SearchSelection} -> Base#{retrieval => SearchMeta, selection => SearchSelection};
+                _ -> Base
+            end,
+            {ok, 200, Payload, Req};
+        {error, Reason} -> {error, Reason, Req}
+    end.
+
 conversation_patch(Data) when is_map(Data) ->
-    case only_keys(Data, [<<"title">>, <<"project_id">>, <<"archived">>, <<"pinned">>]) of
+    case only_keys(Data, [<<"title">>, <<"project_id">>, <<"archived">>, <<"pinned">>,
+                         <<"personality_ref">>]) of
         false -> {error, invalid_request};
         true ->
             try
@@ -293,9 +356,10 @@ conversation_patch(Data) when is_map(Data) ->
                 end,
                 P3 = maybe_boolean(archived, <<"archived">>, Data, P2),
                 P4 = maybe_boolean(pinned, <<"pinned">>, Data, P3),
-                case map_size(P4) of
+                P5 = maybe_binary(personality_ref, <<"personality_ref">>, Data, P4),
+                case map_size(P5) of
                     0 -> {error, invalid_request};
-                    _ -> {ok, P4}
+                    _ -> {ok, P5}
                 end
             catch
                 throw:Reason -> {error, Reason}
@@ -334,9 +398,20 @@ maybe_boolean(AtomKey, BinaryKey, Data, Acc) ->
         error -> Acc
     end.
 
-valid_message(#{<<"message">> := Message} = Data) when map_size(Data) =:= 1,
+valid_message(#{<<"message">> := Message} = Data) when
     is_binary(Message), byte_size(Message) > 0, byte_size(Message) =< ?MAX_MESSAGE_BYTES ->
-    {ok, Message};
+    case only_keys(Data, [<<"message">>, <<"indexes">>]) of
+        true ->
+            Input = maps:get(<<"indexes">>, Data, all),
+            case Input of
+                <<"all">> -> {ok, Message, all};
+                _ -> case ecai_knowledge:validate_indexes(Input) of
+                    {ok, Canonical} -> {ok, Message, Canonical};
+                    Error -> Error
+                end
+            end;
+        false -> {error, invalid_request}
+    end;
 valid_message(#{<<"message">> := Message}) when is_binary(Message), byte_size(Message) > ?MAX_MESSAGE_BYTES ->
     {error, message_too_large};
 valid_message(_) -> {error, invalid_message}.
@@ -418,7 +493,13 @@ status(method_not_allowed) -> 405;
 status(message_too_large) -> 413;
 status(payload_too_large) -> 413;
 status(invalid_request) -> 400;
+status(invalid_personality) -> 400;
+status(personality_not_owned) -> 403;
+status(personality_unavailable) -> 503;
 status(invalid_query) -> 400;
+status(invalid_index_selection) -> 400;
+status(funded_indexes_unavailable) -> 503;
+status(knowledge_unavailable) -> 503;
 status(invalid_message) -> 400;
 status(empty_message) -> 400;
 status(invalid_archived) -> 400;

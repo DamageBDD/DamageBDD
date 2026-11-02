@@ -2,12 +2,43 @@
 %% The embedding DamageBDD router must pass a session-aware authorize fun.
 %% Without that fun this handler DENIES ALL requests.
 -module(ecai_mm_http).
--export([init/2]).
+-export([init/2, trails/0]).
+
+%% All endpoints are GET-only and share the node-admin auth policy used by
+%% /api/admin/settings/ecai. No mutating market execution API is mounted.
+trails() ->
+    Auth = fun damage_settings_http:node_admin/1,
+    [
+        trails:trail("/ecai/market-maker", ?MODULE,
+            #{resource => dashboard, authorize => Auth},
+            #{get => #{tags => ["Node administration"], produces => ["text/html"]}}),
+        trails:trail("/ecai/market-maker/:asset", ?MODULE,
+            #{resource => asset, authorize => Auth},
+            #{get => #{tags => ["Node administration"]}}),
+        trails:trail("/api/ecai/mm/status", ?MODULE,
+            #{resource => <<"status">>, authorize => Auth},
+            #{get => #{tags => ["Node administration"], produces => ["application/json"]}}),
+        trails:trail("/api/ecai/mm/quotes", ?MODULE,
+            #{resource => <<"quotes">>, authorize => Auth},
+            #{get => #{tags => ["Node administration"], produces => ["application/json"]}}),
+        trails:trail("/api/ecai/mm/price-cache", ?MODULE,
+            #{resource => <<"price-cache">>, authorize => Auth},
+            #{get => #{tags => ["Node administration"], produces => ["application/json"]}}),
+        trails:trail("/api/ecai/mm/prices", ?MODULE,
+            #{resource => <<"prices">>, authorize => Auth},
+            #{get => #{tags => ["Node administration"], produces => ["application/json"]}}),
+        trails:trail("/api/ecai/mm/history", ?MODULE,
+            #{resource => <<"history">>, authorize => Auth},
+            #{get => #{tags => ["Node administration"], produces => ["application/json"]}})
+    ].
 
 init(Req, Opts) ->
     case authorized(Req, Opts) of
         true ->
-            serve(Req, Opts);
+            case cowboy_req:method(Req) of
+                <<"GET">> -> serve(Req, Opts);
+                _ -> respond(405, <<"text/plain">>, <<"Method not allowed">>, Req, Opts)
+            end;
         false ->
             respond(
                 403,
@@ -37,10 +68,14 @@ serve(Req, Opts) ->
         cowboy_req:binding(resource, Req, <<"status">>)
     ),
     case Resource of
+        <<"price-cache">> ->
+            json(ecai_mm_price_cache:status(), Req, Opts);
+        <<"prices">> ->
+            prices_json(Req, Opts);
         <<"status">> ->
-            json(ecai_mm:status(), Req, Opts);
+            live_json(fun ecai_mm:status/0, Req, Opts);
         <<"quotes">> ->
-            json(ecai_mm:quotes(), Req, Opts);
+            live_json(fun ecai_mm:quotes/0, Req, Opts);
         <<"history">> ->
             Params = cowboy_req:parse_qs(Req),
             Limit =
@@ -57,13 +92,47 @@ serve(Req, Opts) ->
                 catch
                     _:_ -> 500
                 end,
-            json(ecai_mm:history(Limit), Req, Opts);
+            live_json(fun() -> ecai_mm:history(Limit) end, Req, Opts);
         dashboard ->
             serve_asset(<<"index.html">>, Req, Opts);
         asset ->
             serve_asset(cowboy_req:binding(asset, Req, <<>>), Req, Opts);
         _ ->
             respond(404, <<"text/plain">>, <<"Not found">>, Req, Opts)
+    end.
+
+prices_json(Req, Opts) ->
+    Params = cowboy_req:parse_qs(Req),
+    Period = proplists:get_value(<<"period">>, Params, <<"60min">>),
+    Symbol = proplists:get_value(<<"symbol">>, Params, undefined),
+    Limit = try binary_to_integer(proplists:get_value(<<"limit">>, Params, <<"1000">>))
+            catch _:_ -> invalid end,
+    try
+        Result = case Symbol of
+            undefined -> ecai_mm_price_cache:history(Period, Limit);
+            _ -> ecai_mm_price_cache:candles(Symbol, Period, Limit)
+        end,
+        case Result of
+            {ok, Data} -> json(Data, Req, Opts);
+            {error, _} -> respond(400, <<"application/json">>,
+                <<"{\"error\":\"invalid_history_request\"}">>, Req, Opts)
+        end
+    catch exit:_ ->
+        respond(503, <<"application/json">>,
+            <<"{\"error\":\"price_cache_unavailable\"}">>, Req, Opts)
+    end.
+
+live_json(Fun, Req, Opts) ->
+    case whereis(ecai_mm) of
+        undefined ->
+            respond(503, <<"application/json; charset=utf-8">>,
+                <<"{\"error\":\"market_maker_disabled_or_unavailable\"}">>, Req, Opts);
+        _ ->
+            try json(Fun(), Req, Opts)
+            catch _:_ ->
+                respond(503, <<"application/json; charset=utf-8">>,
+                    <<"{\"error\":\"market_maker_unavailable\"}">>, Req, Opts)
+            end
     end.
 
 json(Data, Req, Opts) ->

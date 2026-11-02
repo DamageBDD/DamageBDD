@@ -183,6 +183,7 @@ load_snapshot(S, Force) ->
                     OldSnap = maps:get(snapshot, S),
                     case publish(NewSnap, old_effective(OldSnap), false) of
                         {ok, Changed} ->
+                            maybe_reconcile_market_maker(Changed),
                             Cold = [
                                 <<(atom_to_binary(App, utf8))/binary, ".", Name/binary>>
                              || {App, Name, restart} <- Changed
@@ -209,6 +210,23 @@ load_snapshot(S, Force) ->
                 _ -> ?LOG_WARNING("System settings file reload rejected: ~p", [ReadWhy])
             end,
             S#{last_error => ReadWhy}
+    end.
+
+
+%% A successfully published Settings version is the trigger to reconcile the
+%% supervised paper worker. The control process is deliberately asynchronous:
+%% failure to open local market-maker state cannot invalidate the settings file
+%% or tear down the node administrator endpoint.
+maybe_reconcile_market_maker(Changed) ->
+    case lists:any(
+        fun
+            ({ecai, <<"market_maker_", _/binary>>, _}) -> true;
+            (_) -> false
+        end,
+        Changed
+    ) of
+        true -> ecai_mm_control:reconcile();
+        false -> ok
     end.
 
 old_effective(undefined) -> #{};
@@ -395,7 +413,11 @@ app_view(App, S) ->
      || Name <- damage_settings_catalog:known(App),
         not maps:is_key(Name, Editable)
     ],
-    {ok, #{
+    Extra = case App of
+        ecai -> #{market_maker => ecai_mm_control:status()};
+        _ -> #{}
+    end,
+    {ok, maps:merge(Extra, #{
         app => atom_to_binary(App, utf8),
         fields => Fields,
         groups => damage_settings_catalog:groups(App),
@@ -404,7 +426,7 @@ app_view(App, S) ->
         config_file => to_binary(maps:get(overlay_path, S)),
         pending_restart => pending_for(App, maps:get(pending, S)),
         last_error => error_json(maps:get(last_error, S))
-    }}.
+    })}.
 
 pending_for(App, Pending) ->
     Prefix = atom_to_binary(App, utf8),

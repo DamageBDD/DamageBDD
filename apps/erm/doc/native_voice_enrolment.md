@@ -1,5 +1,10 @@
 # Guided speaker enrolment
 
+Current GTK speaker enrolment uses [repeated recordings and bounded automatic
+adjustment](voice_repeated_enrolment.md). Its repeated batch and two validation
+takes supersede the sequential GTK enrolment workflow described below. The older
+standalone guided native-enrolment API remains sequential.
+
 `erm_native_voice:enrol("steven", 3)` now uses the same prompt/cue coordinator
 as acoustic tuning. It works before a profile exists. The native enrolment
 validator and atomic profile writer are shared with the existing implementation.

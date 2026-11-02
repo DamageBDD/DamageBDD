@@ -82,16 +82,23 @@ get_reply(SessionID, UserID, UserMessage, Options) when is_map(Options) ->
         maps:get(project_instructions, Options, <<>>)
     ),
     SelfStore = maps:get(self_store, Options, true) =/= false,
-    poolboy:transaction(
-        ?MODULE,
-        fun(Worker) ->
-            gen_server:call(
-                Worker,
-                {infer, SessionID, UserID, UserMessage, History, ProjectInstructions, SelfStore},
-                ?DEFAULT_TIMEOUT
-            )
-        end
-    ).
+    PersonalityRef = maps:get(personality_ref, Options, <<"default">>),
+    Indexes = maps:get(indexes, Options, all),
+    IncludeMeta = maps:get(include_retrieval_meta, Options, false) =:= true,
+    Check = case Indexes of
+        all -> {ok, all};
+        _ -> ecai_knowledge:validate_indexes(Indexes)
+    end,
+    case Check of
+        {ok, Canonical} ->
+            poolboy:transaction(?MODULE, fun(Worker) ->
+                gen_server:call(Worker,
+                    {infer, SessionID, UserID, UserMessage, History,
+                     ProjectInstructions, SelfStore, PersonalityRef, Canonical, IncludeMeta},
+                    ?DEFAULT_TIMEOUT)
+            end);
+        Error -> Error
+    end.
 
 %%====================================================================
 %% gen_server callbacks
@@ -180,81 +187,30 @@ handle_call(
 handle_call(
     {infer, SessionID, UserID, Query0}, From, State
 ) ->
-    handle_call({infer, SessionID, UserID, Query0, [], <<>>, true}, From, State);
+    handle_call({infer, SessionID, UserID, Query0, [], <<>>, true, <<"default">>}, From, State);
 handle_call(
-    {infer, SessionID, UserID, Query0, History0, ProjectInstructions0, SelfStore},
-    _From,
-    State = #state{
-        points = Points,
-        messages = Messages,
-        ollama_host = Host,
-        ollama_port = Port,
-        ollama_model = Model,
-        top_k = TopK,
-        system_prompt = SystemPrompt
-    }
+    {infer, SessionID, UserID, Query0, History, Instructions, SelfStore}, From, State
 ) ->
-    Query = normalize_text(Query0),
-    History = normalize_history_context(History0),
-    ProjectInstructions = normalize_project_instructions(ProjectInstructions0),
-    QueryPoint = text_to_point(Query),
-
-    %% -------------------------
-    %% 1. CHAT MEMORY RETRIEVAL
-    %% -------------------------
-    Nearest = find_nearest(Points, QueryPoint, TopK),
-    ChatContext = resolve_context(Messages, Nearest, SessionID, UserID),
-
-    %% -------------------------
-    %% 2. DISK + IPFS RETRIEVAL
-    %% -------------------------
-    %% Uses your new disk index + docstore
-    DiskContext =
-        case
-            ecai_otp_compat:catch_value(fun() ->
-                ecai_ollama_rag:retrieve_sources("ecai_index", Query, TopK)
-            end)
-        of
-            Sources when is_list(Sources) -> Sources;
-            _ -> []
-        end,
-
-    %% -------------------------
-    %% 3. MERGE CONTEXTS
-    %% -------------------------
-    Context = history_context(History) ++ merge_contexts(ChatContext, DiskContext),
-
-    %% -------------------------
-    %% 4. DIRECT MATCH FAST PATH
-    %% -------------------------
-    case maybe_direct_answer(Context) of
-        {ok, Answer} ->
-            {reply, {ok, Answer}, State};
-        not_found ->
-            %% -------------------------
-            %% 5. BUILD RAG PROMPT
-            %% -------------------------
-            Prompt = build_rag_prompt_full(SessionID, UserID, Query, Context, ProjectInstructions),
-
-            %% -------------------------
-            %% 6. OLLAMA CALL
-            %% -------------------------
-            Reply =
-                call_ollama(
-                    Host,
-                    Port,
-                    Model,
-                    SystemPrompt,
-                    Prompt
-                ),
-
-            case Reply of
-                {ok, AIReply} ->
-                    _ = maybe_self_store_if(SelfStore, SessionID, UserID, Query, AIReply, State),
-                    {reply, {ok, AIReply}, State};
-                {error, _} = Err ->
-                    {reply, Err, State}
-            end
+    handle_call({infer, SessionID, UserID, Query0, History, Instructions, SelfStore,
+                 <<"default">>}, From, State);
+handle_call(
+    {infer, SessionID, UserID, Query0, History, Instructions, SelfStore, PersonalityRef},
+    From, State
+) ->
+    handle_call({infer, SessionID, UserID, Query0, History, Instructions,
+                 SelfStore, PersonalityRef, all, false}, From, State);
+handle_call(
+    {infer, SessionID, UserID, Query0, History, Instructions, SelfStore,
+     PersonalityRef, Indexes, IncludeMeta},
+    _From, State
+) ->
+    %% Resolve on every request using the authenticated account. Browser-supplied
+    %% prompts and cached worker settings never grant a personality entitlement.
+    case resolve_request_personality(UserID, PersonalityRef) of
+        {ok, PersonalityPrompt} ->
+            infer_reply(SessionID, UserID, Query0, History, Instructions,
+                        SelfStore, PersonalityPrompt, Indexes, IncludeMeta, State);
+        {error, _} = Error -> {reply, Error, State}
     end;
 handle_call(Request, _From, State) ->
     ?LOG_WARNING("Unhandled call ~p", [Request]),
@@ -274,6 +230,87 @@ terminate(Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+infer_reply(SessionID, UserID, Query0, History0, ProjectInstructions0,
+            SelfStore, PersonalityPrompt, Indexes, IncludeMeta,
+    State = #state{
+        points = Points,
+        messages = Messages,
+        ollama_host = Host,
+        ollama_port = Port,
+        ollama_model = Model,
+        top_k = TopK,
+        system_prompt = SystemPrompt
+    }
+) ->
+    Query = normalize_text(Query0),
+    RetrievalQuery = retrieval_query(Query),
+    History = normalize_history_context(History0),
+    ProjectInstructions = normalize_project_instructions(ProjectInstructions0),
+    %% -------------------------
+    %% 1. CHAT MEMORY RETRIEVAL
+    %% -------------------------
+    %% Persistent conversations supply authorized History and self_store=false.
+    %% They must not consume the legacy cache: that public endpoint accepts
+    %% client-chosen identifiers, including IDs equal to a private conversation.
+    %% Owned personality calls also never trust legacy chat entries.
+    ChatContext = case SelfStore =/= false andalso PersonalityPrompt =:= <<>> of
+        true ->
+            QueryPoint = text_to_point(Query),
+            Nearest = find_nearest(Points, QueryPoint, TopK),
+            resolve_context(Messages, Nearest, SessionID, UserID);
+        false -> []
+    end,
+
+    %% -------------------------
+    %% 2. UNIFIED INDEX RETRIEVAL
+    %% -------------------------
+    %% The knowledge API owns index validation, funded-index authorization and
+    %% query semantics. Do not silently erase invalid scopes/retrieval failures.
+    Principal = case SelfStore of false -> UserID; _ -> undefined end,
+    Retrieval = ecai_otp_compat:catch_value(fun() ->
+        ecai_knowledge:context(Principal, RetrievalQuery, TopK,
+            #{indexes => Indexes, matching => bool_prefix})
+    end),
+    case Retrieval of
+        {ok, DiskContext, SearchMeta} ->
+            Context = history_context(History) ++ merge_contexts(ChatContext, DiskContext),
+            %% Keep the configured model router and the current request's
+            %% personality/system policy; sources are data, never authority.
+            Prompt = build_rag_prompt_full(SessionID, UserID, Query, Context, ProjectInstructions),
+            RequestSystemPrompt = personality_system_prompt(SystemPrompt, PersonalityPrompt),
+            case call_model(Host, Port, Model, RequestSystemPrompt, Prompt) of
+                {ok, AIReply} ->
+                    _ = maybe_self_store_if(SelfStore, SessionID, UserID, Query, AIReply, State),
+                    Result = case IncludeMeta of
+                        true -> {ok, AIReply, SearchMeta};
+                        false -> {ok, AIReply}
+                    end,
+                    {reply, Result, State};
+                {error, _} = Error -> {reply, Error, State}
+            end;
+        {error, _} = Error -> {reply, Error, State};
+        _ -> {reply, {error, knowledge_unavailable}, State}
+    end.
+
+resolve_request_personality(UserID, Ref) when is_binary(Ref) ->
+    try ecai_personalities:resolve_personality(UserID, Ref) of
+        {ok, #{ref := Ref, system_prompt := Prompt}} when is_binary(Prompt) ->
+            {ok, Prompt};
+        {error, invalid_personality} = Error -> Error;
+        {error, personality_not_owned} = Error -> Error;
+        {error, personality_unavailable} = Error -> Error;
+        _ -> {error, personality_unavailable}
+    catch _:_ -> {error, personality_unavailable} end;
+resolve_request_personality(_, _) -> {error, invalid_personality}.
+
+personality_system_prompt(Base, <<>>) -> Base;
+personality_system_prompt(Base, Personality) ->
+    <<Base/binary, "\n\nPERSONALITY STYLE FOR THIS REQUEST:\n",
+      "Apply these personality instructions as style and working preferences. ",
+      "The base system rules above remain in force. ",
+      "This changes neither tool permissions nor access to private information.\n",
+      Personality/binary>>.
 
 %%====================================================================
 %% Retrieval
@@ -304,51 +341,14 @@ resolve_context(MessagesTab, Nearest, SessionID, UserID) ->
     Deduped = dedupe_by_id(Raw),
     prefer_session_user(Deduped, SessionID, UserID).
 
-maybe_direct_answer(Context) ->
-    case Context of
-        [#{type := chat, question := Q, answer := A} | _] ->
-            case fuzzy_match(Q, Context) of
-                true -> {ok, A};
-                false -> not_found
-            end;
-        _ ->
-            not_found
-    end.
-
-fuzzy_match(Q, Context) ->
-    %% simple heuristic (can upgrade later)
-    lists:any(
-        fun
-            (#{type := chat, question := Q2}) -> similarity(Q, Q2) > 0.9;
-            (_) -> false
-        end,
-        Context
-    ).
-
-similarity(A, B) ->
-    %% placeholder – replace with token overlap later
-    if
-        A =:= B -> 1.0;
-        true -> 0.0
-    end.
-
 prefer_session_user(Messages, SessionID, UserID) ->
-    SessionMatches =
-        [
-            M
-         || M <- Messages,
-            maps:get(session_id, M, undefined) =:= SessionID orelse SessionID =:= undefined
-        ],
-    UserMatches =
-        [
-            M
-         || M <- SessionMatches,
-            UserID =:= undefined orelse maps:get(user_id, M, undefined) =:= UserID
-        ],
-    case UserMatches of
-        [] -> lists:sublist(Messages, ?DEFAULT_TOP_K);
-        _ -> lists:sublist(UserMatches, ?DEFAULT_TOP_K)
-    end.
+    %% The legacy chat endpoint accepts client-supplied identifiers, so neither
+    %% alone grants access to other sessions. Authorized related history comes
+    %% separately from the persistent conversation store, not this worker cache.
+    lists:sublist([M || M <- Messages,
+        SessionID =/= undefined,
+        maps:get(session_id, M, undefined) =:= SessionID,
+        maps:get(user_id, M, undefined) =:= UserID], ?DEFAULT_TOP_K).
 
 dedupe_by_id(Messages) ->
     lists:reverse(
@@ -408,9 +408,10 @@ build_rag_prompt_full(SessionID, UserID, Query, Context, ProjectInstructions) ->
                             );
                         doc ->
                             io_lib:format(
-                                "[S~p][DOC cid=~s]\n~s\n\n",
+                                "[S~p][DOC index=~s cid=~s]\n~s\n\n",
                                 [
                                     Idx,
+                                    maps:get(index, Item, <<>>),
                                     maps:get(cid, Item, <<>>),
                                     maps:get(text, Item, <<>>)
                                 ]
@@ -466,6 +467,20 @@ default_system_prompt() ->
 %%====================================================================
 %% Ollama
 %%====================================================================
+
+%% Explicit node-admin opt-in. Account personality/project instructions remain
+%% system context; the browser cannot choose a provider or credentials.
+call_model(Host, Port, Model, SystemPrompt, Prompt) ->
+    case ecai_llm_settings:route_chat() of
+        false -> call_ollama(Host, Port, Model, SystemPrompt, Prompt);
+        true ->
+            try ecai_ollama_pool:generate_text(chat, Prompt, #{system => SystemPrompt,
+                    timeout => 45000, queue_timeout_ms => 5000, cluster_attempts => 1,
+                    max_output_tokens => 4096, max_response_bytes => 1048576}) of
+                {ok, Text, _} -> {ok, Text};
+                _ -> {error, chat_provider_unavailable}
+            catch _:_ -> {error, chat_provider_unavailable} end
+    end.
 
 call_ollama(Host, Port, Model, SystemPrompt, Prompt) ->
     Body =
@@ -537,6 +552,26 @@ ollama_error(_Json, RawBody) ->
 %%====================================================================
 %% Utilities
 %%====================================================================
+
+%% The knowledge engine enforces a maximum of 16 ANDed search terms. A
+%% conversational prompt can be much longer and include function words; use a
+%% bounded retrieval-only query while keeping the complete user question for
+%% the model. Never convert an empty selector into the all-index default.
+retrieval_query(Query) ->
+    try
+        Tokens = ecai_tokenizer:tokens(Query),
+        Stop = [<<"a">>, <<"an">>, <<"and">>, <<"are">>, <<"about">>,
+            <<"can">>, <<"could">>, <<"did">>, <<"do">>, <<"does">>,
+            <<"explain">>, <<"for">>, <<"from">>, <<"how">>, <<"in">>,
+            <<"is">>, <<"me">>, <<"of">>, <<"on">>, <<"please">>,
+            <<"show">>, <<"tell">>, <<"that">>, <<"the">>, <<"this">>,
+            <<"to">>, <<"was">>, <<"what">>, <<"when">>, <<"where">>,
+            <<"which">>, <<"who">>, <<"why">>, <<"with">>, <<"you">>],
+        Candidates = [T || T <- Tokens, byte_size(T) =< 128,
+            not lists:member(T, Stop)],
+        Terms = case Candidates of [] -> Tokens; _ -> Candidates end,
+        iolist_to_binary(lists:join(<<" ">>, lists:sublist(Terms, 8)))
+    catch _:_ -> <<>> end.
 
 normalize_text(Text) when is_binary(Text) ->
     binary:replace(Text, <<"\r\n">>, <<"\n">>, [global]);
@@ -637,8 +672,15 @@ merge_contexts(Chat, Disk) ->
         [
             #{
                 type => doc,
-                cid => maps:get(cid, M, <<>>),
-                text => maps:get(text, M, <<>>)
+                cid => to_bin(maps:get(cid, M, <<>>)),
+                index => to_bin(maps:get(retrieval_index, M, <<>>)),
+                %% Some published records have title/description but no `text`.
+                %% Do not turn a real search hit into an empty model source.
+                text => clip_text(iolist_to_binary([
+                    to_bin(maps:get(title, M, maps:get(name, M, <<>>))), <<"\n">>,
+                    to_bin(maps:get(description, M, <<>>)), <<"\n">>,
+                    to_bin(maps:get(text, M, maps:get(abstract, M, <<>>)))
+                ]), 4096)
             }
          || M <- Disk
         ],

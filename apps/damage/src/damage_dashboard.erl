@@ -58,7 +58,10 @@ base_context(Req) ->
     #{
         request_path => cowboy_req:path(Req),
         node_version => <<"v0.1">>,
-        logo_image => logo_image(),
+        logo_image => branded(<<"logo">>, logo_image()),
+        favicon_image => branded(<<"favicon">>, <<"/static/img/favicon.ico">>),
+        brand_name => branded(<<"name">>, <<"DamageBDD">>),
+        brand_tagline => branded(<<"tagline">>, <<"Verification workspace">>),
         tax_enabled => application:get_env(damage, tax_enabled, false)
     }.
 
@@ -71,6 +74,14 @@ logo_image() ->
         _ ->
             <<"/static/img/logo.png">>
     end.
+
+branded(Field, Default) ->
+    try
+        case damage_theme:branding(<<"damage">>) of
+            #{Field := Value} when is_binary(Value), Value =/= <<>> -> Value;
+            _ -> Default
+        end
+    catch _:_ -> Default end.
 
 %% Do not substitute a user wallet as the node identity. A locked node
 %% deliberately leaves the default empty instead of silently scanning another account.
@@ -99,7 +110,9 @@ render_full_page(Ctx) ->
     %% Assemble from mustache fragments so you can also SSR each piece independently
     %% page_shell.mustache should call {{{topbar}}}, {{{sidebar}}}, etc. (triple-stache = HTML safe)
     Top = render_tpl(?TPL("topbar.mustache"), Ctx),
-    Exec = render_tpl(?TPL("execution_tab.mustache"), Ctx),
+    Routing = render_tpl(?TPL("bdd_routing.mustache"), Ctx),
+    Exec = render_tpl(?TPL("execution_tab.mustache"), Ctx#{bdd_routing => Routing}),
+    Agents = render_tpl(?TPL("agents_tab.mustache"), Ctx#{bdd_routing => Routing}),
     Activity = render_tpl(?TPL("activity_tab.mustache"), history_context(Ctx)),
     Anal = render_tpl(?TPL("analytics_tab.mustache"), history_context(Ctx)),
     Sched = render_tpl(?TPL("schedules_tab.mustache"), Ctx),
@@ -135,6 +148,7 @@ render_full_page(Ctx) ->
     NodeTransactionsTab = render_tpl(?TPL("node_transactions_tab.mustache"), Ctx),
     NodeChannelsTab = render_tpl(?TPL("node_channels_tab.mustache"), Ctx),
     NodeClnAdminTab = render_tpl(?TPL("node_cln_admin.mustache"), Ctx),
+    NodeBunkerTab = render_tpl(?TPL("node_bunker_tab.mustache"), Ctx),
     NodeTaxReportsTab =
         case maps:get(tax_admin, Ctx, false) of
             true -> render_tpl(?TPL("node_tax_reports_tab.mustache"), Ctx);
@@ -146,6 +160,7 @@ render_full_page(Ctx) ->
         topbar => Top,
         sidebar => render_tpl(?TPL("sidebar.mustache"), Ctx#{footer => Foot}),
         execution_tab => Exec,
+        agents_tab => Agents,
         activity_tab => Activity,
         analytics_tab => Anal,
         schedules_tab => Sched,
@@ -173,6 +188,7 @@ render_full_page(Ctx) ->
         node_transactions_tab => NodeTransactionsTab,
         node_channels_tab => NodeChannelsTab,
         node_cln_admin_tab => NodeClnAdminTab,
+        node_bunker_tab => NodeBunkerTab,
         node_tax_reports_tab => NodeTaxReportsTab
     },
     render_tpl(?TPL("page_shell.mustache"), PageCtx).
@@ -189,7 +205,11 @@ render_component(sidebar, Ctx) ->
 render_component(tabs, Ctx) ->
     render_component(sidebar, Ctx);
 render_component(execution_tab, Ctx) ->
-    render_tpl(?TPL("execution_tab.mustache"), Ctx);
+    Routing = render_tpl(?TPL("bdd_routing.mustache"), Ctx),
+    render_tpl(?TPL("execution_tab.mustache"), Ctx#{bdd_routing => Routing});
+render_component(agents_tab, Ctx) ->
+    Routing = render_tpl(?TPL("bdd_routing.mustache"), Ctx),
+    render_tpl(?TPL("agents_tab.mustache"), Ctx#{bdd_routing => Routing});
 render_component(activity_tab, Ctx) ->
     render_tpl(?TPL("activity_tab.mustache"), history_context(Ctx));
 render_component(analytics_tab, Ctx) ->

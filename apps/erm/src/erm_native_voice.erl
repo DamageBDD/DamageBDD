@@ -8,8 +8,9 @@
     enrol/2, enrol/3,
     cancel_enrol/0,
     decode/1,
-    normalise/1,
+    normalise/1, enrolment_check/3,
     score/2,
+    profile_fingerprint/1,
     configure/1,
     reload/0, reload/1,
     reconnect/0,
@@ -37,6 +38,12 @@
     backend_retry = undefined,
     extra = #{}
 }).
+%% Correlates exact serialized on-disk profile bytes across processes.
+%% A truncated SHA-256 fingerprint is NOT a signature or identity proof.
+profile_fingerprint(Bytes) when is_binary(Bytes) ->
+    Digest = binary:encode_hex(crypto:hash(sha256, Bytes)),
+    <<"sha256:", (binary:part(Digest, 0, 16))/binary>>.
+
 start_link(O) -> gen_server:start_link({local, ?MODULE}, ?MODULE, O, []).
 status() -> gen_server:call(?MODULE, status, 1000).
 enrol(Label, Count) -> enrol(Label, Count, #{}).
@@ -156,16 +163,20 @@ handle_call(status, _, S) ->
             processing => S#st.processing,
             muted => S#st.muted,
             enrolled => S#st.profile =/= undefined,
+            speaker_profile_file => maps:get(profile_file, S#st.opts),
+            speaker_profile_fingerprint => native_profile_fingerprint(S#st.profile),
+            speaker_profile_disk => native_profile_disk_state(S),
             speaker_settings => maps:with(
                 [
                     device,
                     require_speaker,
                     speaker_threshold,
+                    configured_speaker_threshold,
                     enrolment_threshold,
                     min_speaker_ms,
                     observe_only
                 ],
-                S#st.opts
+                speaker_options(S)
             ),
             configuration => maps:with(erm_voice_acoustics:keys(), S#st.opts),
             native_protocol => maps:get(protocol, S#st.extra, 1),
@@ -366,10 +377,22 @@ handle_info({P, {data, <<"R", Dim:16>>}}, S = #st{port = P, ready = false}) when
                 extra = (S#st.extra)#{protocol => 1, acoustic_config => unavailable}
             })
         )};
+handle_info({P, {data, <<"L", E:64, Db:32/float, Speech>>}},
+            S = #st{port=P, ready=true}) when Db >= -200, Db =< 10, Speech =< 1 ->
+    case E =:= S#st.epoch andalso not S#st.muted andalso not suppressed() of
+        true -> voice_event(input, #{phase=>listening, level=>max(0.0,min(1.0,(Db+60)/60)),
+                                     speech=>Speech=:=1});
+        false -> ok
+    end,
+    {noreply,S};
 handle_info({P, {data, <<"B", Epoch:64, Id:64>>}}, S = #st{port = P, ready = true, opts = O}) ->
+    case Epoch =:= S#st.epoch andalso not S#st.muted andalso not suppressed() of
+        true -> voice_event(work, #{phase=>processing}); false -> ok
+    end,
     {noreply,
         arm(maps:get(inference_timeout_ms, O), detection_end(Epoch, Id, S#st{processing = true}))};
 handle_info({P, {data, <<"F">>}}, S = #st{port = P, ready = true}) ->
+    voice_event(work, #{phase=>idle}),
     {noreply, clear_timer(S#st{processing = false})};
 handle_info({P, {data, <<"D", Reason/binary>>}}, S = #st{port = P}) ->
     logger:debug("native voice: ~ts", [Reason]),
@@ -573,16 +596,59 @@ accept_embedding(U, N, S = #st{opts = O, profile = Profile}) ->
         false ->
             dispatch(U, unverified, S);
         true ->
-            case Profile of
-                #{embedding := Known} ->
-                    Score = score(N, Known),
-                    case Score >= maps:get(speaker_threshold, O) of
-                        true -> dispatch(U, Score, S);
-                        false -> reject({speaker_mismatch, Score}, S)
-                    end;
-                _ ->
-                    reject(not_enrolled, S)
+            case native_profile_disk_state(S) of
+                current -> verify_loaded_speaker(U, N, S, Profile);
+                not_enrolled -> reject_unusable_speaker(U, S, not_enrolled);
+                changed_restart_required ->
+                    reject_unusable_speaker(U, S, speaker_profile_changed_restart_required);
+                unavailable -> reject_unusable_speaker(U, S, speaker_profile_unavailable)
             end
+    end.
+
+reject_unusable_speaker(U, S, Reason) ->
+    Token = case native_profile_fingerprint(S#st.profile) of
+        undefined -> <<"none">>;
+        Fingerprint -> Fingerprint
+    end,
+    logger:notice(
+        "erm_voice_profile event=verification backend=native fingerprint=~ts " ++
+        "capture_id=~p score=undefined outcome=reject reason=~p",
+        [Token, maps:get(id, U, undefined), Reason]),
+    reject(Reason, S).
+
+verify_loaded_speaker(U, N, S = #st{opts = O}, #{embedding := Known} = Profile) ->
+    Score = score(N, Known),
+    Threshold = erm_voice_calibration:threshold(
+        maps:get(voice_calibration, Profile, undefined), maps:get(speaker_threshold, O)),
+    Outcome = case Score >= Threshold of true -> pass; false -> reject end,
+    logger:notice(
+        "erm_voice_profile event=verification backend=native fingerprint=~ts " ++
+        "capture_id=~p score=~p threshold=~p outcome=~p",
+        [native_profile_fingerprint(Profile), maps:get(id, U, undefined), Score, Threshold, Outcome]),
+    case Outcome of
+        pass -> dispatch(U, Score, S);
+        reject -> reject({speaker_mismatch, Score}, S)
+    end;
+verify_loaded_speaker(_U, _N, S, _) -> reject(not_enrolled, S).
+
+native_profile_fingerprint(#{profile_fingerprint := Fingerprint}) -> Fingerprint;
+native_profile_fingerprint(_) -> undefined.
+
+native_profile_disk_state(#st{profile = undefined}) -> not_enrolled;
+native_profile_disk_state(#st{profile = Profile, opts = O}) ->
+    Path = maps:get(profile_file, O),
+    case file:read_link_info(Path) of
+        {ok, #file_info{type = regular, size = Size, mode = Mode}}
+                when Size =< 65536, Mode band 8#077 =:= 0 ->
+            case file:read_file(Path) of
+                {ok, Bytes} ->
+                    case profile_fingerprint(Bytes) =:= native_profile_fingerprint(Profile) of
+                        true -> current;
+                        false -> changed_restart_required
+                    end;
+                {error, _} -> unavailable
+            end;
+        _ -> unavailable
     end.
 %% Use the same normalized mean that command verification compares against.
 %% Score the candidate BEFORE including it, so it cannot improve its own match.
@@ -654,12 +720,19 @@ enrol_sample(N, Vs, Count, E, Mean, S) ->
                 model_hash => S#st.model_hash,
                 embedding => Mean
             },
-            case save_profile(maps:get(profile_file, S#st.opts), Profile) of
+            Path = maps:get(profile_file, S#st.opts),
+            case save_profile(Path, Profile) of
                 ok ->
-                    logger:notice("speaker enrolment saved"),
+                    %% save_profile atomically writes term_to_binary(Profile).
+                    %% The token is never included in the serialized profile.
+                    Fingerprint = profile_fingerprint(term_to_binary(Profile)),
+                    logger:notice(
+                        "erm_voice_profile event=saved backend=native fingerprint=~ts " ++
+                        "path=~ts samples=~p", [Fingerprint, Path, Count]),
                     enrol_feedback(
-                        Check#{state => saved},
-                        bump(S#st{enrol = undefined, profile = Profile, last = enrolled})
+                        Check#{state => saved, speaker_profile_fingerprint => Fingerprint},
+                        bump(S#st{enrol = undefined, profile = Profile#{profile_fingerprint => Fingerprint},
+                            last = enrolled})
                     );
                 Error ->
                     logger:error("speaker profile save failed: ~tp", [Error]),
@@ -713,6 +786,7 @@ dispatch(#{id := Id}, Score, S = #st{opts = #{observe_only := true}}) ->
     logger:debug("native speaker observation id=~p score=~p", [Id, Score]),
     S#st{last = #{id => Id, verification => Score, dispatch => observe_only}};
 dispatch(#{text := Text, id := Id}, Score, S = #st{opts = O}) ->
+    voice_event(input, #{text=>Text}),
     case maps:get(debug_utterances, O) of
         true -> logger:debug("native utterance id=~p speaker_score=~p text=~ts", [Id, Score, Text]);
         false -> ok
@@ -774,6 +848,12 @@ decode(<<"U", Epoch:64, Id:64, Ms:32, Dim:16, Rest/binary>>) when
     end;
 decode(_) ->
     {error, invalid_packet}.
+speaker_options(#st{opts=O,profile=P})->
+    C=case P of undefined->undefined;_->maps:get(voice_calibration,P,undefined) end,
+    Configured=maps:get(speaker_threshold,O),
+    O#{speaker_threshold=>erm_voice_calibration:threshold(C,Configured),
+       configured_speaker_threshold=>Configured}.
+
 normalise(V) when is_list(V), length(V) > 0, length(V) =< 4096 ->
     try
         N = math:sqrt(lists:sum([X * X || X <- V])),
@@ -815,6 +895,9 @@ bump(S = #st{port = P, epoch = E, muted = M, ready = true}) ->
         end,
     try
         true = port_command(P, <<Command, B:64>>),
+        voice_event(input, #{phase=>case M orelse Closed of true->muted; false->listening end,
+                             level=>0.0, speech=>false}),
+        voice_event(work, #{phase=>idle}),
         S#st{epoch = Epoch}
     catch
         _:_ -> failed(port_closed, S)
@@ -830,6 +913,8 @@ clear_timer(S = #st{timer = T}) ->
     erlang:cancel_timer(T),
     S#st{timer = undefined}.
 failed(R, S) ->
+    voice_event(input, #{phase=>error,level=>0.0}),
+    voice_event(work, #{phase=>idle}),
     clear_guidance(),
     case maps:get(tuner, S#st.extra, undefined) of
         #{pid := Tuner} = T ->
@@ -924,9 +1009,12 @@ load_profile(Path, Hash) ->
     try
         true = filelib:file_size(Path) =< 1048576,
         {ok, B} = file:read_file(Path),
+        {module,erm_voice_calibration}=code:ensure_loaded(erm_voice_calibration),
         #{version := 1, model_hash := Hash, embedding := V} = P = binary_to_term(B, [safe]),
+        case maps:get(voice_calibration,P,undefined) of
+            undefined->ok;Calibration->ok=erm_voice_calibration:validate(Calibration) end,
         {ok, N} = normalise(V),
-        P#{embedding => N}
+        P#{embedding => N, profile_fingerprint => profile_fingerprint(B)}
     catch
         _:_ -> undefined
     end.
@@ -1141,7 +1229,17 @@ activate_models(O, S) ->
             model_path_keys()
         ),
         Hash = hash_file(maps:get(speaker_model, O)),
-        Profile = load_profile(maps:get(profile_file, O), Hash),
+        ProfilePath = maps:get(profile_file, O),
+        Profile = load_profile(ProfilePath, Hash),
+        case Profile of
+            #{profile_fingerprint := Fingerprint} ->
+                logger:notice(
+                    "erm_voice_profile event=loaded backend=native fingerprint=~ts path=~ts",
+                    [Fingerprint, ProfilePath]);
+            _ ->
+                logger:notice("erm_voice_profile event=unavailable backend=native path=~ts",
+                    [ProfilePath])
+        end,
         {ok,
             cancel_model_retry_state(S#st{
                 opts = O,
@@ -1200,3 +1298,7 @@ default_binary() ->
         {error, _} -> "/nonexistent/erm_native_voice";
         D -> filename:join(D, "erm_native_voice")
     end.
+
+%% Observability is optional in standalone/isolated voice VMs.
+voice_event(Channel, Data) ->
+    try erm_voice_events:publish(?MODULE, Channel, Data) catch error:undef -> ok end.

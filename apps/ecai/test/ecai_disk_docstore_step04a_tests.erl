@@ -2,18 +2,18 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
-anonymous_docstore_round_trip_test() ->
+non_atom_docstore_round_trip_test() ->
     Dir = temp_dir(),
     try
         {ok, Tab1} = ecai_disk_docstore:open(Dir),
-        ?assert(is_reference(Tab1)),
+        ?assertMatch({ecai_disk_docstore, _}, Tab1),
         {ok, 1} = ecai_disk_docstore:next_id(Tab1),
         ok = ecai_disk_docstore:put(Tab1, 1, #{title => <<"one">>}),
         ok = ecai_disk_docstore:sync(Tab1),
         ok = ecai_disk_docstore:close(Tab1),
 
         {ok, Tab2} = ecai_disk_docstore:open(Dir),
-        ?assert(is_reference(Tab2)),
+        ?assertEqual(Tab1, Tab2),
         ?assertEqual(
             {ok, #{title => <<"one">>}},
             ecai_disk_docstore:get(Tab2, 1)

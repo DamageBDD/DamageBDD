@@ -863,7 +863,7 @@ patch_inference_opts(Opts) ->
     ).
 
 patch_inference(Prompt, InferenceOpts) ->
-    try ecai_ollama_pool:generate_json(patch, Prompt, InferenceOpts) of
+    try ecai_ollama_pool:generate_json(patch, Prompt, ecai_llm_settings:code_options(InferenceOpts)) of
         Result ->
             Result
     catch
@@ -1545,6 +1545,7 @@ record_inference_attempt(Attempt, Meta0, Opts) when
             model,
             model_digest,
             model_revision,
+            model_internals,
             host,
             port,
             done_reason,

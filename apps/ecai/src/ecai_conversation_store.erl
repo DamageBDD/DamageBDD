@@ -12,6 +12,7 @@
     start_link/0,
     list_conversations/3,
     create_conversation/3,
+    create_conversation/4,
     get_conversation/2,
     update_conversation/3,
     delete_conversation/2,
@@ -66,7 +67,11 @@ list_conversations(Owner, ProjectId, Limit) ->
     call({list_conversations, owner(Owner), project_id(ProjectId), clamp_limit(Limit)}).
 
 create_conversation(Owner, ProjectId, Title) ->
-    call({create_conversation, owner(Owner), project_id(ProjectId), normalize_title(Title)}).
+    create_conversation(Owner, ProjectId, Title, <<"default">>).
+
+create_conversation(Owner, ProjectId, Title, PersonalityRef) ->
+    call({create_conversation, owner(Owner), project_id(ProjectId), normalize_title(Title),
+          PersonalityRef}).
 
 get_conversation(Owner, ConversationId) ->
     call({get_conversation, owner(Owner), id(ConversationId)}).
@@ -135,8 +140,8 @@ init([]) ->
 
 handle_call({list_conversations, Owner, ProjectId, Limit}, _From, State) ->
     {reply, {ok, list_conversations0(Owner, ProjectId, Limit, State)}, State};
-handle_call({create_conversation, Owner, ProjectId, Title0}, _From, State) ->
-    case ensure_project(Owner, ProjectId, State) of
+handle_call({create_conversation, Owner, ProjectId, Title0, PersonalityRef}, _From, State) ->
+    case ensure_conversation_selection(Owner, ProjectId, PersonalityRef, State) of
         ok ->
             Now = now_ms(),
             ConversationId = new_id(),
@@ -147,6 +152,7 @@ handle_call({create_conversation, Owner, ProjectId, Title0}, _From, State) ->
                 title => Title,
                 auto_title => AutoTitle,
                 project_id => ProjectId,
+                personality_ref => PersonalityRef,
                 created_at => Now,
                 updated_at => Now,
                 message_count => 0,
@@ -247,9 +253,17 @@ update_conversation0(Owner, ConversationId, Patch, State) ->
                 {error, _} = Error -> Error;
                 {ok, Conversation1} ->
                     ProjectId = maps:get(project_id, Conversation1, undefined),
-                    case ensure_project(Owner, ProjectId, State) of
+                    PersonalityRef = maps:get(personality_ref, Conversation1, <<"default">>),
+                    %% Metadata edits remain available when a previously chosen
+                    %% personality is offline. Explicit selections revalidate.
+                    Selection = case maps:is_key(personality_ref, Patch) of
+                        true -> ensure_conversation_selection(Owner, ProjectId, PersonalityRef, State);
+                        false -> ensure_project(Owner, ProjectId, State)
+                    end,
+                    case Selection of
                         ok ->
-                            Conversation = Conversation1#{updated_at => now_ms()},
+                            Conversation = Conversation1#{updated_at => now_ms(),
+                                                          personality_ref => PersonalityRef},
                             ok = dets:insert(State#state.conversations, {{Owner, ConversationId}, Conversation}),
                             ok = reindex_title(Owner, Conversation, State),
                             ok = sync([State#state.conversations, State#state.postings]),
@@ -442,6 +456,7 @@ search_result(Owner, ConversationId, Seq, Score, ProjectId, State) ->
                         conversation_id => ConversationId,
                         title => maps:get(title, Conversation, <<"New chat">>),
                         project_id => json_project_id(maps:get(project_id, Conversation, undefined)),
+                        personality_ref => maps:get(personality_ref, Conversation, <<"default">>),
                         message_seq => Seq,
                         score => Score,
                         snippet => truncate_chars(Snippet, 320),
@@ -517,6 +532,7 @@ context0(Owner, ConversationId, Query, Limit, State) ->
                 recent => [history_record(M) || M <- Current],
                 related => [history_record(M) || M <- Related],
                 project_id => ProjectId,
+                personality_ref => maps:get(personality_ref, Conversation, <<"default">>),
                 project_instructions => Instructions
             }}
     end.
@@ -587,8 +603,26 @@ ensure_project(Owner, ProjectId, State) ->
         {error, _} = Error -> Error
     end.
 
+%% Resolve entitlement at every explicit selection; only the stable reference
+%% is persisted. The package prompt stays in the personality service.
+ensure_conversation_selection(Owner, ProjectId, PersonalityRef, State) ->
+    case ensure_project(Owner, ProjectId, State) of
+        ok -> ensure_personality(Owner, PersonalityRef);
+        {error, _} = Error -> Error
+    end.
+
+ensure_personality(Owner, Ref) when is_binary(Ref), byte_size(Ref) > 0,
+                                   byte_size(Ref) =< 256 ->
+    try ecai_personalities:resolve_personality(Owner, Ref) of
+        {ok, #{ref := Ref}} -> ok;
+        {error, Why} when Why =:= invalid_personality; Why =:= personality_not_owned;
+                          Why =:= personality_unavailable -> {error, Why};
+        _ -> {error, personality_unavailable}
+    catch _:_ -> {error, personality_unavailable} end;
+ensure_personality(_, _) -> {error, invalid_personality}.
+
 normalize_conversation_patch(Patch, Conversation0) ->
-    Allowed = [title, project_id, archived, pinned],
+    Allowed = [title, project_id, archived, pinned, personality_ref],
     case unknown_keys(Patch, Allowed) of
         [] ->
             try
@@ -610,7 +644,13 @@ normalize_conversation_patch(Patch, Conversation0) ->
                     {ok, _} -> throw(invalid_pinned);
                     error -> C3
                 end,
-                {ok, C4}
+                C5 = case maps:find(personality_ref, Patch) of
+                    {ok, Ref} when is_binary(Ref), byte_size(Ref) > 0,
+                                   byte_size(Ref) =< 256 -> C4#{personality_ref => Ref};
+                    {ok, _} -> throw(invalid_personality);
+                    error -> C4
+                end,
+                {ok, C5}
             catch
                 throw:Reason -> {error, Reason};
                 error:Reason -> {error, Reason}
@@ -644,7 +684,8 @@ unknown_keys(Map, Allowed) ->
 
 public_conversation(Conversation) ->
     Public0 = maps:without([auto_title], Conversation),
-    Public0#{project_id => json_project_id(maps:get(project_id, Conversation, undefined))}.
+    Public0#{project_id => json_project_id(maps:get(project_id, Conversation, undefined)),
+             personality_ref => maps:get(personality_ref, Conversation, <<"default">>)}.
 
 json_project_id(undefined) -> null;
 json_project_id(Value) -> Value.

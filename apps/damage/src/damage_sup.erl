@@ -61,6 +61,14 @@ init([]) ->
                 modules => [damage_settings]
             },
             #{
+                id => damage_theme_store,
+                start => {damage_theme_store, start_link, []},
+                restart => permanent,
+                shutdown => 5000,
+                type => worker,
+                modules => [damage_theme_store]
+            },
+            #{
                 id => secrets,
                 start => {secrets, start_link, []},
                 restart => permanent,
@@ -113,6 +121,14 @@ init([]) ->
                     shutdown => 5000,
                     type => worker,
                     modules => [damage_bdd_service]
+                },
+                #{
+                    id => damage_firecracker,
+                    start => {damage_firecracker, start_link, []},
+                    restart => permanent,
+                    shutdown => 15000,
+                    type => worker,
+                    modules => [damage_firecracker]
                 },
                 #{
                     id => damage_schedule_v2,
@@ -257,6 +273,26 @@ init([]) ->
                     type => supervisor,
                     modules => [damage_mm_sup]
                 },
+                %% Cached market history remains readable when quoting is disabled.
+                %% Startup opens storage only; HTTP backfill is independently queued.
+                #{
+                    id => ecai_mm_price_cache,
+                    start => {ecai_mm_price_cache, start_link, []},
+                    restart => permanent,
+                    shutdown => 10000,
+                    type => worker,
+                    modules => [ecai_mm_price_cache]
+                },
+                %% Admin Settings can enable/disable the paper engine without
+                %% restarting the node. The controller is not a trading worker.
+                #{
+                    id => ecai_mm_control,
+                    start => {ecai_mm_control, start_link, []},
+                    restart => permanent,
+                    shutdown => 5000,
+                    type => worker,
+                    modules => [ecai_mm_control]
+                },
                 {damage_hwmon,
                     {damage_hwmon, start_link, [
                         #{
@@ -292,6 +328,7 @@ init([]) ->
                     modules => [damage_nostr]
                 },
                 damage_nsecbunker_sup:child_spec(),
+                damage_nsecbunker_handoff:child_spec(),
                 #{
                     id => damage_nwc_listener,
                     start => {damage_nwc_listener, start_link, []},
@@ -304,7 +341,7 @@ init([]) ->
             ],
 
     %% 6) finally: append Poolboy pools LAST so their workers prepopulate after price_feed is up
-    AllChildren = Core ++ tax_children() ++ PoolSpecs,
+    AllChildren = Core ++ [damage_agent_sup:child_spec()] ++ tax_children() ++ PoolSpecs,
 
     {ok, {SupFlags, AllChildren}}.
 

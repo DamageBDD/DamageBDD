@@ -72,8 +72,8 @@ export function showLightningQR({ containerId, paymentRequest, expirySeconds = 6
     copyButton.style.borderRadius = "0.5em";
     copyButton.style.border = "none";
     copyButton.style.cursor = "pointer";
-    copyButton.style.background = "#333";
-    copyButton.style.color = "white";
+    copyButton.style.background = "var(--theme-surface-alt, #333)";
+    copyButton.style.color = "var(--theme-text, white)";
     copyButton.style.display = "none";
     copyButton.setAttribute("aria-label", "Copy Lightning Invoice");
     copyButton.onclick = () => {
@@ -100,7 +100,7 @@ export function showLightningQR({ containerId, paymentRequest, expirySeconds = 6
         helpLink.style.display = "block";
         helpLink.style.marginTop = "1em";
         helpLink.style.fontSize = "0.9em";
-        helpLink.style.color = "#88f";
+        helpLink.style.color = "var(--theme-link, #88f)";
         helpLink.textContent = "❓ Need Help? View Payment Instructions";
         qrSection.appendChild(helpLink);
     }
@@ -127,7 +127,7 @@ export function showLightningQR({ containerId, paymentRequest, expirySeconds = 6
             timer.textContent = "⚠️ Invoice expired. Please generate a new one.";
             qrCanvas.style.opacity = "0.5";
             copyButton.disabled = true;
-            copyButton.style.background = "#777";
+            copyButton.style.background = "var(--theme-accent-soft, #777)";
         }
     }, 1000);
 }
@@ -149,7 +149,7 @@ export function renderConfirmation({ message, onConfirm, onCancel }) {
   dialog.style.top = "30%";
   dialog.style.left = "50%";
   dialog.style.transform = "translate(-50%, -50%)";
-  dialog.style.background = "#fff";
+  dialog.style.background = "var(--theme-surface, #fff)";
   dialog.style.border = "2px solid #444";
   dialog.style.borderRadius = "10px";
   dialog.style.boxShadow = "0 0 20px rgba(0,0,0,0.2)";

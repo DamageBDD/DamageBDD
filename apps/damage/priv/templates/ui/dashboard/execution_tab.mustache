@@ -38,9 +38,10 @@
     </div>
   </form>
   <div class="composer-meta">
-    <p id="bdd-prompt-help">Sent to this node’s configured ECAI model. Keep secrets in account context. <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> to generate.</p>
+    <p id="bdd-prompt-help">Sent through the BDD authoring route below. Provider charges may apply. Keep secrets out of prompts. <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd> to generate.</p>
     <span><span id="bdd-catalog-status">Loading step signatures…</span> <button type="button" class="workspace-button" id="bdd-refresh-catalog">Refresh</button></span>
   </div>
+  {{{bdd_routing}}}
   <p id="bdd-generation-status" role="status" aria-live="polite"></p>
   <span id="bdd-elapsed" aria-hidden="true"></span>
   <section id="bdd-draft-panel" class="draft-panel" aria-labelledby="bdd-draft-title" hidden>

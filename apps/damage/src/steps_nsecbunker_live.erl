@@ -25,7 +25,7 @@
 -include_lib("kernel/include/logger.hrl").
 -include_lib("kernel/include/file.hrl").
 
--export([step/6, step_dry/6]).
+-export([step/6, step_dry/6, handoff_probe/0]).
 
 -define(NS, nsecbunker_live).
 -define(NIP46_KIND, 24133).
@@ -2002,3 +2002,70 @@ compact(Other) ->
 
 stack_top([{M, F, A, _} | _]) -> {M, F, A};
 stack_top(_) -> undefined.
+
+
+%% Reuse the black-box transport used by the live BDD. The dashboard worker
+%% never changes an allowlist or installs a diagnostic secret.
+handoff_probe() ->
+    Bodies = [
+        ["the live damage nsecbunker server is running"],
+        ["the live damage nsecbunker vault is ready"],
+        ["the live damage nsecbunker node pubkey is loaded from the running bunker policy"],
+        ["the live NIP-46 client is the damage_nostr node identity"],
+        ["the live NIP-46 client pubkey is authorised by the running bunker policy"],
+        ["the live NIP-46 relays are loaded from the running bunker config"],
+        ["the live NIP-46 relay bridge is running and subscribed"],
+        ["the live NIP-46 test run id is generated"]],
+    Context = lists:foldl(fun(Body, Ctx) ->
+        step([], Ctx, <<"Given">>, 0, Body, []) end, #{}, Bodies),
+    Relays = require_live(relays, Context),
+    true = length(Relays) > 0 andalso length(Relays) =< 6,
+    Policy = get_policy(Context),
+    Kind = first_disallowed_kind(Policy),
+    lists:flatmap(fun(Relay) ->
+        Ctx = put_live(Context, #{relays => [Relay]}),
+        [handoff_one(Ctx, Relay, Method, Opts, Outcome) ||
+            {Method, Opts, Outcome} <- [
+                {<<"ping">>, [], {result, <<"pong">>}},
+                {<<"get_public_key">>, [], {result, require_live(bunker_pubkey_hex, Context)}},
+                {<<"sign_event">>, [{event_kind, 30023}], signed_event},
+                {<<"nip04_decrypt">>, [], {rejected, <<"method_not_allowed">>}},
+                {<<"sign_event">>, [{event_kind, Kind}], {rejected, <<"kind_not_allowed">>}}]]
+    end, Relays).
+
+handoff_one(Context, Relay, Method, Opts, Outcome) ->
+    Base = #{relay => relay_url(Relay), method => Method,
+        test => case Outcome of {rejected, Why} -> Why; _ -> Method end},
+    try
+        %% Keep the real rate limiter active. Pace our own allowed probes; do
+        %% not grant skip_rate_limit to the public relay diagnostic client.
+        case Outcome of
+            {rejected, _} -> ok;
+            _ ->
+                Rate = maps:get(rate_limit, get_policy(Context)),
+                Delay = (1000 * maps:get(window_seconds, Rate) div
+                    max(1, maps:get(max_requests, Rate))) + 50,
+                receive after Delay -> ok end
+        end,
+        Ctx = publish_black_box_live_nip46(Context, Method, Opts),
+        Live = live(Ctx),
+        Request = maps:get(last_nip46_request_event, Live),
+        Reply = maps:get(last_nip46_reply_event, Live),
+        Response = maps:get(last_nip46_response, Live),
+        Expected = #{client => require_live(client_pubkey_hex, Ctx),
+            bunker => require_live(bunker_pubkey_hex, Ctx),
+            request_id => maps:get(last_request_id, Live), outcome => Outcome},
+        case damage_nsecbunker_handoff_checks:verify_exchange(Request, Reply, Response,
+            maps:get(last_unsigned_event, Live, undefined), Expected) of
+            {ok, Proof} ->
+                Rows = [R || Line <- binary:split(audit_tail(Ctx), <<"\n">>, [global]),
+                    R <- [handoff_decode_row(Line)], is_map(R)],
+                {ok, Audit} = damage_nsecbunker_handoff_checks:correlate(Rows,
+                    maps:get(request_id, Expected), event_id(Request), event_id(Reply)),
+                Base#{status => passed, proof => Proof, audit => Audit};
+            {error, Why0} -> Base#{status => failed, reason => Why0}
+        end
+    catch _:_ -> Base#{status => failed, reason => relay_exchange_or_audit_failed} end.
+
+handoff_decode_row(Line) ->
+    try jsx:decode(Line, [return_maps]) catch _:_ -> invalid end.

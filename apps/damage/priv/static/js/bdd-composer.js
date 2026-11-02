@@ -1,6 +1,8 @@
 import { MAX_PROMPT_BYTES, EXAMPLES, promptBytes, apiHeaders, filterSteps, stepLine,
   appendStep, featureStats, canAcceptDraft, validationSummary, featureFilename } from './bdd-composer-model.js';
 
+import {mountBddRouting} from './bdd-routing.js';
+
 function boot() {
   const byId = id => document.getElementById(id);
   const root = byId('bdd-composer'), editor = byId('damageTextArea');
@@ -28,13 +30,21 @@ function boot() {
       if (response.status === 401) throw new Error('Your session has expired. Sign in again to continue.');
       let data;
       try { data = await response.json(); } catch { throw new Error(`The node returned an unreadable response (HTTP ${response.status}).`); }
-      if (!response.ok) throw new Error(typeof data?.message === 'string' ? data.message : `Request failed (HTTP ${response.status}).`);
+      if (!response.ok) {
+        const error = new Error(typeof data?.message === 'string' ? data.message : data?.error || `Request failed (HTTP ${response.status}).`);
+        error.status = response.status; throw error;
+      }
       if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('The node returned an invalid JSON response.');
       return data;
     } finally {
       clearTimeout(timer); signal?.removeEventListener('abort', abort);
     }
   }
+
+  const routing = mountBddRouting(root.querySelector('[data-bdd-routing]'), {
+    request: (_path, options = {}) => api('routing', options.body, {signal: options.signal})
+  });
+  document.addEventListener('damage:bdd-routing-changed', () => { void routing.refresh(); void loadCatalog(); });
 
   function controls() {
     const bytes = promptBytes(prompt.value), busy = !!state.active;
@@ -135,6 +145,7 @@ function boot() {
     const box = byId('bdd-draft-notes'); box.replaceChildren();
     const add = text => { const p = document.createElement('p'); p.textContent = text; box.append(p); };
     add(validationSummary(draft.validation));
+    if (draft.inference) add(`Drafted with ${draft.inference.provider} · ${draft.inference.model} · BDD route r${draft.inference.routing_revision}.`);
     add(`ECAI knowledge cards used: ${draft.grounding?.knowledge_cards || 0}. Deployed signatures remain the validation authority.`);
     for (const note of draft.assumptions || []) add(`Assumption: ${note}`);
     for (const note of draft.missing_steps || []) add(`Unsupported requirement: ${note}`);
@@ -269,11 +280,12 @@ function boot() {
     byId('bdd-run-status').textContent = running ? 'Running' : 'Request complete';
   });
   document.addEventListener('auth:changed', () => {
+    routing.reset(); void routing.refresh();
     state.sequence++; state.active?.controller.abort(); clearInterval(state.active?.timer); state.active = null;
     state.draft = null; state.undo = null; byId('bdd-draft-panel').hidden = true; byId('bdd-undo').hidden = true;
     byId('bdd-elapsed').textContent = ''; dirty(); loadCatalog();
   });
-  stats(); updateReports(); loadCatalog();
+  stats(); updateReports(); loadCatalog(); void routing.refresh();
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
 else boot();

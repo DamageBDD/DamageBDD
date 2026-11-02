@@ -101,8 +101,22 @@ base_context(Req) ->
         request_path => cowboy_req:path(Req),
         node_version => <<"v0.1">>,
         indexer_path => <<"/indexer">>,
-        advanced_indexer_path => <<"/indexer/advanced">>
+        advanced_indexer_path => <<"/indexer/advanced">>,
+        brand_name => branded(<<"name">>, <<"ECAI">>),
+        brand_tagline => branded(<<"tagline">>, <<"INTELLIGENCE FABRIC">>),
+        brand_logo => branded(<<"logo">>, <<>>),
+        brand_favicon => branded(<<"favicon">>, <<>>),
+        has_brand_logo => branded(<<"logo">>, <<>>) =/= <<>>,
+        has_brand_favicon => branded(<<"favicon">>, <<>>) =/= <<>>
     }.
+
+branded(Field, Default) ->
+    try
+        case damage_theme:branding(<<"ecai">>) of
+            #{Field := V} when is_binary(V), V =/= <<>> -> V;
+            _ -> Default
+        end
+    catch _:_ -> Default end.
 
 %% ---------------------- Dashboard pieces --------------------
 render_dashboard_component(<<"topbar">>, Ctx) ->
@@ -200,15 +214,25 @@ render_dashboard_page("ecai_console.mustache", Ctx) ->
     AuthHtml = damage_utils:load_template(damage, "ui/dashboard/auth_modal.mustache", AuthCtx),
     %% The Video Studio markup lives in the console template itself. Older
     %% running ecai_dashboard beams therefore cannot omit it accidentally.
+    Routing = damage_utils:load_template(damage, "ui/dashboard/bdd_routing.mustache", Ctx),
+    Agents = damage_utils:load_template(damage, "ui/dashboard/agents_tab.mustache", Ctx#{bdd_routing => Routing}),
     MarketMaker = render_tpl(?DASH_TPL("ecai_market_maker.mustache"), Ctx),
     ComputeSettings = render_tpl(?DASH_TPL("compute_settings.mustache"), Ctx),
+    MathPaths = render_tpl(?DASH_TPL("ecai_math_paths.mustache"), Ctx),
+    Personalities = render_tpl(?DASH_TPL("ecai_personalities.mustache"), Ctx),
+    Evaluation = render_tpl(?DASH_TPL("ecai_eval.mustache"), Ctx),
     OllamaKeys = render_tpl(?DASH_TPL("ollama_keys.mustache"), Ctx),
     render_tpl(
         ?DASH_TPL("ecai_console.mustache"),
         Ctx#{
             browser_auth_modal => AuthHtml,
+            agents_panel => Agents,
+            bdd_routing => Routing,
             market_maker_panel => MarketMaker,
             compute_settings_panel => ComputeSettings,
+            math_paths_panel => MathPaths,
+            evaluation_panel => Evaluation,
+            personalities_panel => Personalities,
             ollama_keys_panel => OllamaKeys
         }
     );

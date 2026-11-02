@@ -9,6 +9,8 @@
     setup_vault/0,
     preview/2,
     create/2,
+    operations/1,
+    operation/2,
     submit_tx/2,
     list/1,
     get/2,
@@ -49,10 +51,21 @@ preview(Owner, Spec) ->
     gen_server:call(?SERVER, {preview, to_bin(Owner), Spec}, 120000).
 
 create(Owner, Spec) ->
-    gen_server:call(?SERVER, {create, to_bin(Owner), Spec}, 120000).
+    operation_call({create, to_bin(Owner), Spec}).
+
+operations(Owner) -> operation_call({operations, to_bin(Owner)}).
+operation(Owner, Id) -> operation_call({operation, to_bin(Owner), to_bin(Id)}).
+
+operation_call(Request) ->
+    try gen_server:call(?SERVER, Request, 10000) of
+        Reply -> Reply
+    catch
+        exit:{noproc, _} -> {error, schedule_service_unavailable};
+        exit:_ -> {error, schedule_operation_outcome_unknown}
+    end.
 
 submit_tx(Owner, TxSpec) ->
-    gen_server:call(?SERVER, {submit_tx, to_bin(Owner), TxSpec}, 120000).
+    operation_call({submit_tx, to_bin(Owner), TxSpec}).
 
 list(Owner) ->
     gen_server:call(?SERVER, {list, to_bin(Owner)}, 30000).
@@ -68,7 +81,7 @@ runs(Owner, ScheduleId, Limit) ->
     ).
 
 action(Owner, ScheduleId, Action) ->
-    gen_server:call(?SERVER, {action, to_bin(Owner), to_bin(ScheduleId), Action}, 120000).
+    operation_call({action, to_bin(Owner), to_bin(ScheduleId), Action}).
 
 run_now(Owner, ScheduleId) ->
     gen_server:call(?SERVER, {run_now, to_bin(Owner), to_bin(ScheduleId)}, 30000).
@@ -94,11 +107,14 @@ init([]) ->
     File = filename:join(data_dir(), "schedule_v2.dets"),
     case dets:open_file(?TABLE, [{file, File}, {type, set}, {auto_save, 5000}]) of
         {ok, ?TABLE} ->
-            {ok, #{timers => #{}, inflight => #{}, pending => #{}}};
+            ok = recover_operations(),
+            {ok, #{timers => #{}, inflight => #{}, pending => #{}, operations => #{}}};
         {error, Reason} ->
             {stop, {schedule_v2_store_open_failed, Reason}}
     end.
 
+handle_call(load_all_schedules, _From, #{operations := Ops} = State) when map_size(Ops) > 0 ->
+    {reply, {error, schedule_operation_in_progress}, State};
 handle_call(load_all_schedules, _From, State0) ->
     State1 = cancel_all_timers(State0),
     Schedules = all_schedules(),
@@ -122,22 +138,30 @@ handle_call({preview, Owner, Spec0}, _From, State) ->
             false -> do_preview(Owner, Spec0)
         end,
     {reply, Reply, State};
-handle_call({create, Owner, Spec0}, _From, State0) ->
-    case owner_busy(Owner, State0) of
-        true ->
-            {reply, {error, schedule_execution_in_progress}, State0};
-        false ->
-            case ensure_vault_for_owner(Owner) of
-                {ok, _Contract} ->
-                    {Reply, State1} = do_create_call(Owner, Spec0, State0),
-                    {reply, Reply, State1};
-                {error, _} = Error ->
-                    {reply, Error, State0}
-            end
+handle_call({create, Owner, Spec0}, _From, State) ->
+    start_operation(create, Owner, normalize_input(Spec0), State);
+handle_call({submit_tx, Owner, Spec0}, _From, State) ->
+    start_operation(submit_tx, Owner, normalize_input(Spec0), State);
+handle_call({operations, Owner}, _From, State) ->
+    Ops = lists:sort(fun(A, B) -> maps:get(created_at, A, 0) >= maps:get(created_at, B, 0) end,
+        owner_operations(Owner)),
+    {reply, {ok, [damage_schedule_v2_operation:public(Op) || Op <- Ops]}, State};
+handle_call({operation, Owner, Id}, _From, State) ->
+    Reply = case lookup({operation, Owner, Id}) of
+        {ok, Op} -> {ok, damage_schedule_v2_operation:public(Op)};
+        not_found -> {error, not_found}
+    end,
+    {reply, Reply, State};
+handle_call({operation_checkpoint, Owner, Id, Stage, Extra}, {Pid, _}, State) ->
+    case maps:get(Owner, maps:get(operations, State, #{}), undefined) of
+        #{id := Id, pid := Pid} ->
+            {ok, Op} = lookup({operation, Owner, Id}),
+            Updated = maps:merge(Op, maps:with([schedule_id], Extra)),
+            ok = durable_operation(Updated#{stage => Stage,
+                updated_at => erlang:system_time(second)}),
+            {reply, ok, State};
+        _ -> {reply, {error, operation_not_running}, State}
     end;
-handle_call({submit_tx, Owner, TxSpec}, _From, State0) ->
-    {Reply, State1} = do_submit_tx(Owner, TxSpec, State0),
-    {reply, Reply, State1};
 handle_call({list, Owner}, _From, State) ->
     Schedules = [public_schedule(enrich_schedule(S)) || S <- owner_schedules(Owner)],
     {reply, {ok, Schedules}, State};
@@ -169,9 +193,10 @@ handle_call({runs, Owner, ScheduleId, Limit0}, _From, State) ->
                 {error, not_found}
         end,
     {reply, Reply, State};
-handle_call({action, Owner, ScheduleId, Action}, _From, State0) ->
-    {Reply, State1} = do_action(Owner, ScheduleId, Action, State0),
-    {reply, Reply, State1};
+handle_call({action, Owner, ScheduleId, Action}, _From, State) ->
+    %% Actions may repeat (pause/resume/pause); each invocation is a new intent.
+    start_operation(action, Owner, #{schedule_id => ScheduleId,
+        action => normalize_action(Action), request_id => new_schedule_id(Owner)}, State);
 handle_call({run_now, Owner, ScheduleId}, _From, State) ->
     Reply =
         case lookup({schedule, ScheduleId}) of
@@ -244,23 +269,61 @@ handle_cast({execution_complete, Owner}, State0) ->
 handle_cast(_Other, State) ->
     {noreply, State}.
 
-handle_info({schedule_due, ScheduleId, ScheduledAt}, State0) ->
-    Now = erlang:system_time(second),
-    State1 = remove_timer(ScheduleId, State0),
-    case lookup({schedule, ScheduleId}) of
-        {ok, Schedule} when Now + 1 < ScheduledAt ->
-            %% Long timers are capped so re-arm without executing early.
-            {noreply, maybe_arm(Schedule, State1)};
-        {ok, Schedule} ->
-            execute(ScheduleId, ScheduledAt),
-            {noreply, maybe_arm(Schedule, State1)};
-        not_found ->
-            {noreply, State1}
+handle_info({schedule_due, ScheduleId, ScheduledAt, Token}, State) ->
+    case maps:get(ScheduleId, maps:get(timers, State, #{}), undefined) of
+        {_Ref, Token} -> {noreply, on_schedule_due(ScheduleId, ScheduledAt, State)};
+        _ -> {noreply, State}
+    end;
+handle_info({schedule_due, ScheduleId, ScheduledAt}, State) ->
+    %% Only accept a legacy message while its legacy timer is still current.
+    case maps:get(ScheduleId, maps:get(timers, State, #{}), undefined) of
+        Ref when is_reference(Ref) -> {noreply, on_schedule_due(ScheduleId, ScheduledAt, State)};
+        _ -> {noreply, State}
+    end;
+handle_info({operation_complete, Owner, Id, Pid, Reply, Effects}, State0) ->
+    case maps:get(Owner, maps:get(operations, State0, #{}), undefined) of
+        #{id := Id, pid := Pid} = Worker ->
+            State1 = forget_operation(Owner, Worker, State0),
+            {ok, Op} = lookup({operation, Owner, Id}),
+            Finished = case Reply of
+                {ok, Value} -> Op#{status => complete, result => Value,
+                    updated_at => erlang:system_time(second)};
+                {error, Why} -> damage_schedule_v2_operation:failure(Op, Why);
+                _ -> damage_schedule_v2_operation:failure(Op, invalid_reply)
+            end,
+            ok = durable_operation(Finished),
+            State2 = apply_timer_effects(Effects, State1),
+            {noreply, maybe_start_next(Owner, State2)};
+        _ -> {noreply, State0}
+    end;
+handle_info({operation_deadline, Owner, Id}, State0) ->
+    case maps:get(Owner, maps:get(operations, State0, #{}), undefined) of
+        #{id := Id, pid := Pid} = Worker ->
+            %% This cannot cancel a transaction already accepted by the chain.
+            exit(Pid, kill),
+            State1 = forget_operation(Owner, Worker, State0),
+            {ok, Op} = lookup({operation, Owner, Id}),
+            ok = durable_operation(damage_schedule_v2_operation:failure(Op, operation_deadline)),
+            {noreply, maybe_start_next(Owner, State1)};
+        _ -> {noreply, State0}
+    end;
+handle_info({'DOWN', Ref, process, Pid, _Reason}, State0) ->
+    Found = [{Owner, Worker} || {Owner, #{ref := R, pid := P} = Worker} <-
+        maps:to_list(maps:get(operations, State0, #{})), R =:= Ref, P =:= Pid],
+    case Found of
+        [{Owner, #{id := Id} = Worker}] ->
+            State1 = forget_operation(Owner, Worker, State0),
+            {ok, Op} = lookup({operation, Owner, Id}),
+            ok = durable_operation(damage_schedule_v2_operation:failure(Op, worker_interrupted)),
+            {noreply, maybe_start_next(Owner, State1)};
+        [] -> {noreply, State0}
     end;
 handle_info(_Info, State) ->
     {noreply, State}.
 
 terminate(_Reason, State) ->
+    maps:foreach(fun(_Owner, #{pid := Pid}) -> exit(Pid, kill) end,
+        maps:get(operations, State, #{})),
     _ = cancel_all_timers(State),
     _ = close_table(),
     ok.
@@ -293,18 +356,21 @@ ensure_vault_for_owner(Owner) ->
     end.
 
 do_create_call(Owner, Spec0, State0) ->
+    ok = operation_checkpoint(preparing, #{}),
     case do_prepare_create(Owner, Spec0) of
         {ok, Draft} ->
             ScheduleId = maps:get(id, Draft),
             ok = store({draft, Owner, ScheduleId}, Draft),
+            ok = operation_checkpoint(create_schedule, #{schedule_id => ScheduleId}),
             case damage_schedule_v2_contract:create_schedule(Owner, Draft) of
                 {ok, Result} ->
                     case damage_schedule_v2_contract:call_result_ok(Result) of
                         true ->
                             case complete_custodial_funding(Owner, Draft) of
                                 {ok, Schedule} ->
-                                    ok = delete({draft, Owner, ScheduleId}),
                                     ok = store({schedule, ScheduleId}, Schedule),
+                                    ok = dets:sync(?TABLE),
+                                    ok = delete({draft, Owner, ScheduleId}),
                                     State1 = maybe_arm(Schedule, State0),
                                     {{ok, public_schedule(Schedule)}, State1};
                                 Error ->
@@ -468,6 +534,7 @@ do_prepare_create(Owner, Spec0) ->
     end.
 
 complete_custodial_funding(Owner, Draft) ->
+    ok = operation_checkpoint(approve_allowance, #{}),
     Lock = maps:get(funded, Draft),
     case damage_schedule_v2_contract:approve_allowance(Owner, Lock) of
         {ok, ApproveResult} ->
@@ -480,6 +547,7 @@ complete_custodial_funding(Owner, Draft) ->
     end.
 
 fund_custodial(Owner, Draft) ->
+    ok = operation_checkpoint(fund_schedule, #{}),
     Id = maps:get(id, Draft),
     Lock = maps:get(funded, Draft),
     case damage_schedule_v2_contract:fund_schedule(Owner, Id, Lock) of
@@ -502,6 +570,7 @@ do_submit_tx(Owner, TxSpec0, State0) ->
     Stage = normalize_stage(maps:get(stage, TxSpec, undefined)),
     case lookup({draft, Owner, ScheduleId}) of
         {ok, Draft} ->
+            ok = operation_checkpoint(Stage, #{schedule_id => ScheduleId}),
             case finalize_chain_tx(TxSpec) of
                 {ok, ChainResult} ->
                     case damage_schedule_v2_contract:call_result_ok(ChainResult) of
@@ -542,8 +611,9 @@ next_wallet_stage(Owner, ScheduleId, approve_allowance, Draft, State) ->
 next_wallet_stage(_Owner, _ScheduleId, fund_schedule, Draft, State0) ->
     Schedule = Draft#{status => active},
     Id = maps:get(id, Schedule),
-    ok = delete_draft(Draft),
     ok = store({schedule, Id}, Schedule),
+    ok = dets:sync(?TABLE),
+    ok = delete_draft(Draft),
     State1 = maybe_arm(Schedule, State0),
     {{ok, #{status => ok, schedule => public_schedule(Schedule)}}, State1};
 next_wallet_stage(_Owner, _ScheduleId, Stage, _Draft, State) ->
@@ -576,6 +646,7 @@ finish_wallet_action(Owner, ScheduleId, Stage, Pending, TxSpec, State0) ->
         false ->
             {{error, {unexpected_wallet_stage, Stage, ExpectedStage}}, State0};
         true ->
+            ok = operation_checkpoint(Stage, #{schedule_id => ScheduleId}),
             case finalize_chain_tx(TxSpec) of
                 {ok, ChainResult} ->
                     case damage_schedule_v2_contract:call_result_ok(ChainResult) of
@@ -611,6 +682,7 @@ do_action(Owner, ScheduleId, Action0, State0) ->
     Action = normalize_action(Action0),
     case lookup({schedule, ScheduleId}) of
         {ok, #{owner := Owner} = _Schedule} ->
+            ok = operation_checkpoint(Action, #{schedule_id => ScheduleId}),
             ContractCall = action_contract_call(Action, Owner, ScheduleId),
             case ContractCall of
                 {ok, Result} ->
@@ -968,9 +1040,10 @@ safe_map(Fun) ->
 %% ------------------------------------------------------------------
 
 owner_busy(Owner, State) ->
-    maps:is_key(Owner, maps:get(inflight, State, #{})).
+    maps:is_key(Owner, maps:get(inflight, State, #{})) orelse owner_operation_blocked(Owner).
 
 scheduler_idle(State) ->
+    not lists:any(fun damage_schedule_v2_operation:blocks_owner/1, all_operations()) andalso
     maps:size(maps:get(inflight, State, #{})) =:= 0 andalso
         maps:fold(
             fun(_Owner, Queue, Empty) -> Empty andalso Queue =:= [] end,
@@ -1011,6 +1084,12 @@ clear_inflight(Owner, State0) ->
     State0#{inflight => maps:remove(Owner, Inflight0)}.
 
 start_next_pending(Owner, State0) ->
+    case owner_busy(Owner, State0) of
+        true -> State0;
+        false -> start_next_pending_ready(Owner, State0)
+    end.
+
+start_next_pending_ready(Owner, State0) ->
     Pending0 = maps:get(pending, State0, #{}),
     case maps:get(Owner, Pending0, []) of
         [{ScheduleId, ScheduledAt} | Rest] ->
@@ -1028,6 +1107,8 @@ start_next_pending(Owner, State0) ->
 %% Timers
 %% ------------------------------------------------------------------
 
+maybe_arm(#{status := active, id := Id}, #{defer_timers := true} = State) ->
+    defer_timer({arm, Id}, State);
 maybe_arm(#{status := active} = Schedule0, State0) ->
     Schedule = enrich_next_run(Schedule0),
     Id = maps:get(id, Schedule),
@@ -1037,8 +1118,9 @@ maybe_arm(#{status := active} = Schedule0, State0) ->
             Now = erlang:system_time(second),
             Delay0 = erlang:max(0, (Next - Now) * 1000),
             Delay = erlang:min(?MAX_TIMER_MS, Delay0),
-            Ref = erlang:send_after(Delay, self(), {schedule_due, Id, Next}),
-            put_timer(Id, Ref, State0);
+            Token = make_ref(),
+            Ref = erlang:send_after(Delay, self(), {schedule_due, Id, Next, Token}),
+            put_timer(Id, {Ref, Token}, State0);
         _ ->
             State0
     end;
@@ -1056,6 +1138,27 @@ enrich_next_run(Schedule) ->
         _ -> Schedule#{next_run_at => undefined}
     end.
 
+on_schedule_due(Id, ScheduledAt, State0) ->
+    State1 = remove_timer(Id, State0),
+    Now = erlang:system_time(second),
+    case lookup({schedule, Id}) of
+        {ok, #{owner := Owner} = Schedule} ->
+            case owner_operation_blocked(Owner) of
+                true when Now + 1 >= ScheduledAt ->
+                    %% Do not rewrite a schedule while its mutation worker owns it.
+                    queue_pending(Owner, {Id, ScheduledAt}, State1);
+                true -> State1;
+                false when Now + 1 < ScheduledAt -> maybe_arm(Schedule, State1);
+                false ->
+                    execute(Id, ScheduledAt),
+                    maybe_arm(Schedule, State1)
+            end;
+        not_found -> State1
+    end.
+
+timer_ref({Ref, _Token}) -> Ref;
+timer_ref(Ref) -> Ref.
+
 put_timer(Id, Ref, State) ->
     Timers0 = maps:get(timers, State, #{}),
     State#{timers => maps:put(Id, Ref, Timers0)}.
@@ -1064,19 +1167,21 @@ remove_timer(Id, State) ->
     Timers0 = maps:get(timers, State, #{}),
     State#{timers => maps:remove(Id, Timers0)}.
 
+cancel_timer(Id, #{defer_timers := true} = State) ->
+    defer_timer({cancel, Id}, State);
 cancel_timer(Id, State0) ->
     Timers0 = maps:get(timers, State0, #{}),
     case maps:get(Id, Timers0, undefined) of
         undefined ->
             State0;
         Ref ->
-            _ = erlang:cancel_timer(Ref),
+            _ = erlang:cancel_timer(timer_ref(Ref)),
             State0#{timers => maps:remove(Id, Timers0)}
     end.
 
 cancel_all_timers(State0) ->
     Timers = maps:get(timers, State0, #{}),
-    lists:foreach(fun({_Id, Ref}) -> _ = erlang:cancel_timer(Ref) end, maps:to_list(Timers)),
+    lists:foreach(fun({_Id, Ref}) -> _ = erlang:cancel_timer(timer_ref(Ref)) end, maps:to_list(Timers)),
     State0#{timers => #{}}.
 
 rearm_all(State0) ->
@@ -1268,6 +1373,179 @@ remaining(S) ->
     ).
 
 %% ------------------------------------------------------------------
+%% Journalled mutations: chain waits never run in the scheduler callback.
+%% ------------------------------------------------------------------
+start_operation(Kind, Owner, Spec, State) ->
+    case damage_schedule_v2_operation:identity(Owner, Kind, Spec) of
+        {ok, Id, Digest} ->
+            case lookup({operation, Owner, Id}) of
+                {ok, #{request_hash := Digest} = Op} ->
+                    {reply, {ok, damage_schedule_v2_operation:public(Op)}, State};
+                {ok, _} -> {reply, {error, idempotency_conflict}, State};
+                not_found -> admit_operation(Kind, Owner, Spec, Id, Digest, State)
+            end;
+        {error, _} = Error -> {reply, Error, State}
+    end.
+
+admit_operation(Kind, Owner, Spec, Id, Digest, State0) ->
+    Workers = maps:get(operations, State0, #{}),
+    Busy = owner_busy(Owner, State0),
+    PendingDraft = Kind =:= create andalso owner_has_draft(Owner),
+    case {Busy, PendingDraft, maps:size(Workers) >= 8} of
+        {true, _, _} -> {reply, {error, schedule_operation_in_progress}, State0};
+        {_, true, _} -> {reply, {error, pending_schedule_requires_reconciliation}, State0};
+        {_, _, true} -> {reply, {error, schedule_service_busy}, State0};
+        {false, false, false} ->
+            Now = erlang:system_time(second),
+            Op0 = #{operation_id => Id, owner => Owner, kind => Kind,
+                request_hash => Digest, status => running, stage => queued,
+                created_at => Now, updated_at => Now},
+            Op = maps:merge(Op0, maps:with([schedule_id], Spec)),
+            %% Sync before acknowledging or starting any chain operation.
+            ok = durable_operation(Op),
+            ok = supersede_signing_operation(Kind, Owner, Spec, Id),
+            Parent = self(),
+            {Pid, Ref} = spawn_opt(fun() ->
+                put(schedule_operation, {Parent, Owner, Id}),
+                {Reply, Effects} = try perform_operation(Kind, Owner, Spec)
+                    catch _:_ -> {{error, worker_interrupted}, #{}}
+                    end,
+                Parent ! {operation_complete, Owner, Id, self(), Reply, Effects}
+            end, [link, monitor]),
+            Timer = erlang:send_after(operation_deadline_ms(), self(),
+                {operation_deadline, Owner, Id}),
+            Worker = #{id => Id, pid => Pid, ref => Ref, timer => Timer},
+            {reply, {ok, damage_schedule_v2_operation:public(Op)},
+                State0#{operations => maps:put(Owner, Worker, Workers)}}
+    end.
+
+supersede_signing_operation(submit_tx, Owner, Spec, NextId) ->
+    ScheduleId = maps:get(schedule_id, Spec, undefined),
+    Stage = normalize_stage(maps:get(stage, Spec, undefined)),
+    lists:foreach(fun(Op) ->
+        case Op of
+            #{status := complete, result := #{status := signing_required, stage := Stage},
+                schedule_id := ScheduleId} ->
+                ok = durable_operation((maps:remove(result, Op))#{
+                    status => superseded, superseded_by => NextId});
+            _ -> ok
+        end
+    end, owner_operations(Owner)),
+    ok;
+supersede_signing_operation(_, _, _, _) -> ok.
+
+perform_operation(create, Owner, Spec) ->
+    Empty = #{defer_timers => true, timer_effects => []},
+    ok = operation_checkpoint(ensuring_vault, #{}),
+    case ensure_vault_for_owner(Owner) of
+        {ok, _} -> do_create_call(Owner, Spec, Empty);
+        {error, _} = Error -> {Error, Empty}
+    end;
+perform_operation(submit_tx, Owner, Spec) ->
+    do_submit_tx(Owner, Spec, #{defer_timers => true, timer_effects => []});
+perform_operation(action, Owner, Spec) ->
+    do_action(Owner, maps:get(schedule_id, Spec), maps:get(action, Spec),
+        #{defer_timers => true, timer_effects => []}).
+
+operation_checkpoint(Stage, Extra) ->
+    case get(schedule_operation) of
+        {Parent, Owner, Id} ->
+            gen_server:call(Parent,
+                {operation_checkpoint, Owner, Id, Stage, Extra}, 10000);
+        undefined -> ok
+    end.
+
+operation_deadline_ms() ->
+    case application:get_env(damage, schedule_v2_operation_timeout_ms, 900000) of
+        N when is_integer(N), N >= 1000, N =< 3600000 -> N;
+        _ -> 900000
+    end.
+
+forget_operation(Owner, #{pid := Pid, ref := Ref, timer := Timer}, State) ->
+    _ = erlang:cancel_timer(Timer),
+    _ = erlang:demonitor(Ref, [flush]),
+    _ = unlink(Pid),
+    State#{operations => maps:remove(Owner, maps:get(operations, State, #{}))}.
+
+maybe_start_next(Owner, State) ->
+    case owner_busy(Owner, State) of
+        true -> State;
+        false -> start_next_pending(Owner, rearm_missing_owner_timers(Owner, State))
+    end.
+
+rearm_missing_owner_timers(Owner, State0) ->
+    lists:foldl(fun(Schedule, State) ->
+        Id = maps:get(id, Schedule),
+        case maps:is_key(Id, maps:get(timers, State, #{})) of
+            true -> State;
+            false -> maybe_arm(Schedule, State)
+        end
+    end, State0, owner_schedules(Owner)).
+
+defer_timer(Effect, State) ->
+    State#{timer_effects => [Effect | maps:get(timer_effects, State, [])]}.
+
+apply_timer_effects(Effects, State) ->
+    lists:foldl(fun
+        ({cancel, Id}, S) -> cancel_timer(Id, S);
+        ({arm, Id}, S) ->
+            case lookup({schedule, Id}) of
+                {ok, Schedule} -> maybe_arm(Schedule, cancel_timer(Id, S));
+                not_found -> S
+            end
+    end, State, lists:reverse(maps:get(timer_effects, Effects, []))).
+
+durable_operation(#{owner := Owner, operation_id := Id} = Op) ->
+    ok = store({operation, Owner, Id}, Op),
+    dets:sync(?TABLE).
+
+all_operations() ->
+    dets:foldl(fun
+        ({{operation, _Owner, _Id}, Op}, Acc) -> [Op | Acc];
+        (_, Acc) -> Acc
+    end, [], ?TABLE).
+
+owner_operations(Owner) ->
+    [O || O <- all_operations(), maps:get(owner, O, undefined) =:= Owner].
+
+owner_operation_blocked(Owner) ->
+    lists:any(fun damage_schedule_v2_operation:blocks_owner/1, owner_operations(Owner)).
+
+owner_has_draft(Owner) ->
+    dets:foldl(fun
+        ({{draft, O, _Id}, _}, _) when O =:= Owner -> true;
+        (_, Acc) -> Acc
+    end, false, ?TABLE).
+
+recover_operations() ->
+    lists:foreach(fun(Op) ->
+        ok = durable_operation(damage_schedule_v2_operation:recover(Op))
+    end, all_operations()),
+    Drafts = dets:foldl(fun
+        ({{draft, _Owner, _Id}, Draft}, Acc) -> [Draft | Acc];
+        (_, Acc) -> Acc
+    end, [], ?TABLE),
+    lists:foreach(fun recover_legacy_draft/1, Drafts),
+    ok.
+
+recover_legacy_draft(#{owner := Owner, id := ScheduleId} = Draft) ->
+    Known = lists:any(fun(Op) ->
+        maps:get(schedule_id, Op, undefined) =:= ScheduleId
+    end, owner_operations(Owner)),
+    case {Known, lookup({schedule, ScheduleId})} of
+        {false, not_found} ->
+            {ok, Id, Digest} = damage_schedule_v2_operation:identity(
+                Owner, legacy_create, #{schedule_id => ScheduleId}),
+            ok = durable_operation(#{operation_id => Id, owner => Owner,
+                request_hash => Digest, kind => create,
+                schedule_id => ScheduleId, stage => legacy_create,
+                status => reconciliation_required, error => <<"legacy_creation_outcome_unknown">>,
+                created_at => maps:get(created_at, Draft, erlang:system_time(second)),
+                updated_at => erlang:system_time(second)});
+        _ -> ok
+    end.
+
+%% ------------------------------------------------------------------
 %% Utility
 %% ------------------------------------------------------------------
 
@@ -1279,6 +1557,7 @@ normalize_input(_) ->
 normalize_key(K) when is_atom(K) -> K;
 normalize_key(K) when is_binary(K) ->
     case K of
+        <<"request_id">> -> request_id;
         <<"feature">> -> feature;
         <<"feature_hash">> -> feature_hash;
         <<"feature_title">> -> feature_title;

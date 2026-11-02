@@ -15,8 +15,8 @@ html {
 
 body {
   font-family: "Ubuntu Mono", monospace, sans-serif;
-  background-color: #fefefe;
-  color: #1a1a1a;
+  background-color: var(--theme-bg, #fefefe);
+  color: var(--theme-text, #1a1a1a);
   line-height: 1.6;
   padding: 0 1rem;
 }
@@ -31,12 +31,12 @@ body {
 h1.title {
   font-size: 2rem;
   margin-bottom: 1rem;
-  border-bottom: 3px solid #FF9900;
+  border-bottom: 3px solid var(--theme-warning, #FF9900);
   padding-bottom: 0.3rem;
 }
 
 h2, h3 {
-  color: #111;
+  color: var(--theme-text, #111);
   margin-top: 2rem;
   margin-bottom: 0.5rem;
 }
@@ -47,25 +47,25 @@ ul.org-ul {
 }
 
 code {
-  background: #eee;
+  background: var(--theme-surface-alt, #eee);
   padding: 0.2em 0.4em;
   border-radius: 4px;
   font-family: "Ubuntu Mono", monospace;
 }
 
 blockquote {
-  border-left: 4px solid #FF9900;
+  border-left: 4px solid var(--theme-warning, #FF9900);
   padding-left: 1rem;
   font-style: italic;
   margin: 1.5rem 0;
-  color: #444;
+  color: var(--theme-text, #444);
 }
 
 /* Table of contents */
 #table-of-contents {
-  background: #f0f0f0;
+  background: var(--theme-surface-alt, #f0f0f0);
   padding: 1rem;
-  border-left: 4px solid #FF9900;
+  border-left: 4px solid var(--theme-warning, #FF9900);
   margin-bottom: 2rem;
 }
 
@@ -80,7 +80,7 @@ blockquote {
 
 #text-table-of-contents a {
   text-decoration: none;
-  color: #1a1a1a;
+  color: var(--theme-text, #1a1a1a);
 }
 
 .org-center {
@@ -93,7 +93,7 @@ blockquote {
 a:focus,
 button:focus,
 input:focus {
-  outline: 2px solid #FF9900;
+  outline: 2px solid var(--theme-focus, #FF9900);
 }
 
 /* Responsive */
@@ -131,29 +131,29 @@ input:focus {
   width: 90%;
   max-width: 400px;
   text-align: center;
-  border: 1px solid #ccc;
+  border: 1px solid var(--theme-control-border, #ccc);
   border-radius: 6px;
-  background-color: #f9f9f9;
+  background-color: var(--theme-input, #f9f9f9);
   margin-bottom: 1em;
 }
 
 #stack-btn {
   font-size: 1.2em;
   padding: 0.75em 2em;
-  background: linear-gradient(135deg, #FF9900, #ffcc00);
-  color: #111;
+  background: linear-gradient(135deg, var(--theme-accent, #FF9900), var(--theme-accent, #ffcc00));
+  color: var(--theme-on-accent, #111);
   font-weight: bold;
   border: none;
   border-radius: 10px;
   cursor: pointer;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+  box-shadow: 0 4px 10px var(--theme-shadow, rgba(0,0,0,0.2));
   transition: all 0.2s ease-in-out;
 }
 
 #stack-btn:hover {
   transform: scale(1.05);
-  box-shadow: 0 6px 15px rgba(0,0,0,0.3);
-  background: linear-gradient(135deg, #ffd700, #FF9900);
+  box-shadow: 0 6px 15px var(--theme-shadow, rgba(0,0,0,0.3));
+  background: linear-gradient(135deg, var(--theme-accent-hover, #ffd700), var(--theme-accent-hover, #FF9900));
 }
 
 #registration-stack-recents {
@@ -161,7 +161,7 @@ input:focus {
   padding: 0;
   margin-top: 1.5em;
   font-family: monospace;
-  background: #f5f5f5;
+  background: var(--theme-surface, #f5f5f5);
   border-radius: 0.5em;
   padding: 1em;
   text-align: left;
@@ -184,17 +184,17 @@ input:focus {
   transform: translateY(-50%);
   font-size: 1.2em;
   pointer-events: none;
-  color: #FF9900;
+  color: var(--theme-warning, #FF9900);
 }
 
 .input-icon-container input {
   font-size: 1em;
   padding: 0.5em 1em 0.5em 2.2em; /* extra left padding for icon */
-  border: 1px solid #ccc;
+  border: 1px solid var(--theme-control-border, #ccc);
   border-radius: 8px;
-  background-color: #f9f9f9;
+  background-color: var(--theme-input, #f9f9f9);
   width: 100%;
-  box-shadow: inset 0 1px 3px rgba(0,0,0,0.1);
+  box-shadow: inset 0 1px 3px var(--theme-shadow, rgba(0,0,0,0.1));
 }
 
 /* Header and Branding */
@@ -224,20 +224,20 @@ input:focus {
   align-items: center;
   gap: 1em;
   padding: 1em;
-  background-color: #FF9900; /* Bitcoin orange */
-  border-bottom: 2px solid #000; /* optional for strong contrast */
+  background-color: var(--theme-accent, #FF9900); /* Bitcoin orange */
+  border-bottom: 2px solid var(--theme-border, #000); /* optional for strong contrast */
 }
 
 .site-title {
   margin: 0;
   font-size: 1.8em;
-  color: #fff; /* white text on orange */
+  color: var(--theme-on-accent, #fff); /* paired with the header accent */
 }
 
 .tagline {
   margin: 0.2em 0 0;
   font-size: 1em;
-  color: #fefefe; /* slightly off-white for readability */
+  color: var(--theme-on-accent, #fefefe); /* paired with the header accent */
 }
 
 
@@ -284,7 +284,7 @@ input:focus {
   left: 10px;
   transform: translateY(-50%);
   font-size: 1.2em;
-  color: #FF9900;
+  color: var(--theme-warning, #FF9900);
   pointer-events: none;
 }
 
@@ -292,28 +292,28 @@ input:focus {
   width: 100%;
   padding: 0.5em 1em 0.5em 2.2em;
   font-size: 1em;
-  border: 1px solid #ccc;
+  border: 1px solid var(--theme-border, #ccc);
   border-radius: 8px;
-  background-color: #f9f9f9;
+  background-color: var(--theme-surface, #f9f9f9);
 }
 
 #login-btn {
   font-size: 1em;
   padding: 0.5em 1.2em;
-  background: linear-gradient(135deg, #FF9900, #ffcc00);
-  color: #111;
+  background: linear-gradient(135deg, var(--theme-accent, #FF9900), var(--theme-accent, #ffcc00));
+  color: var(--theme-on-accent, #111);
   font-weight: bold;
   border: none;
   border-radius: 8px;
   cursor: pointer;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+  box-shadow: 0 2px 6px var(--theme-shadow, rgba(0,0,0,0.2));
   transition: all 0.2s ease-in-out;
 }
 
 #login-btn:hover {
   transform: scale(1.03);
-  background: linear-gradient(135deg, #ffd700, #FF9900);
-  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+  background: linear-gradient(135deg, var(--theme-accent-hover, #ffd700), var(--theme-accent-hover, #FF9900));
+  box-shadow: 0 4px 10px var(--theme-shadow, rgba(0,0,0,0.3));
 }
 
 @media (max-width: 600px) {
@@ -354,25 +354,25 @@ input:focus {
 
 /** footer **/
 .footer {
-  background: #f5f5f5;
+  background: var(--theme-surface, #f5f5f5);
   padding: 2em 1em;
   text-align: center;
   font-size: 0.95em;
-  color: #333;
-  border-top: 1px solid #e0e0e0;
+  color: var(--theme-text, #333);
+  border-top: 1px solid var(--theme-border, #e0e0e0);
   margin-top: 3em;
 }
 
 .footer-message h2 {
   font-size: 1.3em;
   margin-bottom: 0.5em;
-  color: #FF9900;
+  color: var(--theme-warning, #FF9900);
   font-weight: bold;
 }
 
 .centered-message {
   font-size: 1.1em;
-  color: #444;
+  color: var(--theme-text, #444);
   line-height: 1.6;
   max-width: 600px;
   margin: 0 auto 1.5em;
@@ -380,11 +380,11 @@ input:focus {
 
 .footer .meta {
   font-size: 0.9em;
-  color: #666;
+  color: var(--theme-muted, #666);
 }
 
 .footer .meta a {
-  color: #FF9900;
+  color: var(--theme-warning, #FF9900);
   text-decoration: none;
   margin: 0 0.5em;
 }
@@ -402,19 +402,19 @@ input:focus {
 }
 
 .button-grid button {
-  background: #fefefe;
-  border: 1px solid #FF9900;
+  background: var(--theme-surface, #fefefe);
+  border: 1px solid var(--theme-warning, #FF9900);
   padding: 0.5em 1em;
   border-radius: 8px;
   cursor: pointer;
   font-weight: bold;
-  color: #333;
+  color: var(--theme-text, #333);
   transition: all 0.2s;
 }
 
 .button-grid button:hover {
-  background: #FF9900;
-  color: white;
+  background: var(--theme-warning, #FF9900);
+  color: var(--theme-on-accent, white);
 }
 #theme-button{
 position:fixed;top:1rem;right:1rem;font-size:1.5rem;background:none;border:none;cursor:pointer;
@@ -425,26 +425,26 @@ margin:10px;
     border-collapse: collapse;
     margin-top: 1em;
     font-size: 0.95em;
-    background-color: #f9f9f9;
+    background-color: var(--theme-surface, #f9f9f9);
   }
 
   .recent-table thead {
-    background-color: #444;
-    color: white;
+    background-color: var(--theme-surface, #444);
+    color: var(--theme-text, white);
   }
 
   .recent-table th, .recent-table td {
-    border: 1px solid #ddd;
+    border: 1px solid var(--theme-border, #ddd);
     padding: 0.6em;
     text-align: left;
   }
 
   .recent-table tbody tr:nth-child(even) {
-    background-color: #f0f0f0;
+    background-color: var(--theme-surface-alt, #f0f0f0);
   }
 
   .recent-table tbody tr:hover {
-    background-color: #e0f7fa;
+    background-color: var(--theme-accent-soft, #e0f7fa);
   }
   .recent-table img {
     display: block;
@@ -458,7 +458,7 @@ margin:10px;
   }
 
   .qr-btn:hover {
-    color: #007bff;
+    color: var(--theme-link, #007bff);
   }
 
   .qr-container {
@@ -479,8 +479,8 @@ pre code, code {
   position: absolute;
   top: 4px;
   right: 4px;
-  background: rgba(0, 122, 204, 0.6); /* translucent blue */
-  color: #fff;
+  background: var(--theme-accent, rgba(0, 122, 204, 0.6)); /* translucent blue */
+  color: var(--theme-on-accent, #fff);
   border: none;
   padding: 4px 8px;
   font-size: 12px;
@@ -497,7 +497,7 @@ pre code, code {
 .copy-btn:hover,
 .copy-btn:active,
 .copy-btn:focus {
-  background: rgba(0, 122, 204, 0.9);
+  background: var(--theme-accent, rgba(0, 122, 204, 0.9));
   opacity: 1;
   transform: scale(1.05);
 }
@@ -511,3 +511,11 @@ pre code, code {
   }
 }
 
+
+/* Theme values win over local light/dark defaults; no sizing change for QR/media. */
+body { color-scheme:var(--theme-color-scheme, normal); }
+input,select,textarea { color:var(--theme-text, inherit); background-color:var(--theme-input, revert); }
+input:is([type="checkbox"],[type="radio"]) { accent-color:var(--theme-accent, auto); }
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible {
+  outline:2px solid var(--theme-focus, currentColor); outline-offset:3px;
+}

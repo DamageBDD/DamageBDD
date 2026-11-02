@@ -32,13 +32,13 @@
   font-size: 1.65rem;
   font-weight: 800;
   letter-spacing: .3px;
-  color: #eaf4ff;
+  color: var(--theme-text, #eaf4ff);
   text-align: left;
 
   /* subtle brand glow */
   text-shadow:
-    0 1px 0 rgba(255,255,255,.04),
-    0 6px 18px rgba(0,140,255,.18);
+    0 1px 0 var(--theme-shadow, rgba(255,255,255,.04)),
+    0 6px 18px var(--theme-shadow, rgba(0,140,255,.18));
 }
 
 /* Tagline */
@@ -47,7 +47,7 @@
   font-size: .9rem;
   font-weight: 500;
   letter-spacing: .25px;
-  color: rgba(200,220,255,.75);
+  color: var(--theme-muted, rgba(200,220,255,.75));
 
   /* visually separates from the title */
   opacity: .9;
@@ -104,7 +104,7 @@
   background: linear-gradient(
     to right,
     rgba(0,140,255,.0),
-    rgba(0,140,255,.35),
+    var(--theme-surface-alt, rgba(0,140,255,.35)),
     rgba(0,140,255,.0)
   );
 }

@@ -4,6 +4,7 @@
 -export([
     start_link/0,
     search/2,
+    source/1,
     status/0,
     activate_snapshot/2,
     upsert_live_record/4,
@@ -39,6 +40,8 @@ start_link() ->
 search(Query, Opts) when is_map(Opts) ->
     gen_server:call(?MODULE, {search, Query, Opts}, infinity).
 
+source(DocId) -> gen_server:call(?MODULE, {source, DocId}, 30000).
+
 status() ->
     gen_server:call(?MODULE, status).
 
@@ -63,12 +66,21 @@ init([]) ->
 handle_continue(restore_active_snapshot, State) ->
     {noreply, restore_active_snapshot(State)}.
 
+handle_call({source, DocId}, _From, State0) ->
+    case active_search_context(State0) of
+        {live, Ctx, State1} -> {reply, ecai_search:source(Ctx, DocId), State1};
+        {stable, Ctx, State1} -> {reply, ecai_search:source(Ctx, DocId), State1};
+        {none, State1} -> {reply, {error, search_index_not_ready}, State1}
+    end;
 handle_call({search, Query, Opts}, _From, State0) ->
     case active_search_context(State0) of
         {live, Ctx, State1 = #st{live_metadata = LiveMetadata}} ->
             %% Live writes are serialized through this gen_server. Rebuild
             %% deferred proof roots only when a query actually needs them.
-            _ = ecai_search:finalize_roots(Ctx),
+            _ = case maps:get(include_proofs, Opts, true) of
+                true -> ecai_search:finalize_roots(Ctx);
+                false -> ok
+            end,
             {reply,
                 annotate_index_result(
                     ecai_wikimedia_search:search(Ctx, Query, Opts),
@@ -264,6 +276,7 @@ live_upsert(Ctx, DocId, Record, Abstract) ->
     try
         ok = ecai_search:upsert_record(Ctx, DocId, Record),
         ok = ecai_search:index_text(Ctx, DocId, <<"abstract">>, Abstract, 120),
+        ok = ecai_source_retrieval:index_text(Ctx, DocId, Record),
         ok
     catch
         Class:Reason:Stacktrace -> {error, {live_index_update_failed, Class, Reason, Stacktrace}}

@@ -1,0 +1,62 @@
+%% Run in a separate VM with current production routing/supervision modules,
+%% never the phrase policy suite's command/intent test doubles.
+-module(erm_phrase_integration_tests).
+-include_lib("eunit/include/eunit.hrl").
+
+canonical_routes_test() ->
+    Pairs = [{stop_music, stop}, {pause_music, pause}, {play_music, play},
+        {next_track, next}, {previous_track, previous}],
+    lists:foreach(fun({Phrase, Action}) ->
+        ?assertEqual({ok, #{action => Action}},
+            erm_voice_intent:parse(erm_phrase_codec:command(Phrase)))
+    end, Pairs).
+
+supervisor_selection_test() ->
+    Previous = application:get_env(erm, tts),
+    try
+        ok = application:set_env(erm, tts, [{enabled, true}]),
+        Phrase = #{backend => phrases, voice => #{enabled => false}},
+        Native = #{backend => native, voice => #{enabled => false}},
+        ?assertEqual([erm_phrase_voice], ids(erm_sup:whisper_child_specs(true, Phrase))),
+        ?assertEqual([erm_native_voice], ids(erm_sup:whisper_child_specs(true, Native))),
+        ?assertEqual([], erm_sup:whisper_child_specs(false, Phrase)),
+        ok = application:set_env(erm, tts, [{enabled, false}]),
+        ?assertEqual([erm_model_pull, erm_phrase_voice],
+            ids(erm_sup:whisper_child_specs(true, Phrase))),
+        ?assertEqual([erm_model_pull, erm_native_voice],
+            ids(erm_sup:whisper_child_specs(true, Native)))
+    after
+        case Previous of
+            undefined -> application:unset_env(erm, tts);
+            {ok, Value} -> application:set_env(erm, tts, Value)
+        end
+    end.
+ids(Specs) -> [maps:get(id, Spec) || Spec <- Specs].
+
+rebar_artifact_selection_test() ->
+    Names = ["ERM_NATIVE_VOICE", "ERM_SHARE_BRIDGE"],
+    Previous = [{Name, os:getenv(Name)} || Name <- Names],
+    Script = filename:join(os:getenv("PHRASE_TEST_ERM"), "rebar.config.script"),
+    Retained = [{pre_hooks, [{compile, "echo retained"}]},
+        {artifacts, ["priv/retained"]}],
+    try
+        true = os:putenv("ERM_NATIVE_VOICE", "1"),
+        true = os:putenv("ERM_SHARE_BRIDGE", "0"),
+        {ok, Enabled} = file:script(Script, [{'CONFIG', Retained}]),
+        ?assertEqual(["priv/retained", "priv/erm_native_voice", "priv/erm_phrase_lab"],
+            proplists:get_value(artifacts, Enabled)),
+        ?assert(lists:member({compile, "echo retained"},
+            proplists:get_value(pre_hooks, Enabled))),
+        true = os:putenv("ERM_NATIVE_VOICE", "0"),
+        {ok, Disabled} = file:script(Script, [{'CONFIG', Retained}]),
+        ?assertEqual(Retained, Disabled),
+        true = os:putenv("ERM_SHARE_BRIDGE", "1"),
+        {ok, Shared} = file:script(Script, [{'CONFIG', Retained}]),
+        ?assertEqual(["priv/retained", "priv/erm_kdeconnect_share"],
+            proplists:get_value(artifacts, Shared))
+    after
+        lists:foreach(fun
+            ({Name, false}) -> os:unsetenv(Name);
+            ({Name, Value}) -> os:putenv(Name, Value)
+        end, Previous)
+    end.

@@ -307,6 +307,8 @@ is_custodial(Owner) ->
 
 safe_eval(Fun) when is_function(Fun, 0) ->
     try Fun() of
+        {error, _} = Error -> Error;
+        {ok, _} = Ok -> Ok;
         Value -> {ok, Value}
     catch
         Class:Reason:Stack -> {error, {contract_operation_failed, Class, Reason, Stack}}

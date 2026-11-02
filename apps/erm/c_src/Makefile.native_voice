@@ -3,11 +3,16 @@ SHERPA_PREFIX ?= /opt/sherpa-onnx
 CXX ?= c++
 CXXFLAGS ?= -O2 -Wall -Wextra
 TARGET ?= ../priv/erm_native_voice
-all: $(TARGET)
-$(TARGET): erm_native_voice.cpp erm_voice_audio.h Makefile.native_voice ../scripts/build_native_voice.sh ../scripts/setup_native_voice.sh
+all: $(TARGET) phrase_lab
+# Pass the helper target explicitly: the caller's TARGET names the capture port
+# and is otherwise inherited by recursive make, which must not overwrite it.
+phrase_lab:
+	$(MAKE) -f Makefile.phrase_lab TARGET=../priv/erm_phrase_lab
+$(TARGET): erm_native_voice.cpp erm_voice_audio.h erm_phrase_features.h erm_phrase_synth.h Makefile.native_voice ../scripts/build_native_voice.sh ../scripts/setup_native_voice.sh
 	mkdir -p "$(dir $(TARGET))"
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -std=c++17 -pthread -I"$(WHISPER_PREFIX)/include" -I"$(SHERPA_PREFIX)/include" "$<" -L"$(WHISPER_PREFIX)/lib" -L"$(SHERPA_PREFIX)/lib" -Wl,--disable-new-dtags,-rpath,"$(WHISPER_PREFIX)/lib:$(SHERPA_PREFIX)/lib" $(LDFLAGS) -lwhisper -lsherpa-onnx-c-api -o "$@.tmp"
 	mv -f "$@.tmp" "$@"
 clean:
 	rm -f "$(TARGET)" "$(TARGET).tmp" .erm_native_voice.build
-.PHONY: all clean
+	$(MAKE) -f Makefile.phrase_lab TARGET=../priv/erm_phrase_lab clean
+.PHONY: all clean phrase_lab

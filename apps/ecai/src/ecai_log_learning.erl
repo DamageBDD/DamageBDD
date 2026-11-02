@@ -517,7 +517,7 @@ infer_incident(Prompt, Opts) ->
         provider => maps:get(provider, Opts)
     },
     InferenceOpts = maybe_put(model, maps:get(model, Opts), InferenceOpts0),
-    try ecai_ollama_pool:generate_json(audit, Prompt, InferenceOpts) of
+    try ecai_ollama_pool:generate_json(audit, Prompt, ecai_llm_settings:code_options(InferenceOpts)) of
         {ok, Card, Meta} when is_map(Card), is_map(Meta) -> {ok, Card, Meta};
         {ok, Card, Meta} when is_map(Card) ->
             {ok, Card, #{raw_meta => safe_term(Meta)}};

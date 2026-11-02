@@ -1,0 +1,17 @@
+<details class="bdd-routing" data-bdd-routing>
+  <summary>Drafting model <span data-route="summary">Not loaded</span></summary>
+  <p>BDD authoring uses ECAI’s <code>bdd</code> role. The prompt and selected code knowledge can leave this node when remote processing is permitted. Provider charges may apply outside the task budget. Keep secrets out of prompts. Agent execution keeps its separately configured planner.</p>
+  <div data-route="candidates" class="agent-muted"></div>
+  <form data-route="form">
+    <fieldset disabled data-route="fields">
+      <legend>Node-wide BDD authoring route</legend>
+      <div class="agent-fields">
+        <label>Provider<select name="provider"><option value="any">Automatic · eligible BDD providers</option><option value="ollama">Ollama</option><option value="openai">OpenAI</option><option value="anthropic">Claude / Anthropic</option></select></label>
+        <label>Model<input name="model" type="text" maxlength="256" placeholder="Use the connection’s default model" autocomplete="off"></label>
+      </div>
+      <p class="agent-muted">This filters approved connections; it does not add one or grant remote access. An unavailable selection fails instead of switching provider. Manage connections, keys and remote-role consent in ECAI → AI providers &amp; roles.</p>
+      <button type="submit" data-route="save">Save authoring route</button>
+    </fieldset>
+  </form>
+  <div class="agent-toolbar"><button type="button" data-route="refresh">Refresh route</button><span data-route="status" role="status" aria-live="polite">Sign in to inspect routing. Only node administrators can change it.</span></div>
+</details>

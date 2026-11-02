@@ -7,8 +7,16 @@
 
 get(Key) ->
     {Default, Check} = spec(Key),
-    Value = normalize(Check, application:get_env(nosternity, Key, Default)),
+    Raw = case application:get_env(nosternity, Key) of
+        {ok, Configured} -> Configured;
+        undefined when is_function(Default, 0) -> Default();
+        undefined -> Default
+    end,
+    Value = normalize(Check, Raw),
     case valid(Check, Value) of
+        true when Check =:= path ->
+            try damage_config:normalize_path(unicode:characters_to_list(Value))
+            catch error:_ -> error({invalid_configuration, Key}) end;
         true -> Value;
         false -> error({invalid_configuration, Key})
     end.
@@ -31,6 +39,8 @@ validate() ->
 
 keys() ->
     [
+        data_dir,
+        search_store_file,
         dashboard_enabled,
         auth_signup_enabled,
         auth_store_file,
@@ -73,8 +83,14 @@ spec(dashboard_enabled) ->
     {true, boolean};
 spec(auth_signup_enabled) ->
     {true, boolean};
+%% Durable state follows the shared Damage state root. Explicit per-file
+%% overrides retain their meaning, including legacy relative paths.
+spec(data_dir) ->
+    {fun() -> filename:join([damage_config:state_dir(), "dets", "nosternity"]) end, path};
+spec(search_store_file) ->
+    {fun() -> filename:join(get(data_dir), "search.dets") end, path};
 spec(auth_store_file) ->
-    {"data/nosternity/accounts.dets", path};
+    {fun() -> filename:join(get(data_dir), "accounts.dets") end, path};
 spec(auth_challenge_ttl_seconds) ->
     {180, {integer, 30, 600}};
 spec(auth_session_ttl_seconds) ->
@@ -160,9 +176,17 @@ utf8(Value) when is_binary(Value); is_list(Value) ->
 utf8(_) ->
     invalid.
 
+valid(path, Value) when is_binary(Value) ->
+    case unicode:characters_to_list(Value) of
+        List when is_list(List) -> valid(path, List);
+        _ -> false
+    end;
 valid(path, Value) ->
     is_list(Value) andalso Value =/= [] andalso
-        lists:all(fun(C) -> is_integer(C) andalso C > 0 end, Value);
+        lists:all(fun(C) ->
+            is_integer(C) andalso C > 0 andalso C =< 16#10ffff andalso
+                not (C >= 16#d800 andalso C =< 16#dfff)
+        end, Value);
 valid(boolean, Value) ->
     is_boolean(Value);
 valid({integer, Min, Max}, Value) ->

@@ -71,6 +71,7 @@ policy_key(damage, <<"quickstart_enabled">>) -> true;
 policy_key(damage, <<"quickstart_trial_enabled">>) -> true;
 policy_key(damage, <<"cln_keyfile">>) -> true;
 policy_key(damage, <<"nsecbunker">>) -> true;
+policy_key(ecai, <<"market_maker_admin_enabled">>) -> true;
 policy_key(ecai, <<"code_security_enabled">>) -> true;
 policy_key(ecai, <<"code_admin_enabled">>) -> true;
 policy_key(ecai, <<"code_review_push_enabled">>) -> true;
@@ -125,6 +126,7 @@ groups(damage) ->
     ];
 groups(ecai) ->
     [
+        g(<<"evaluation">>, <<"LLM evaluation">>, <<"Node ceilings, provider allowlists and review policy; separate from account preferences">>),
         g(
             <<"indexing">>,
             <<"Indexing & ingestion">>,
@@ -282,6 +284,7 @@ group_key(ecai, K) ->
     first_prefix(
         K,
         [
+            {<<"eval_">>, <<"evaluation">>},
             {<<"index_">>, <<"indexing">>},
             {<<"ingest_">>, <<"indexing">>},
             {<<"wikimedia_">>, <<"indexing">>},

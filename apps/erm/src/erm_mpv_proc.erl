@@ -41,6 +41,10 @@
     code_change/3
 ]).
 
+-ifdef(TEST).
+-export([direct_mpv_call/3, cached_audio_command/2, encode_mpv_named_command/2]).
+-endif.
+
 -define(DEFAULT_IPC_PATH, "/tmp/mpv.sock").
 -define(SOCKET_WAIT_MS, 5000).
 -define(SOCKET_POLL_MS, 100).
@@ -616,6 +620,15 @@ safe_mpv_call(Function, Args, Path) ->
 %% jsx_encoder. Unknown commands still fall back to mpv_ipc for compatibility.
 direct_mpv_call(connect, [Path0], _OwnerPath) ->
     connect_socket(normalize_path(Path0));
+direct_mpv_call(load_cached_audio, [File, Format], Path) ->
+    %% ECDJ only supplies hash-verified local audio. Force the expected audio
+    %% demuxer and disable nested references so disguised playlists cannot
+    %% turn this local-only boundary into a network fetch. Named loadfile
+    %% arguments avoid the positional index added in mpv 0.38.
+    case cached_audio_command(File, Format) of
+        {ok, Command} -> send_mpv_named_command(Path, Command);
+        Error -> Error
+    end;
 direct_mpv_call(load_file, [File], Path) ->
     send_mpv_command(Path, [<<"loadfile">>, File, <<"replace">>]);
 direct_mpv_call(load_list, [File], Path) ->
@@ -655,6 +668,31 @@ direct_mpv_call(seek_percent, [Percent0], Path) when is_integer(Percent0); is_fl
     send_mpv_command(Path, [<<"seek">>, Percent, <<"absolute-percent">>]);
 direct_mpv_call(_Function, _Args, _Path) ->
     unsupported.
+
+cached_audio_command(File0, Format) when is_binary(Format) ->
+    File = normalize_path(File0),
+    case filename:pathtype(File)=:=absolute andalso
+         lists:member(Format,[<<"mp3">>,<<"flac">>,<<"ogg">>,<<"wav">>,<<"mov">>]) of
+        true ->
+            {ok,#{<<"name">>=><<"loadfile">>,<<"url">>=>unicode:characters_to_binary(File),
+                  <<"flags">>=><<"replace">>,
+                  <<"options">>=>#{<<"demuxer">>=><<"lavf">>,
+                    <<"demuxer-lavf-format">>=>Format,
+                    <<"access-references">>=><<"no">>,<<"autoload-files">>=><<"no">>,
+                    <<"ytdl">>=><<"no">>,
+                    <<"demuxer-lavf-o">>=><<"protocol_whitelist=file">>}}};
+        false -> {error,invalid_cached_audio}
+    end;
+cached_audio_command(_,_) -> {error,invalid_cached_audio}.
+
+send_mpv_named_command(Path0, Command) ->
+    Path = normalize_path(Path0),
+    RequestId = erlang:unique_integer([positive,monotonic]),
+    Payload=encode_mpv_named_command(Command,RequestId),
+    send_ipc_request(Path,Payload,RequestId,?IPC_REPLY_TIMEOUT_MS).
+
+encode_mpv_named_command(Command,RequestId) ->
+    [jsx:encode(#{<<"command">>=>Command,<<"request_id">>=>RequestId}),<<"\n">>].
 
 send_mpv_command(Path0, Args0) ->
     Path = normalize_path(Path0),

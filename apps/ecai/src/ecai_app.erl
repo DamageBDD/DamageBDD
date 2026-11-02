@@ -96,18 +96,27 @@ get_trails() ->
     Handlers =
         [
             ecai_api,
+            damage_agent_http,
+            damage_bdd_routing_http,
+            damage_bdd_http,
             ecai_auth_http,
+            ecai_eval_http,
+            ecai_personality_http,
+            ecai_math_dashboard_http,
             ecai_video_dashboard_http,
             ecai_mm_dashboard_http,
             ecai_index_pool_http,
             ecai_index_jobs_http,
             ecai_quick_index_http,
             ecai_compute_settings_http,
+            ecai_aws_setup_http,
             ecai_private_http,
             ecai_wikimedia_http,
+            ecai_knowledge_http,
             ecai_yelp_admin,
             ecai_dashboard,
-            ecai_chat_http_handler
+            ecai_chat_http_handler,
+            ecai_voice_notes_http
         ] ++ conversation_history_handlers() ++ ollama_api_handlers() ++ code_admin_handlers() ++ marketplace_handlers(),
     %% The dashboard uses the same supervised browser auth service as DamageBDD.
     %% Legacy login routes remain for the separate older indexer pages only.
@@ -121,12 +130,18 @@ get_trails() ->
             })
         ] ++ damage_browser_auth_http:trails(ecai),
     AuthAssets = ecai_auth_http:asset_routes(),
+    AgentAssets = [{"/ecai/agent-assets/" ++ Path, cowboy_static,
+                    {priv_file, damage, "static/" ++ Path}} || Path <- [
+        "js/agent-workspace.js", "js/agent-tasks.js", "js/bdd-routing.js",
+        "css/agent-workspace.css"]],
     Trails =
         [
             {"/terms", cowboy_static, {priv_file, ecai, "static/terms.html"}},
             {"/static/[...]", cowboy_static, {priv_dir, ecai, "static/"}},
-            {"/ecai/ws/", ecai_ws, #{}}
-        ] ++ AuthAssets ++ AccountRoutes ++ trails:trails(Handlers),
+            {"/ecai/ws/", ecai_ws, #{}},
+            {"/api/themes/css", damage_theme_http, #{action => css}},
+            {"/api/themes/branding", damage_theme_http, #{action => branding}}
+        ] ++ AgentAssets ++ AuthAssets ++ AccountRoutes ++ trails:trails(Handlers),
     trails:store(Trails),
     trails:single_host_compile(Trails).
 

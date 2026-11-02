@@ -13,6 +13,8 @@
     merge_plan/2,
     read_manifest/1,
     search/3,
+    search/4,
+    source/3,
     snapshot/2
 ]).
 
@@ -491,8 +493,11 @@ verified_receipt(Entry, Placement) ->
 
 %% Query one verified shard at a time, so peak ETS usage scales with the shard
 %% rather than with the aggregate corpus. Scores/roots stay per-shard.
-search(ManifestPath, Query, Limit) when
-    is_map(Query),
+search(ManifestPath, Query, Limit) ->
+    search(ManifestPath, Query, Limit, #{include_proofs => true}).
+
+search(ManifestPath, Query, Limit, Opts) when
+    is_map(Query), is_map(Opts),
     is_integer(Limit),
     Limit >= 1,
     Limit =< 1000
@@ -502,32 +507,35 @@ search(ManifestPath, Query, Limit) when
         Shards = maps:get(shards, Manifest),
         %% Reduce after every shard. Never accumulate O(shards * Limit)
         %% results or proofs in a desktop process.
-        {Top, Proofs} = lists:foldl(
-            fun(S, {AccHits, AccProofs}) ->
+        {Top, Proofs, SearchMeta} = lists:foldl(
+            fun(S, {AccHits, AccProofs, AccMeta}) ->
                 SnapPath = maps:get(snapshot_path, S),
                 ok = expect_ok(verify_snapshot(SnapPath, maps:get(snapshot_sha256, S))),
                 Ctx0 = ecai_search:new(),
                 try
                     {ok, Ctx} = expect(ecai_search:load(Ctx0, path(SnapPath))),
-                    {Results, Headers} = ecai_search:search(Ctx, Query, Limit),
+                    {Results, Headers, Meta} = shard_query(Ctx, Query, Limit, Opts),
                     Ord = maps:get(ordinal, S),
                     Best = bounded_top_k(
                         AccHits ++
-                            [H#{shard_ordinal => Ord} || H <- Results],
+                            [H#{shard_ordinal => Ord, record => ecai_source_retrieval:summary(maps:get(record,H,#{}))} || H <- Results],
                         Limit
                     ),
                     Needed = lists:usort([maps:get(shard_ordinal, H) || H <- Best]),
-                    {Best, maps:with(Needed, AccProofs#{Ord => Headers})}
+                    {Best, maps:with(Needed, AccProofs#{Ord => Headers}),
+                        ecai_text_query:merge_meta(AccMeta, Meta)}
                 after
                     _ = ecai_search:wipe(Ctx0)
                 end
             end,
-            {[], #{}},
+            {[], #{}, #{}},
             Shards
         ),
         {ok, #{
             results => Top,
             proofs_by_shard => Proofs,
+            search_meta => SearchMeta,
+            partial => maps:get(truncated, SearchMeta, false),
             index_root => maps:get(index_root, Manifest),
             ranking => per_shard_heuristic_not_global_idf
         }}
@@ -536,8 +544,35 @@ search(ManifestPath, Query, Limit) when
         error:{badmatch, {error, Reason}} -> {error, Reason};
         Class:Reason -> {error, {shard_search_failed, Class, Reason}}
     end;
-search(_, _, _) ->
+search(_, _, _, _) ->
     {error, invalid_query}.
+
+shard_query(Ctx, #{knowledge_query := Q, matching := Mode}, Limit, _Opts) ->
+    {Hits, Meta} = ecai_search:text_search(Ctx, Q, Limit, Mode),
+    {Hits, [], Meta};
+shard_query(Ctx, Query, Limit, Opts) ->
+    {Hits, Headers} = ecai_search:search(Ctx, Query, Limit, Opts),
+    {Hits, Headers, #{truncated => false}}.
+
+source(ManifestPath, Ordinal, DocId) when is_integer(Ordinal), is_binary(DocId) ->
+    try
+        {ok, Manifest} = expect(read_manifest(ManifestPath)),
+        case [S || S <- maps:get(shards, Manifest), maps:get(ordinal, S) =:= Ordinal] of
+            [Shard] ->
+                Path = maps:get(snapshot_path, Shard),
+                ok = expect_ok(verify_snapshot(Path, maps:get(snapshot_sha256, Shard))),
+                Ctx0 = ecai_search:new(),
+                try
+                    {ok, Ctx} = expect(ecai_search:load(Ctx0, path(Path))),
+                    ecai_search:source(Ctx, DocId)
+                after ecai_search:wipe(Ctx0) end;
+            _ -> {error, source_not_found}
+        end
+    catch
+        throw:{shard_error, Why} -> {error, Why};
+        Class:Why -> {error, {shard_source_failed, Class, Why}}
+    end;
+source(_, _, _) -> {error, badarg}.
 
 bounded_top_k(Hits, Limit) ->
     Sorted = lists:sort(

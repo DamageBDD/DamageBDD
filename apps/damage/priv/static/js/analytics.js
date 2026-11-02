@@ -309,7 +309,7 @@ function initAnalytics(panel) {
     series.forEach((row, i) => {
       const x = pad.left + i * slot + (slot - barW) / 2;
       let y = pad.top + plotH;
-      for (const [key, color] of [['passed', css('--ws-accent', '#86b36b')], ['failed', css('--ws-error', '#d96b78')], ['unknown', '#718096']]) {
+      for (const [key, color] of [['passed', css('--ws-accent', '#86b36b')], ['failed', css('--ws-error', '#d96b78')], ['unknown', css('--theme-muted', '#718096')]]) {
         const value = Number(row[key]) || 0; if (!value) continue;
         const h = value / max * plotH; y -= h; ctx.fillStyle = color; ctx.fillRect(x, y, barW, Math.max(1, h));
       }

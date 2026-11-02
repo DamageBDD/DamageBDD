@@ -127,7 +127,8 @@ extract(W0) ->
     end.
 
 measurement(#{id := Id, ms := Ms, embedding := V, text := Text} = U, Dim, Profile, O) ->
-    Threshold = maps:get(speaker_threshold, O),
+    Calibration=case Profile of undefined->undefined;_->maps:get(voice_calibration,Profile,undefined) end,
+    Threshold = erm_voice_calibration:threshold(Calibration,maps:get(speaker_threshold, O)),
     Base = #{
         id => Id,
         audio_ms => Ms,

@@ -28,10 +28,10 @@
             %% Logger primary threshold. Development keeps debug available to
             %% file handlers; production sample uses info.
             {logger_level, info},
-            {module_level, info, [damage_reload]},
             {
                 logger,
                 [
+                    {module_level, info, [damage_reload]},
                     {module_level, debug, [
                         erm_voice,
                         erm_voice_intent,

@@ -1,0 +1,94 @@
+<section class="view eval-workspace" data-panel="evaluation" aria-labelledby="evalTitle" hidden>
+  <div class="page-intro"><div class="eyebrow">EVIDENCE · BEHAVIOUR · REGRESSION</div><h1 id="evalTitle">LLM evaluation</h1><p>Run reviewed scenarios against selected, recorded model targets. Separate executable checks, human judgement and paper-trading results.</p></div>
+  <div class="surface panel-pad eval-notice" id="evalAccess"><p>Managed email sign-in is required. Wallet-only sessions cannot run evaluations or change policy.</p><button type="button" class="button button-primary" id="evalSignIn">Sign in</button></div>
+  <div id="evalWorkspace" hidden>
+    <div class="eval-toolbar"><span class="status-tag" id="evalNodeState">Not loaded</span><span id="evalQuota" class="context-hint"></span><button type="button" class="button button-outline" id="evalRefresh">Refresh</button></div>
+    <div id="evalStatus" role="status" aria-live="polite" class="eval-status"></div>
+    <nav class="eval-tabs" aria-label="Evaluation workspace">
+      <button type="button" class="button button-outline" data-eval-tab="runs" aria-pressed="true">Runs &amp; results</button>
+      <button type="button" class="button button-outline" data-eval-tab="profiles" aria-pressed="false">Qwen behaviour profiles</button>
+      <button type="button" class="button button-outline" data-eval-tab="datasets" aria-pressed="false">Datasets &amp; coverage</button>
+      <button type="button" class="button button-outline" data-eval-tab="reviews" aria-pressed="false">Review queue</button>
+      <button type="button" class="button button-outline" data-eval-tab="account" aria-pressed="false">Account settings</button>
+      <button type="button" class="button button-outline" data-eval-tab="node" id="evalNodeTab" aria-pressed="false" hidden>Node policy</button>
+    </nav>
+    <div data-eval-pane="runs">
+      <section class="surface panel-pad"><h2>Start a comparison</h2><p class="context-hint">Each target receives the same selected cases and generation limits. Gold checks and future market data stay outside the model request. The account settings below select targets and repetitions.</p>
+        <form id="evalRunForm" class="stack-form"><div class="field-grid">
+          <label>Reviewed suite<select id="evalRunSuite" required></select></label>
+          <label>Dataset split<select id="evalSplit"><option value="dev">Development</option><option value="test">Test</option><option value="holdout">Holdout</option></select></label>
+        </div><label>Idempotency key<input id="evalRunKey" maxlength="128" required autocomplete="off"></label>
+        <div class="inline-actions"><button type="submit" class="button button-primary" id="evalRunSubmit">Run evaluation</button><button type="button" class="button button-outline" id="evalNewKey">New run key</button></div>
+        <p class="context-hint">A timeout does not mean a request was free or never ran. Reuse this key to resolve submission uncertainty. No automatic paid retries.</p></form>
+      </section>
+      <section class="surface panel-pad"><h2>Run history</h2><div id="evalRunList" class="eval-table-wrap"></div></section>
+      <section class="surface panel-pad" id="evalReportPanel" hidden><div class="panel-heading"><div><div class="eyebrow">PINNED SUITE · OBSERVED OUTCOMES</div><h2 id="evalReportTitle">Run report</h2></div><span class="status-tag" id="evalGate"></span></div>
+        <div id="evalMetrics" class="eval-metrics"></div><div class="inline-actions"><button type="button" class="button button-outline" id="evalEvidence">Export integrity receipt</button><button type="button" class="button button-outline" id="evalCancel">Cancel remaining work</button></div>
+        <p class="context-hint">Pass rates use all planned trials, including errors and interruptions. A critical failure blocks the gate. Citation checks validate reference IDs, not semantic truth. Trading is paper replay only.</p>
+        <h3>Target scorecards</h3><div id="evalTargets" class="eval-table-wrap"></div>
+        <h3>Failure explorer</h3><label>Outcome filter<select id="evalOutcomeFilter"><option value="all">All outcomes</option><option value="not_pass">Not passing</option><option value="indeterminate">Needs review</option><option value="uncertain">Uncertain request</option></select></label><div id="evalCases" class="eval-table-wrap"></div>
+        <h3>Recommendations and slice metrics</h3><pre id="evalFindings" class="code-display"></pre>
+        <details><summary>Selected trial: input, output and check evidence</summary><pre id="evalTrial" class="code-display">Choose Inspect on a trial.</pre></details>
+      </section>
+      <section class="surface panel-pad"><h2>Paired regression comparison</h2><form id="evalCompareForm" class="stack-form"><div class="field-grid"><label>Baseline run ID<input id="evalBaseline" required></label><label>Baseline target ID<input id="evalBaselineTarget" required></label><label>Candidate run ID<input id="evalCandidate" required></label><label>Candidate target ID<input id="evalCandidateTarget" required></label></div><button class="button button-outline" type="submit">Compare identical cases</button></form><pre id="evalComparison" class="code-display">Same suite and split required. Incomplete pairs remain visible.</pre></section>
+    </div>
+    <div data-eval-pane="profiles" hidden>
+      <section class="surface panel-pad">
+        <div class="panel-heading"><div><div class="eyebrow">QWEN · ECAI · DAMAGEBDD</div><h2>Behaviour profiles catalogue</h2></div><span class="status-tag">Experimental</span></div>
+        <p>Define a behaviour, record its activation recipe and keep the comparison evidence beside it.</p>
+        <p class="eval-profile-capability" id="evalProfileCapability" role="status">Loading catalogue capabilities…</p>
+        <div id="evalProfileMetrics" class="eval-metrics"></div>
+        <h3>Start with a hypothesis</h3><p class="context-hint">These templates contain objectives and evaluation plans. No steering direction or measured improvement is supplied.</p>
+        <div id="evalProfileTemplates" class="eval-profile-grid"></div>
+      </section>
+      <section class="surface panel-pad">
+        <div class="panel-heading"><h2>Your saved profiles</h2><button type="button" class="button button-outline" id="evalProfilesRefresh">Refresh catalogue</button></div>
+        <div class="field-grid"><label>Search profiles<input type="search" id="evalProfileSearch" placeholder="Name, objective, model or tag"></label><label>Evidence status<select id="evalProfileFilter"><option value="all">All profiles</option><option value="draft">Draft objective</option><option value="recipe_saved">Recipe saved</option><option value="comparison_linked">Comparison linked</option></select></label></div>
+        <div id="evalProfileList" class="eval-profile-grid" aria-live="polite"></div>
+      </section>
+      <section class="surface panel-pad" id="evalProfileDetailPanel" hidden>
+        <div class="panel-heading"><div><div class="eyebrow">IMMUTABLE RECIPE · OBSERVED COMPARISONS</div><h2 id="evalProfileTitle">Profile</h2></div><span class="status-tag" id="evalProfileState"></span></div>
+        <p id="evalProfileObjective"></p><p id="evalProfileIdentity" class="context-hint eval-profile-identity"></p>
+        <div class="inline-actions"><button type="button" class="button button-outline" id="evalProfileEdit">Use as new draft</button><button type="button" class="button button-outline" id="evalProfileExport">Export recipe JSON</button><button type="button" class="button button-outline" id="evalProfileReceipt">Export evidence receipt</button></div>
+        <details><summary>Activation recipe &amp; evaluation plan</summary><pre id="evalProfileSpec" class="code-display"></pre></details>
+        <h3>Linked comparisons</h3><p class="context-hint">Results are frozen when linked. A comparison records observed outcomes; it does not prove that an activation recipe ran. Configuration differences are shown explicitly.</p><div id="evalProfileComparisons" class="eval-table-wrap"></div><pre id="evalProfileComparisonDetail" class="code-display" hidden></pre>
+        <details><summary>Link an existing paired comparison</summary>
+          <p class="context-hint">Both arms must belong to this account, have completed outcomes, use the same suite and split, and match this profile’s exact model and declared revision. Pin a model revision in a new snapshot before linking results.</p>
+          <button type="button" class="button button-outline" id="evalProfileUseComparison">Copy IDs from Runs &amp; results</button>
+          <form id="evalProfileLinkForm" class="stack-form"><div class="field-grid">
+            <label>Baseline run ID<input id="evalProfileBaseline" required maxlength="128"></label><label>Baseline target ID<input id="evalProfileBaselineTarget" required maxlength="128"></label>
+            <label>Candidate run ID<input id="evalProfileCandidate" required maxlength="128"></label><label>Candidate target ID<input id="evalProfileCandidateTarget" required maxlength="128"></label>
+          </div><label>Declared candidate selection method<select id="evalProfileMethod"><option value="fixed">Fixed recipe</option><option value="ecai_selected">ECAI-selected recipe</option><option value="lookup_selected">Simple lookup-selected recipe</option></select></label>
+          <label>Observations, confounders and failures<textarea id="evalProfileLinkNote" rows="3" required maxlength="4096"></textarea></label><button class="button button-primary" type="submit">Link observed results</button></form>
+        </details>
+      </section>
+      <section class="surface panel-pad" id="evalProfileEditor">
+        <h2>Profile draft</h2><p class="context-hint">Saving creates a content-addressed snapshot in this account. Changing the recipe creates a new ID and does not inherit comparison evidence.</p>
+        <div class="inline-actions"><button type="button" class="button button-outline" id="evalProfileNew">New blank draft</button><label>Import recipe JSON<input id="evalProfileFile" type="file" accept=".json,application/json"></label></div>
+        <form id="evalProfileForm" class="stack-form">
+          <div class="field-grid"><label>Name<input id="evalProfileName" required maxlength="120"></label><label>Exact model ID<input id="evalProfileModel" required maxlength="256" value="Qwen/Qwen3.5-4B"></label></div>
+          <label>Behaviour objective<textarea id="evalProfileGoal" rows="3" required maxlength="2048"></textarea></label>
+          <div class="field-grid"><label>Model revision or weights digest<input id="evalProfileRevision" maxlength="256" placeholder="Unpinned draft — required for linking comparisons"></label><label>Quantization / precision<input id="evalProfileQuantization" required maxlength="128" value="unspecified"></label></div>
+          <label>Tags, separated by commas<input id="evalProfileTags" maxlength="784" placeholder="erlang, code, bdd"></label>
+          <label>Intervention kind<select id="evalProfileKind"><option value="unconfigured">Objective only — direction not discovered</option><option value="neurons">MLP neuron interventions</option><option value="vector">Activation vector reference</option></select></label>
+          <label>Intervention JSON<textarea id="evalProfileIntervention" class="code-input" rows="9" required spellcheck="false">{"kind":"unconfigured"}</textarea></label>
+          <p class="context-hint">Zero-based layers and neurons. dose_milli = 1000 means a dose of 1 in the declared normalization. Vector references require a SHA-256 digest. Model-specific dimensions and vector bytes must be checked by a future inference adapter.</p>
+          <label>Evaluation plan &amp; known limitations<textarea id="evalProfileNotes" rows="5" required maxlength="4096"></textarea></label>
+          <button class="button button-primary" type="submit">Save profile snapshot</button>
+        </form>
+      </section>
+    </div>
+    <div data-eval-pane="datasets" hidden>
+      <section class="surface panel-pad"><h2>Versioned evaluation datasets</h2><p class="context-hint">Import cases, fixed references, executable checks and anchored human rubrics. Editing any gold label, reference, reviewer list or case creates a new content-addressed suite. Explicit reviewer IDs grant access to that suite and its trials.</p>
+        <div class="inline-actions"><button type="button" class="button button-outline" id="evalLoadDialogue">Load synthetic dialogue example</button><button type="button" class="button button-outline" id="evalLoadTrading">Load paper-trading example</button><label>Import JSON file<input id="evalDatasetFile" type="file" accept=".json,application/json"></label></div>
+        <form id="evalImportForm" class="stack-form"><label>Suite JSON, maximum 2 MiB<textarea id="evalDatasetInput" class="code-input" rows="16" required spellcheck="false"></textarea></label><button class="button button-primary" type="submit">Validate &amp; save new snapshot</button></form><p class="context-hint">Examples are synthetic smoke tests, not production benchmarks. Review sampling, annotation quality and leakage before using a suite as a release gate.</p>
+      </section>
+      <section class="surface panel-pad"><h2>Coverage &amp; annotation approval</h2><div id="evalSuiteList" class="eval-table-wrap"></div><pre id="evalSuiteDetail" class="code-display">Inspect a suite to see its source, frozen references and annotation guidelines.</pre>
+        <form id="evalApproveForm" class="stack-form"><label>Suite hash<input id="evalApproveId" required></label><label>Review notes<textarea id="evalApproveNote" rows="3" maxlength="4096" required></textarea></label><label><input type="checkbox" id="evalApproveChecked" required> I reviewed the labels, coverage, provenance and split assignments.</label><button class="button button-outline" type="submit">Record my annotation approval</button></form>
+      </section>
+    </div>
+    <div data-eval-pane="reviews" hidden><section class="surface panel-pad"><h2>Independent review queue</h2><p class="context-hint">Only explicitly authorized reviewers can inspect or rate a shared suite. Trial views omit other reviewers’ votes and provider identity. Votes are immutable and disagreements remain indeterminate.</p><div id="evalReviewList" class="eval-table-wrap"></div><pre id="evalReviewDetail" class="code-display">Choose a review item.</pre><form id="evalReviewForm" class="stack-form"><label>Verdict<select id="evalReviewVerdict"><option value="pass">Pass</option><option value="fail">Fail</option><option value="indeterminate">Indeterminate</option></select></label><label>Evidence and reasoning<textarea id="evalReviewNote" rows="4" maxlength="4096" required></textarea></label><button class="button button-primary" type="submit">Record review</button></form></section></div>
+    <div data-eval-pane="account" hidden><section class="surface panel-pad"><h2>Account evaluation settings</h2><p class="context-hint">These preferences affect this account on this node. Node allowlists and ceilings always take precedence. Credentials stay in the existing server-side model configuration.</p><form id="evalAccountForm" class="stack-form"><div id="evalAccountFields" class="field-grid"></div><button class="button button-primary" type="submit">Save account settings</button></form><h3>Effective settings</h3><pre id="evalEffective" class="code-display"></pre></section></div>
+    <div data-eval-pane="node" hidden><section class="surface panel-pad"><h2>Node-wide evaluation policy</h2><p class="context-hint">The same versioned fields appear under DamageBDD → Node administration → ECAI settings → LLM evaluation. Defaults disable evaluation and remote inference. Changes are persisted by the existing node settings service.</p><form id="evalNodeForm" class="stack-form"><div id="evalNodeFields" class="field-grid"></div><button class="button button-primary" type="submit">Save node policy</button></form><p class="context-hint">Target IDs must refer to explicitly configured code_model_nodes or code_ollama_nodes entries. Remote targets require verified TLS. Limits cover this node; they are not a cross-node or currency budget.</p></section></div>
+  </div>
+</section>

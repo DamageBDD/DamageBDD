@@ -1,0 +1,12 @@
+%% Merge into the existing damage application entry; do not replace sys.config.
+[{damage, [{firecracker, [
+    {enabled, false},
+    {launcher, "/usr/bin/sudo"},
+    {launcher_args, ["-n", "--", "/usr/local/libexec/damage-firecracker-runner"]},
+    {profiles, [<<"shell">>]},
+    {max_jobs, 2},
+    {timeout_ms, 60000},
+    {max_timeout_ms, 60000},
+    {max_script_bytes, 65536},
+    {max_result_bytes, 2097152}
+]}]}].

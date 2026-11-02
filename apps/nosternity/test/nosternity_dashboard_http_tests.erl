@@ -49,6 +49,16 @@ exercise(Port, Origin) ->
     ?assertNotEqual(nomatch, binary:match(HTML, <<"authTemplate">>)),
     ?assertNotEqual(undefined, proplists:get_value(<<"content-security-policy">>, H)),
     {200, _, _} = request(Port, <<"GET">>, "/dashboard/fragments/auth", [], <<>>),
+    {200, _, Voice} = request(Port, <<"GET">>, "/dashboard/fragments/voice-note", [], <<>>),
+    ?assertNotEqual(nomatch, binary:match(Voice, <<"Hold to talk">>)),
+    ?assertNotEqual(
+        nomatch,
+        binary:match(proplists:get_value(<<"content-security-policy">>, H), <<"media-src 'self' blob:">>)
+    ),
+    ?assertEqual(
+        <<"microphone=(self), on-device-speech-recognition=(self)">>,
+        proplists:get_value(<<"permissions-policy">>, H)
+    ),
     {404, _, _} = request(Port, <<"GET">>, "/dashboard/fragments/not_allowed", [], <<>>),
     {200, _, _} = request(Port, <<"GET">>, "/dashboard/assets/dashboard.js", [], <<>>),
     Headers = [

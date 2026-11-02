@@ -3,11 +3,11 @@
 #lnqr {
   margin-top: 2em;
   padding: 1em;
-  background: #111;
+  background: var(--theme-surface, #111);
   border-radius: 1em;
   box-shadow: 0 0 10px rgba(0, 0, 0, 0.7);
   text-align: center;
-  color: #eee;
+  color: var(--theme-text, #eee);
   margin-left: auto;
   margin-right: auto;
 }
@@ -15,7 +15,7 @@
 #lnqr h2 {
   font-size: 1.5em;
   margin-bottom: 0.5em;
-  color: #fff;
+  color: var(--theme-text, #fff);
 }
 
 #lnqr p {
@@ -26,26 +26,26 @@
 #lnqr button {
   font-size: 1em;
   padding: 0.6em 1.2em;
-  background-color: #333;
+  background-color: var(--theme-surface, #333);
   border: none;
   border-radius: 0.5em;
-  color: white;
+  color: var(--theme-text, white);
   cursor: pointer;
   margin-top: 1em;
   transition: background-color 0.3s;
 }
 
 #lnqr button:hover:not(:disabled) {
-  background-color: #555;
+  background-color: var(--theme-accent-soft, #555);
 }
 
 #lnqr button:disabled {
-  background-color: #777;
+  background-color: var(--theme-surface, #777);
   cursor: not-allowed;
 }
 
 #lnqr a {
-  color: #88f;
+  color: var(--theme-text, #88f);
   font-size: 0.9em;
   display: block;
   margin-top: 1em;
@@ -89,7 +89,7 @@ bitcoin-qr {
 #green-tick {
   animation: pop 0.6s ease-in-out;
   font-size: 8rem;
-  color: green;
+  color: var(--theme-text, green);
   text-align: center;
   margin-top: 2rem;
 }

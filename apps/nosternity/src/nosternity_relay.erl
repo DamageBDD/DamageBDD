@@ -30,9 +30,17 @@ status() -> gen_server:call(?MODULE, status).
 
 init([]) ->
     process_flag(trap_exit, true),
-    File = application:get_env(nosternity, search_store_file, "data/nosternity/search.dets"),
-    ok = filelib:ensure_dir(File),
-    {ok, Db} = dets:open_file(nosternity_search_events, [{file, File}, {type, set}, {repair, true}]),
+    case nosternity_storage:open(search_store_file, nosternity_search_events, true) of
+        {ok, Db, File} ->
+            try init_store(Db)
+            catch Class:Reason:Stack ->
+                dets:close(Db),
+                {stop, {search_store_initialization_failed, File, {Class, Reason, Stack}}}
+            end;
+        {error, Reason} -> {stop, Reason}
+    end.
+
+init_store(Db) ->
     S0 = #{
         db => Db,
         events => #{},

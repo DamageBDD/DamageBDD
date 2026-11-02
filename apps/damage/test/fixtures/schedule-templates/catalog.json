@@ -1,0 +1,261 @@
+[
+  {
+    "id": "http-uptime",
+    "title": "HTTP uptime & latency",
+    "category": "Availability",
+    "description": "Notice downtime and slow responses with one small GET check.",
+    "cron_spec": "*/15 * * * *",
+    "timezone": "UTC",
+    "window_days": 7,
+    "security_check": false,
+    "fields": [
+      {
+        "key": "target_url",
+        "label": "Target HTTP(S) URL",
+        "type": "url",
+        "placeholder": "https://node.example.com/",
+        "max_length": 2048,
+        "required": true
+      },
+      {
+        "key": "expected_status",
+        "label": "Expected HTTP status",
+        "type": "number",
+        "default": 200,
+        "min": 200,
+        "max": 599,
+        "required": true
+      },
+      {
+        "key": "max_ms",
+        "label": "Maximum response time (ms)",
+        "type": "number",
+        "default": 3000,
+        "min": 100,
+        "max": 30000,
+        "required": true
+      }
+    ],
+    "requests_per_run": 1,
+    "consent_required": true,
+    "authorization": "Only monitor systems you own or are authorized to test. Verify the exact host in Settings > Domains, or ask the operator for an owner-scoped target grant. Private targets require an explicit operator grant."
+  },
+  {
+    "id": "content-canary",
+    "title": "Page content canary",
+    "category": "Availability",
+    "description": "Catch a broken deployment or unexpected landing page using expected public text.",
+    "cron_spec": "0 * * * *",
+    "timezone": "UTC",
+    "window_days": 7,
+    "security_check": false,
+    "fields": [
+      {
+        "key": "target_url",
+        "label": "Target HTTP(S) URL",
+        "type": "url",
+        "placeholder": "https://node.example.com/",
+        "max_length": 2048,
+        "required": true
+      },
+      {
+        "key": "contains",
+        "label": "Expected public text",
+        "type": "text",
+        "max_length": 256,
+        "required": true
+      },
+      {
+        "key": "max_ms",
+        "label": "Maximum response time (ms)",
+        "type": "number",
+        "default": 3000,
+        "min": 100,
+        "max": 30000,
+        "required": true
+      }
+    ],
+    "requests_per_run": 1,
+    "consent_required": true,
+    "authorization": "Only monitor systems you own or are authorized to test. Verify the exact host in Settings > Domains, or ask the operator for an owner-scoped target grant. Private targets require an explicit operator grant."
+  },
+  {
+    "id": "tls-expiry",
+    "title": "TLS certificate expiry",
+    "category": "Security",
+    "description": "Verify HTTPS trust and hostname; fail before the certificate gets too close to expiry.",
+    "cron_spec": "0 9 * * *",
+    "timezone": "UTC",
+    "window_days": 7,
+    "security_check": false,
+    "fields": [
+      {
+        "key": "target_url",
+        "label": "Target HTTP(S) URL",
+        "type": "url",
+        "placeholder": "https://node.example.com/",
+        "max_length": 2048,
+        "required": true
+      },
+      {
+        "key": "min_days",
+        "label": "Minimum days remaining",
+        "type": "number",
+        "default": 14,
+        "min": 1,
+        "max": 90,
+        "required": true
+      }
+    ],
+    "requests_per_run": 1,
+    "consent_required": true,
+    "authorization": "Only monitor systems you own or are authorized to test. Verify the exact host in Settings > Domains, or ask the operator for an owner-scoped target grant. Private targets require an explicit operator grant."
+  },
+  {
+    "id": "security-headers",
+    "title": "Web security headers",
+    "category": "Security",
+    "description": "Check HSTS, nosniff, CSP and frame-protection headers on an HTTPS web page.",
+    "cron_spec": "0 9 * * *",
+    "timezone": "UTC",
+    "window_days": 7,
+    "security_check": false,
+    "fields": [
+      {
+        "key": "target_url",
+        "label": "Target HTTP(S) URL",
+        "type": "url",
+        "placeholder": "https://node.example.com/",
+        "max_length": 2048,
+        "required": true
+      }
+    ],
+    "requests_per_run": 1,
+    "consent_required": true,
+    "authorization": "Only monitor systems you own or are authorized to test. Verify the exact host in Settings > Domains, or ask the operator for an owner-scoped target grant. Private targets require an explicit operator grant."
+  },
+  {
+    "id": "node-exposure",
+    "title": "Self-hosted node exposure",
+    "category": "Security",
+    "description": "Check Git metadata, .env availability, Kubo RPC and Go debug endpoints. Read-only; not an exploit or CVE scan.",
+    "cron_spec": "0 9 * * *",
+    "timezone": "UTC",
+    "window_days": 7,
+    "security_check": true,
+    "fields": [
+      {
+        "key": "target_url",
+        "label": "Target HTTP(S) URL",
+        "type": "url",
+        "placeholder": "https://node.example.com/",
+        "max_length": 2048,
+        "required": true
+      }
+    ],
+    "requests_per_run": 4,
+    "consent_required": true,
+    "authorization": "Only monitor systems you own or are authorized to test. Verify the exact host in Settings > Domains, or ask the operator for an owner-scoped target grant. Private targets require an explicit operator grant."
+  },
+  {
+    "id": "docker-exposure",
+    "title": "Docker API exposure",
+    "category": "Security",
+    "description": "Check whether a deliberately selected Docker listener returns its version without credentials. No containers or commands are created.",
+    "cron_spec": "0 9 * * *",
+    "timezone": "UTC",
+    "window_days": 7,
+    "security_check": true,
+    "fields": [
+      {
+        "key": "target_url",
+        "label": "Target HTTP(S) URL",
+        "type": "url",
+        "placeholder": "https://node.example.com/",
+        "max_length": 2048,
+        "required": true
+      }
+    ],
+    "requests_per_run": 1,
+    "consent_required": true,
+    "authorization": "Only monitor systems you own or are authorized to test. Verify the exact host in Settings > Domains, or ask the operator for an owner-scoped target grant. Private targets require an explicit operator grant."
+  },
+  {
+    "id": "ipfs-content",
+    "title": "IPFS content availability",
+    "category": "Decentralized",
+    "description": "Request the first 1 KiB of a gateway CID to catch missing content. This is a reachability check, not a CID integrity proof.",
+    "cron_spec": "0 * * * *",
+    "timezone": "UTC",
+    "window_days": 7,
+    "security_check": false,
+    "fields": [
+      {
+        "key": "target_url",
+        "label": "Target HTTP(S) URL",
+        "type": "url",
+        "placeholder": "https://node.example.com/",
+        "max_length": 2048,
+        "required": true
+      },
+      {
+        "key": "max_ms",
+        "label": "Maximum response time (ms)",
+        "type": "number",
+        "default": 10000,
+        "min": 100,
+        "max": 30000,
+        "required": true
+      }
+    ],
+    "requests_per_run": 1,
+    "consent_required": true,
+    "authorization": "Only monitor systems you own or are authorized to test. Verify the exact host in Settings > Domains, or ask the operator for an owner-scoped target grant. Private targets require an explicit operator grant."
+  },
+  {
+    "id": "nostr-relay",
+    "title": "Nostr relay information",
+    "category": "Decentralized",
+    "description": "Check NIP-11 HTTP metadata and supported_nips. Does not publish events or prove WebSocket delivery.",
+    "cron_spec": "*/15 * * * *",
+    "timezone": "UTC",
+    "window_days": 7,
+    "security_check": false,
+    "fields": [
+      {
+        "key": "target_url",
+        "label": "Target HTTP(S) URL",
+        "type": "url",
+        "placeholder": "https://node.example.com/",
+        "max_length": 2048,
+        "required": true
+      }
+    ],
+    "requests_per_run": 1,
+    "consent_required": true,
+    "authorization": "Only monitor systems you own or are authorized to test. Verify the exact host in Settings > Domains, or ask the operator for an owner-scoped target grant. Private targets require an explicit operator grant."
+  },
+  {
+    "id": "auth-boundary",
+    "title": "Protected endpoint guard",
+    "category": "Security",
+    "description": "Check that an unauthenticated request still receives HTTP 401 or 403 after deployment.",
+    "cron_spec": "0 * * * *",
+    "timezone": "UTC",
+    "window_days": 7,
+    "security_check": true,
+    "fields": [
+      {
+        "key": "target_url",
+        "label": "Target HTTP(S) URL",
+        "type": "url",
+        "placeholder": "https://node.example.com/",
+        "max_length": 2048,
+        "required": true
+      }
+    ],
+    "requests_per_run": 1,
+    "consent_required": true,
+    "authorization": "Only monitor systems you own or are authorized to test. Verify the exact host in Settings > Domains, or ask the operator for an owner-scoped target grant. Private targets require an explicit operator grant."
+  }
+]

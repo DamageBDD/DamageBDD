@@ -66,11 +66,12 @@ request(Method, Host0, Port, Path0, Headers0, Body0, Opts0) when
     Headers = normalize_headers(Headers0),
     Timeout = maps:get(timeout, Opts0, ?DEFAULT_HTTP_TIMEOUT),
     Decode = maps:get(decode, Opts0, raw),
+    MaxResponse = maps:get(max_response_bytes, Opts0, infinity),
     Close = maps:get(close, Opts0, true),
 
     Transport = transport_for(Host, Port, Opts0),
     Proxy = proxy_policy(Host, maps:get(proxy, Opts0, auto)),
-    GunOpts0 = maps:without([timeout, decode, close, proxy], Opts0),
+    GunOpts0 = maps:without([timeout, decode, close, proxy, max_response_bytes], Opts0),
     GunOpts = maps:put(transport, Transport, GunOpts0),
 
     case open(Host, Port, GunOpts, Proxy) of
@@ -80,7 +81,7 @@ request(Method, Host0, Port, Path0, Headers0, Body0, Opts0) when
                     await_up(ConnPid, maps:get(connect_timeout, Opts0, ?DEFAULT_CONNECT_TIMEOUT))
                 of
                     {ok, _Protocol} ->
-                        do_request(Method, ConnPid, Path, Headers, Body0, Timeout, Decode);
+                        do_request(Method, ConnPid, Path, Headers, Body0, Timeout, Decode, MaxResponse);
                     Error ->
                         Error
                 end
@@ -116,7 +117,7 @@ head(Host, Port, Path, Headers, Opts) ->
 options(Host, Port, Path, Headers, Opts) ->
     request(options, Host, Port, Path, Headers, <<>>, Opts).
 
-do_request(Method, ConnPid, Path, Headers, Body, Timeout, Decode) ->
+do_request(Method, ConnPid, Path, Headers, Body, Timeout, Decode, MaxResponse) ->
     StreamRef =
         case Method of
             get -> gun:get(ConnPid, Path, Headers);
@@ -128,7 +129,11 @@ do_request(Method, ConnPid, Path, Headers, Body, Timeout, Decode) ->
             patch -> gun:patch(ConnPid, Path, Headers, normalize_body(Body))
         end,
 
-    Reply = await_response(ConnPid, StreamRef, Timeout, Decode),
+    Reply = case MaxResponse of
+        infinity -> await_response(ConnPid, StreamRef, Timeout, Decode);
+        N when is_integer(N), N > 0 -> await_bounded(ConnPid, StreamRef, Timeout, Decode, N);
+        _ -> {error, invalid_max_response_bytes}
+    end,
     damage_otp_compat:catch_value(fun() -> gun:cancel(ConnPid, StreamRef) end),
     Reply.
 
@@ -149,9 +154,46 @@ await_response(ConnPid, StreamRef, Timeout, Decode) ->
             {error, {unexpected_response, Other}}
     end.
 
+%% Optional bounded binary-key JSON path for untrusted model responses.
+%% Existing callers keep their historical decoding mode unless opting in.
+await_bounded(Pid, Ref, Timeout, Decode, Max) ->
+    Deadline = erlang:monotonic_time(millisecond) + Timeout,
+    case gun:await(Pid, Ref, Timeout) of
+        {response, fin, Status, Headers} -> build_response(Status, Headers, <<>>, Decode);
+        {response, nofin, Status, Headers} ->
+            case bounded_body(Pid, Ref, Deadline, Max, 0, []) of
+                {ok, Body} -> build_response(Status, Headers, Body, Decode);
+                Error -> Error
+            end;
+        {error, Why} -> {error, {await_response_failed, Why}};
+        _ -> {error, unexpected_response}
+    end.
+bounded_body(Pid, Ref, Deadline, Max, Size, Acc) ->
+    Remaining = Deadline - erlang:monotonic_time(millisecond),
+    case Remaining > 0 of
+        false -> {error, response_timeout};
+        true ->
+            case gun:await(Pid, Ref, Remaining) of
+                {data, Fin, Data} when is_binary(Data) ->
+                    N = Size + byte_size(Data),
+                    case {N =< Max, Fin} of
+                        {false, _} -> {error, response_too_large};
+                        {true, fin} -> {ok, iolist_to_binary(lists:reverse([Data | Acc]))};
+                        {true, nofin} -> bounded_body(Pid, Ref, Deadline, Max, N, [Data | Acc])
+                    end;
+                {trailers, _} -> {ok, iolist_to_binary(lists:reverse(Acc))};
+                {error, Why} -> {error, {await_body_failed, Why}};
+                _ -> {error, unexpected_body_message}
+            end
+    end.
+
 build_response(Status, Headers, Body, Decode) ->
     Base = #{status => Status, headers => Headers, body => Body},
     case Decode of
+        json_binary ->
+            try jsx:decode(Body, [return_maps]) of
+                JsonBinary -> {ok, Base#{json => JsonBinary}}
+            catch _:_ -> {error, invalid_json_response} end;
         none ->
             {ok, maps:remove(body, Base)};
         raw ->

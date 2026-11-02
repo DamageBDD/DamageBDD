@@ -638,12 +638,12 @@ test_loop(Dir, Labels, Profile, O, N, Count) ->
                             case Capture of
                                 ok ->
                                     ok = write_private_exclusive(TestFile ++ ".script.txt", Prompt),
-                                    Result = ecai_voice_loop:score(
+                                    Result = ecai_voice_ui:work(?MODULE, fun() -> ecai_voice_loop:score(
                                         Dir,
                                         TestFile,
                                         Expected,
                                         maps:get(backend, O)
-                                    ),
+                                    ) end),
                                     save_result(TestFile, Result),
                                     print_result(Result),
                                     maybe_feedback(TestFile, Result, O);
@@ -784,6 +784,7 @@ prompt_and_capture(Path, Text, O) ->
     end.
 
 speak(Text, Path, O) ->
+    ecai_voice_ui:publish(?MODULE, output, #{text=>unicode:characters_to_binary(Text)}),
     reserve_private(Path),
     try
         ok = command("espeak-ng", ["-w", Path, Text], 15000),
@@ -804,8 +805,12 @@ command(Name, Args, Timeout) ->
         stderr_to_stdout,
         {args, Args}
     ]),
+    Token = ecai_voice_ui:begin_audio(?MODULE, Name, Args),
     try
-        await_port(Port, erlang:monotonic_time(millisecond) + Timeout, <<>>)
+        Result = await_port(Port, erlang:monotonic_time(millisecond) + Timeout, <<>>, Token),
+        ecai_voice_ui:end_audio(Token, ok), Result
+    catch C:E:Stack ->
+        ecai_voice_ui:end_audio(Token, error), erlang:raise(C,E,Stack)
     after
         %% A port normally closes itself after exit_status, so ignore only
         %% the expected badarg when it has already closed.
@@ -816,17 +821,19 @@ command(Name, Args, Timeout) ->
         end
     end.
 
-await_port(Port, Deadline, Output) ->
+await_port(Port, Deadline, Output, Token) ->
     Remaining = max(0, Deadline - erlang:monotonic_time(millisecond)),
+    case Remaining of 0 -> fail(audio_command_timeout); _ -> ok end,
     receive
         {Port, {data, B}} when is_binary(B) ->
             Keep = min(byte_size(B), max(0, 4096 - byte_size(Output))),
-            await_port(Port, Deadline, <<Output/binary, (binary:part(B, 0, Keep))/binary>>);
+            await_port(Port, Deadline, <<Output/binary, (binary:part(B, 0, Keep))/binary>>, Token);
         {Port, {exit_status, 0}} ->
             ok;
         {Port, {exit_status, Code}} ->
             fail({audio_command_failed, Code, Output})
-    after Remaining -> fail(audio_command_timeout)
+    after min(Remaining, 100) ->
+        ecai_voice_ui:tick(Token), await_port(Port, Deadline, Output, Token)
     end.
 
 next_test_id(Dir) -> next_test_id(Dir, 1).

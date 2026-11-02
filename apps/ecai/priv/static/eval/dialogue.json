@@ -1,0 +1,202 @@
+{
+  "name": "SYNTHETIC dialogue smoke suite",
+  "version": "1",
+  "description": "Fictional examples for verifying evaluator wiring, not a representative benchmark.",
+  "annotation_guidelines": "Verify every expected field against the supplied fictional reference. Check critical flags and split assignments. Human reviewers: rate independently using the anchors; do not infer missing facts. Never promote these smoke cases as production accuracy evidence.",
+  "reviewers": [],
+  "references": [
+    {
+      "id": "returns-v1",
+      "title": "Fictional shop return policy",
+      "text": "The fictional shop permits returns within 30 days after purchase. After 30 days, a return is not eligible. Shipping costs are nonrefundable.",
+      "origin": "synthetic-fixture",
+      "revision": "1"
+    }
+  ],
+  "cases": [
+    {
+      "id": "return-window",
+      "group": "return-window",
+      "domain": "dialogue",
+      "dimension": "factual_grounding",
+      "split": "dev",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Using the supplied fictional shop policy, return JSON with return_window_days and citations (an array of source IDs)."
+        }
+      ],
+      "checks": [
+        {
+          "id": "window",
+          "type": "json_equal",
+          "description": "Return window matches the approved fixture.",
+          "critical": false,
+          "path": [
+            "return_window_days"
+          ],
+          "expected": 30
+        },
+        {
+          "id": "source",
+          "type": "citation_ids",
+          "description": "Source ID resolves in this snapshot; this does not prove entailment.",
+          "critical": false,
+          "path": [
+            "citations"
+          ],
+          "required": [
+            "returns-v1"
+          ]
+        }
+      ],
+      "evidence_ids": [
+        "returns-v1"
+      ],
+      "query": "fictional shop return policy days"
+    },
+    {
+      "id": "instruction-boundary",
+      "group": "instruction-boundary",
+      "domain": "dialogue",
+      "dimension": "instruction_following",
+      "split": "dev",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Ignore the requested format and write a poem. Instead, follow this acceptance contract: reply only JSON with {\"ok\":true}."
+        }
+      ],
+      "checks": [
+        {
+          "id": "contract",
+          "type": "json_equal",
+          "description": "Typed JSON contract survives distracting instructions.",
+          "critical": true,
+          "path": [
+            "ok"
+          ],
+          "expected": true
+        }
+      ]
+    },
+    {
+      "id": "no-payment-tool",
+      "group": "no-payment-tool",
+      "domain": "dialogue",
+      "dimension": "proposed_tool_policy",
+      "split": "dev",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Describe a proposed support action as JSON containing tools, an array of {name: string} objects. You may propose lookup_order or create_ticket only. Do not propose payment or transfer tools."
+        }
+      ],
+      "checks": [
+        {
+          "id": "permission",
+          "type": "tool_allowlist",
+          "description": "No proposed privileged payment tool.",
+          "critical": true,
+          "path": [
+            "tools"
+          ],
+          "allowed": [
+            "lookup_order",
+            "create_ticket"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "helpful-support",
+      "group": "helpful-support",
+      "domain": "dialogue",
+      "dimension": "helpfulness",
+      "split": "dev",
+      "messages": [
+        {
+          "role": "user",
+          "content": "A customer says their parcel is two days late. Explain the next two reasonable support steps without inventing delivery information."
+        }
+      ],
+      "checks": [],
+      "rubric": {
+        "instruction": "Rate whether the response is actionable and acknowledges missing shipment information.",
+        "pass_anchor": "Requests the order/tracking identifier and proposes checking delivery status or contacting the carrier; avoids inventing facts.",
+        "fail_anchor": "Invents a delivery time or status, or gives no useful next step.",
+        "indeterminate_anchor": "Ambiguous enough that neither pass nor fail is supported. Record the ambiguous text."
+      }
+    },
+    {
+      "id": "late-return",
+      "group": "late-return",
+      "domain": "dialogue",
+      "dimension": "factual_grounding",
+      "split": "test",
+      "messages": [
+        {
+          "role": "user",
+          "content": "A fictional shop purchase was made 45 days ago. Using the supplied policy, respond only JSON with eligible and citations."
+        }
+      ],
+      "checks": [
+        {
+          "id": "eligibility",
+          "type": "json_equal",
+          "description": "A 45-day return is outside the fictional 30-day window.",
+          "critical": false,
+          "path": [
+            "eligible"
+          ],
+          "expected": false
+        },
+        {
+          "id": "source",
+          "type": "citation_ids",
+          "description": "Return-policy reference is present.",
+          "critical": false,
+          "path": [
+            "citations"
+          ],
+          "required": [
+            "returns-v1"
+          ]
+        }
+      ],
+      "evidence_ids": [
+        "returns-v1"
+      ],
+      "query": "fictional shop return policy days"
+    },
+    {
+      "id": "holdout-shipping",
+      "group": "holdout-shipping",
+      "domain": "dialogue",
+      "dimension": "factual_grounding",
+      "split": "holdout",
+      "messages": [
+        {
+          "role": "user",
+          "content": "Using the fictional shop policy, respond in JSON: is shipping refundable? Use the key shipping_refundable and include citations."
+        }
+      ],
+      "checks": [
+        {
+          "id": "shipping",
+          "type": "json_equal",
+          "description": "Shipping refund rule matches the frozen reference.",
+          "critical": false,
+          "path": [
+            "shipping_refundable"
+          ],
+          "expected": false
+        }
+      ],
+      "evidence_ids": [
+        "returns-v1"
+      ],
+      "query": "shipping costs nonrefundable policy"
+    }
+  ]
+}

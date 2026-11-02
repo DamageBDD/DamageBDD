@@ -1,0 +1,23 @@
+%% Merge this entry into the existing ecai application configuration.
+%% The Nosternity dashboard uses its existing browser_auth_origin and sessions.
+[
+ {ecai, [
+   {voice_notes, #{
+      enabled => true,
+      max_duration_ms => 30000,
+      max_audio_bytes => 2097152,
+      ffmpeg => "ffmpeg",
+      temp_dir => "/tmp",
+      %% Use the loopback whisper-server already managed by erm, if present.
+      whisper_host => "127.0.0.1",
+      whisper_port => 8080,
+      whisper_path => "/inference",
+      %% Speech recognition works without Ollama. Cleanup is opt-in per clip.
+      cleanup_enabled => false,
+      ollama_host => "127.0.0.1",
+      ollama_port => 11434,
+      %% Change to an installed local text model; no automatic model download.
+      ollama_model => <<"qwen3:0.6b">>
+   }}
+ ]}
+].

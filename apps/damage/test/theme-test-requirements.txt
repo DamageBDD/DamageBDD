@@ -1,0 +1,6 @@
+# Optional offline UI-regression tooling; not application runtime dependencies.
+# These are the versions used for the bundled browser/static test report.
+beautifulsoup4==4.14.3
+lxml==6.1.1
+playwright==1.57.0
+tinycss2==1.5.1

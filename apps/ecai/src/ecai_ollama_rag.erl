@@ -36,42 +36,35 @@ ask_bdd(BaseDir, Query0) ->
 %%====================================================================
 
 retrieve_sources(BaseDir, QueryBin, K) ->
-    ok = ecai_private_store:assert_public(BaseDir),
-    HotTab = ecai_hot_terms:new(20000),
-    Terms = tokenize(QueryBin),
-
-    %% 1) lexical shortlist
-    Postings = [ecai_disk_search:term_postings(BaseDir, HotTab, T) || T <- Terms],
-    Scores = score_docs(Postings),
-    CandidateDocInts = top_k(Scores, ?DEFAULT_CANDIDATE_POOL),
-
-    {ok, DocTab} = ecai_disk_docstore:open(BaseDir),
-    Candidates = load_candidate_metas(DocTab, CandidateDocInts),
-    ok = ecai_disk_docstore:close(DocTab),
-
-    %% 2) semantic rerank with embeddings
-    case rerank_by_embeddings(QueryBin, Candidates) of
-        {ok, Ranked} ->
-            lists:sublist(Ranked, min(K, length(Ranked)));
-        {error, _} ->
-            %% fallback to lexical order if embeddings unavailable
-            lists:sublist(Candidates, min(K, length(Candidates)))
+    Candidates = retrieve_sources_lexical(BaseDir, QueryBin, max(K, ?DEFAULT_CANDIDATE_POOL)),
+    case Candidates of
+        [] -> [];
+        _ ->
+            case rerank_by_embeddings(QueryBin, Candidates) of
+                {ok, Ranked} -> lists:sublist(Ranked, K);
+                {error, _} -> lists:sublist(Candidates, K)
+            end
     end.
 
-%% Managed HTTP inference must not trigger an implicit second model call to the
-%% historical localhost embedding service. This variant performs the same
-%% bounded public-index shortlist without semantic reranking.
-retrieve_sources_lexical(BaseDir, QueryBin, K) ->
+%% No implicit model call. Query terms MUST use the canonical field prefixes.
+retrieve_sources_lexical(BaseDir, QueryBin, K) when is_integer(K), K > 0, K =< 1000 ->
     ok = ecai_private_store:assert_public(BaseDir),
-    HotTab = ecai_hot_terms:new(20000),
-    Terms = tokenize(QueryBin),
-    Postings = [ecai_disk_search:term_postings(BaseDir, HotTab, T) || T <- Terms],
-    Scores = score_docs(Postings),
-    CandidateDocInts = top_k(Scores, max(K, ?DEFAULT_CANDIDATE_POOL)),
-    {ok, DocTab} = ecai_disk_docstore:open(BaseDir),
-    Candidates = load_candidate_metas(DocTab, CandidateDocInts),
-    ok = ecai_disk_docstore:close(DocTab),
-    lists:sublist(Candidates, min(K, length(Candidates))).
+    case filelib:is_regular(filename:join([BaseDir, "docstore", "ecai_docstore.dets"])) of
+        false -> [];
+        true ->
+            HotTab = ecai_hot_terms:new(20000),
+            try
+                Terms = ecai_terms:terms_from_query(
+                    #{text => QueryBin, abstract => QueryBin, title => QueryBin,
+                      heading => QueryBin, prefix => false}, false),
+                Postings = [ecai_disk_search:term_postings(BaseDir, HotTab, T) || T <- Terms],
+                Scores = score_docs(Postings),
+                Ids = top_k(Scores, max(K, ?DEFAULT_CANDIDATE_POOL)),
+                {ok, DocTab} = ecai_disk_docstore:open(BaseDir),
+                try lists:sublist(load_candidate_metas(DocTab, Ids), K)
+                after ecai_disk_docstore:close(DocTab) end
+            after ets:delete(HotTab) end
+    end.
 
 load_candidate_metas(DocTab, DocInts) ->
     [
@@ -148,7 +141,7 @@ score_docs(PostingsLists) ->
 
 top_k(ScoresMap, K) ->
     Pairs = maps:to_list(ScoresMap),
-    Sorted = lists:sort(fun({_, A}, {_, B}) -> A >= B end, Pairs),
+    Sorted = lists:sort(fun({I, A}, {J, B}) -> {-A, I} < {-B, J} end, Pairs),
     [DocInt || {DocInt, _Score} <- lists:sublist(Sorted, min(K, length(Sorted)))].
 
 %%====================================================================
@@ -403,11 +396,6 @@ cosine_similarity(A, B) ->
 %%====================================================================
 %% Utilities
 %%====================================================================
-
-tokenize(Bin) when is_binary(Bin) ->
-    Lower = string:lowercase(binary_to_list(Bin)),
-    Raw = re:split(Lower, "[^a-z0-9_]+", [{return, list}, trim]),
-    [list_to_binary(T) || T <- Raw, length(T) >= 3].
 
 to_bin(B) when is_binary(B) -> B;
 to_bin(L) when is_list(L) -> list_to_binary(L);

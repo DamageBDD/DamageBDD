@@ -215,6 +215,26 @@ base_fields(damage) ->
     ];
 base_fields(ecai) ->
     [
+        #{key => eval_enabled, label => <<"Evaluation: enabled">>, type => boolean, default => false, apply => hot},
+        #{key => eval_allow_remote, label => <<"Evaluation: allow remote">>, type => boolean, default => false, apply => hot},
+        #{key => eval_target_ids, label => <<"Evaluation: target ids">>, type => string_list, default => [], apply => hot},
+        #{key => eval_max_parallel, label => <<"Evaluation: max parallel">>, type => integer, default => 2, apply => hot, min => 1, max => 32},
+        #{key => eval_max_parallel_per_account, label => <<"Evaluation: max parallel per account">>, type => integer, default => 1, apply => hot, min => 1, max => 8},
+        #{key => eval_max_queued_runs, label => <<"Evaluation: max queued runs">>, type => integer, default => 64, apply => hot, min => 1, max => 1000},
+        #{key => eval_max_account_runs, label => <<"Evaluation: max account runs">>, type => integer, default => 100, apply => hot, min => 1, max => 10000},
+        #{key => eval_max_account_suites, label => <<"Evaluation: max account suites">>, type => integer, default => 50, apply => hot, min => 1, max => 1000},
+        #{key => eval_max_cases, label => <<"Evaluation: max cases">>, type => integer, default => 100, apply => hot, min => 1, max => 1000},
+        #{key => eval_max_repetitions, label => <<"Evaluation: max repetitions">>, type => integer, default => 5, apply => hot, min => 1, max => 20},
+        #{key => eval_max_run_calls, label => <<"Evaluation: max run calls">>, type => integer, default => 500, apply => hot, min => 1, max => 10000},
+        #{key => eval_daily_calls, label => <<"Evaluation: daily calls">>, type => integer, default => 1000, apply => hot, min => 1, max => 100000},
+        #{key => eval_node_daily_calls, label => <<"Evaluation: node daily calls">>, type => integer, default => 10000, apply => hot, min => 1, max => 1000000},
+        #{key => eval_max_output_tokens, label => <<"Evaluation: max output tokens">>, type => integer, default => 2048, apply => hot, min => 16, max => 32768},
+        #{key => eval_max_prompt_bytes, label => <<"Evaluation: max prompt bytes">>, type => integer, default => 32768, apply => hot, min => 1024, max => 262144},
+        #{key => eval_max_response_bytes, label => <<"Evaluation: max response bytes">>, type => integer, default => 131072, apply => hot, min => 1024, max => 1048576},
+        #{key => eval_timeout_ms, label => <<"Evaluation: timeout ms">>, type => integer, default => 120000, apply => hot, min => 1000, max => 900000},
+        #{key => eval_min_pass_bps, label => <<"Evaluation: min pass bps">>, type => integer, default => 9500, apply => hot, min => 0, max => 10000},
+        #{key => eval_min_reviewers, label => <<"Evaluation: min reviewers">>, type => integer, default => 1, apply => hot, min => 1, max => 3},
+        #{key => eval_retention_days, label => <<"Evaluation: retention days">>, type => integer, default => 30, apply => hot, min => 2, max => 3650},
         ?I(top_k, <<"Retrieval top K">>, 1, 1000, restart),
         ?B(index_jobs_enabled, <<"Enable indexing jobs">>, restart),
         ?I(index_jobs_max_concurrency, <<"Indexing concurrency">>, 1, 1024, restart),
@@ -293,7 +313,7 @@ base_fields(ecai) ->
             86400000,
             restart
         )
-    ];
+    ] ++ ecai_mm_settings:fields();
 base_fields(nosternity) ->
     [
         ?B(enabled, <<"Enable Nosternity">>, restart),
@@ -417,6 +437,7 @@ public_value(#{type := parallelism}, auto) ->
 public_value(#{type := parallelism}, N) when is_integer(N) -> {ok, N};
 public_value(#{type := boolean}, B) when is_boolean(B) -> {ok, B};
 public_value(#{type := integer}, I) when is_integer(I) -> {ok, I};
+public_value(#{type := number}, N) when is_number(N) -> {ok, N};
 public_value(#{type := tax_jurisdiction}, B) when is_binary(B) -> {ok, B};
 public_value(#{type := ae_account}, B) when is_binary(B) -> {ok, B};
 public_value(#{type := ae_account}, L) when is_list(L) ->
@@ -511,6 +532,12 @@ decode(#{type := integer, min := Min, max := Max}, I) when
     is_integer(I), I >= Min, I =< Max
 ->
     {ok, I};
+%% Numeric bounds are intentionally explicit; atom, numeric-string and
+%% non-number JSON values are rejected rather than coerced.
+decode(#{type := number, min := Min, max := Max}, N) when
+    is_number(N), N >= Min, N =< Max
+->
+    {ok, N};
 decode(#{type := string}, B) when is_binary(B), byte_size(B) =< 512, byte_size(B) > 0 ->
     try
         S = unicode:characters_to_list(B),
@@ -559,7 +586,10 @@ validate_effective(All) when is_map(All) ->
     Max = maps:get(search_max_limit, N, 200),
     case Default =< Max of
         true ->
-            validate_tax_effective(maps:get(damage, All, #{}));
+            case validate_tax_effective(maps:get(damage, All, #{})) of
+                ok -> ecai_mm_settings:validate_effective(maps:get(ecai, All, #{}));
+                Error -> Error
+            end;
         false ->
             {error,
                 {invalid_setting_combination, nosternity, search_default_limit, search_max_limit}}

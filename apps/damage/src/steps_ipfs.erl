@@ -24,6 +24,19 @@
 -define(STEP_ADD_PATH_TO_IPFS_AND_STORE_HASH, [
     "I add the path", Path, "to IPFS and store the hash in", Variable
 ]).
+%% An embedded Dockerfile can be published by a remote /execute_feature call
+%% without requiring a repository checkout on the DamageBDD execution node.
+-define(STEP_PUBLISH_DOCKERFILE_TO_IPFS_AND_STORE_HASH, [
+    "I publish the following Dockerfile to IPFS and store the hash in", Variable
+]).
+%% Base64 prevents Gherkin/step templating from consuming Bash/Dockerfile braces.
+%% Decoding happens only after the step's ordinary context rendering completes.
+-define(STEP_PUBLISH_BASE64_DOCKERFILE_TO_IPFS_AND_STORE_HASH, [
+    "I publish the following base64 encoded Dockerfile to IPFS and store the hash in", Variable
+]).
+-define(MAX_INLINE_DOCKERFILE_BYTES, 262144).
+-define(MAX_BASE64_DOCKERFILE_BYTES, ((?MAX_INLINE_DOCKERFILE_BYTES + 2) div 3) * 4).
+-define(MAX_BASE64_DOCSTRING_BYTES, (?MAX_BASE64_DOCKERFILE_BYTES + 16384)).
 
 %%% ---------------------- helpers (kept similar to steps_http) -----------------
 
@@ -368,6 +381,27 @@ step(
             ?LOG_DEBUG("range url ~p ~p ~p", [Cfg, Path, Headers]),
             ipfs_get(Gateway, Path, Headers, Context0)
     end;
+%% Publish an inline Dockerfile, keeping backwards compatibility for raw input.
+%% The base64 variant avoids placeholder validation consuming Bash/PKGCONFIG braces
+%% before the Dockerfile reaches this step.  The decoded bytes are published.
+step(
+    Config,
+    Context0,
+    <<"When">>,
+    _N,
+    ?STEP_PUBLISH_DOCKERFILE_TO_IPFS_AND_STORE_HASH,
+    Body
+) ->
+    publish_dockerfile_step(Config, Context0, Variable, inline_dockerfile_bytes(Body));
+step(
+    Config,
+    Context0,
+    <<"When">>,
+    _N,
+    ?STEP_PUBLISH_BASE64_DOCKERFILE_TO_IPFS_AND_STORE_HASH,
+    Body
+) ->
+    publish_dockerfile_step(Config, Context0, Variable, inline_base64_dockerfile_bytes(Body));
 %% When I add the path "deb/" to IPFS and store the hash in "asset_hash"
 step(
     Config,
@@ -558,6 +592,155 @@ realpath(Path) ->
             %% Better to require OTP with filelib:realpath in production.
             {ok, filename:absname(Path)}
     end.
+
+%% Reuse the same publication path for raw and base64-encoded docstrings.
+publish_dockerfile_step(Config, Context0, Variable, BytesResult) ->
+    case {proplists:get_value(run_dir, Config), BytesResult} of
+        {undefined, _} ->
+            maps:put(fail, <<"IPFS Dockerfile publication requires run_dir">>, Context0);
+        {_, {error, Reason}} ->
+            maps:put(fail, damage_utils:strf("Invalid inline Dockerfile: ~p", [Reason]), Context0);
+        {RunDir0, {ok, Bytes}} ->
+            RunDir = filename:absname(to_list(RunDir0)),
+            case publish_inline_dockerfile(RunDir, Bytes) of
+                {ok, Cid, HashList} ->
+                    maps:put(Variable, Cid, maps:put(ipfs_add_result, HashList, Context0));
+                {error, Reason} ->
+                    maps:put(
+                        fail,
+                        damage_utils:strf("Inline Dockerfile IPFS publication failed: ~p", [Reason]),
+                        Context0
+                    )
+            end
+    end.
+
+%% Keep inline input bounded. Body is a rendered Gherkin docstring, not a path.
+inline_dockerfile_bytes(Body) when is_binary(Body) ->
+    validate_inline_dockerfile(Body);
+inline_dockerfile_bytes(Body) when is_list(Body) ->
+    try validate_inline_dockerfile(iolist_to_binary(Body))
+    catch error:badarg -> {error, invalid_body} end;
+inline_dockerfile_bytes(_) ->
+    {error, invalid_body}.
+
+%% Strict RFC 4648 padded base64, optionally wrapped over multiple lines.
+%% Bound encoded length before normalising/decoding to prevent oversized input.
+inline_base64_dockerfile_bytes(Body) when is_binary(Body) ->
+    decode_inline_base64_dockerfile(Body);
+inline_base64_dockerfile_bytes(Body) when is_list(Body) ->
+    try decode_inline_base64_dockerfile(iolist_to_binary(Body))
+    catch error:badarg -> {error, invalid_body} end;
+inline_base64_dockerfile_bytes(_) ->
+    {error, invalid_body}.
+
+decode_inline_base64_dockerfile(<<>>) ->
+    {error, empty_body};
+decode_inline_base64_dockerfile(Bytes)
+    when byte_size(Bytes) > ?MAX_BASE64_DOCSTRING_BYTES ->
+    {error, too_large};
+decode_inline_base64_dockerfile(Bytes) ->
+    %% Gherkin implementations differ in docstring line joining/indentation.
+    %% Remove ASCII whitespace only; reject any other non-base64 input.
+    Encoded = lists:foldl(
+        fun(Whitespace, Data) -> binary:replace(Data, Whitespace, <<>>, [global]) end,
+        Bytes,
+        [<<"\n">>, <<"\r">>, <<"\t">>, <<" ">>]
+    ),
+    case byte_size(Encoded) of
+        0 -> {error, empty_body};
+        N when N > ?MAX_BASE64_DOCKERFILE_BYTES -> {error, too_large};
+        _ ->
+            Pattern = <<"^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$">>,
+            case re:run(Encoded, Pattern, [{capture, none}]) of
+                match ->
+                    try validate_inline_dockerfile(base64:decode(Encoded))
+                    catch error:_ -> {error, invalid_base64} end;
+                nomatch -> {error, invalid_base64}
+            end
+    end.
+
+validate_inline_dockerfile(<<>>) ->
+    {error, empty_body};
+validate_inline_dockerfile(Bytes) when byte_size(Bytes) > ?MAX_INLINE_DOCKERFILE_BYTES ->
+    {error, too_large};
+validate_inline_dockerfile(Bytes) ->
+    case binary:match(Bytes, <<0>>) of
+        nomatch -> {ok, Bytes};
+        _ -> {error, nul_byte}
+    end.
+
+%% Use an unguessable, exclusive file under the trusted run directory. The
+%% Dockerfile is retained in IPFS, never in the run directory after this step.
+publish_inline_dockerfile(RunDir, Bytes) ->
+    case filelib:is_dir(RunDir) of
+        false -> {error, run_dir_missing};
+        true ->
+            Suffix = binary_to_list(binary:encode_hex(crypto:strong_rand_bytes(16))),
+            Temp = filename:join(RunDir, "inline-dockerfile-" ++ Suffix ++ ".Dockerfile"),
+            case file:open(Temp, [write, exclusive, binary]) of
+                {error, OpenError} -> {error, {open_failed, OpenError}};
+                {ok, File} ->
+                    try
+                        case write_inline_file(File, Temp, Bytes) of
+                            ok ->
+                                case add_path_to_ipfs(Temp) of
+                                    {ok, HashList} ->
+                                        case pick_root_hash(HashList, root_name_for_path(Temp)) of
+                                            {ok, Cid} -> {ok, Cid, HashList};
+                                            {error, PickError} -> {error, {missing_ipfs_root_cid, PickError}}
+                                        end;
+                                    {error, AddError} -> {error, {ipfs_add_failed, AddError}}
+                                end;
+                            {error, WriteError} -> {error, {write_failed, WriteError}}
+                        end
+                    after
+                        _ = file:delete(Temp)
+                    end
+            end
+    end.
+
+write_inline_file(File, Temp, Bytes) ->
+    ModeResult = file:change_mode(Temp, 8#600),
+    WriteResult = case ModeResult of
+        ok -> file:write(File, Bytes);
+        {error, _} = Error -> Error
+    end,
+    CloseResult = file:close(File),
+    case {WriteResult, CloseResult} of
+        {ok, ok} -> ok;
+        {{error, Reason}, _} -> {error, Reason};
+        {ok, {error, Reason}} -> {error, Reason}
+    end.
+
+
+-ifdef(TEST).
+inline_dockerfile_validation_test() ->
+    ?assertEqual({ok, <<"FROM scratch\n">>}, inline_dockerfile_bytes(<<"FROM scratch\n">>)),
+    ?assertEqual({error, empty_body}, inline_dockerfile_bytes(<<>>)),
+    ?assertEqual({error, nul_byte}, inline_dockerfile_bytes(<<"FROM ", 0, "scratch">>)),
+    ?assertEqual({error, invalid_body}, inline_dockerfile_bytes(42)),
+    ?assertEqual({error, too_large},
+        inline_dockerfile_bytes(binary:copy(<<"a">>, ?MAX_INLINE_DOCKERFILE_BYTES + 1))),
+    ?assertEqual({error, too_large},
+        inline_dockerfile_bytes([binary:copy(<<"a">>, ?MAX_INLINE_DOCKERFILE_BYTES + 1)])),
+    ?assertEqual({error, run_dir_missing},
+        publish_inline_dockerfile("/does/not/exist/damagebdd-inline", <<"FROM scratch">>)).
+
+inline_base64_dockerfile_test() ->
+    Expected = <<"FROM scratch\n">>,
+    Encoded = base64:encode(Expected),
+    ?assertEqual({ok, Expected}, inline_base64_dockerfile_bytes(Encoded)),
+    ?assertEqual({ok, Expected},
+        inline_base64_dockerfile_bytes(<<"RlJPTSBzY3Jh\n  dGNoCg==">>)),
+    ?assertEqual({error, empty_body}, inline_base64_dockerfile_bytes(<<>>)),
+    ?assertEqual({error, invalid_body}, inline_base64_dockerfile_bytes(42)),
+    ?assertEqual({error, invalid_base64}, inline_base64_dockerfile_bytes(<<"not base64!">>)),
+    ?assertEqual({error, invalid_base64}, inline_base64_dockerfile_bytes(<<"RlJPTSBzY3JhdGNoCg=">>)),
+    ?assertEqual({error, too_large},
+        inline_base64_dockerfile_bytes(binary:copy(<<"A">>, ?MAX_BASE64_DOCSTRING_BYTES + 1))),
+    ?assertEqual({error, too_large},
+        inline_base64_dockerfile_bytes(binary:copy(<<"A">>, ?MAX_BASE64_DOCKERFILE_BYTES))).
+-endif.
 
 add_path_to_ipfs(AbsPath0) ->
     AbsPath = to_bin(AbsPath0),

@@ -198,19 +198,19 @@ write_and_validate_catalog(Catalog) ->
     end.
 
 atomic_write(Path, Bytes) ->
-    ok = filelib:ensure_dir(Path),
-    Tmp = Path ++ ".tmp",
-    case file:write_file(Tmp, Bytes, [raw, binary]) of
+    case filelib:ensure_dir(Path) of
         ok ->
-            case file:rename(Tmp, Path) of
-                ok ->
-                    ok;
-                {error, Reason} ->
-                    _ = file:delete(Tmp),
-                    {error, Reason}
+            Suffix = integer_to_list(erlang:unique_integer([positive, monotonic])),
+            Tmp = Path ++ "." ++ Suffix ++ ".tmp",
+            try
+                case file:write_file(Tmp, Bytes, [raw, binary, exclusive]) of
+                    ok -> file:rename(Tmp, Path);
+                    {error, _Reason} = Error -> Error
+                end
+            after
+                _ = file:delete(Tmp)
             end;
-        {error, _Reason} = Error ->
-            Error
+        {error, _Reason} = Error -> Error
     end.
 
 find_file(Name, [#{name := Name} = File | _]) -> {ok, File};

@@ -1,4 +1,5 @@
 @compiler >= 6
+include "String.aes"
 
 contract NodeRegistry =
 
@@ -89,17 +90,17 @@ contract NodeRegistry =
   entrypoint init(network_id : string, protocol_version : int) : state =
     require(String.length(network_id) > 0, "BAD_NETWORK_ID")
     require(protocol_version >= 0, "BAD_PROTOCOL_VERSION")
-    { governance       = Call.caller
-    , network_id       = network_id
-    , protocol_version = protocol_version
-    , registry_version = 3
-    , paused           = false
-    , successor        = None
-    , users            = {}
-    , nodes            = {}
-    , node_index       = {}
-    , node_count       = 0
-    }
+    {
+      governance       = Call.caller,
+      network_id       = network_id,
+      protocol_version = protocol_version,
+      registry_version = 3,
+      paused           = false,
+      successor        = None,
+      users            = {},
+      nodes            = {},
+      node_index       = {},
+      node_count       = 0}
 
   // -----------------------------------------------------------------
   // Network / registry identity
@@ -158,13 +159,13 @@ contract NodeRegistry =
     require_governance()
     require(!Map.member(account, state.users), "ALREADY_REGISTERED")
     let info : user_info =
-      { registry   = registry
-      , joined     = Chain.timestamp
-      , tier       = tier
-      , active     = true
-      , node_ids   = []
-      , node_count = 0
-      }
+      {
+        registry   = registry,
+        joined     = Chain.timestamp,
+        tier       = tier,
+        active     = true,
+        node_ids   = [],
+        node_count = 0}
     put(state{ users[account] = info })
     Chain.event(OperatorRegistered(account, registry))
     true
@@ -175,13 +176,13 @@ contract NodeRegistry =
     require_write_enabled()
     require(!Map.member(Call.caller, state.users), "ALREADY_REGISTERED")
     let info : user_info =
-      { registry   = registry
-      , joined     = Chain.timestamp
-      , tier       = "community"
-      , active     = true
-      , node_ids   = []
-      , node_count = 0
-      }
+      {
+        registry   = registry,
+        joined     = Chain.timestamp,
+        tier       = "community",
+        active     = true,
+        node_ids   = [],
+        node_count = 0}
     put(state{ users[Call.caller] = info })
     Chain.event(OperatorRegistered(Call.caller, registry))
     true
@@ -252,19 +253,18 @@ contract NodeRegistry =
 
     let index = state.node_count
     let ninfo : node_info =
-      { owner_account = owner_account
-      , registered_at = Chain.timestamp
-      , updated_at    = Chain.timestamp
-      , status        = 1
-      , meta          = meta
-      , cfg           = cfg
-      }
+      {
+        owner_account = owner_account,
+        registered_at = Chain.timestamp,
+        updated_at    = Chain.timestamp,
+        status        = 1,
+        meta          = meta,
+        cfg           = cfg}
 
     let u0 = state.users[owner_account]
     let u1 = u0{
       node_ids   = node_id :: u0.node_ids,
-      node_count = u0.node_count + 1
-      }
+      node_count = u0.node_count + 1}
 
     put(state{
       nodes[ node_id ] = ninfo,

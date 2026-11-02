@@ -15,6 +15,8 @@
 #include <mutex>
 #include <condition_variable>
 #include <stdexcept>
+#include <chrono>
+#include <cstring>
 static int output;
 static std::mutex mutex;
 static std::condition_variable wake;
@@ -52,7 +54,26 @@ static void play(std::vector<uint8_t> &pcm,int rate,const char *player,int volum
     execv(player,const_cast<char*const*>(args));_Exit(127);
   }
   close(fd); if(child<0)throw std::runtime_error("player_fork");
-  int status=0;pid_t result;do {result=waitpid(child,&status,0);}while(result<0&&errno==EINTR);
+  // Playback-clock envelope from the actual synthesized PCM. This is not
+  // speaker loopback; device buffering can offset the visible envelope.
+  send("P");
+  auto started=std::chrono::steady_clock::now();
+  int status=0;pid_t result;
+  for (;;) {
+    result=waitpid(child,&status,WNOHANG);
+    if(result==child || (result<0 && errno!=EINTR)) break;
+    double elapsed=std::chrono::duration<double>(std::chrono::steady_clock::now()-started).count();
+    size_t first=size_t(elapsed*rate), count=0;double energy=0;
+    for(size_t i=first;i<first+size_t(rate/16) && i<pcm.size()/2;i++) {
+      int16_t v=int16_t(uint16_t(pcm[2*i])|(uint16_t(pcm[2*i+1])<<8));
+      double x=double(v)/32768.0 * volume/100.0; energy+=x*x;count++;
+    }
+    double db=count && energy>0 ? 10*std::log10(energy/count) : -120;
+    float level=float(std::fmax(0.0,std::fmin(1.0,(db+60)/60)));
+    uint32_t bits;std::memcpy(&bits,&level,4);
+    std::string msg="L";for(int i=3;i>=0;i--)msg.push_back(char(bits>>(i*8)));send(msg);
+    std::this_thread::sleep_for(std::chrono::milliseconds(64));
+  }
   if(result<0||!WIFEXITED(status)||WEXITSTATUS(status)!=0)throw std::runtime_error("player_failed");
 }
 static void cue(const std::string &kind,const char *player,int volume) {

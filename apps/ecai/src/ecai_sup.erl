@@ -51,6 +51,10 @@ init([]) ->
     ok = ecai_paths:ensure_parent(SnapPath),
     Interval = application:get_env(ecai, index_snapshot_ms, 60000),
     PoolSpecs0 =
+        [#{id => ecai_eval_sup, start => {ecai_eval_sup, start_link, []},
+           restart => permanent, shutdown => infinity, type => supervisor}] ++
+        ecai_personalities:child_specs() ++
+        ecai_math_dashboard_srv:child_specs() ++
         conversation_history_specs() ++
             maybe_ollama_key_specs() ++ maybe_compute_specs() ++ maybe_ingest_specs() ++
             [
@@ -255,7 +259,10 @@ maybe_compute_specs() ->
                     shutdown => 30000,
                     type => worker,
                     modules => [ecai_compute_settings]
-                }
+                },
+                #{id => ecai_aws_setup_sup, start => {ecai_aws_setup_sup, start_link, []},
+                  restart => permanent, shutdown => infinity, type => supervisor,
+                  modules => [ecai_aws_setup_sup]}
             ];
         false ->
             [];

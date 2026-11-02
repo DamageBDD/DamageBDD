@@ -22,6 +22,7 @@ trails() ->
         get_trail("/ecai/wikimedia/sources", sources),
         get_trail("/ecai/wikimedia/plan", plan),
         get_trail("/ecai/wikimedia/search", search),
+        get_trail("/ecai/wikimedia/source/:id", source),
         get_trail("/ecai/wikimedia/doctor", doctor),
         get_trail("/ecai/wikimedia/sample", sample_status),
         get_trail("/ecai/wikimedia/sample/catalog", sample_catalog),
@@ -79,6 +80,13 @@ to_json(Req0, #{action := plan} = State) ->
             end;
         {error, Reason} ->
             reply_error(Req0, 400, Reason, State)
+    end;
+to_json(Req0, #{action := source} = State) ->
+    DocId = cowboy_req:binding(id, Req0),
+    case safe_call(fun() -> ecai_wikimedia_search_server:source(DocId) end) of
+        {ok, {ok, Source}} -> reply_json(Req0, 200, #{ok => true, source => Source}, State);
+        {ok, {error, Reason}} -> reply_error(Req0, 404, Reason, State);
+        {error, Reason} -> reply_error(Req0, 503, Reason, State)
     end;
 to_json(Req0, #{action := search} = State) ->
     Query = maps:from_list(cowboy_req:parse_qs(Req0)),

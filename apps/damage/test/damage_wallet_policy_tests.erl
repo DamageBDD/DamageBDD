@@ -10,7 +10,7 @@ wallet_reads_test_() ->
                 <<"/accounts/balance">>,
                 <<"/accounts/wallet/">>,
                 <<"/accounts/session">>,
-                <<"/ai/bdd/catalog">>
+                <<"/ai/bdd/catalog">>, <<"/ai/bdd/routing">>
             ]
     ].
 wallet_authoring_test_() ->
@@ -24,7 +24,7 @@ wallet_mutations_denied_test_() ->
         ?_assertNot(damage_wallet_policy:allowed(Method, Path, wallet))
      || Method <- [<<"POST">>, <<"PUT">>, <<"DELETE">>],
         Path <- [
-            <<"/execute_feature/">>,
+            <<"/execute_feature/">>, <<"/ai/bdd/routing">>, <<"/api/agents/tasks">>,
             <<"/tx/">>,
             <<"/context">>,
             <<"/schedules">>,
@@ -41,7 +41,7 @@ wallet_hidden_custody_reads_denied_test_() ->
             [<<"/context">>, <<"/schedules">>, <<"/api/nwc/sessions">>, <<"/api/node/balances">>]
     ].
 managed_path_preserved_test() ->
-    ?assert(damage_wallet_policy:allowed(<<"POST">>, <<"/execute_feature/">>, custodial)).
+    ?assert(damage_wallet_policy:allowed(<<"POST">>, <<"/execute_feature/">>, <<"/ai/bdd/routing">>, <<"/api/agents/tasks">>, custodial)).
 unknown_wallet_route_denied_test() ->
     ?assertNot(damage_wallet_policy:allowed(<<"GET">>, <<"/new-admin-endpoint">>, wallet)).
 wallet_not_spending_authority_test() ->

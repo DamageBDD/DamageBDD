@@ -4,6 +4,76 @@ This rebased implementation adds **Compute & NFTs** to `/dashboard#compute`, reu
 login/bearer authentication and the ECAI dashboard styling. It can be integrated later with the separately delivered one-shot remote
 worker starter; that worker is not included in this patch.
 
+## Guided click-through connection (October 2026 UI update)
+
+The **Compute & NFTs → Provider accounts** view now starts with a provider
+picker. Only the selected provider's setup steps are expanded; configuration
+fields remain inside an editable **Enter existing resources** section.
+External console links use fixed AWS/Google Cloud origins and open in a new
+tab. For Google Cloud, entering a valid project ID updates links to Cloud Run
+Jobs, IAM workload identity pools, service accounts and GCS buckets. Invalid
+or blank project hints are discarded rather than reflected into URLs.
+
+The steps are **Choose → Delegate access → Verify identity → Continue to
+budgets**. Identity verification is still **not** cloud execution or OAuth
+account authorization. There is no implicit cloud billing consent and no
+credential-upload or wallet-signing step in this onboarding.
+
+### AWS: prepare first, then create the IAM role
+
+1. Select **AWS Batch → Generate setup ID**. This calls authenticated
+   `POST /ecai/compute/providers/aws_batch/prepare` with `{}` and persists a
+   new, account-scoped 48-character hex external ID in DETS. It generates the
+   ID **before** all resource fields are supplied. Repeating the request,
+   restarting the node or updating the AWS connection does not rotate it.
+2. The ECAI operator configures its precise **coordinator IAM role ARN** in
+   `sys.config` (or other application environment):
+
+   ```erlang
+   {ecai, [
+       {compute_aws_coordinator_role_arn,
+        "arn:aws:iam::210987654321:role/EcaiCoordinator"}
+   ]}.
+   ```
+
+   Only IAM role ARNs pass server-side validation. The browser cannot edit
+   this principal and **will not construct a trust policy without one**.
+   Never trust `*` or an entire external AWS account implicitly.
+3. Click **Copy trust policy** to copy scoped JSON with the exact operator
+   principal and per-account `sts:ExternalId` condition. Click **Open AWS IAM**,
+   create a role using **Custom trust policy**, and attach narrowly scoped
+   Batch (`SubmitJob`, `DescribeJobs`, termination if needed), S3 and optional
+   KMS permissions as appropriate. Independently provision the Batch queue,
+   immutable job definition and tenant-specific S3 prefix.
+4. Expand **Enter existing AWS resources**, paste the role ARN, queue,
+   job definition, region and bucket. Save, then **Verify IAM role access**.
+   The ECAI coordinator's AWS CLI calls STS AssumeRole without returning
+   temporary credentials to the browser.
+
+A generated external ID does not create an AWS identity or IAM role. This is
+an IAM-console handoff, **not** a one-click CloudFormation deployment.
+
+### Google Cloud: console deep links, not a copied JSON key
+
+1. Select **Google Cloud Run Jobs**. Enter your project ID in the first step
+   to open Cloud Run Jobs and GCS directly in that project.
+2. Open the workload identity pools and service accounts links. The ECAI
+   node operator must provision or authorize a trusted federation source
+   (for example an OIDC workload identity provider) or node-managed
+   short-lived credentials. Configure scoped Cloud Run and GCS permissions.
+3. Expand **Enter existing Google Cloud resources**, enter the existing job,
+   region, bucket and worker service account, save, then click **Verify Cloud
+   Run visibility**. This invokes `gcloud run jobs describe` on the server.
+
+These links do **not** complete an OAuth browser redirect or deploy a Cloud
+Run job. Fully automated cloud provisioning would require a separately
+reviewed and consented integration, such as an AWS CloudFormation template or
+Google Cloud OAuth plus organization-specific IAM federation provisioning.
+
+The onboarding API requires the same explicit authenticated bearer token as
+other compute writes. The pre-created external ID is a non-secret trust
+condition; it is owner-scoped and never included in provider deep-link URLs.
+
 ## Shipped in this rebase
 
 - Per-account AWS Batch / Cloud Run configuration (no static cloud keys)
@@ -35,12 +105,12 @@ Use provider statements to reconcile spend before releasing/settling budget.
 
 ## Installation
 
-This patch was regenerated from the uploaded `latest-ecai.tar.gz` (11 October
-2026). Apply it from your DamageBDD root (which contains `apps/ecai`):
+This update was prepared against the uploaded `latest-ecai.tar.gz`
+(14 October 2026). Apply it from your DamageBDD root (which contains `apps/ecai`):
 
 ```sh
-git apply --check ecai-compute-settings-rebased.patch
-git apply ecai-compute-settings-rebased.patch
+git apply --check ecai-provider-clickthrough.patch
+git apply ecai-provider-clickthrough.patch
 ```
 
 The rebased console keeps the Video Studio and Market Maker integrations. The
@@ -86,9 +156,10 @@ verified status. No permission to spend money is granted merely by saving settin
 
 ## Connect AWS Batch
 
-1. Save the role ARN, region, *pre-created* Batch queue and job definition, and
-   staging S3 bucket from the dashboard.
-2. Copy the displayed unique `external_id` into the role trust policy. Trust
+1. Click **Generate setup ID** and copy the displayed unique `external_id`
+   before creating your AWS role. Use **Copy trust policy** when the node
+   operator's coordinator role ARN is configured.
+2. Configure the role's trust policy in the AWS console. Trust
    **only** the ECAI operator's IAM principal as role consumer, for example:
 
 ```json
@@ -101,7 +172,8 @@ verified status. No permission to spend money is granted merely by saving settin
 }
 ```
 
-3. Allow only required `batch:SubmitJob`, `batch:DescribeJobs`,
+3. Save the role ARN, region, *pre-created* Batch queue and job definition,
+   and staging S3 bucket from the dashboard. Allow only required `batch:SubmitJob`, `batch:DescribeJobs`,
    `batch:TerminateJob` and scoped S3/KMS operations. Use an independent
    least-privilege **Batch task role** for the worker's staging prefix.
 4. Install AWS CLI and provide the ECAI *node* with its own short-lived
@@ -133,6 +205,7 @@ charges. Configure them independently of the ECAI reservation ledger.
 | GET | `/ecai/compute/eligible-sources` | Owned shard source job suggestions |
 | POST | `/ecai/compute/policy` | Save monthly compute/mint limits and recipient |
 | POST | `/ecai/compute/providers/aws_batch` | Save role/batch connection |
+| POST | `/ecai/compute/providers/aws_batch/prepare` | Persist a stable per-account external ID before role creation (empty JSON object required) |
 | POST | `/ecai/compute/providers/cloud_run` | Save Cloud Run connection |
 | POST | `/ecai/compute/providers/:provider/verify` | Verify node identity access |
 | POST | `/ecai/compute/quote` | Estimate conservative cost for a trusted staged shard |
@@ -173,6 +246,8 @@ mark a reservation spent: `actual_billed_cents = null` intentionally.
 ```sh
 node --check apps/ecai/priv/static/js/ecai-compute-settings.js
 python3 -m py_compile tools/ecai_compute_install.py
+python3 -m unittest apps/ecai/test/test_compute_dashboard_contract.py
+node apps/ecai/test/test_compute_provider_onboarding.js
 rebar3 eunit --module ecai_compute_settings_tests
 ```
 

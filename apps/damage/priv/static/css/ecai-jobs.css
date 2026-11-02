@@ -5,11 +5,11 @@
 }
 
 .job-card {
-  border: 1px solid #333;
+  border: 1px solid var(--theme-border, #333);
   border-radius: 8px;
   padding: 1rem;
   margin-bottom: 1rem;
-  background: #0b0b0b;
+  background: var(--theme-surface, #0b0b0b);
 }
 
 .job-header {
@@ -31,19 +31,19 @@
 .block {
   display: block;
   padding: 0.5rem;
-  background: #111;
+  background: var(--theme-surface, #111);
 }
 
 .btn {
   padding: 0.5rem 1rem;
   border-radius: 4px;
-  background: #f7931a; /* Bitcoin orange */
-  color: black;
+  background: var(--theme-accent, #f7931a); /* Bitcoin orange */
+  color: var(--theme-on-accent, black);
   border: none;
   cursor: pointer;
 }
 
 .btn.danger {
-  background: #c0392b;
-  color: white;
+  background: var(--theme-accent, #c0392b);
+  color: var(--theme-on-accent, white);
 }

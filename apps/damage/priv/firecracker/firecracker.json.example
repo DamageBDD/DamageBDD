@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "enabled": false,
+  "jailer": "/usr/local/libexec/firecracker/jailer",
+  "firecracker": "/usr/local/libexec/firecracker/firecracker",
+  "max_jobs": 2,
+  "uid_base": 41000,
+  "gid_base": 41000,
+  "profiles": {
+    "shell": {
+      "kernel": "/var/lib/damage-firecracker/images/vmlinux",
+      "kernel_sha256": "REPLACE_WITH_64_LOWERCASE_HEX_DIGITS",
+      "rootfs": "/var/lib/damage-firecracker/images/shell.ext4",
+      "rootfs_sha256": "REPLACE_WITH_64_LOWERCASE_HEX_DIGITS",
+      "vcpu_count": 1,
+      "mem_size_mib": 256,
+      "timeout_ms": 60000,
+      "max_output_bytes": 65536,
+      "max_image_bytes": 4294967296
+    }
+  }
+}

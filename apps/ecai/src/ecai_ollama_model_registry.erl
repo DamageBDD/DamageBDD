@@ -60,7 +60,7 @@ base_models(Status) ->
 
 usable_node(Node) ->
     Health = maps:get(health, Node, unknown),
-    Health =/= down andalso chat_capable(Node).
+    maps:get(enabled, Node, true) andalso Health =/= down andalso chat_capable(Node).
 
 chat_capable(Node) ->
     lists:member(chat, maps:get(roles, Node, [])).
@@ -213,7 +213,7 @@ int_or_zero(I) when is_integer(I), I >= 0 -> I;
 int_or_zero(_) -> 0.
 
 first_nonempty([]) -> <<>>;
-first_nonempty([H | T]) when is_binary(H), byte_size(H) > 0 -> H;
+first_nonempty([H | _]) when is_binary(H), byte_size(H) > 0 -> H;
 first_nonempty([_ | T]) -> first_nonempty(T).
 
 normalize_time(undefined) ->

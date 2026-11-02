@@ -1,7 +1,7 @@
 :root {
   --ecai-indexer-gap: 14px;
-  --ecai-indexer-border: #7f7f7f55;
-  --ecai-indexer-muted: #777;
+  --ecai-indexer-border: var(--theme-border, #7f7f7f55);
+  --ecai-indexer-muted: var(--theme-muted, #777);
 }
 
 * { box-sizing: border-box; }
@@ -146,7 +146,7 @@ body { margin: 0; }
 .progress {
   height: 7px;
   border-radius: 999px;
-  background: #8884;
+  background: var(--theme-surface-alt, #8884);
   overflow: hidden;
   margin-top: 4px;
 }
@@ -168,8 +168,8 @@ body { margin: 0; }
 .ecai-indexer-events { min-height: 160px; max-height: 280px; }
 .ecai-indexer-checkbox { display: flex !important; gap: 7px !important; align-items: center; }
 .ecai-indexer-checkbox input { width: auto !important; }
-.ok { color: #268c46; }
-.bad { color: #c33; }
+.ok { color: var(--theme-success, #268c46); }
+.bad { color: var(--theme-danger, #c33); }
 
 @media (max-width: 980px) {
   .ecai-indexer-layout { grid-template-columns: 1fr; }
@@ -210,7 +210,7 @@ body { margin: 0; }
 }
 
 .ecai-indexer-login-dialog::backdrop {
-  background: rgb(0 0 0 / 0.48);
+  background: var(--theme-backdrop, rgb(0 0 0 / 0.48));
 }
 
 .ecai-indexer-login-form {

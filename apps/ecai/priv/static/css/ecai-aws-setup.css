@@ -1,0 +1,36 @@
+/* Automatic AWS setup uses the existing compute palette and theme boundaries. */
+[data-panel="compute"] .aws-setup { color:var(--compute-ink, var(--text)); min-width:0; margin-bottom:1.1rem; }
+[data-panel="compute"] .aws-setup :is(fieldset,section,div,label) { min-width:0; }
+[data-panel="compute"] .aws-setup fieldset { border:0; margin:0; padding:0; display:grid; gap:.8rem; }
+[data-panel="compute"] .aws-setup :is(h3,h4) { margin:0; color:var(--compute-ink, var(--text)); }
+[data-panel="compute"] .aws-setup-heading, [data-panel="compute"] .aws-setup-actions { display:flex; flex-wrap:wrap; align-items:center; gap:.75rem; justify-content:space-between; }
+[data-panel="compute"] .aws-setup-actions { justify-content:flex-start; margin-top:.8rem; }
+[data-panel="compute"] .aws-setup-steps { display:flex; flex-wrap:wrap; list-style:none; padding:0; gap:.6rem; margin:1rem 0; }
+[data-panel="compute"] .aws-setup-steps li { padding:.4rem .8rem; border:1px solid var(--compute-line,var(--border)); border-radius:30px; background:var(--compute-subtle,var(--surface-2)); font-size:.8rem; }
+[data-panel="compute"] .aws-setup-columns { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; }
+[data-panel="compute"] .aws-setup-card, [data-panel="compute"] .aws-setup-operation { border:1px solid var(--compute-line,var(--border)); border-radius:12px; padding:1rem; background:var(--compute-subtle,var(--surface-2)); }
+[data-panel="compute"] .aws-setup-card h4 { margin-bottom:1rem; }
+[data-panel="compute"] .aws-setup-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.8rem; }
+[data-panel="compute"] .aws-setup-facts { padding:.8rem; margin:.8rem 0; border:1px solid var(--compute-line,var(--border)); border-radius:9px; background:var(--compute-surface,var(--surface)); overflow-wrap:anywhere; font-size:.85rem; white-space:pre-line; }
+[data-panel="compute"] .aws-setup-warning { padding:.8rem 1rem; margin:.7rem 0; border-left:3px solid var(--compute-warning,var(--warning)); background:var(--compute-warning-bg,var(--surface-2)); color:var(--compute-ink,var(--text)); border-radius:5px; font-size:.8rem; line-height:1.6; }
+[data-panel="compute"] .aws-setup-warning p { margin:.3rem 0; color:inherit; }
+[data-panel="compute"] .aws-setup-warning[hidden] { display:none; }
+[data-panel="compute"] .aws-setup-notice { margin:.8rem 0; white-space:pre-line; overflow-wrap:anywhere; color:var(--compute-muted,var(--muted)); font-size:.85rem; }
+[data-panel="compute"] .aws-setup-notice[data-error="true"] { border-left:3px solid var(--danger,#c25665); padding-left:.8rem; color:var(--compute-ink,var(--text)); }
+[data-panel="compute"] .aws-setup-history { display:flex; align-items:end; gap:.8rem; margin:1rem 0; }
+[data-panel="compute"] .aws-setup-history label { flex:1; }
+[data-panel="compute"] .aws-setup-details { margin-top:.9rem; border:1px solid var(--compute-line,var(--border)); border-radius:9px; padding:.8rem; }
+[data-panel="compute"] .aws-setup-details summary { cursor:pointer; font-weight:650; font-size:.85rem; }
+[data-panel="compute"] .aws-setup-details .mono { overflow-wrap:anywhere; font-size:.75rem; margin:.8rem 0; }
+[data-panel="compute"] .aws-setup-check { display:flex; flex-direction:row; align-items:flex-start; gap:.6rem; font-size:.82rem; line-height:1.6; font-weight:500; margin:.9rem 0; }
+[data-panel="compute"] .aws-setup-check input { margin-top:.2rem; width:18px; height:18px; flex:0 0 auto; }
+[data-panel="compute"] .aws-setup-approval { margin:1rem 0; }
+[data-panel="compute"] .aws-setup-events { margin-top:.6rem; max-height:240px; overflow:auto; font:11px/1.7 ui-monospace,monospace; }
+[data-panel="compute"] .aws-setup-events > div { padding:.2rem 0; border-bottom:1px solid var(--compute-line,var(--border)); overflow-wrap:anywhere; }
+[data-panel="compute"] #awsSetupResourceList { font:11px/1.7 ui-monospace,monospace; margin:.8rem 0; overflow-wrap:anywhere; }
+[data-panel="compute"] .aws-setup :is(input,textarea,select) { color:var(--compute-ink,var(--text)); background:var(--compute-surface,var(--surface)); }
+[data-panel="compute"] #computeAwsManual > .compute-connection-heading, [data-panel="compute"] #computeAwsManual > .compute-guidance-grid { margin:1rem; }
+@media(max-width:1000px) { [data-panel="compute"] .aws-setup-columns { grid-template-columns:1fr; } }
+@media(max-width:520px) { [data-panel="compute"] .aws-setup-grid { grid-template-columns:1fr; } [data-panel="compute"] .aws-setup-card,[data-panel="compute"] .aws-setup-operation { padding:.8rem; } [data-panel="compute"] .aws-setup-history { flex-wrap:wrap; } }
+/* The new manual wrapper must also outrank shared input:not(...) selectors. */
+[data-panel="compute"] #computeAwsManual :is(input,select,textarea) { color:var(--compute-ink,var(--text)); background:var(--compute-surface,var(--surface)); border-color:var(--compute-line,var(--border)); }

@@ -2,6 +2,10 @@
 -include_lib("eunit/include/eunit.hrl").
 -export([adding_handler/1, removing_handler/1, log/2]).
 math_test()->
+    ?assertEqual(erm_native_voice:profile_fingerprint(<<"profile">>),
+        erm_native_voice:profile_fingerprint(<<"profile">>)),
+    ?assert(erm_native_voice:profile_fingerprint(<<"profile">>) =/=
+        erm_native_voice:profile_fingerprint(<<"another">>)),
     {ok,V}=erm_native_voice:normalise([3.0,4.0]),
     ?assert(abs(erm_native_voice:score(V,V)-1.0)<0.00001),
     ?assertEqual({error,invalid_embedding},erm_native_voice:normalise([0.0,0.0])),
@@ -34,12 +38,30 @@ native_test_()->{foreach,fun setup/0,fun cleanup/1,[
     fun(O)->fun()->
         inject(1,[1.0,0.0],2000,<<"Hey Bob stop music">>),
         ?assertEqual({rejected,not_enrolled},maps:get(last,erm_native_voice:status())),no_command(),
-        enroll(),inject(5,[1.0,0.0],2000,<<"Hey Bob stop music">>),
+        enroll(),
+        {ok,ProfileBytes}=file:read_file(maps:get(profile_file,O)),
+        Fingerprint=erm_native_voice:profile_fingerprint(ProfileBytes),
+        ?assertEqual(Fingerprint,maps:get(speaker_profile_fingerprint,erm_native_voice:status())),
+        ?assertEqual(current,maps:get(speaker_profile_disk,erm_native_voice:status())),
+        inject(5,[1.0,0.0],2000,<<"Hey Bob stop music">>),
         receive {command,<<"stop music">>}->ok after 1000->error(no_dispatch) end,
         {ok,Info}=file:read_file_info(maps:get(profile_file,O)),
         ?assertEqual(8#600,element(8,Info) band 8#777),
         gen_server:stop(erm_native_voice),{ok,_}=erm_native_voice:start_link(O),wait_ready(100),
-        ?assert(maps:get(enrolled,erm_native_voice:status()))
+        ?assert(maps:get(enrolled,erm_native_voice:status())),
+        ?assertEqual(Fingerprint,maps:get(speaker_profile_fingerprint,erm_native_voice:status()))
+    end end,
+    fun(O)->fun()->
+        enroll(),
+        {ok,OldBytes}=file:read_file(maps:get(profile_file,O)),
+        Old=erm_native_voice:profile_fingerprint(OldBytes),
+        P=binary_to_term(OldBytes,[safe]),
+        ok=file:write_file(maps:get(profile_file,O),term_to_binary(P#{label=><<"changed">>})),
+        ?assertEqual(Old,maps:get(speaker_profile_fingerprint,erm_native_voice:status())),
+        ?assertEqual(changed_restart_required,maps:get(speaker_profile_disk,erm_native_voice:status())),
+        inject(5,[1.0,0.0],2000,<<"Hey Bob stop music">>),
+        ?assertEqual({rejected,speaker_profile_changed_restart_required},
+            maps:get(last,erm_native_voice:status())),no_command()
     end end,
     fun(_)->fun()->enroll(),inject(4,[0.0,1.0],2000,<<"Hey Bob stop">>),
         ?assertMatch({rejected,{speaker_mismatch,_}},maps:get(last,erm_native_voice:status())),no_command()
@@ -806,3 +828,17 @@ rapid_enrolment_test_() -> {foreach, fun setup_v3/0, fun cleanup_tuning/1, [
         ?assertEqual(undefined,persistent_term:get({erm_native_voice,guidance},undefined))
     end end
 ]}.
+
+%% Real native capture code, deterministic PCM supplied only at the SDK boundary.
+native_meter_test() ->
+    P=native_worker([]),
+    try
+        receive {P,{data,<<"R",2:16,4>>}}->ok after 2000->error(no_ready) end,
+        true=port_command(P,<<"M",2:64>>),
+        receive {P,{data,<<"L",1:64,Db:32/float,Speech>>}} ->
+            ?assert(abs(Db+12.0412)<0.01),?assert(Speech=:=0 orelse Speech=:=1)
+        after 2000->error(no_measured_meter) end,
+        true=port_command(P,<<"M",5:64>>),
+        receive {P,{data,<<"L",2:64,_/binary>>}}->error(muted_meter)
+        after 180->ok end
+    after try port_close(P) catch error:badarg->ok end end.

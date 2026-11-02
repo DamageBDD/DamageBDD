@@ -25,11 +25,12 @@ def build_preview(node_admin: bool = False, tax_admin: bool = False) -> str:
     static = APP / 'priv/static'
     shell = (templates / 'page_shell.mustache').read_text()
     css_paths = re.findall(r'href=[\'\"](/static/css/[^\'\"]+)', shell)
-    css = '\n'.join((static / path.removeprefix('/static/')).read_text() for path in css_paths)
+    css = '\n'.join((static / path.split('?',1)[0].removeprefix('/static/')).read_text() for path in css_paths)
     logo = base64.b64encode((static / 'img/logo.png').read_bytes()).decode()
     context = {'logo_image': 'data:image/png;base64,' + logo, 'authenticated': True,
                'node_admin': node_admin, 'tax_admin': tax_admin or node_admin,
                'tax_only_admin': tax_admin and not node_admin, 'node_version': 'fixture'}
+    context['bdd_routing'] = (templates/'bdd_routing.mustache').read_text()
     context['footer'] = render_template((templates / 'footer.mustache').read_text(), context)
     context['sidebar'] = render_template((templates / 'sidebar.mustache').read_text(), context)
     # Use the production shell and server-rendered panels, not an alternate DOM.
@@ -48,8 +49,8 @@ def build_preview(node_admin: bool = False, tax_admin: bool = False) -> str:
     page_html = page_html.replace('<head>', '<head><style>' + css + '</style>')
     page_html = page_html.replace('<main id="content"', '<div class="preview-banner"><strong>INTERACTIVE PREVIEW</strong> · Simulated API responses. No wallet, model or target requests.</div><main id="content"')
     page_html = page_html.replace('</head>', '<style>.preview-banner {padding:8px 12px; background:#172335; color:#c6d3e4; font:11px/1.5 system-ui; text-align:center;} .preview-banner strong {color:#eef3fa;}</style></head>')
-    helpers = (static / 'js/bdd-composer-model.js').read_text().replace('export ', '')
-    controller = re.sub(r'^import .*?;\s*', '', (static / 'js/bdd-composer.js').read_text(), count=1, flags=re.S)
+    helpers = (static / 'js/bdd-composer-model.js').read_text().replace('export ', '') + '\n' + (static / 'js/bdd-routing.js').read_text().replace('export ', '')
+    controller = re.sub(r'^import .*?;\s*', '', (static / 'js/bdd-composer.js').read_text(), flags=re.S | re.M)
     main = (static / 'js/main.js').read_text()
     execution_guard = main[main.index('let executionInFlight = false;'):main.index('async function submitDamageFormRequest()')]
     catalog = json.loads((APP / 'test/fixtures/bdd-composer/catalog.json').read_text())
@@ -73,6 +74,7 @@ window.fetch = async (url, options = {}) => {
     if (mode === 'no-engine') value.engine.generator_available = false;
     return respond(value);
   }
+  if (action === 'routing') return respond({revision:0,route:{provider:'any',model:''},connections:[],can_manage:false});
   if (action === 'cancel') return respond({status:'ok',cancelled:true});
   if (mode === 'http-error') return respond({message:'Preview: model service unavailable. Retry.'}, 503);
   if (mode === 'unauthorized') return respond({message:'Unauthorized'}, 401);

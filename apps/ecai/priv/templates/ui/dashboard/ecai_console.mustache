@@ -6,50 +6,87 @@
   <meta name="description" content="ECAI node control plane: search, conversational access, indexing, private knowledge and operations">
   <meta name="referrer" content="no-referrer">
   <meta name="theme-color" content="#101b32">
-  <title>ECAI · Control plane</title>
-  <link rel="stylesheet" href="/static/css/ecai-console.css">
-  <link rel="stylesheet" href="/static/css/ecai-video.css">
-  <link rel="stylesheet" href="/static/css/ecai-market-maker.css">
+  <title>{{brand_name}} · Control plane</title>
+  {{#has_brand_favicon}}<link rel="icon" href="{{brand_favicon}}">{{/has_brand_favicon}}
+  <link rel="stylesheet" href="/static/css/ecai-llm-settings.css?v=llm-settings-v1">
+  <link rel="stylesheet" href="/static/css/ecai-model-internals.css?v=model-internals-v1&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-console.css?v=personality-conversations-v1-knowledge-v2&index-mint=index-mint-v1&theme=semantic-v2&chat=wide-v2">
+  <link rel="stylesheet" href="/static/css/ecai-personalities.css?v=personalities-v1&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-eval.css?v=eval-v1&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-math-paths.css?v=math-guided-journey-v1&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-math-kernel.css?v=elliptic-kernel-v1">
+  <link rel="stylesheet" href="/static/css/ecai-math-3d.css?v=geometry-lab-v1">
+  <link rel="stylesheet" href="/static/css/ecai-orbital.css?v=otv001-v1">
+  <link rel="stylesheet" href="/static/css/ecai-video.css?theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-market-maker.css?theme=semantic-v2">
   <link rel="stylesheet" href="/ecai/auth-assets/css/auth.css">
-  <link rel="stylesheet" href="/static/css/ecai-auth.css">
-  <link rel="stylesheet" href="/static/css/ecai-quick-index.css?v=quick-index-v2">
-  <link rel="stylesheet" href="/static/css/ecai-index-pool.css">
-  <link rel="stylesheet" href="/static/css/ecai-compute-settings.css">
-  <link rel="stylesheet" href="/static/css/ecai-keys.css">
+  <link rel="stylesheet" href="/static/css/ecai-auth.css?v=auth-colours-v1&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-quick-index.css?v=quick-index-v2&index-mint=index-mint-v1&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-index-pool.css?theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-compute-settings.css?v=compute-only-v1&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-keys.css?theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-index-mint-settings.css?v=index-mint-settings-v1&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-knowledge-workspace.css?v=knowledge-v2&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-conversation-indexes.css?v=chat-indexes-v1">
+  <link rel="stylesheet" href="/static/css/ecai-aws-setup.css?v=automatic-aws-v1&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-sidebar-settings.css?v=sidebar-settings-v1&theme=semantic-v2">
+  <link rel="stylesheet" href="/ecai/agent-assets/css/agent-workspace.css?v=dashboard-agents-v1">
+  <link rel="stylesheet" href="/api/themes/css?app=ecai">
 </head>
 <body>
   <div class="console-shell" id="ecaiConsole" data-node-version="{{node_version}}">
     <aside class="console-sidebar" id="consoleSidebar" aria-label="Primary navigation">
       <div class="brand-block">
-        <div class="brand-symbol" aria-hidden="true">e<span>·</span></div>
-        <div><div class="brand-name">ECAI</div><div class="brand-caption">INTELLIGENCE FABRIC</div></div>
+        {{#has_brand_logo}}<img class="theme-brand-logo" src="{{brand_logo}}" alt="">{{/has_brand_logo}}
+        {{^has_brand_logo}}<div class="brand-symbol" aria-hidden="true">e</div>{{/has_brand_logo}}
+        <div><div class="brand-name">{{brand_name}}</div><div class="brand-caption">{{brand_tagline}}</div></div>
         <button class="icon-button sidebar-close" type="button" id="closeNav" aria-label="Close menu">×</button>
       </div>
-      <div class="sidebar-label">WORKSPACE</div>
-      <nav id="consoleNav" class="main-nav" aria-label="ECAI areas">
-        <button type="button" data-view="overview" class="nav-link is-active" aria-current="page"><span class="nav-icon" aria-hidden="true">◫</span>Overview</button>
-        <button type="button" data-view="search" class="nav-link"><span class="nav-icon" aria-hidden="true">⌕</span>Knowledge search</button>
-        <button type="button" data-view="chat" class="nav-link"><span class="nav-icon" aria-hidden="true">▤</span>Conversation</button>
-        <button type="button" data-view="video" class="nav-link"><span class="nav-icon" aria-hidden="true">▸</span>Video Studio</button>
-        <button type="button" data-view="indexing" class="nav-link"><span class="nav-icon" aria-hidden="true">▦</span>Index jobs</button>
-        <button type="button" data-view="compute" class="nav-link"><span class="nav-icon" aria-hidden="true">⌁</span>Compute &amp; NFTs</button>
-        <button type="button" data-view="keys" class="nav-link"><span class="nav-icon" aria-hidden="true">⌑</span>Keys</button>
-        <button type="button" data-view="network" class="nav-link" id="indexPoolNav" hidden><span class="nav-icon" aria-hidden="true">ϟ</span>Funded indexing</button>
-        <button type="button" data-view="wikimedia" class="nav-link"><span class="nav-icon" aria-hidden="true">◎</span>Wikimedia</button>
-        <button type="button" data-view="knowledge" class="nav-link"><span class="nav-icon" aria-hidden="true">⌘</span>Knowledge &amp; privacy</button>
-        <button type="button" data-view="marketplace" class="nav-link"><span class="nav-icon" aria-hidden="true">◇</span>Marketplace</button>
-        <button type="button" data-view="market-maker" class="nav-link"><span class="nav-icon" aria-hidden="true">◈</span>Market Maker</button>
-        <button type="button" data-view="code" class="nav-link" id="codeAdminNav" hidden><span class="nav-icon" aria-hidden="true">▣</span>Code learning &amp; repair</button>
-        <button type="button" data-view="operations" class="nav-link"><span class="nav-icon" aria-hidden="true">≋</span>Operations</button>
-        <button type="button" data-view="api" class="nav-link"><span class="nav-icon" aria-hidden="true">{ }</span>API explorer</button>
+      <nav id="consoleNav" class="main-nav" aria-label="ECAI areas" data-sidebar-layout="settings-v1">
+        <div class="sidebar-workspace">
+          <div class="sidebar-group" role="group" aria-labelledby="navWorkspaceLabel">
+            <div class="sidebar-label" id="navWorkspaceLabel">WORKSPACE</div>
+            <button type="button" data-view="overview" class="nav-link is-active" aria-current="page"><span class="nav-icon" aria-hidden="true">◫</span>Overview</button>
+            <button type="button" data-view="chat" class="nav-link"><span class="nav-icon" aria-hidden="true">▤</span>Conversation</button>
+            <button type="button" data-view="agents" class="nav-link"><span class="nav-icon" aria-hidden="true">▣</span>Agents</button>
+            <button type="button" data-view="search" class="nav-link"><span class="nav-icon" aria-hidden="true">⌕</span>Knowledge search</button>
+          </div>
+          <div class="sidebar-group" role="group" aria-labelledby="navKnowledgeLabel">
+            <div class="sidebar-label" id="navKnowledgeLabel">KNOWLEDGE</div>
+            <button type="button" data-view="indexing" class="nav-link"><span class="nav-icon" aria-hidden="true">▦</span>Index jobs</button>
+            <button type="button" data-view="knowledge" class="nav-link"><span class="nav-icon" aria-hidden="true">⌘</span>Knowledge &amp; privacy</button>
+            <button type="button" data-view="wikimedia" class="nav-link"><span class="nav-icon" aria-hidden="true">◎</span>Wikimedia</button>
+          </div>
+          <div class="sidebar-group" role="group" aria-labelledby="navCreateLabel">
+            <div class="sidebar-label" id="navCreateLabel">CREATE</div>
+            <button type="button" data-view="personalities" class="nav-link"><span class="nav-icon" aria-hidden="true">◉</span>AI personalities</button>
+            <button type="button" data-view="video" class="nav-link"><span class="nav-icon" aria-hidden="true">▸</span>Video Studio</button>
+          </div>
+          <details class="sidebar-tools" id="sidebarMoreTools">
+            <summary>More tools</summary>
+            <button type="button" data-view="evaluation" class="nav-link"><span class="nav-icon" aria-hidden="true">✓</span>LLM evaluation</button>
+            <button type="button" data-view="math" class="nav-link"><span class="nav-icon" aria-hidden="true">↝</span>Mathematical paths</button>
+            <button type="button" data-view="orbital" class="nav-link"><span class="nav-icon" aria-hidden="true">◎</span>Orbital verification <small>OTV-001</small></button>
+            <button type="button" data-view="marketplace" class="nav-link"><span class="nav-icon" aria-hidden="true">◇</span>Marketplace</button>
+            <button type="button" data-view="market-maker" class="nav-link"><span class="nav-icon" aria-hidden="true">◈</span>Market Maker</button>
+            <button type="button" data-view="network" class="nav-link" id="indexPoolNav" hidden><span class="nav-icon" aria-hidden="true">ϟ</span>Funded indexing</button>
+            <button type="button" data-view="code" class="nav-link" id="codeAdminNav" hidden><span class="nav-icon" aria-hidden="true">▣</span>Code learning &amp; repair</button>
+            <button type="button" data-view="operations" class="nav-link"><span class="nav-icon" aria-hidden="true">≋</span>Operations</button>
+            <button type="button" data-view="api" class="nav-link"><span class="nav-icon" aria-hidden="true">{ }</span>API explorer</button>
+          </details>
+        </div>
+        <div class="sidebar-bottom">
+          <div class="sidebar-group" role="group" aria-labelledby="navSettingsLabel">
+            <div class="sidebar-label" id="navSettingsLabel">SETTINGS</div>
+            <button type="button" class="nav-link" data-view="account"><span class="nav-icon" aria-hidden="true">⚙</span>Account settings</button>
+            <button type="button" data-view="compute" class="nav-link"><span class="nav-icon" aria-hidden="true">⌁</span>Compute</button>
+            <button type="button" data-view="keys" class="nav-link"><span class="nav-icon" aria-hidden="true">⌑</span>API keys</button>
+            <button type="button" class="nav-link" data-view="ai-providers" id="llmSettingsNav" hidden><span class="nav-icon" aria-hidden="true">⌘</span>AI providers &amp; roles</button>
+            <button type="button" class="nav-link" data-view="node-settings"><span class="nav-icon" aria-hidden="true">▣</span>Node settings</button>
+          </div>
+          <button type="button" class="node-mark" data-settings-go="node-settings" aria-label="Open node settings"><span class="node-dot" id="sidebarStatusDot" aria-hidden="true"></span><span id="sidebarNodeState" role="status" aria-live="polite" aria-atomic="true">Node not checked</span><span class="node-version">{{node_version}}</span></button>
+        </div>
       </nav>
-      <div class="sidebar-bottom">
-        <div class="sidebar-label">EXISTING TOOLS</div>
-        <a href="/indexer" class="subtle-link">Simple indexer <span aria-hidden="true">↗</span></a>
-        <a href="/indexer/advanced" class="subtle-link">Advanced indexer <span aria-hidden="true">↗</span></a>
-        <a href="/chat" class="subtle-link">Legacy chat <span aria-hidden="true">↗</span></a>
-        <div class="node-mark"><span class="node-dot" id="sidebarStatusDot"></span><span id="sidebarNodeState">Node not checked</span><span class="node-version">{{node_version}}</span></div>
-      </div>
     </aside>
 
     <div class="console-body">
@@ -59,7 +96,6 @@
           <div class="breadcrumb">ECAI <span aria-hidden="true">/</span> <strong id="viewBreadcrumb">Overview</strong></div>
         </div>
         <div class="topbar-actions">
-          <span class="topbar-runtime" id="topbarRuntime">Connecting to node…</span>
           <button type="button" id="refreshView" class="icon-button refresh-icon" title="Refresh current view" aria-label="Refresh current view">↻</button>
           <span class="topbar-divider" aria-hidden="true"></span>
           <span class="console-session-kind" id="consoleSessionKind"></span>
@@ -78,6 +114,7 @@
           <div><strong>Wallet identity verified · restricted session</strong><p>Public search and conversation are available. Indexing, private corpora, node administration and Lightning rewards require managed email sign-in. Connecting a wallet does not authorize payments or link it to an email account.</p></div>
           <button type="button" id="walletManagedLogin" class="button button-outline button-sm">Sign in with email</button>
         </aside>
+        <section class="view" data-panel="agents" aria-label="Agent workspace" hidden>{{{agents_panel}}}</section>
         <section class="view is-visible" data-panel="overview" aria-labelledby="overviewTitle">
           <div class="welcome-banner">
             <div>
@@ -101,7 +138,7 @@
               <div class="panel-heading"><div><div class="eyebrow">OPERATIONS</div><h2>Recent index activity</h2></div><button type="button" class="text-button" data-go="indexing">All jobs →</button></div>
               <div id="overviewJobs" class="overview-jobs"><div class="empty-state">Sign in to see current queue activity.</div></div>
             </section>
-            <section class="surface panel-pad">
+            <section class="surface panel-pad" id="overviewServiceSection">
               <div class="panel-heading"><div><div class="eyebrow">SYSTEM</div><h2>Service availability</h2></div><button type="button" id="refreshHealth" class="text-button">Recheck ↻</button></div>
               <div class="service-list" id="overviewServices"><div class="empty-state">Checking connected APIs…</div></div>
               <p class="context-hint">Availability is based on real endpoint responses, not simulated metrics.</p>
@@ -223,19 +260,38 @@
         </section>
 
         <section class="view" data-panel="search" aria-labelledby="searchTitle" hidden>
-          <div class="page-intro"><div class="eyebrow">RETRIEVAL</div><h1 id="searchTitle">Knowledge search</h1><p>Search indexed records and inspect returned verification material.</p></div>
-          <section class="surface panel-pad">
-            <form id="searchForm" class="search-form"><label for="searchQuery" class="sr-only">Search query</label><span class="search-leading" aria-hidden="true">⌕</span><input id="searchQuery" type="search" placeholder="Search the ECAI fabric…" required minlength="1" maxlength="2048"><label class="compact-field">Results <input type="number" id="searchLimit" min="1" max="100" value="10"></label><button class="button button-primary" type="submit">Search</button></form>
-            <div class="form-meta"><span id="searchStatus" role="status">Search is available without signing in.</span><span>POST /ecai/search</span></div>
-            <div id="searchResults" class="result-stack"><div class="empty-state">Start with a name, term, category or location.</div></div>
+          <div class="page-intro"><div class="eyebrow">RETRIEVAL</div><h1 id="searchTitle">Knowledge search</h1><p>Search live builds, published disk segments and your accepted funded shards. Retrieve retained sources independently of previews.</p></div>
+          <section class="surface panel-pad knowledge-search-surface">
+            <form id="searchForm" class="search-form" role="search">
+              <div class="knowledge-query-field"><label for="searchQuery" class="sr-only">Search query</label><span class="search-leading" aria-hidden="true">⌕</span><input id="searchQuery" type="search" placeholder="Search the ECAI fabric…" required minlength="1" maxlength="2048" autocomplete="off" spellcheck="false" aria-describedby="searchHelp"><button id="searchClear" class="knowledge-search-clear" type="button" aria-label="Clear search" hidden>×</button></div>
+              <label class="compact-field" for="searchLimit">Results<input type="number" id="searchLimit" min="1" max="100" step="1" value="10"></label>
+              <button class="button button-primary" type="submit">Search</button>
+            </form>
+            <div class="knowledge-search-options"><p id="searchHelp">Search as you type · Enter searches immediately.</p><label class="checkbox-label"><input id="searchLiveRefresh" type="checkbox" checked> Refresh live results</label></div>
+            <details id="searchIndexes" class="knowledge-indexes">
+              <summary><span>Search indexes</span><span id="searchIndexSummary" class="knowledge-index-summary">All indexes</span></summary>
+              <div class="knowledge-index-body">
+                <p class="context-hint">Choose which indexes the backend searches. Unchecked indexes are not queried. Your funded indexes are visible only to your account.</p>
+                <div class="knowledge-index-toolbar" role="group" aria-label="Index selection actions">
+                  <button id="searchIndexAll" class="button button-outline button-sm" type="button" aria-pressed="true">All indexes</button>
+                  <button id="searchIndexNone" class="button button-outline button-sm" type="button" aria-pressed="false">Clear selection</button>
+                  <button id="searchIndexRefresh" class="button button-outline button-sm" type="button">Refresh list</button>
+                </div>
+                <p id="searchIndexStatus" class="context-hint" role="status" aria-live="polite">Expand to load the indexes visible to this session.</p>
+                <div id="searchIndexChoices" class="knowledge-index-choices" aria-busy="false"></div>
+              </div>
+            </details>
+            <p id="searchStatus" class="knowledge-search-status" role="status" aria-live="polite" aria-atomic="true">Start typing to search. Guest access is available.</p>
+            <p id="searchWarning" class="knowledge-search-warning" role="status" hidden></p>
+            <div id="searchResults" class="result-stack" aria-label="Knowledge search results" aria-busy="false"><div class="empty-state">Start with a name, term, category or location.</div></div>
           </section>
-          <details class="surface expandable"><summary>Verification payload <span class="expand-arrow">⌄</span></summary><pre id="searchProofs" class="code-display">Run a search to view the proofs returned by the server.</pre></details>
+          <details class="surface expandable"><summary>Retrieval status &amp; verification <span class="expand-arrow">⌄</span></summary><pre id="searchProofs" class="code-display">Run a search to inspect backend availability. Live previews are not final artifact proofs.</pre></details>
         </section>
 
         <section class="view" data-panel="chat" aria-labelledby="chatTitle" hidden>
           <div class="page-intro"><div class="eyebrow">CONVERSATION</div><h1 id="chatTitle">Speak to the knowledge layer</h1><p>Signed-in conversations are durable, searchable through the private ECAI term index and can be grouped into projects. Guest chat remains an isolated session. Replies depend on the configured backend and are not cryptographic proofs.</p></div>
-          <div class="chat-workspace">
-            <aside class="surface chat-history-panel" id="chatHistoryPanel" aria-label="Conversation history">
+          <div class="chat-workspace chat-workspace--integrated" id="chatWorkspace">
+            <aside class="chat-history-panel" id="chatHistoryPanel" aria-label="Conversation history">
               <div class="chat-history-actions">
                 <button type="button" class="button button-primary chat-new-button" id="newChatBtn">＋ New chat</button>
                 <button type="button" class="chat-search-button" id="chatSearchBtn"><span aria-hidden="true">⌕</span><span>Search chats</span><kbd>⌘K</kbd></button>
@@ -251,9 +307,10 @@
                 <div id="chatHistoryList" class="chat-history-list"><div class="chat-history-empty">Sign in to keep account-scoped history.</div></div>
               </div>
             </aside>
-            <div class="surface chat-layout">
+            <div class="chat-layout">
               <div class="chat-toolbar">
-                <button type="button" class="chat-history-toggle" id="chatHistoryToggle" aria-controls="chatHistoryPanel" aria-expanded="false" aria-label="Toggle conversation history">☰</button>
+                <button type="button" class="chat-history-toggle chat-nav-toggle" id="chatNavToggle" aria-label="Expand main navigation" aria-pressed="false" title="Expand main navigation">◨</button>
+                <button type="button" class="chat-history-toggle" id="chatHistoryToggle" aria-controls="chatHistoryPanel" aria-expanded="true" aria-label="Toggle conversation history">☰</button>
                 <span class="status-indicator"><span class="status-pulse"></span>ECAI chat</span>
                 <div class="chat-thread-heading"><strong id="chatConversationTitle">New conversation</strong><span id="chatProjectLabel" class="small muted">Guest session</span></div>
                 <span id="chatSessionLabel" class="mono small">New session</span>
@@ -263,9 +320,44 @@
                   <button type="button" class="text-button chat-delete-button" id="chatDeleteBtn" disabled>Delete</button>
                 </div>
               </div>
+              <div class="chat-personality-bar">
+                <div class="chat-personality-choice"><label for="chatPersonality">PERSONALITY</label><select id="chatPersonality" aria-describedby="chatPersonalityStatus"><option value="default">ECAI default · built-in</option></select></div>
+                <button type="button" id="chatPersonalityRefresh" class="icon-button" aria-label="Refresh owned personalities" title="Refresh owned personalities">↻</button>
+                <button type="button" class="text-button" data-go="personalities">Explore personalities ↗</button>
+                <p id="chatPersonalityStatus" class="chat-personality-status" role="status" aria-live="polite">Guest conversations use ECAI default.</p>
+              </div>
+              <details id="chatIndexes" class="knowledge-indexes chat-indexes" aria-label="Conversation knowledge sources">
+                <summary><span>Knowledge indexes for this conversation</span><span id="chatIndexSummary" class="knowledge-index-summary">All indexes</span></summary>
+                <div class="knowledge-index-body">
+                  <p class="context-hint">Choose which sources the model can retrieve. Conversation history is separate. Funded indexes are restricted to your account.</p>
+                  <div class="knowledge-index-toolbar" role="group" aria-label="Conversation index selection">
+                    <button type="button" class="button button-outline button-sm" id="chatIndexAll" aria-pressed="true">All indexes</button>
+                    <button type="button" class="button button-outline button-sm" id="chatIndexNone" aria-pressed="false">Clear selection</button>
+                    <button type="button" class="button button-outline button-sm" id="chatIndexRefresh">Refresh list</button>
+                  </div>
+                  <p id="chatIndexStatus" class="context-hint" role="status" aria-live="polite">Expand to load the indexes available to this account.</p>
+                  <div id="chatIndexChoices" class="knowledge-index-choices" aria-busy="false"></div>
+                </div>
+              </details>
               <div class="chat-messages" id="chatMessages" aria-live="polite"><div class="chat-welcome"><div class="welcome-icon">e·</div><h2>Ask a question</h2><p>Guest messages use a temporary session. Sign in to keep searchable conversation history.</p></div></div>
-              <form id="chatForm" class="composer"><label class="sr-only" for="chatPrompt">Your message</label><textarea id="chatPrompt" rows="2" required maxlength="16384" placeholder="Ask the ECAI knowledge layer…"></textarea><button class="button button-primary" type="submit" id="chatSend">Send ↗</button></form>
-              <div class="form-meta"><span id="chatStatus" role="status">Ready</span><span>Saved + privately indexed when signed in</span></div>
+              <form id="chatForm" class="composer chat-composer">
+                <input id="chatFileInput" type="file" hidden multiple accept=".txt,.md,.markdown,.org,.json,.jsonl,.csv,.tsv,.yaml,.yml,.html,.xml,.log,text/plain,text/markdown,text/csv,application/json">
+                <input id="chatVoiceFile" type="file" hidden accept="audio/webm,audio/ogg,audio/mp4,audio/wav,audio/*">
+                <div class="chat-composer-shell">
+                  <div id="chatAttachmentList" class="chat-attachment-list" hidden></div>
+                  <label class="sr-only" for="chatPrompt">Your message</label>
+                  <textarea id="chatPrompt" rows="2" maxlength="16384" placeholder="Ask anything about your knowledge…"></textarea>
+                  <div class="chat-composer-bottom">
+                    <div class="chat-composer-tools">
+                      <button type="button" class="button button-outline button-sm" id="chatAttachBtn" aria-label="Attach a text file">＋ Attach</button>
+                      <button type="button" class="button button-outline button-sm" id="chatVoiceBtn" aria-label="Record a voice note">♩ Voice</button>
+                      <span class="chat-composer-shortcut">Enter to send · Shift+Enter for a newline</span>
+                    </div>
+                    <button class="button button-primary" type="submit" id="chatSend">Send ↗</button>
+                  </div>
+                </div>
+              </form>
+              <div class="form-meta"><span id="chatStatus" role="status">Ready</span><span id="chatRetrievalStatus" class="chat-retrieval-hint" role="status" aria-live="polite">Scope: all indexes · matching: final-word prefix</span><span>Saved + privately indexed when signed in</span></div>
             </div>
           </div>
           <dialog id="chatSearchDialog" class="chat-dialog">
@@ -290,8 +382,16 @@
         </section>
 
         <section class="view" data-panel="indexing" data-ecai-managed aria-labelledby="indexTitle" hidden>
-          <div class="page-intro page-intro-actions"><div><div class="eyebrow">DURABLE PIPELINE</div><h1 id="indexTitle">Index jobs</h1><p>Enqueue curated sources, inspect persisted jobs and follow execution events.</p></div><div class="inline-actions wrap-actions"><button type="button" class="button button-outline" id="indexOpenCompute">Compute budget &amp; NFT settings ↗</button><a class="button button-outline" href="/indexer/advanced">Advanced builder ↗</a></div></div>
+          <div class="page-intro page-intro-actions"><div><div class="eyebrow">DURABLE PIPELINE</div><h1 id="indexTitle">Index jobs</h1><p>Enqueue curated sources, inspect persisted jobs and follow execution events.</p></div><div class="inline-actions wrap-actions"><button type="button" class="button button-outline" id="indexOpenCompute">Compute settings →</button><a class="button button-outline" href="/indexer/advanced">Advanced builder ↗</a></div></div>
           <div class="three-stats"><div class="surface mini-stat"><span>Running</span><strong id="queueRunning">—</strong></div><div class="surface mini-stat"><span>Queued</span><strong id="queueQueued">—</strong></div><div class="surface mini-stat"><span>Concurrency</span><strong id="queueWorkers">—</strong></div></div>
+          <section class="surface panel-pad index-samples" aria-labelledby="indexSampleTitle">
+            <div class="panel-heading"><div><div class="eyebrow">START SMALL · PUBLIC TEST DATA</div><h2 id="indexSampleTitle">Try the complete indexing flow</h2></div><span class="status-tag">3 synthetic records</span></div>
+            <p>Use the bundled JSONL file to test inspection, queueing, live progress, search and source retrieval. No external source download is needed. Quick Index still requires the node's IPFS service and index worker.</p>
+            <ol class="sample-flow"><li><strong>Load &amp; inspect</strong><span>Review the detected JSONL structure.</span></li><li><strong>Index</strong><span>Confirm using Add to index queue.</span></li><li><strong>Follow the job</strong><span>Open Execution history for live events.</span></li><li><strong>Search &amp; retrieve</strong><span>Find orbital orchard and open its source.</span></li></ol>
+            <div class="sample-actions"><button id="indexSampleLoad" type="button" class="button button-primary">Load 3-record sample</button><a class="button button-outline" href="/static/samples/knowledge-smoke.jsonl" download="knowledge-smoke.jsonl">Download JSONL</a><button type="button" class="button button-outline" data-sample-query="orbital orchard">Search sample ↗</button></div>
+            <p id="indexSampleStatus" class="sample-status" role="status" aria-live="polite">Loading only selects and inspects the sample. Queueing is a separate explicit action.</p>
+            <details class="sample-preview"><summary>What is in the sample?</summary><p>Orbital orchard — irrigation check; Kinetic lighthouse — battery check; Cedar observatory — sensor check. These are synthetic public records. Do not use private documents in this public test flow.</p></details>
+          </section>
           <section class="surface panel-pad quick-index-card" id="quickIndexCard" aria-labelledby="quickIndexTitle">
             <div class="panel-heading">
               <div><div class="eyebrow">QUICK INDEX</div><h2 id="quickIndexTitle">Add knowledge from anywhere</h2></div>
@@ -323,11 +423,14 @@
 
             <div class="quick-index-actions">
               <button type="button" class="button button-outline" id="quickIndexInspect">Detect structure</button>
-              <button type="button" class="button button-primary" id="quickIndexQueue" disabled>Index detected source ↗</button>
-              <span class="quick-index-status" id="quickIndexStatus" role="status" aria-live="polite">Ready</span>
+              <span class="quick-index-status" id="quickIndexStatus" role="status" aria-live="polite">Inspect a source to review the plan.</span>
             </div>
 
             <div class="quick-index-analysis" id="quickIndexAnalysis" aria-live="polite"><p class="quick-index-empty">Choose a source, then detect its structure before indexing.</p></div>
+            <div class="quick-index-actions">
+              <button type="button" class="button button-primary" id="quickIndexQueue" aria-describedby="quickIndexStatus" disabled>Add to index queue</button>
+              <button type="button" class="button button-outline" id="quickIndexViewJob" hidden>View job</button>
+            </div>
             <div class="quick-index-public-note"><span aria-hidden="true">ⓘ</span><span><strong>Searchable/public pipeline:</strong> file and URL bytes are content-addressed in this node's IPFS store before the existing <code>ipfs_cid → searchable_disk</code> job runs. Use Knowledge &amp; privacy instead for confidential corpora.</span></div>
           </section>
           <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">LARGE DATASETS</div><h2>Wikimedia presets</h2></div><button type="button" id="reloadPresets" class="text-button">Reload presets ↻</button></div><div id="indexPresets" class="preset-grid"><div class="empty-state">Sign in to load available presets.</div></div></section>
@@ -342,6 +445,24 @@
             <p class="context-hint">Open any job for progress, checkpoints, artifacts and live events. Tracking starts automatically and stops when you close it or switch jobs.</p>
             <div id="indexJobList" class="index-job-list" aria-label="Indexing jobs"><div class="empty-state">Sign in to inspect jobs.</div></div>
           </section>
+          <details id="indexMintSettings" class="surface panel-pad index-mint-settings" data-ecai-managed>
+            <summary><strong>Mint preferences &amp; review requests</strong><span>For completed index artifacts</span></summary>
+            <p class="context-hint">Set account-wide review preferences here. Choose copies and metadata using the Mint button on a job. These settings and review requests do not submit a blockchain transaction.</p>
+            <p id="indexMintSettingsStatus" class="index-mint-settings-status" role="status" aria-live="polite">Open to load your mint preferences.</p>
+            <form id="indexMintPolicyForm" class="stack-form">
+              <fieldset id="indexMintPolicyFields" disabled>
+                <label class="index-mint-check"><input name="enabled" type="checkbox"> Allow manually requested mint reviews</label>
+                <div class="index-mint-policy-grid">
+                  <label>Default recipient (Æternity public address)<input name="recipient" autocomplete="off" spellcheck="false" maxlength="103" placeholder="ak_…"></label>
+                  <label>Monthly mint fee reservation limit (USD)<input name="monthly" type="number" min="0" max="1000000" step="0.01" value="0" required></label>
+                </div>
+                <p class="context-hint">The recipient is checked against each job's request. Setting an address is not a wallet connection. The monthly limit applies to fee reservations, not a guaranteed on-chain fee.</p>
+                <button id="indexMintPolicySave" type="submit" class="button button-primary button-sm">Save mint preferences</button>
+              </fieldset>
+            </form>
+            <div class="index-mint-settings-heading"><h3>Recent review requests</h3><button type="button" id="indexMintSettingsRefresh" class="button button-outline button-sm">Refresh</button></div>
+            <div id="indexMintRequestList" class="index-mint-request-list"><p class="context-hint">Open to load requests for this account.</p></div>
+          </details>
           <details class="surface expandable"><summary>Enqueue custom job specification <span class="expand-arrow">⌄</span></summary><div class="details-content"><p class="context-hint">Use the existing <a href="/indexer/advanced">advanced builder</a> to generate a spec, or submit a validated <code>ecai-index-job/v1</code> JSON specification here.</p><form id="customJobForm"><label for="indexCustomSpec">Job specification</label><textarea class="code-input" id="indexCustomSpec" rows="10" spellcheck="false" required>{
   "schema": "ecai-index-job/v1",
   "kind": "wikimedia_visibility",
@@ -355,6 +476,12 @@
         <section class="view" data-panel="wikimedia" data-ecai-managed aria-labelledby="wikiTitle" hidden>
           <div class="page-intro"><div class="eyebrow">WIKIMEDIA · DURABLE INDEXING</div><h1 id="wikiTitle">Choose what to index</h1><p>Pick one or more server-approved datasets, or configure an exact release and month window. Review the selection before it joins the index queue.</p></div>
 
+          <section class="surface panel-pad index-samples" aria-labelledby="wikiSampleTitle">
+            <div class="panel-heading"><div><div class="eyebrow">BUNDLED PIPELINE TEST</div><h2 id="wikiSampleTitle">Wikimedia smoke sample</h2></div><span class="status-tag">4 input articles → top 3 selected</span></div>
+            <p>The local fixture includes Quantum mechanics, Classical mechanics, Physique quantique and a low-visibility Noise article. The smoke preset selects the top three and exercises download, ranking, indexing and finalization without an external Wikimedia download.</p>
+            <div class="sample-actions"><button type="button" id="wikiSampleCheck" class="button button-outline">Check sample service</button><button type="button" id="wikiSampleSelect" class="button button-primary">Select only smoke preset</button><button type="button" class="button button-outline" data-sample-query="Quantum mechanics">Search sample ↗</button><a class="text-button" href="/ecai/wikimedia/sample/catalog" target="_blank" rel="noopener noreferrer">View catalog ↗</a></div>
+            <p id="wikiSampleStatus" class="sample-status" role="status" aria-live="polite">Select the smoke preset, add it to the queue below, then open View job. Search becomes available as records are indexed; previews are not final artifact proofs.</p>
+          </section>
           <section class="surface panel-pad wiki-picker-surface" aria-labelledby="wikiPresetTitle">
             <div class="panel-heading"><div><div class="eyebrow">01 · QUICK QUEUE</div><h2 id="wikiPresetTitle">Pick Wikimedia projects</h2></div><button type="button" id="wikiReloadProjects" class="button button-outline button-sm">Refresh projects</button></div>
             <p class="context-hint">These presets are configured and validated by this ECAI node. Each selection becomes a separate durable indexing job.</p>
@@ -417,6 +544,11 @@
 
         <section class="view" data-panel="code" data-ecai-managed aria-labelledby="codeTitle" hidden>
           <div class="page-intro"><div class="eyebrow">NODE ADMINISTRATION · REVIEW GATE</div><h1 id="codeTitle">Code learning &amp; repair</h1><p>Inspect durable learning and repair activity, review verifier-validated Git diffs, and publish human-approved changes to a dedicated <code>origin</code> review branch. Nothing publishes automatically.</p></div>
+          <div class="code-subnav" role="tablist" aria-label="Code learning and repair sections">
+            <button type="button" id="codePipelineTab" role="tab" aria-controls="codePipelinePanel" aria-selected="true" data-code-section="pipeline">Pipeline &amp; reviews</button>
+            <button type="button" id="codeModelInternalsTab" role="tab" aria-controls="modelInternalsPanel" aria-selected="false" tabindex="-1" data-code-section="model-internals">Model Internals</button>
+          </div>
+          <div id="codePipelinePanel" role="tabpanel" aria-labelledby="codePipelineTab">
           <div class="surface panel-pad">
             <div class="panel-heading"><div><div class="eyebrow">LEARNING CYCLE</div><h2>Code intelligence &amp; repair workers</h2></div><button type="button" class="button button-outline button-sm" id="codeRefresh">Refresh</button></div>
             <div id="codeAdminNotice" class="context-hint" role="status">This workspace requires a server-authorized node administrator account.</div>
@@ -536,6 +668,62 @@
           </div>
           </div>
           </div>
+          </div>
+          <section id="modelInternalsPanel" class="model-internals" role="tabpanel" aria-labelledby="codeModelInternalsTab" hidden>
+            <div><button type="button" class="text-button" data-go="ai-providers">Configure AI providers &amp; roles →</button></div>
+            <div class="mi-heading"><div><div class="eyebrow">INFERENCE CONTROL · NODE POLICY</div><h2>Model Internals</h2><p>Control the interfaces this node actually exposes. Keep deeper runtime hooks explicit, isolated and testable.</p></div><button type="button" id="miRefresh" class="button button-outline button-sm">Refresh telemetry</button></div>
+            <div id="miNotice" class="mi-notice" role="status" aria-live="polite">Checking administrator access…</div>
+            <div class="mi-summary" aria-label="Inference policy status">
+              <article class="surface mi-stat"><span>Policy</span><strong id="miPolicyState">Not loaded</strong><small id="miPolicyScope">No policy snapshot loaded</small></article>
+              <article class="surface mi-stat"><span>Saved revision</span><strong id="miRevision">—</strong><small id="miUpdatedAt">Never changed</small></article>
+              <article class="surface mi-stat"><span>Configured targets</span><strong id="miNodeCount">—</strong><small>Read from the existing inference pool</small></article>
+            </div>
+            <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">01 · CAPABILITY MAP</div><h3>Wired here, or runtime required?</h3></div></div><div id="miCapabilities" class="mi-capabilities"><p class="context-hint">Capabilities have not been loaded.</p></div></section>
+            <div class="mi-workspace">
+              <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">02 · CONTROL POLICY</div><h3>Generation overrides</h3></div><span id="miDraftState" class="status-tag">No draft</span></div>
+                <p class="context-hint">Node-wide policy, not an account preference. Blank numbers inherit existing node/request settings. Saves affect new requests; in-flight retries keep their pinned revision.</p>
+                <form id="miForm" class="stack-form">
+                  <fieldset id="miFields" disabled>
+                    <label class="mi-toggle"><input id="miEnabled" type="checkbox"> Enable this policy for selected code roles</label>
+                    <fieldset class="mi-role-fields"><legend>Code roles</legend><div class="mi-role-choices">
+                      <label><input type="checkbox" name="miRole" value="patch"> Repair</label><label><input type="checkbox" name="miRole" value="learning"> Learning</label><label><input type="checkbox" name="miRole" value="audit"> Audit</label><label><input type="checkbox" name="miRole" value="synthesis"> Synthesis</label>
+                    </div></fieldset>
+                    <p class="context-hint">Public chat, native chat/generate requests and LLM evaluation are outside this policy.</p>
+                    <div class="mi-subheading">Ollama · native generation</div><div class="mi-field-grid">
+                      <label>Temperature<input id="miTemperature" type="number" min="0" max="2" step="0.01" placeholder="Inherit"></label>
+                      <label>Top-p<input id="miTopP" type="number" min="0.001" max="1" step="0.001" placeholder="Inherit"></label>
+                      <label>Top-k<input id="miTopK" type="number" min="1" max="1000" step="1" placeholder="Inherit"></label>
+                      <label>Min-p<input id="miMinP" type="number" min="0" max="1" step="0.01" placeholder="Inherit"></label>
+                      <label>Seed<input id="miSeed" type="number" min="0" max="2147483647" step="1" placeholder="Inherit"></label>
+                      <label>Repeat penalty<input id="miRepeatPenalty" type="number" min="0.1" max="2" step="0.01" placeholder="Inherit"></label>
+                      <label>Context tokens<input id="miNumCtx" type="number" min="512" max="131072" step="1" placeholder="Inherit"></label>
+                      <label>Maximum output tokens<input id="miMaxOutput" type="number" min="1" max="32768" step="1" placeholder="Inherit"></label>
+                    </div>
+                    <p class="context-hint">Large context windows increase resource use. A fixed seed or zero temperature does not guarantee identical results across model/runtime changes.</p>
+                    <label class="mi-toggle"><input id="miPatchSchema" type="checkbox"> Use the fixed JSON schema for Ollama repair requests</label>
+                    <p class="context-hint">Constrains summary, security_property, tests and patch fields. It does not validate a patch or bypass compilation, tests or review.</p>
+                    <details class="mi-advanced"><summary>OpenAI · existing Responses adapter</summary><p class="context-hint">Only the controls wired into this adapter appear here. Leave temperature blank for models that reject it. Credentials and model routing stay in server configuration.</p><div class="mi-field-grid">
+                      <label>Maximum output tokens<input id="miOpenaiMaxOutput" type="number" min="1" max="32768" step="1" placeholder="Inherit"></label><label>Temperature (model-dependent)<input id="miOpenaiTemperature" type="number" min="0" max="2" step="0.01" placeholder="Inherit"></label>
+                    </div></details>
+                    <label>Appended system guidance<textarea id="miSystemSuffix" rows="4" maxlength="2048" placeholder="Optional operator guidance for selected code roles"></textarea></label>
+                    <p class="context-hint">Maximum 2,048 UTF-8 bytes. Existing system guidance is preserved. Do not paste credentials, private keys or untrusted source instructions.</p>
+                    <div class="inline-actions wrap-actions"><button id="miSave" type="submit" class="button button-primary button-sm">Save policy</button><button id="miDiscard" type="button" class="button button-outline button-sm">Discard local edits</button></div>
+                  </fieldset>
+                </form>
+              </section>
+              <div class="mi-side-column">
+                <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">03 · INSPECT BEFORE SAVING</div><h3>Request preview</h3></div><span class="status-tag">NO INFERENCE</span></div>
+                  <p class="context-hint">Validate the current draft and inspect its overrides. No model is loaded, no prompt is sent and no spend is initiated.</p>
+                  <div class="mi-field-grid"><label>Provider<select id="miPreviewProvider"><option value="ollama">Ollama</option><option value="openai">OpenAI</option></select></label><label>Role<select id="miPreviewRole"><option value="patch">Repair</option><option value="learning">Learning</option><option value="audit">Audit</option><option value="synthesis">Synthesis</option></select></label></div>
+                  <button id="miPreview" type="button" class="button button-outline button-sm" disabled>Validate &amp; preview draft</button>
+                  <pre id="miPreviewOutput" class="code-display mi-output" aria-live="polite">No preview requested.</pre>
+                </section>
+                <section class="surface panel-pad"><div class="eyebrow">CONFIGURATION FINGERPRINT</div><h3>Saved policy evidence</h3><code id="miConfigHash" class="mi-hash">Not loaded</code><p class="context-hint">This SHA-256 fingerprint identifies the saved configuration. It is not a digital signature or proof that generated statements are true.</p><div id="miChanges" class="mi-events">No policy changes recorded.</div></section>
+              </div>
+            </div>
+            <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">04 · EXISTING POOL</div><h3>Inference targets</h3></div><span id="miPoolState" class="status-tag">Not checked</span></div><div id="miNodes" class="mi-nodes">No target telemetry loaded.</div><p class="context-hint">This page cannot edit endpoints, add credentials, select an arbitrary model or load executable adapters.</p></section>
+            <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">05 · OBSERVABILITY</div><h3>Recent code inference</h3></div><span class="status-tag">METADATA ONLY</span></div><p class="context-hint">The latest 32 successful calls observed on this node. This view resets on service restart; policy metadata on repair attempts follows the existing durable repair store. No prompts, generated code or hidden activations are displayed.</p><div id="miObservations" class="mi-events">No calls observed yet.</div></section>
+          </section>
         </section>
 
         <section class="view" data-panel="network" data-ecai-managed aria-labelledby="poolTitle" hidden>
@@ -571,6 +759,92 @@
 
         {{{market_maker_panel}}}
 
+        {{{personalities_panel}}}
+
+        {{{math_paths_panel}}}
+        <!-- OTV-001 lives inside the existing ECAI control plane. Synthetic, public, no API calls. -->
+        <section class="view otv-view" data-panel="orbital" id="otvChallenge" aria-labelledby="otvTitle" hidden>
+          <div class="otv-hero">
+            <div class="otv-hero-copy">
+              <div class="otv-eyebrow"><span class="otv-signal"></span> OPEN ENGINEERING CHALLENGE <span class="otv-separator">/</span> OTV-001</div>
+              <h1 id="otvTitle">Make every failure <span>reproducible.</span></h1>
+              <p>A public orbital-transfer <strong>verification benchmark</strong>: synthetic state transitions, deliberately injected faults, explainable invariant checks and portable evidence. Designed to invite independent engineers to break the model—not to simulate Starship flight.</p>
+              <div class="otv-hero-actions">
+                <button type="button" class="otv-primary" id="otvPresent">Present challenge <span aria-hidden="true">↗</span></button>
+                <button type="button" class="otv-ghost" id="otvCopyPitch">Copy technical pitch</button>
+              </div>
+            </div>
+            <div class="otv-hero-side" aria-label="Benchmark scope">
+              <span class="otv-hero-mark">OTV<span>001</span></span>
+              <span class="otv-hero-aside">OPEN TESTBED<br>NOT FLIGHT DATA</span>
+            </div>
+          </div>
+          <div class="otv-context-bar"><span><span class="otv-live-dot"></span> DETERMINISTIC LOCAL SIMULATOR</span><span>6 INVARIANTS</span><span>96 SYNTHETIC FRAMES</span><span>NO PROPRIETARY DATA</span></div>
+          <div class="otv-main-grid">
+            <section class="otv-card otv-stage-card" aria-labelledby="otvStageTitle">
+              <div class="otv-card-head"><div><span class="otv-overline">01 / VISUAL STATE</span><h2 id="otvStageTitle">Orbital transfer demonstrator</h2></div><span class="otv-chip">3D · ORBIT / ZOOM</span></div>
+              <div class="otv-scene-wrap">
+                <canvas id="otvScene" width="1080" height="620" tabindex="0" role="img" aria-label="Interactive 3D view of two generic reservoir modules connected by a flow line. Drag to orbit, use the mouse wheel to zoom."></canvas>
+                <div class="otv-scene-top"><span>SYNTHETIC TRANSFER / NOT TO SCALE</span><span id="otvSceneMode">NOMINAL</span></div>
+                <div class="otv-scene-label otv-scene-left">SOURCE <strong id="otvSourceMass">100.000</strong></div>
+                <div class="otv-scene-label otv-scene-right">RECEIVER <strong id="otvReceiverMass">12.000</strong></div>
+                <div class="otv-scene-bottom"><span id="otvSceneValve">VALVE: CLOSED</span><span>DRAG · ORBIT &nbsp; / &nbsp; SCROLL · ZOOM</span></div>
+              </div>
+              <div class="otv-timeline"><div class="otv-timeline-top"><span>REPLAY POSITION</span><output id="otvFrameLabel" for="otvFrame">T+000 / 095</output></div><input id="otvFrame" type="range" min="0" max="95" value="0" step="1" aria-label="Choose telemetry frame"></div>
+            </section>
+            <aside class="otv-card otv-control-card" aria-labelledby="otvControlsTitle">
+              <div class="otv-card-head"><div><span class="otv-overline">02 / TEST EXECUTION</span><h2 id="otvControlsTitle">Inject a failure</h2></div></div>
+              <p class="otv-small">Change one condition. The verifier checks all six invariants over the same deterministic synthetic trace.</p>
+              <label for="otvScenario">Scenario</label>
+              <select id="otvScenario">
+                <option value="nominal">Nominal transfer</option>
+                <option value="leak" selected>Unaccounted transfer loss</option>
+                <option value="valve-stuck">Valve command mismatch</option>
+                <option value="thermal">Thermal excursion</option>
+                <option value="pressure">Pressure excursion</option>
+                <option value="sensor-drift">Sensor drift</option>
+                <option value="event-reorder">Out-of-order telemetry</option>
+              </select>
+              <label for="otvSeed">Deterministic seed</label>
+              <input id="otvSeed" type="number" value="1729" min="0" max="999999999" step="1" inputmode="numeric">
+              <p class="otv-small" id="otvScenarioDescription">A portion of outgoing mass does not reach the receiving reservoir.</p>
+              <div class="otv-control-actions"><button type="button" id="otvRun" class="otv-primary">Run verification <span aria-hidden="true">▶</span></button><button type="button" id="otvPause" class="otv-ghost">Pause</button></div>
+              <div class="otv-divider"></div>
+              <div class="otv-result-top"><span>VERIFICATION RESULT</span><span id="otvResultStatus" class="otv-status">—</span></div>
+              <p id="otvResultSummary" class="otv-result-summary" role="status" aria-live="polite">Select a scenario and run the verifier.</p>
+              <div class="otv-mini-data"><div><span>First detected violation</span><strong id="otvFirstFault">—</strong></div><div><span>Seed / events</span><strong id="otvSeedEvents">1729 / 96</strong></div></div>
+              <div class="otv-divider"></div>
+              <div class="otv-export-head">EXPORT REPRODUCIBLE EVIDENCE</div>
+              <div class="otv-export-actions"><button type="button" id="otvExportEvidence" class="otv-ghost">Evidence JSON ↓</button><button type="button" id="otvExportFeature" class="otv-ghost">BDD blueprint ↓</button></div>
+              <p class="otv-fine">Evidence is SHA-256 hashed locally. It is not signed, independently attested, or executed by DamageBDD nodes yet.</p>
+            </aside>
+          </div>
+          <div class="otv-stats" aria-label="Verification summary">
+            <article class="otv-stat"><span>CHECKS / INVARIANT TYPES</span><strong id="otvChecks">06</strong><small>Dimensionless benchmark rules</small></article>
+            <article class="otv-stat"><span>FAILED INVARIANTS</span><strong id="otvFailures">—</strong><small id="otvFailuresNote">Awaiting run</small></article>
+            <article class="otv-stat"><span>PEAK MASS RESIDUAL</span><strong id="otvResidual">—</strong><small>Normalised mass units</small></article>
+            <article class="otv-stat"><span>EVIDENCE DIGEST</span><strong class="otv-hash" id="otvDigest">—</strong><small>SHA-256 · local only</small></article>
+          </div>
+          <div class="otv-lower-grid">
+            <section class="otv-card otv-telemetry" aria-labelledby="otvTelemetryTitle"><div class="otv-card-head"><div><span class="otv-overline">03 / REPLAYABLE TELEMETRY</span><h2 id="otvTelemetryTitle">Mass balance and constraint violations</h2></div></div>
+              <div class="otv-chart-key"><span><i class="otv-key-cyan"></i> Source mass</span><span><i class="otv-key-amber"></i> Receiver reported</span><span><i class="otv-key-red"></i> Mass residual</span></div>
+              <canvas id="otvChart" width="1050" height="310" role="img" aria-label="Deterministic chart of source mass, measured receiving-reservoir mass and mass-balance residual across the transfer"></canvas>
+              <p class="otv-fine">Mass units are arbitrary. Each signal uses its own visual axis; rules evaluate unscaled values.</p>
+            </section>
+            <section class="otv-card otv-findings" aria-labelledby="otvFindingsTitle"><div class="otv-card-head"><div><span class="otv-overline">04 / EXPLAINABLE VERIFICATION</span><h2 id="otvFindingsTitle">Invariant findings</h2></div></div>
+              <div id="otvFindings" class="otv-findings-list" aria-live="polite"><p>Run a scenario to inspect rule-level evidence.</p></div>
+            </section>
+            <section class="otv-card otv-ecai" aria-labelledby="otvEcaiTitle"><div class="otv-card-head"><div><span class="otv-overline">05 / RETRIEVAL WORKBENCH</span><h2 id="otvEcaiTitle">ECAI hypothesis lane</h2></div><span class="otv-chip">LOCAL INDEX</span></div>
+              <p class="otv-small">Comparable failure signatures from a local reference atlas. This is a deterministic stand-in for the proposed ECAI retrieval integration, <strong>not native curve retrieval</strong>.</p>
+              <div id="otvAnalogues" class="otv-analogues">No failure signature to retrieve.</div>
+              <div class="otv-next"><span class="otv-next-title">ENGINEERING BRIDGE</span><p>ECAI: candidate retrieval and counterexample search. DamageBDD: independent execution, signed test reports and cross-node replay. Both are proposed next-stage integrations.</p></div>
+            </section>
+          </div>
+          <footer class="otv-footer"><span>OTV-001 · Independent public research demonstrator</span><span>NOT SPACEX-AFFILIATED · NO FLIGHT DATA · NO SAFETY CERTIFICATION</span></footer>
+        </section>
+
+        {{{evaluation_panel}}}
+
         {{{compute_settings_panel}}}
 
         {{{ollama_keys_panel}}}
@@ -579,6 +853,132 @@
           <div class="page-intro"><div class="eyebrow">REFERENCE &amp; EXECUTION</div><h1 id="apiTitle">API explorer</h1><p>Browse the routes exported by this ECAI node and make authenticated same-origin requests.</p></div>
           <div class="api-explorer"><section class="surface api-list-panel"><label for="apiFilter" class="sr-only">Filter endpoints</label><input id="apiFilter" class="api-filter" type="search" placeholder="⌕  Filter endpoints"><div id="apiRoutes" class="api-route-list" aria-label="API endpoints"></div></section><section class="surface panel-pad api-request-panel"><div class="panel-heading"><div><div class="eyebrow">REQUEST</div><h2 id="apiRequestTitle">Choose an endpoint</h2></div><span class="status-tag" id="apiMethodTag">REST</span></div><p id="apiRequestDescription" class="context-hint">Select a route on the left to inspect its parameters.</p><form id="apiRequestForm" class="stack-form"><div id="apiPathParams"></div><div id="apiQueryParams"></div><div id="apiRequestBodyWrapper" hidden><label for="apiRequestBody">JSON body</label><textarea id="apiRequestBody" class="code-input" rows="9" spellcheck="false"></textarea></div><div class="inline-actions"><button type="submit" id="apiRequestSubmit" class="button button-primary" disabled>Send request ↗</button><button type="button" id="apiCopyResponse" class="button button-outline" disabled>Copy response</button></div></form><div class="form-meta"><span id="apiResponseMeta" role="status">No request sent.</span></div><pre id="apiResponse" class="code-display">Select an endpoint to get started.</pre></section></div>
         </section>
+        <section class="view llm-settings" data-panel="ai-providers" aria-labelledby="llmSettingsTitle" hidden>
+          <div class="page-intro"><div class="eyebrow">SETTINGS · NODE-WIDE INFERENCE</div><h1 id="llmSettingsTitle">AI providers &amp; roles</h1><p>Connect Ollama, OpenAI and Claude. Assign workloads to the existing ECAI inference pool without changing execution or review permissions.</p></div>
+          <div id="llmNotice" class="llm-notice" role="status" aria-live="polite">Sign in with a server-authorized node administrator account.</div>
+          <div class="llm-summary">
+            <article class="surface llm-stat"><span>Configuration</span><strong id="llmRevision">—</strong><small id="llmSource">Not loaded</small></article>
+            <article class="surface llm-stat"><span>Runtime</span><strong id="llmRuntimeState">Not checked</strong><small id="llmRuntimeRevision">No provider request made</small></article>
+            <article class="surface llm-stat"><span>Connections</span><strong id="llmConnectionCount">—</strong><small>Credentials stay on the server</small></article>
+          </div>
+          <form id="llmForm" autocomplete="off">
+            <div class="llm-toolbar"><span id="llmDraftState">No draft</span><div class="inline-actions"><button type="button" id="llmRefresh" class="button button-outline">Refresh</button><button type="button" id="llmDiscard" class="button button-outline" disabled>Discard edits</button><button type="submit" id="llmSave" class="button button-primary" disabled>Save &amp; apply</button></div></div>
+            <fieldset id="llmFields" disabled>
+              <legend class="sr-only">Node inference configuration</legend>
+              <div class="llm-workspace">
+                <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">CONNECTIONS</div><h2>Provider registry</h2></div></div>
+                  <div class="llm-add"><label for="llmAddProvider" class="sr-only">New provider</label><select id="llmAddProvider"><option value="ollama">Ollama</option><option value="openai">OpenAI</option><option value="anthropic">Claude / Anthropic</option></select><button type="button" id="llmAdd" class="button button-outline">Add</button></div>
+                  <div id="llmConnectionList" class="llm-connection-list" aria-label="Configured connections"></div>
+                  <p class="context-hint">A connection is one endpoint and model policy. Several connections can use the same provider.</p>
+                </section>
+                <section class="surface panel-pad"><div class="panel-heading"><h2 id="llmEditorTitle">Connection details</h2><button type="button" id="llmRemove" class="text-button" disabled>Remove</button></div>
+                  <p id="llmEmpty" class="context-hint">Add or select a connection.</p>
+                  <div id="llmEditor" hidden>
+                    <div class="llm-field-grid">
+                      <label>Connection ID<input id="llmId" maxlength="128" pattern="[A-Za-z0-9_.:\-]+" required></label>
+                      <label>Provider<select id="llmProvider"><option value="ollama">Ollama</option><option value="openai">OpenAI Responses</option><option value="anthropic">Claude / Anthropic Messages</option></select></label>
+                      <label>Host<input id="llmHost" maxlength="253" required spellcheck="false"></label>
+                      <label>Port<input id="llmPort" type="number" min="1" max="65535" required></label>
+                      <label>Transport<select id="llmTransport"><option value="tcp">HTTP · approved local / LAN</option><option value="tls">HTTPS · TLS</option></select></label>
+                      <label class="llm-toggle"><input id="llmEnabled" type="checkbox">Enable this connection</label>
+                      <label class="llm-wide">Default model<input id="llmModel" list="llmDiscoveredModels" maxlength="256" placeholder="Select a discovered model or enter its exact ID" required><datalist id="llmDiscoveredModels"></datalist></label>
+                      <label class="llm-wide">Allowed models<input id="llmModels" placeholder="all, or a comma-separated model list" required></label>
+                      <label>Credential source<select id="llmAuthType"><option value="inherited">Keep deployment credential</option><option value="environment">Server environment variable</option><option value="vault">Saved node-vault reference</option><option value="none">No credential · local Ollama</option></select></label>
+                      <label>Credential reference<input id="llmCredentialRef" maxlength="256" spellcheck="false"></label>
+                      <label class="llm-wide">Replace API key · optional<input id="llmApiKey" type="password" autocomplete="new-password" maxlength="8192" placeholder="Write-only: blank preserves the selected credential"></label>
+                    </div>
+                    <p id="llmKeyState" class="context-hint">No replacement key queued.</p>
+                    <p class="context-hint">New keys are encrypted in DamageBDD’s node-scoped vault. Secrets are never returned. New LAN endpoints must be approved in server configuration.</p>
+                    <details class="llm-advanced"><summary>Scheduling &amp; request limits</summary><div class="llm-field-grid">
+                      <label>Concurrent requests<input id="llmInflight" type="number" min="1" max="64" required></label>
+                      <label>Scheduling weight<input id="llmWeight" type="number" min="1" max="100" required></label>
+                      <label>Request timeout · ms<input id="llmTimeout" type="number" min="1000" max="1800000" required></label>
+                      <label>Connect timeout · ms<input id="llmConnectTimeout" type="number" min="100" max="30000" required></label>
+                      <label>Maximum output tokens<input id="llmOutputTokens" type="number" min="1" max="32768" placeholder="Provider default"></label>
+                      <label>Temperature<input id="llmTemperature" type="number" min="0" max="2" step="any" placeholder="Provider default"></label>
+                    </div></details>
+                    <div class="llm-probe"><button type="button" id="llmProbe" class="button button-outline">Test &amp; list models</button><p id="llmProbeResult" class="context-hint" role="status">Tests use the saved connection. No text-generation request is sent.</p></div>
+                  </div>
+                </section>
+              </div>
+              <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">ROLE ASSIGNMENTS</div><h2>Which connection does each job?</h2></div><button type="button" class="text-button" data-go="code/model-internals">Model Internals →</button></div>
+                <p class="context-hint">Checked connections are eligible for the role. The existing scheduler selects by health, capacity and weight—not column order. Each connection uses its default model unless a workload explicitly pins a model.</p>
+                <div class="llm-table-wrap"><table class="llm-role-table"><thead><tr><th scope="col">Connection</th><th scope="col">Learning</th><th scope="col">Audit</th><th scope="col">Repair</th><th scope="col">Synthesis</th><th scope="col">Chat</th><th scope="col">DamageBDD AI</th></tr></thead><tbody id="llmRoleRows"></tbody></table></div>
+                <fieldset class="llm-remote"><legend>Allow non-loopback processing for these roles</legend><div id="llmRemoteRoles" class="llm-role-checks"></div><p class="context-hint">Remote providers receive the selected plaintext. A local Ollama endpoint can itself forward to cloud models; disable that separately when required. These settings never override private-corpus destination permissions.</p></fieldset>
+                <label class="llm-toggle"><input type="checkbox" id="llmRouteChat">Use the shared Chat role for ECAI dashboard conversations</label>
+                <p class="context-hint">Off preserves the existing chat worker’s Ollama settings. On uses this registry without falling back to the legacy chat endpoint when unavailable.</p>
+              </section>
+              <details class="surface panel-pad llm-advanced"><summary>Backend runtime configuration</summary><p class="context-hint">These are shared defaults. Workload-specific request deadlines and output limits can take precedence. Model Internals tuning remains a separate policy.</p><div class="llm-field-grid llm-runtime-fields">
+                <label>Health interval · ms<input id="llmHealthInterval" type="number" min="5000" max="3600000" required></label>
+                <label>Health timeout · ms<input id="llmHealthTimeout" type="number" min="1000" max="30000" required></label>
+                <label>Failure threshold<input id="llmFailureThreshold" type="number" min="1" max="10" required></label>
+                <label>Queue timeout · ms<input id="llmQueueTimeout" type="number" min="1000" max="1800000" required></label>
+                <label>Maximum routing attempts<input id="llmAttempts" type="number" min="1" max="5" required></label>
+              </div><p class="context-hint">These controls update the existing code_model_* runtime settings. A save does not cancel active requests. Billing-sensitive failures retain the existing no-ambiguous-retry protections.</p></details>
+            </fieldset>
+          </form>
+          <div id="providerBddRouting">{{{bdd_routing}}}</div>
+          <section class="surface panel-pad"><div class="eyebrow">DAMAGEBDD INTEGRATION</div><h2>AI profiles</h2><div id="llmDamageProfiles" class="llm-profile-list">Not loaded.</div><p class="context-hint">Profiles using damage_ai_ecai use the DamageBDD AI role. Existing damage_ai_openai profiles and agent backends stay unchanged. Account allowlists, skill contracts and execution gates remain in DamageBDD.</p></section>
+        </section>
+
+        <!-- Sidebar settings launchers reuse the existing account and admin handlers. -->
+        <section class="view settings-workspace" data-panel="account" aria-labelledby="accountSettingsTitle" hidden>
+          <div class="page-intro"><div class="eyebrow">SETTINGS · YOUR ACCOUNT</div><h1 id="accountSettingsTitle">Account settings</h1><p>Manage your session and find account-scoped preferences in one place.</p></div>
+          <div class="settings-grid">
+            <section class="settings-card" aria-labelledby="accountSettingsSessionTitle">
+              <h2 id="accountSettingsSessionTitle">Your session</h2>
+              <p id="accountSettingsNotice">Sign in to manage your account settings.</p>
+              <dl><div><dt>Account</dt><dd id="accountSettingsIdentity">Guest access</dd></div><div><dt>Sign-in method</dt><dd id="accountSettingsMode">Not signed in</dd></div><div><dt>Account address</dt><dd id="accountSettingsAddress">Sign in to view your account</dd></div></dl>
+              <div class="settings-actions">
+                <button type="button" class="button button-primary" id="accountSettingsLogin" data-settings-action="login">Sign in</button>
+                <button type="button" class="button button-outline" id="accountSettingsCreate" data-settings-action="signup">Create account</button>
+                <button type="button" class="button button-outline" id="accountSettingsWallet" data-settings-action="wallet">Connect wallet</button>
+                <button type="button" class="button button-outline" id="accountSettingsManagedLogin" data-settings-action="login" hidden>Sign in with email</button>
+                <button type="button" class="button button-outline" id="accountSettingsSwitch" data-settings-action="switch" hidden>Switch account</button>
+                <button type="button" class="button button-outline" id="accountSettingsLogout" data-settings-action="logout" hidden>Sign out</button>
+              </div>
+              <p class="settings-help">Switching accounts replaces this browser session; it does not link accounts. Never enter a wallet seed phrase or private key here.</p>
+            </section>
+            <section class="settings-card" aria-labelledby="accountSettingsPreferencesTitle">
+              <h2 id="accountSettingsPreferencesTitle">Account preferences</h2>
+              <p id="accountSettingsAccess">Managed email sign-in is required for these settings.</p>
+              <div class="settings-links">
+                <button type="button" class="settings-link" data-settings-go="keys" data-settings-managed disabled><strong>API keys</strong><small>Create, rotate and revoke account-scoped API keys.</small></button>
+                <button type="button" class="settings-link" data-settings-go="knowledge" data-settings-managed disabled><strong>Knowledge &amp; privacy</strong><small>Open your private corpus tools and access controls.</small></button>
+                <button type="button" class="settings-link" data-settings-go="compute" data-settings-managed disabled><strong>Compute</strong><small>Cloud connections, budgets and reservations for your account.</small></button>
+                <button type="button" class="settings-link" data-settings-action="mint" data-settings-managed disabled><strong>Mint preferences</strong><small>Open fee allowances and review requests within Index jobs.</small></button>
+              </div>
+            </section>
+          </div>
+        </section>
+        <section class="view settings-workspace" data-panel="node-settings" aria-labelledby="nodeSettingsTitle" hidden>
+          <div class="page-intro"><div class="eyebrow">SETTINGS · THIS NODE</div><h1 id="nodeSettingsTitle">Node settings</h1><p>Find node-wide controls and diagnostics. Account preferences and cloud budgets remain separate.</p></div>
+          <div class="settings-grid">
+            <section class="settings-card" aria-labelledby="nodeSettingsAboutTitle">
+              <h2 id="nodeSettingsAboutTitle">About this node</h2>
+              <dl><div><dt>Node version</dt><dd id="nodeSettingsVersion">Not reported</dd></div></dl>
+              <p id="nodeSettingsAccess">Node-wide changes require a server-authorized administrator.</p>
+              <div class="settings-links">
+                <button type="button" class="settings-link" data-settings-action="diagnostics"><strong>Service diagnostics</strong><small>Inspect individual endpoint checks on Overview.</small></button>
+                <button type="button" class="settings-link" data-settings-go="api"><strong>API explorer</strong><small>Browse the available routes. Submissions remain explicit.</small></button>
+              </div>
+            </section>
+            <section class="settings-card" aria-labelledby="nodeSettingsControlsTitle">
+              <h2 id="nodeSettingsControlsTitle">Administrator controls</h2>
+              <button type="button" class="settings-link" data-go="ai-providers"><strong>AI providers &amp; roles</strong><small>Connect models and expose the shared backend configuration.</small></button>
+              <p id="nodeSettingsRestricted">This session does not have administrator access. Sign in with an authorized account to see available node controls.</p>
+              <div id="nodeSettingsCode" hidden>
+                <p id="nodeSettingsCodeNotice">Open the existing runtime settings in Code learning &amp; repair.</p>
+                <div class="settings-links"><button type="button" class="settings-link" data-settings-action="code-settings"><strong>Learning, repositories &amp; review gate</strong><small>Open existing runtime policy; no change is made by opening it.</small></button></div>
+              </div>
+              <div id="nodeSettingsOperations" hidden>
+                <div class="settings-links"><button type="button" class="settings-link" data-settings-go="operations"><strong>Ingestion &amp; runtime</strong><small>Open Operations for loaders, publication steps and socket diagnostics.</small></button></div>
+              </div>
+              <p class="settings-help">Administrator links do not grant permissions. The destination and server recheck access before any change.</p>
+            </section>
+          </div>
+        </section>
+
       </main>
     </div>
     <div id="consoleToast" class="console-toast" role="status" aria-live="polite" hidden></div>
@@ -587,10 +987,12 @@
 
   {{{browser_auth_modal}}}
   <script src="/ecai/auth-assets/js/micromodal.min.js"></script>
-  <script type="module" src="/static/js/ecai-quick-index.js?v=quick-index-v2"></script>
+  <script type="module" src="/static/js/ecai-quick-index.js?v=quick-index-v2&index-mint=index-mint-v1"></script>
   <script type="module" src="/static/js/ecai-index-pool.js"></script>
-  <script type="module" src="/static/js/ecai-compute-settings.js"></script>
+  <script type="module" src="/static/js/ecai-aws-setup.js?v=automatic-aws-v1"></script>
+  <script type="module" src="/static/js/ecai-compute-settings.js?v=compute-only-v1&aws-setup=automatic-aws-v1"></script>
   <script type="module" src="/static/js/ecai-keys.js"></script>
-  <script type="module" src="/static/js/ecai-console.js?v=video-studio-v4-mm-v1-compute-v2-keys-v1"></script>
+  <script type="module" src="/static/js/ecai-index-mint-settings.js?v=index-mint-settings-v1"></script>
+  <script type="module" src="/static/js/ecai-console.js?v=dashboard-agents-v1-llm-settings-v1-model-internals-v1-personality-conversations-v1-personalities-v1-video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-explorer-v2-kernel-v1-eval-v1-source-retrieval-v1-knowledge-v2-compute-only-v1&index-mint=index-mint-v1-sidebar-settings-v1&chat=wide-v2&orbital=otv001-v1"></script>
 </body>
 </html>

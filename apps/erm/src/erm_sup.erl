@@ -70,7 +70,7 @@ init([]) ->
                         MediaSpecs = media_specs(),
                         LegacySpecs = legacy_specs(),
                         OptionalSpecs = [optional_services_child_spec()],
-                        MediaSpecs ++ erm_tts:child_specs() ++ whisper_child_specs() ++ LegacySpecs ++
+                        [erm_voice_events:child_spec()] ++ dj_specs() ++ MediaSpecs ++ erm_tts:child_specs() ++ whisper_child_specs() ++ LegacySpecs ++
                             OptionalSpecs
                 end,
 
@@ -466,6 +466,12 @@ wait_unregistered(Name, Attempts) ->
 %%% GTK-independent media workers
 %%%===================================================================
 
+dj_specs() ->
+    case application:get_env(erm, dj, #{}) of
+        #{enabled := true} -> [erm_dj:child_spec()];
+        _ -> []
+    end.
+
 media_specs() ->
     case media_enabled() of
         true ->
@@ -617,6 +623,19 @@ whisper_child_specs(true, #{backend := native} = Opts) ->
                 shutdown => 5000,
                 type => worker,
                 modules => [erm_native_voice]
+            }
+        ];
+whisper_child_specs(true, #{backend := phrases} = Opts) ->
+    %% Exclusive capture backend: do not start Whisper/native capture alongside it.
+    native_model_pull_specs() ++ voice_child_specs(Opts) ++
+        [
+            #{
+                id => erm_phrase_voice,
+                start => {erm_phrase_voice, start_link, [Opts]},
+                restart => permanent,
+                shutdown => 5000,
+                type => worker,
+                modules => [erm_phrase_voice]
             }
         ];
 whisper_child_specs(true, Opts) ->

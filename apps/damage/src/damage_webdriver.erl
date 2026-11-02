@@ -3,7 +3,7 @@
 -module(damage_webdriver).
 -compile({no_auto_import, [element/2]}).
 -behaviour(gen_server).
--export([start/1, perform/3, close/1, options/1, capabilities/1]).
+-export([start/1, perform/3, close/1, options/1, capabilities/1, navigation_url/1]).
 -export([
     init/1,
     handle_call/3,
@@ -268,7 +268,8 @@ operation_timeout(Op, S) ->
             layout,
             fixture_idle,
             value_contains,
-            fixture_count
+            fixture_count,
+            url_prefix
         ])
     of
         true -> maps:get(wait, S);
@@ -289,6 +290,39 @@ operation(start, [], #{session := undefined} = S) ->
     case V of
         #{<<"sessionId">> := Id} when is_binary(Id), byte_size(Id) > 0 -> S#{session => Id};
         _ -> fail(bad_session_response)
+    end;
+operation(navigate, [Url], S) ->
+    case navigation_url(Url) of
+        {ok, Target} -> navigate(Target, S);
+        {error, Reason} -> fail(Reason)
+    end;
+operation(url_prefix, [Prefix0], S) ->
+    case navigation_url(Prefix0) of
+        {ok, Prefix} ->
+            await(fun(S1) ->
+                case command(S1, get, <<"/url">>, #{}) of
+                    Current when is_binary(Current) -> binary:match(Current, Prefix) =:= {0, byte_size(Prefix)};
+                    _ -> false
+                end
+            end, S);
+        {error, Reason} -> fail(Reason)
+    end;
+operation(select, [Css, Wanted], S) ->
+    select_option(bin(Css), bin(Wanted), S);
+operation(checked, [Css, State], S) ->
+    Wanted = case bin(State) of
+        <<"checked">> -> true;
+        <<"unchecked">> -> false;
+        _ -> fail(invalid_checked_state)
+    end,
+    set_checked(bin(Css), Wanted, S);
+operation(account_secret, [Owner0, Name0, Css], S) ->
+    Owner = bin(Owner0),
+    Name = bin(Name0),
+    %% Resolve in the owned client process; no plaintext in context or command args.
+    case account_secret(Owner, Name) of
+        {ok, Value} -> fill(bin(Css), Value, S);
+        error -> fail(missing_recorded_account_secret)
     end;
 operation(open, [], S) ->
     open_clean(S);
@@ -598,6 +632,86 @@ credential(Key, S) ->
             end;
         _ ->
             fail(missing_webdriver_credential)
+    end.
+
+%% Website URLs may include path/query/hash, unlike the automation endpoint.
+%% Reject credentials, controls and non-web schemes before creating a session.
+navigation_url(Value) ->
+    try
+        Url = bin(Value),
+        true = byte_size(Url) > 0 andalso byte_size(Url) =< 8192,
+        #{scheme := Scheme, host := Host} = Parsed = uri_string:parse(Url),
+        true = (Scheme =:= <<"http">> orelse Scheme =:= <<"https">>),
+        true = is_binary(Host) andalso byte_size(Host) > 0,
+        false = maps:is_key(userinfo, Parsed),
+        Port = maps:get(port, Parsed, 80),
+        true = is_integer(Port) andalso Port > 0 andalso Port < 65536,
+        nomatch = re:run(Url, <<"[\\x00-\\x20\\x7f]">>, [{capture, none}]),
+        {ok, Url}
+    catch
+        _:_ -> {error, invalid_browser_url}
+    end.
+
+account_secret(Owner, Name) when is_binary(Owner), byte_size(Owner) > 0,
+    is_binary(Name), byte_size(Name) > 0, byte_size(Name) =< 256 ->
+    try secrets:retrieve_decrypt({account, Owner}, Name) of
+        {ok, Value} when is_binary(Value); is_list(Value) ->
+            case bin(Value) of
+                B when is_binary(B) -> {ok, B};
+                _ -> error
+            end;
+        _ -> error
+    catch
+        _:_ -> error
+    end;
+account_secret(_, _) -> error.
+
+select_option(Css, Wanted, S) ->
+    S1 = wait_state(Css, <<"clickable">>, S),
+    Id = element(Css, S1),
+    case {command(S1, get, element_path(Id, <<"/name">>), #{}),
+        command(S1, get, element_path(Id, <<"/property/multiple">>), #{})} of
+        {<<"select">>, false} -> ok;
+        _ -> fail(expected_single_select)
+    end,
+    Option = matching_option(Id, Wanted, S1),
+    %% WebDriver clicks the option; no synthetic change events or action retries.
+    _ = command(S1, post, element_path(Option, <<"/click">>), #{}),
+    await(fun(S2) -> command(S2, get, element_path(Option, <<"/selected">>), #{}) =:= true end, S1).
+
+matching_option(Select, Wanted, S) ->
+    Options = command(S, post, element_path(Select, <<"/elements">>),
+        #{<<"using">> => <<"css selector">>, <<"value">> => <<"option">>}),
+    %% Recorders capture select.value, not the displayed label. In particular,
+    %% an empty option value is valid and must not be replaced by its label.
+    Matches = [Id || #{?ELEMENT := Id} <- Options,
+        command(S, get, element_path(Id, <<"/property/value">>), #{}) =:= Wanted],
+    case Matches of
+        [Id] -> Id;
+        [] ->
+            case remaining(S) > 100 of
+                true -> timer:sleep(100), matching_option(Select, Wanted, S);
+                false -> fail(recorded_option_not_found)
+            end;
+        _ -> fail(ambiguous_recorded_option)
+    end.
+
+set_checked(Css, Wanted, S) ->
+    S1 = wait_state(Css, <<"clickable">>, S),
+    Id = element(Css, S1),
+    Kind = command(S1, get, element_path(Id, <<"/property/type">>), #{}),
+    case {Kind, Wanted} of
+        {<<"checkbox">>, _} -> ok;
+        {<<"radio">>, true} -> ok;
+        {<<"radio">>, false} -> fail(cannot_uncheck_radio);
+        _ -> fail(expected_checkbox_or_radio)
+    end,
+    case command(S1, get, element_path(Id, <<"/selected">>), #{}) of
+        Wanted -> S1;
+        Actual when is_boolean(Actual) ->
+            _ = command(S1, post, element_path(Id, <<"/click">>), #{}),
+            await(fun(S2) -> command(S2, get, element_path(Id, <<"/selected">>), #{}) =:= Wanted end, S1);
+        _ -> fail(invalid_checked_response)
     end.
 
 navigate(Url, S) ->

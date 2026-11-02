@@ -1,0 +1,188 @@
+# syntax=docker/dockerfile:1.7
+# Manjaro ARM stable build environment. NEVER use an Arch Linux ARM userspace
+# for a manjaro-arm-aarch64 release: the rolling ABI can exceed the device ABI.
+# The Manjaro multi-architecture base publishes an arm64 image; use
+# --platform linux/arm64. Pin BASE_IMAGE to a verified immutable digest
+# after a validated build (the dated tag alone is not immutable).
+ARG BASE_IMAGE=manjarolinux/base:20260322
+FROM ${BASE_IMAGE} AS builder
+
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+ARG TARGETOS
+ARG TARGETARCH
+ARG BUILD_JOBS=2
+ARG PACMAN_DISABLE_SANDBOX=0
+ARG TARGET_GLIBC=2.41
+ARG TARGET_OTP_MAJOR=28
+ARG TARGET_ERTS_MAJOR=16
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    GIT_TERMINAL_PROMPT=0 \
+    MAKEFLAGS="-j${BUILD_JOBS}" \
+    CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" \
+    ERL_AFLAGS="+S ${BUILD_JOBS}:${BUILD_JOBS} +SDcpu 1 +SDio 1" \
+    PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
+
+# All upgrade/install operations resolve against Manjaro ARM's *own* signed
+# stable repositories, never archlinuxarm.org or the x86_64 Manjaro mirrorlist.
+RUN <<'PACKAGES'
+[[ "${TARGETOS:-}" == linux && "${TARGETARCH:-}" == arm64 && "$(uname -m)" == aarch64 ]] || {
+    echo 'ERROR: this builder must run as linux/arm64 (aarch64)' >&2; exit 1;
+}
+[[ "$BUILD_JOBS" =~ ^[1-9][0-9]*$ ]] && (( BUILD_JOBS <= 64 )) || {
+    echo 'ERROR: BUILD_JOBS must be from 1 to 64' >&2; exit 1;
+}
+if ! grep -Eiq '(^ID=.*manjaro|^ID_LIKE=.*manjaro|^NAME=.*manjaro)' /etc/os-release; then
+    echo 'ERROR: the base image is not identified as Manjaro; do not publish a Manjaro release' >&2
+    cat /etc/os-release >&2
+    exit 1
+fi
+if [[ "$(pacman -Qq pacman 2>/dev/null)" != pacman ]]; then
+    echo 'ERROR: pacman is missing' >&2; exit 1
+fi
+# pacman 6.x predates the download sandbox and rejects sandbox flags.
+# pacman 7.x exposes --disable-sandbox; newer versions may support the
+# narrower --disable-sandbox-filesystem option for Landlock-only failures.
+# Probe once inside the selected Manjaro image, not on the Docker host.
+# Never weaken signature checking or persist a DisableSandbox setting.
+pacman_download_options=()
+case "$PACMAN_DISABLE_SANDBOX" in
+    0) ;;
+    1)
+        pacman_help="$(LC_ALL=C pacman -S --help 2>&1)" || {
+            echo 'ERROR: cannot query pacman supported options' >&2
+            exit 1
+        }
+        if grep -Eq -- '(^|[[:space:]])--disable-sandbox-filesystem([[:space:]]|$)' <<< "$pacman_help"; then
+            pacman_download_options=(--disable-sandbox-filesystem)
+            echo 'WARNING: disabling pacman Landlock filesystem sandbox for the QEMU build' >&2
+        elif grep -Eq -- '(^|[[:space:]])--disable-sandbox([[:space:]]|$)' <<< "$pacman_help"; then
+            pacman_download_options=(--disable-sandbox)
+            echo 'WARNING: disabling pacman download sandbox for the QEMU build' >&2
+        else
+            # Older pacman has no download sandbox to disable.  Leave its
+            # existing signed repository transaction entirely unchanged.
+            echo 'INFO: pacman does not support a sandbox-disable flag; proceeding without one' >&2
+        fi
+        ;;
+    *)
+        echo 'ERROR: PACMAN_DISABLE_SANDBOX must be 0 or 1' >&2
+        exit 1
+        ;;
+esac
+# The existing Manjaro ARM keyrings and mirrorlist are part of the base image.
+# This must not be replaced with Arch Linux/Arch Linux ARM keys or repos.
+shopt -s nullglob
+keyrings=(/usr/share/pacman/keyrings/manjaro*.gpg)
+(( ${#keyrings[@]} > 0 )) || { echo 'ERROR: missing Manjaro keyrings' >&2; exit 1; }
+pacman-key --init
+for ring in "${keyrings[@]}"; do
+    pacman-key --populate "$(basename "$ring" .gpg)"
+done
+packages=(
+    base-devel ca-certificates git curl wget which util-linux
+    tar gzip unzip xz zstd patch pkgconf cmake ninja binutils file
+    gcc make fakeroot pacman-contrib ccache jq python
+    erlang-core erlang-inets erlang-mnesia erlang-public_key erlang-ssl
+    erlang-sasl erlang-runtime_tools erlang-os_mon erlang-ssh
+    erlang-tools erlang-syntax_tools erlang-parsetools erlang-erl_interface
+    rebar3 openssl gmp libsodium libcap libx11 libxcb xcb-proto
+    gtk4 libshumate kubo pass
+)
+for attempt in 1 2 3; do
+    if pacman -Syu "${pacman_download_options[@]}" --noconfirm --needed "${packages[@]}"; then
+        break
+    fi
+    if [[ "$attempt" == 3 ]]; then
+        echo 'ERROR: Manjaro ARM stable package transaction failed' >&2; exit 1
+    fi
+    sleep 5
+done
+
+# Fail immediately on a repository version drift, even before compiling code.
+actual_glibc="$(getconf GNU_LIBC_VERSION | awk '{print $2}')"
+max_glibc="$(printf '%s\n%s\n' "$actual_glibc" "$TARGET_GLIBC" | sort -V | tail -n 1)"
+[[ "$max_glibc" == "$TARGET_GLIBC" ]] || {
+    echo "ERROR: builder glibc $actual_glibc exceeds Manjaro target $TARGET_GLIBC" >&2; exit 1;
+}
+otp="$(erl -noshell -eval 'io:format("~s",[erlang:system_info(otp_release)]),halt().' 2>/dev/null)"
+erts="$(erl -noshell -eval 'io:format("~s",[erlang:system_info(version)]),halt().' 2>/dev/null)"
+[[ "$otp" == "$TARGET_OTP_MAJOR" && "$erts" == "$TARGET_ERTS_MAJOR".* ]] || {
+    echo "ERROR: builder OTP/ERTS $otp/$erts; required $TARGET_OTP_MAJOR/$TARGET_ERTS_MAJOR.x" >&2
+    exit 1
+}
+[[ "$(uname -m)" == aarch64 ]] || exit 1
+printf '[damagebdd] Manjaro ARM stable builder ABI: glibc %s OTP %s ERTS %s\n' "$actual_glibc" "$otp" "$erts"
+install -d /usr/local/share/damage-builder
+pacman -Q > /usr/local/share/damage-builder/packages.txt
+# Clear package archives; leave package signatures and keyring enforcement intact.
+pacman -Scc --noconfirm
+PACKAGES
+
+# liboqs built natively against the SAME Manjaro glibc as OTP and all NIFs.
+# Use one pinned upstream source revision and a generic ARMv8 distribution build.
+ARG LIBOQS_COMMIT=5a1a854b0dc9f2141bdc771c555ee60c37950183
+RUN <<'LIBOQS'
+[[ "$LIBOQS_COMMIT" =~ ^[0-9a-f]{40}$ ]] || { echo 'invalid LIBOQS_COMMIT' >&2; exit 1; }
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+git init "$work/oqs"
+git -C "$work/oqs" remote add origin https://github.com/open-quantum-safe/liboqs.git
+git -C "$work/oqs" fetch --depth 1 origin "$LIBOQS_COMMIT"
+git -C "$work/oqs" checkout --detach FETCH_HEAD
+cmake -S "$work/oqs" -B "$work/build" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr/local \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DOQS_DIST_BUILD=ON \
+    -DOQS_USE_OPENSSL=ON \
+    -DOQS_MINIMAL_BUILD=KEM_ml_kem_768 \
+    -DOQS_BUILD_ONLY_LIB=ON
+cmake --build "$work/build" --parallel "$BUILD_JOBS"
+cmake --install "$work/build"
+install -d /usr/local/lib/pkgconfig
+cat >/usr/local/lib/pkgconfig/liboqs.pc <<'PC'
+prefix=/usr/local
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+Name: liboqs
+Description: Open Quantum Safe liboqs built for Manjaro ARM
+Version: 0.16.0
+Libs: -L${libdir} -loqs -lcrypto -lpthread -lm
+Cflags: -I${includedir}
+PC
+pkg-config --exists liboqs
+LIBOQS
+
+ARG BUILDER_UID=1000
+RUN <<'SETUP'
+[[ "$BUILDER_UID" =~ ^[1-9][0-9]*$ ]] || exit 1
+if ! id damage >/dev/null 2>&1; then
+    useradd --create-home --user-group --uid "$BUILDER_UID" damage
+fi
+install -d -o damage -g damage -m 0755 /opt/workspace \
+    /home/damage/.cache /home/damage/.cache/ccache \
+    /home/damage/.local /home/damage/.local/erm-voice
+install -d -o damage -g damage -m 0700 /home/damage/.cache/erm-native-voice
+pkg-config --exists gtk4 shumate-1.0 liboqs
+command -v rebar3
+command -v makepkg
+command -v readelf
+SETUP
+
+USER damage
+ENV HOME=/home/damage \
+    XDG_CACHE_HOME=/home/damage/.cache \
+    CCACHE_DIR=/home/damage/.cache/ccache
+WORKDIR /opt/workspace
+ARG REPO_URL=https://github.com/DamageBDD/DamageBDD.git
+ARG REPO_REF=develop
+RUN <<'SOURCE'
+git clone --branch "$REPO_REF" -- "$REPO_URL" /opt/workspace
+[[ "$(uname -m)" == aarch64 ]] || exit 1
+test -w "$HOME/.cache"
+SOURCE
+CMD ["/bin/bash"]

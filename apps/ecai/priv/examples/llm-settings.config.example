@@ -1,0 +1,38 @@
+%% MERGE selected keys into the EXISTING applications in sys.config.
+%% Do not replace the full deployment file or its account/skill allowlists.
+%% No credential value belongs in this file. Model IDs below are placeholders.
+[
+ {ecai, [
+   {code_security_enabled, true},
+   {code_admin_enabled, true},
+   %% An empty ECAI list defers to damage.node_admins; it does not grant access.
+   {code_admin_accounts, []},
+   %% Existing code_model_nodes/code_ollama_nodes are imported automatically.
+   %% Extra Ollama destinations must be approved here before dashboard use.
+   {llm_settings_ollama_endpoints, [
+     #{provider => ollama, host => "REPLACE_WITH_APPROVED_LAN_HOST",
+       port => 11434, transport => tcp}
+   ]},
+   %% Built-in approved env refs: OPENAI_API_KEY, ANTHROPIC_API_KEY, OLLAMA_API_KEY.
+   %% Add references only for credentials explicitly provisioned for inference.
+   {llm_settings_allowed_envs, ["ENGINEERING_OPENAI_API_KEY"]}
+ ]},
+ {damage, [
+   %% Retain your real node_admins; do not add an account without authorization.
+   %% {node_admins, [<<"REPLACE_WITH_AUTHENTICATED_NODE_ADMIN_ACCOUNT">>]},
+   %% Merge this named profile into existing ai_profiles, not over them.
+   {ai_profiles, [
+     {<<"ecai-text">>, [
+       {backend, damage_ai_ecai},
+       {allowed_accounts, [<<"REPLACE_WITH_AUTHORIZED_ACCOUNT">>]},
+       {allowed_skills, [<<"summarize">>, <<"rewrite">>, <<"translate">>,
+                         <<"answer">>, <<"classify">>, <<"extract">>]},
+       {timeout_ms, 60000},
+       {max_input_bytes, 65536},
+       {max_response_bytes, 1048576},
+       {max_output_tokens, 2048},
+       {max_calls, 10}
+     ]}
+   ]}
+ ]}
+].

@@ -61,20 +61,25 @@ get_trails() ->
             damage_analytics,
             damage_reports,
             damage_run_history_http,
-            damage_ai,
             damage_bdd_http,
+            damage_bdd_routing_http,
+            damage_agent_http,
             lnaddress,
             cowboy_swagger_handler,
             lightning_auth,
             damage_doc,
             damage_swap_options_http,
             damage_settings_http,
+            damage_nsecbunker_handoff_http,
+            damage_theme_http,
+            ecai_mm_http,
             damage_dashboard,
             damage_nwc_http,
             damage_nip96_http,
             damage_liquidity_http,
             damage_node_admin_http,
-            damage_tax_http,
+            damage_tax_http
+        ] ++ evaluation_handlers() ++ [
             %% Blossom has a root /:blob catch-all. Keep it last so all
             %% existing DamageBDD routes take precedence.
             damage_blossom_http
@@ -471,4 +476,12 @@ node_host(NodeName) ->
     case string:split(atom_to_list(NodeName), "@", all) of
         [_Alive, Hostname] -> {ok, Hostname};
         _ -> {error, {invalid_node_name, NodeName}}
+    end.
+
+%% The optional ECAI application owns the ledger. The same authenticated API
+%% is available to Damage's per-account settings without changing listener URLs.
+evaluation_handlers() ->
+    case code:ensure_loaded(ecai_eval_http) of
+        {module, ecai_eval_http} -> [ecai_eval_http];
+        _ -> []
     end.

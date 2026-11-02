@@ -90,6 +90,20 @@ this object; network fetching/decoding remains outside the GTK process.
 `GtkBox`. Logical children are appended to that inner box. This provides a
 scrollable GS-style container without exposing a second native object ID.
 
+`scrolled_box` and `list_view` accept `hscroll` and `vscroll` policies:
+`automatic`, `never`, or `always`. Updating one preserves the other. Defaults
+remain horizontal `never` / vertical `automatic` for `scrolled_box`, and
+`automatic` on both axes for `list_view`. In gtkgs these are options on logical
+`scrolled` and `listbox` objects.
+
+`text_view` (logical `editor`) and `entry` accept boolean `editable`.
+An editor with `editable => false` remains enabled, focusable and selectable
+for copying diagnostics. Programmatic `text` updates still work. The `wrap`
+boolean also applies to editors (`true` uses word/character wrapping, `false`
+uses no wrapping). Native reads support editor `text` and `editable`, and
+scrolled `hscroll`/`vscroll` return the policy atoms above. These options require
+rebuilding the native executable as well as loading the Erlang changes.
+
 When gtknode4 is built with libshumate, `map` maps to `ShumateSimpleMap` and
 the hello capability map includes `libshumate => true`. Its canonical map
 properties are `source_id`, `latitude`, `longitude`, `zoom_level`, and

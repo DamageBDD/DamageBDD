@@ -23,6 +23,54 @@ settings_and_reservations({_Pid, Path}) ->
     },
     {ok, Account0} = ecai_compute_settings:snapshot(Owner),
     ?assertEqual(0, maps:get(<<"monthly_cents">>, maps:get(<<"budget">>, Account0))),
+    ?assertEqual(#{}, maps:get(<<"provider_setup">>, Account0)),
+    ?assertEqual(null, maps:get(<<"aws_coordinator_role_arn">>,
+        maps:get(<<"connection_hints">>, Account0))),
+    %% Operators can generate the AWS external ID before the IAM role exists.
+    ?assertEqual({error, unsupported_provider},
+        ecai_compute_settings:prepare_provider(Owner, <<"cloud_run">>)),
+    {ok, #{<<"external_id">> := External}} =
+        ecai_compute_settings:prepare_provider(Owner, <<"aws_batch">>),
+    ?assertEqual(48, byte_size(External)),
+    ?assertEqual({ok, #{<<"external_id">> => External}},
+        ecai_compute_settings:prepare_provider(Owner, <<"aws_batch">>)),
+    {ok, PreparedAccount} = ecai_compute_settings:snapshot(Owner),
+    ?assertEqual(#{}, maps:get(<<"providers">>, PreparedAccount)),
+    ?assertEqual(External, maps:get(<<"aws_batch_external_id">>,
+        maps:get(<<"provider_setup">>, PreparedAccount))),
+    {ok, OtherAccount} = ecai_compute_settings:snapshot(<<"another_owner">>),
+    ?assertEqual(#{}, maps:get(<<"provider_setup">>, OtherAccount)),
+    {ok, #{<<"external_id">> := OtherExternal}} =
+        ecai_compute_settings:prepare_provider(<<"another_owner">>, <<"aws_batch">>),
+    ?assert(OtherExternal =/= External),
+    AWS = #{
+        <<"role_arn">> => <<"arn:aws:iam::123456789012:role/EcaiIndexer">>,
+        <<"region">> => <<"ap-southeast-2">>,
+        <<"job_queue">> => <<"ecai-index-spot">>,
+        <<"job_definition">> => <<"ecai-index-job">>,
+        <<"bucket">> => <<"ecai-index-artifacts">>
+    },
+    {ok, AwsSaved} = ecai_compute_settings:put_provider(Owner, <<"aws_batch">>, AWS),
+    ?assertEqual(External, maps:get(<<"external_id">>, AwsSaved)),
+    ?assertEqual(<<"unverified">>, maps:get(<<"status">>, AwsSaved)),
+    {ok, AwsUpdated} = ecai_compute_settings:put_provider(Owner, <<"aws_batch">>,
+        AWS#{<<"region">> => <<"us-east-1">>}),
+    ?assertEqual(External, maps:get(<<"external_id">>, AwsUpdated)),
+    ?assertEqual({error, invalid_aws_connection},
+        ecai_compute_settings:put_provider(Owner, <<"aws_batch">>,
+            AWS#{<<"aws_access_key_id">> => <<"forbidden">>})),
+    %% The IAM role ARN shown in the UI must come from trusted node settings.
+    application:set_env(ecai, compute_aws_coordinator_role_arn,
+        "arn:aws:iam::210987654321:role/EcaiCoordinator"),
+    {ok, HintsAccount} = ecai_compute_settings:snapshot(Owner),
+    ?assertEqual(<<"arn:aws:iam::210987654321:role/EcaiCoordinator">>,
+        maps:get(<<"aws_coordinator_role_arn">>,
+            maps:get(<<"connection_hints">>, HintsAccount))),
+    application:set_env(ecai, compute_aws_coordinator_role_arn, <<"*">>),
+    {ok, InvalidHints} = ecai_compute_settings:snapshot(Owner),
+    ?assertEqual(null, maps:get(<<"aws_coordinator_role_arn">>,
+        maps:get(<<"connection_hints">>, InvalidHints))),
+    application:unset_env(ecai, compute_aws_coordinator_role_arn),
     {ok, #{<<"reserve_cents">> := Cents}} = ecai_compute_settings:quote(Spec),
     %% 1 vCPU * 600 sec + 2 GiB, fixed allowance and a 1.5x buffer.
     %% Prices use integer micro-USD and a cent is 10,000 micro-USD.
@@ -96,6 +144,19 @@ settings_and_reservations({_Pid, Path}) ->
         2
     ),
     ?assertEqual(<<"awaiting_wallet_signature">>, maps:get(<<"status">>, M1)),
+    ?assertEqual(1, maps:get(<<"copies">>, M1)),
+    %% A retry of the same review does not reserve its cap twice.
+    {ok, M1} = ecai_compute_settings:request_mint(Owner, <<"ready_job">>, Metadata, Recipient, 2),
+    ?assertEqual(
+        {error, mint_request_conflict},
+        ecai_compute_settings:request_mint(Owner, <<"ready_job">>,
+            Metadata#{<<"requested_copies">> => 3}, Recipient, 2)
+    ),
+    ?assertEqual(
+        {error, mint_request_conflict},
+        ecai_compute_settings:request_mint(Owner, <<"ready_job">>,
+            Metadata#{<<"requested_metadata">> => #{<<"title">> => <<"Changed title">>}}, Recipient, 2)
+    ),
     ?assertEqual(
         {error, mint_request_conflict},
         ecai_compute_settings:request_mint(Owner, <<"ready_job">>, Metadata, Recipient, 1)
@@ -110,6 +171,10 @@ settings_and_reservations({_Pid, Path}) ->
     {ok, Recovered} = ecai_compute_settings:snapshot(Owner),
     ?assertEqual(Cents, maps:get(<<"reserved_compute_cents">>, Recovered)),
     ?assertEqual(2, maps:get(<<"reserved_mint_cents">>, Recovered)),
+    ?assertEqual(External, maps:get(<<"aws_batch_external_id">>,
+        maps:get(<<"provider_setup">>, Recovered))),
+    ?assertEqual({ok, #{<<"external_id">> => External}},
+        ecai_compute_settings:prepare_provider(Owner, <<"aws_batch">>)),
     ?assertEqual(
         {error, monthly_budget_exceeded},
         ecai_compute_settings:reserve(Owner, <<"after-restart-key">>, Spec)
@@ -156,4 +221,24 @@ cleanup({_Pid, Path}) ->
     _ = file:delete(Path),
     _ = file:delete(Path ++ ".DAT"),
     _ = file:delete(Path ++ ".TMP"),
-    application:unset_env(ecai, compute_price_upper_bounds).
+    application:unset_env(ecai, compute_price_upper_bounds),
+    application:unset_env(ecai, compute_aws_coordinator_role_arn).
+
+
+mint_copy_validation_test() ->
+    ?assertEqual({ok, 3, #{}}, ecai_compute_settings:validate_mint_options(3, #{})),
+    lists:foreach(fun(Copies) ->
+        ?assertEqual({error, invalid_mint_copies}, ecai_compute_settings:validate_mint_options(Copies, #{}))
+    end, [0, -1, 1001, 1.5, <<"3">>, null]).
+
+mint_metadata_validation_test() ->
+    Metadata = #{<<"title">> => <<"Knowledge edition">>, <<"tags">> => [<<"ecai">>],
+        <<"external_url">> => <<"https://example.org/artifact">>},
+    ?assertEqual({ok, 5, Metadata}, ecai_compute_settings:validate_mint_options(5, Metadata)),
+    lists:foreach(fun(Invalid) ->
+        ?assertEqual({error, invalid_mint_metadata}, ecai_compute_settings:validate_mint_options(1, Invalid))
+    end, [null, [], #{<<"manifest_sha256">> => <<"override">>},
+          #{<<"title">> => binary:copy(<<"a">>, 257)}, #{<<"tags">> => lists:duplicate(25, <<"x">>)},
+          #{<<"external_url">> => <<"javascript:alert(1)">>},
+          #{<<"external_url">> => <<"https://user:password@example.org/">>},
+          #{<<"description">> => <<255>>}]).

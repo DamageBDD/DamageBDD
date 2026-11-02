@@ -5,6 +5,20 @@
 -damage_roles([node_admin]).
 -export([step/6, step_dry/6, cleanup/1, cleanup_owner/0]).
 
+%% Generic browser-journey operations used by the recorder adapter.
+step(Config, Context, _Keyword, _Line, ["I navigate the WebDriver browser to", Url], _Body) ->
+    perform(Config, Context, navigate, [Url]);
+step(Config, Context, _Keyword, _Line, ["I select the WebDriver option in", Css], Body) ->
+    perform(Config, Context, select, [Css, Body]);
+step(Config, Context, _Keyword, _Line,
+    ["I set the WebDriver checked state of", Css, "to", State], _Body) ->
+    perform(Config, Context, checked, [Css, State]);
+step(Config, Context, _Keyword, _Line, ["the WebDriver URL should start with", Prefix], _Body) ->
+    perform(Config, Context, url_prefix, [Prefix]);
+step(Config, Context, _Keyword, _Line,
+    ["I enter the WebDriver account secret", Name, "into", Css], _Body) ->
+    %% The account comes from authenticated execution context, never the step.
+    perform(Config, Context, account_secret, [maps:get(public_key, Context, undefined), Name, Css]);
 step(Config, Context, _Keyword, _Line, ["I use WebDriver profile", Name], _Body) ->
     perform(Config, Context, profile, [Name]);
 step(Config, Context, _Keyword, _Line, ["I use the WebDriver sidebar action", Action], _Body) ->
@@ -189,6 +203,18 @@ step(Config, Context, _Keyword, _Line, ["I close the WebDriver browser"], _Body)
     perform(Config, Context, close, []).
 
 %% Dry runs deliberately avoid the browser, credentials, network and assertions.
+step_dry(_Config, Context, _Keyword, _Line, ["I navigate the WebDriver browser to", _Url], _Body) ->
+    Context;
+step_dry(_Config, Context, _Keyword, _Line, ["I select the WebDriver option in", _Css], _Body) ->
+    Context;
+step_dry(_Config, Context, _Keyword, _Line,
+    ["I set the WebDriver checked state of", _Css, "to", _State], _Body) ->
+    Context;
+step_dry(_Config, Context, _Keyword, _Line, ["the WebDriver URL should start with", _Prefix], _Body) ->
+    Context;
+step_dry(_Config, Context, _Keyword, _Line,
+    ["I enter the WebDriver account secret", _Name, "into", _Css], _Body) ->
+    Context;
 step_dry(_Config, Context, _Keyword, _Line, ["I use WebDriver profile", _Name], _Body) ->
     Context;
 step_dry(_Config, Context, _Keyword, _Line, ["I use the WebDriver sidebar action", _Action], _Body) ->

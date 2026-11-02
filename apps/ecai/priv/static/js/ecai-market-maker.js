@@ -177,12 +177,12 @@ export function initMarketMaker({request, canManage, openLogin}) {
     const first = points.length ? when(points[0].ts_ms) : '—';
     const last = points.length ? when(points[points.length - 1].ts_ms) : '—';
     drawChart('mmPriceChart', [
-      {color: '#5266e7', points: points.map((p) => p.damage_index)},
-      {color: '#14a88e', points: points.map((p) => p.btc_index)}], [first, last]);
+      {color: 'var(--theme-info, #5266e7)', points: points.map((p) => p.damage_index)},
+      {color: 'var(--theme-success, #14a88e)', points: points.map((p) => p.btc_index)}], [first, last]);
     const opening = state.status?.performance?.opening_equity_usdt;
     drawChart('mmPerformanceChart', [
-      {color: '#5266e7', points: points.map((p) => p.equity_usdt)},
-      {color: '#e49b4f', points: points.map((p) => Number.isFinite(opening)
+      {color: 'var(--theme-info, #5266e7)', points: points.map((p) => p.equity_usdt)},
+      {color: 'var(--theme-warning, #e49b4f)', points: points.map((p) => Number.isFinite(opening)
         ? opening + p.btc_benchmark_pnl_usdt : NaN)}], [first, last]);
     $('mmSampleCount').textContent = `${fmt(points.length)} stored market observations in the selected window. Charts show observed data only.`;
     const events = state.history.filter((e) => e.audit_hash);

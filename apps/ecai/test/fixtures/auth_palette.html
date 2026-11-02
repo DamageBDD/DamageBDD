@@ -1,0 +1,72 @@
+<!-- STYLE CONTRACT FIXTURE ONLY. This is not a copy of DamageBDD auth and must
+     never be mounted in production. It covers selectors present in ECAI's
+     auth overrides and the screenshot, without login/wallet controllers. -->
+<style>
+  .modal__overlay { padding:24px; overflow-y:auto; align-items:flex-start; backdrop-filter:blur(7px); }
+  .auth-modal { width:584px; max-width:100%; border:1px solid var(--auth-line); border-radius:24px; box-shadow:0 20px 80px #0005; }
+  .auth-brand { display:flex; align-items:center; gap:12px; }
+  .auth-brand img { width:40px; height:40px; border-radius:10px; }
+  .auth-brand strong { display:block; font-size:18px; }
+  .auth-brand small { display:block; font-size:10px; letter-spacing:1.5px; margin-top:2px; }
+  .auth-heading h1 { font-size:34px; margin:0 0 10px; line-height:1.2; }
+  .auth-heading p { margin:0; font-size:14px; }
+  .auth-tabs { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:4px; border:1px solid var(--auth-line); border-radius:12px; padding:5px; margin-bottom:22px; }
+  .auth-tabs button { border:0; min-height:44px; border-radius:8px; font:inherit; }
+  .auth-mode-note { padding:13px 15px; border:1px solid var(--auth-line); border-radius:10px; margin:0 0 20px; font-size:14px; }
+  .auth-form { display:grid; gap:14px; }
+  .auth-form label { font-size:14px; font-weight:650; display:block; }
+  .auth-form input { width:100%; min-height:50px; border:1px solid var(--auth-line); border-radius:10px; font-size:14px; }
+  .auth-form label + input { margin-top:-4px; }
+  .auth-password-heading { display:flex; justify-content:space-between; align-items:center; margin-top:8px; gap:10px; }
+  .auth-password { position:relative; }
+  .auth-password input { padding-right:64px; }
+  .auth-password button { position:absolute; right:10px; top:7px; padding:8px; border:0; font:inherit; }
+  .auth-primary { width:100%; display:flex; justify-content:space-between; gap:10px; align-items:center; border:1px solid transparent; border-radius:10px; padding:14px 17px; margin-top:10px; font-size:15px; font-weight:650; }
+  .auth-footer { border-top:1px solid var(--auth-line); margin-top:25px; padding-top:20px; text-align:center; font-size:12px; }
+  .auth-footer p { margin-bottom:8px; }
+  .auth-dismiss { border:0; font:inherit; font-size:13px; margin-bottom:8px; }
+  .auth-status, .auth-confirmation { padding:12px 15px; border:1px solid transparent; border-radius:10px; }
+  .auth-status:empty { display:none; }
+  .auth-wallet-choice { width:100%; margin:8px 0; padding:12px; border:1px solid var(--auth-line); border-radius:10px; font:inherit; }
+  pre { white-space:pre-wrap; overflow-wrap:anywhere; padding:10px; }
+  @media(max-width:650px) { .modal__overlay { padding:16px; } .auth-heading h1 { font-size:28px; } .auth-tabs { margin-bottom:18px; } .auth-tabs button { font-size:12px; } }
+</style>
+<div id="login-modal" class="modal is-open" aria-hidden="false">
+  <div class="modal__overlay">
+    <div class="modal__container auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+      <div id="login_modal_content">
+        <button class="auth-dismiss" type="button" data-auth-dismiss>Continue browsing ×</button>
+        <div class="auth-brand"><img src="/static/img/ecai-brain.svg" alt="ECAI brain mark"><div><strong>ECAI</strong><small>INTELLIGENCE FABRIC</small></div></div>
+        <div class="auth-heading"><h1 id="auth-title">Welcome back</h1><p>One workspace. Two ways to sign in.<br>Managed account or wallet proof.</p></div>
+        <div class="auth-tabs" role="tablist" aria-label="Sign in method">
+          <button id="auth-login-tab" type="button" role="tab" aria-selected="true" aria-controls="palette-login">Email</button>
+          <button type="button" role="tab" aria-selected="false" aria-controls="palette-signup" tabindex="-1">Create account</button>
+          <button type="button" role="tab" aria-selected="false" aria-controls="palette-wallet" tabindex="-1">Wallet</button>
+        </div>
+        <section id="palette-login" role="tabpanel">
+          <p class="auth-mode-note"><strong>Managed account</strong> · This node holds your account signing key for supported operations.</p>
+          <form class="auth-form" onsubmit="return false">
+            <label for="login-username">Email address</label><input type="email" id="login-username" autocomplete="username" placeholder="you@example.com" value="operator@example.test">
+            <div class="auth-password-heading"><label for="password">Password</label><button type="button" id="loginResetPasswdBtn" style="border:0;padding:0;font:inherit;font-size:12px">Forgot password?</button></div>
+            <div class="auth-password"><input type="password" id="password" autocomplete="current-password" value="FixtureOnly!123"><button type="button" aria-label="Show password">Show</button></div>
+            <button type="submit" class="auth-primary" id="loginSubmitBtn"><span>Sign in with email</span><span aria-hidden="true">→</span></button>
+          </form>
+        </section>
+        <section id="palette-signup" role="tabpanel" hidden>
+          <p class="auth-mode-note"><strong>Managed account</strong> · Create an account with your email.</p>
+          <form class="auth-form" onsubmit="return false"><label for="signup-username">Email address</label><input id="signup-username" type="email" autocomplete="email" placeholder="you@example.com"><button id="signupSubmitBtn" class="auth-primary" type="submit">Create account</button></form>
+          <div class="auth-confirmation" id="signup-confirmation" hidden><strong>Check your inbox</strong><p>A confirmation email has been sent.</p></div>
+        </section>
+        <section id="palette-wallet" role="tabpanel" hidden>
+          <p class="auth-mode-note"><strong>Wallet proof</strong> · Your keys stay in your wallet.</p>
+          <button type="button" id="connect-button" class="auth-wallet-choice">Connect browser wallet</button>
+          <button type="button" id="connect-mobile-wallet" class="auth-wallet-choice">Open mobile wallet</button>
+          <details id="wallet-proof"><summary>Review sign-in proof</summary><pre id="wallet-proof-message">Sign in to ECAI\nOrigin: https://ecai-auth.test\nNo transaction or payment.</pre></details>
+          <button type="button" class="auth-primary" id="wallet-sign-in" disabled>Sign proof to continue</button>
+        </section>
+        <div class="auth-status" id="connect-status" role="status" aria-live="polite"></div>
+        <footer class="auth-footer"><p>By continuing, you accept the <a href="#terms">Terms and Conditions</a>.</p><p>Never enter your wallet seed phrase or private key here.</p></footer>
+      </div>
+    </div>
+  </div>
+</div>

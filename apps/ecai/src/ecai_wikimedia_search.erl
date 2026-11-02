@@ -40,7 +40,15 @@ search(Ctx, Query0, Opts) when is_map(Opts) ->
         Limit = bounded_limit(maps:get(limit, NormalizedOpts, ?DEFAULT_LIMIT)),
         FetchLimit = erlang:min(?MAX_LIMIT * 5, erlang:max(Limit * 5, Limit)),
         SearchMap = search_map(Query, NormalizedOpts),
-        {Results0, Proofs} = ecai_search:search(Ctx, SearchMap, FetchLimit),
+        {Results0, Proofs, SearchMeta} = case maps:get(matching, Opts, legacy) of
+            legacy ->
+                {Hs, Ps} = ecai_search:search(Ctx, SearchMap, FetchLimit,
+                    #{include_proofs => maps:get(include_proofs, Opts, true)}),
+                {Hs, Ps, #{truncated => false}};
+            Mode when Mode =:= bool_prefix; Mode =:= exact ->
+                {Hs, Meta} = ecai_search:text_search(Ctx, Query, FetchLimit, Mode),
+                {Hs, [], Meta}
+        end,
         FilteredResults = [
             Result
          || Result <- Results0,
@@ -51,7 +59,8 @@ search(Ctx, Query0, Opts) when is_map(Opts) ->
             FilteredResults,
             maps:get(dedupe_entities, NormalizedOpts, true)
         ),
-        Results = lists:sublist(EntityResults, Limit),
+        Results = [R#{record => ecai_source_retrieval:summary(maps:get(record, R, #{})),
+                       record_projection => summary} || R <- lists:sublist(EntityResults, Limit)],
         {ok, #{
             query => Query,
             count => length(Results),
@@ -59,6 +68,8 @@ search(Ctx, Query0, Opts) when is_map(Opts) ->
             matched_entities => MatchedEntityCount,
             results => Results,
             proofs => Proofs,
+            search_meta => SearchMeta,
+            partial => maps:get(truncated, SearchMeta, false),
             filters => maps:with(
                 [
                     language,
@@ -142,6 +153,7 @@ search_map(Query, Opts) ->
     Base = #{
         name => Query,
         title => Query,
+        text => Query,
         abstract => Query,
         prefix => maps:get(prefix, Opts, true)
     },

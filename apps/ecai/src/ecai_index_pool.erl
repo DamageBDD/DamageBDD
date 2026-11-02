@@ -6,6 +6,7 @@
 -export([
     start_link/0,
     snapshot/0,
+    knowledge_manifests/1,
     quote/2,
     create/3,
     operation/3,
@@ -22,6 +23,9 @@
 
 start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 snapshot() -> gen_server:call(?MODULE, snapshot, 5000).
+knowledge_manifests(Owner) when is_binary(Owner), byte_size(Owner) > 0 ->
+    gen_server:call(?MODULE, {knowledge_manifests, Owner}, 5000);
+knowledge_manifests(_) -> [].
 quote(Actor, Body) -> gen_server:call(?MODULE, {quote, Actor, Body}, 10000).
 create(Actor, Key, Body) -> gen_server:call(?MODULE, {create, Actor, Key, Body}, 30000).
 operation(Actor, Action, Body) -> gen_server:call(?MODULE, {operation, Actor, Action, Body}, 5000).
@@ -61,6 +65,20 @@ init([]) ->
     _ = file:change_mode(File, 8#600),
     {ok, schedule(S)}.
 
+handle_call({knowledge_manifests, Owner}, _From, S) ->
+    Views = lists:filtermap(fun(J) ->
+        case maps:get(owner, J, undefined) =:= Owner of
+            false -> false;
+            true ->
+                case maps:get(manifest, J, maps:get(live_manifest, J, undefined)) of
+                    M when is_map(M) ->
+                        Final = maps:is_key(manifest, J),
+                        {true, M#{pool_id => maps:get(id, J), final => Final, live => not Final}};
+                    _ -> false
+                end
+        end
+    end, maps:values(maps:get(jobs, S#st.data))),
+    {reply, Views, S};
 handle_call(snapshot, _From, S) ->
     {reply, public(S#st.data), S};
 handle_call({quote, A, B}, _From, S) ->

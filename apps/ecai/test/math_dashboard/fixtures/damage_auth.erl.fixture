@@ -1,0 +1,11 @@
+%% TEST ONLY. Compiled solely into the isolated test directory, never a release.
+-module(damage_auth).
+-export([resolve_oauth/2, authenticate/2, authenticated_account/1]).
+resolve_oauth(<<"test-alice-bearer">>, _) -> {ok,#{auth_mode=>custodial,owner=><<"alice">>}};
+resolve_oauth(<<"test-bob-bearer">>, _) -> {ok,#{auth_mode=>custodial,owner=><<"bob">>}};
+resolve_oauth(<<"test-wallet-bearer">>, _) -> {ok,#{auth_mode=>wallet,owner=><<"wallet">>}};
+resolve_oauth(_,_) -> {error,invalid_token}.
+authenticate(#{cookie_owner:=Owner},_) -> {ok,#{auth_mode=>custodial,owner=>Owner}};
+authenticate(_,_) -> {error,no_session}.
+authenticated_account(#{owner:=O}) -> {ok,O};
+authenticated_account(_) -> {error,no_account}.

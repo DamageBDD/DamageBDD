@@ -1,0 +1,35 @@
+/* ECAI /#math: local 3D geometry experiment / mint-preparation workbench. */
+.math-3d { margin:18px 0 20px;min-width:0; }
+.math-3d-layout { display:grid;grid-template-columns:minmax(0,1.65fr) minmax(252px,.75fr);gap:14px;align-items:stretch;margin:16px 0; }
+.math-3d-viewport { min-width:0;overflow:hidden;border-radius:13px;background:#0a1722;border:1px solid #294555;display:flex;flex-direction:column; }
+#math3DStage { display:block;width:100%;height:480px;touch-action:none;cursor:grab;outline-offset:-3px; }
+#math3DStage:active { cursor:grabbing; }
+#math3DStage:focus-visible { outline:2px solid #56d5da; }
+.math-3d-stats { display:flex;gap:18px;flex-wrap:wrap;background:#102431;color:#a7c0c9;padding:13px 17px;font:11px/1.4 ui-monospace,monospace; }
+.math-3d-stats strong { color:#a4e8df;font-weight:700; }
+.math-3d-controls { border:1px solid #294555;background:#0b1925;border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px;min-width:0;color:#cfdee8; }
+.math-3d-controls>label:not(.math-3d-inline-check) { color:#d6e8f0;font-size:12px;font-weight:650;display:flex;align-items:center;justify-content:space-between; }
+.math-3d-controls output { color:#91e8e8;font-family:ui-monospace,monospace; }
+.math-3d-controls select { width:100%;font:12px/1.4 inherit;min-width:0;border:1px solid #426078;background:#172d3a;color:#f2fbff;border-radius:7px;padding:9px; }
+.math-3d-controls input[type=range] { accent-color:#66d7dc;display:block;width:100%; }
+.math-3d-controls .math-3d-inline-check { color:#d6e8f0;display:flex;gap:9px;align-items:center;font-size:12px; }
+.math-3d-controls .math-3d-inline-check input { accent-color:#66d7dc; }
+.math-3d-actions { display:flex;gap:8px;flex-wrap:wrap;margin-top:3px; }
+.math-3d-actions button { white-space:nowrap; }
+.math-3d-experiment { margin-top:6px;padding-top:14px;border-top:1px solid #294555; }
+.math-3d-experiment strong { font-size:14px;color:#f2fbff; }
+.math-3d-experiment p { font-size:12px;line-height:1.65;color:#b0c6d0;margin:8px 0 12px; }
+.math-3d-experiment .button { max-width:100%;white-space:normal; }
+.math-3d-experiment .math-3d-status { font-size:11px;margin:9px 0 0;color:#99d4cf; }
+.math-3d-receipt { padding:18px;border:1px solid var(--line,#d4deeb);background:var(--theme-surface,#f7f9fd);border-radius:12px;margin:0 0 14px;min-width:0; }
+.math-3d-receipt[hidden] { display:none; }
+.math-3d-receipt h3 { margin:0 0 9px;font-size:17px; }
+.math-3d-receipt p { font-size:13px;line-height:1.6; }
+.math-3d-receipt dl { display:grid;grid-template-columns:140px minmax(0,1fr);gap:10px;margin:12px 0; }
+.math-3d-receipt dt { font-weight:700;font-size:11px; }
+.math-3d-receipt dd { margin:0;font:11px/1.5 ui-monospace,monospace;overflow-wrap:anywhere; }
+.math-3d-export-actions { display:flex;flex-wrap:wrap;gap:9px; }
+.math-3d-mint-note { margin:14px 0 0;border-top:1px solid var(--line,#d4deeb);padding-top:12px; }
+@media(max-width:1060px){.math-3d-layout{grid-template-columns:1fr}.math-3d-controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px 15px}.math-3d-controls .math-3d-experiment{grid-column:1/-1}.math-3d-controls .math-3d-actions{align-self:center}}
+@media(max-width:660px){#math3DStage{height:390px}.math-3d-controls{display:flex}.math-3d-receipt dl{grid-template-columns:1fr;gap:4px}.math-3d-export-actions button{width:100%}}
+@media(prefers-reduced-motion:reduce){.math-3d *{scroll-behavior:auto!important}}

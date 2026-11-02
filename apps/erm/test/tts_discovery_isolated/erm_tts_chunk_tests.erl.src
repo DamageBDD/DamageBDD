@@ -33,7 +33,14 @@ with_port(F)->
     try receive {P,{data,<<"R",1>>}}->F(P,Capture) after 2000->error(start_timeout) end
     after try port_close(P) catch _:_ ->ok end end.
 speak(P,Text)->true=port_command(P,<<"S",(list_to_binary(Text))/binary>>),
-    receive {P,{data,B}}->B;{P,{exit_status,N}}->error({native_exit,N}) after 2000->error(speech_timeout) end.
+    speech_result(P).
+speech_result(P) ->
+    receive
+        {P,{data,<<"P">>}} -> speech_result(P);
+        {P,{data,<<"L",Level:32/float>>}} when Level>=0,Level=<1 -> speech_result(P);
+        {P,{data,B}} -> B;
+        {P,{exit_status,N}} -> error({native_exit,N})
+    after 2000->error(speech_timeout) end.
 
 volume_protocol_test_()->
     [{binary_to_list(B),fun()->with_port(fun(P,_)->
@@ -58,4 +65,12 @@ cue_audio_test() -> with_port(fun(P,Capture) ->
     ?assertEqual(Before,file:read_file(os:getenv("ERM_TTS_CAPTURE_TEXT"))),
     %% A cue must not poison the Piper iterator used by subsequent speech.
     ?assertEqual(<<"D">>,speak(P,"single_done"))
+end).
+
+playback_telemetry_test() -> with_port(fun(P,_)->
+    true=port_command(P,<<"Ssingle_done">>),
+    receive {P,{data,<<"P">>}}->ok after 2000->error(no_playback_start) end,
+    receive {P,{data,<<"L",Level:32/float>>}}->?assert(Level>=0 andalso Level=<1)
+    after 2000->error(no_playback_level) end,
+    ?assertEqual(<<"D">>,speech_result(P))
 end).

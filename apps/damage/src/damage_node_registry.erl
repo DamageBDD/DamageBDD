@@ -841,11 +841,27 @@ validate_contract(CtId0) ->
     end.
 
 query_contract_value(KeyPair, CtId, Path, Func, Args) ->
-    case damage_ae:contract_query(KeyPair, CtId, Path, Func, Args) of
-        #{"return_type" := "ok", "return_value" := Value} -> Value;
-        #{<<"return_type">> := <<"ok">>, <<"return_value">> := Value} -> Value;
-        #{return_type := ok, return_value := Value} -> Value;
-        Other -> {error, {contract_query_failed, Func, Other}}
+    %% Registry identity validation must be read-only and deterministic.
+    %% Do not use damage_ae:contract_query/5 here: that API may fall back to
+    %% an on-chain contract call when dry-run is unavailable, which is both
+    %% inappropriate during startup validation and can return transaction-shaped
+    %% results instead of a pure query result. All other NodeRegistry reads use
+    %% contract_call_dry/5, so keep validation on the same path.
+    case damage_ae:contract_call_dry(KeyPair, CtId, Path, Func, Args) of
+        #{"return_type" := "ok", "return_value" := Value} ->
+            Value;
+        #{<<"return_type">> := <<"ok">>, <<"return_value">> := Value} ->
+            Value;
+        #{return_type := ok, return_value := Value} ->
+            Value;
+        {error, Reason} ->
+            {error, {contract_dry_query_failed, Func, Reason}};
+        #{"return_type" := ReturnType, "return_value" := ReturnValue} ->
+            {error, {contract_dry_query_rejected, Func, ReturnType, ReturnValue}};
+        #{<<"return_type">> := ReturnType, <<"return_value">> := ReturnValue} ->
+            {error, {contract_dry_query_rejected, Func, ReturnType, ReturnValue}};
+        Other ->
+            {error, {contract_dry_query_failed, Func, Other}}
     end.
 
 normalize_int_value(I) when is_integer(I) -> {ok, I};

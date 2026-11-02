@@ -1,0 +1,41 @@
+/* Native, self-contained visualizer within /dashboard#math. No root rules. */
+.math-kernel {
+  --kernel-aqua:#85e9ef;
+  --kernel-gold:#f4c27e;
+  --kernel-muted:#9aafbe;
+  margin:18px 0 20px;
+  min-width:0;
+}
+.math-kernel .math-kernel-heading { align-items:center; }
+.math-kernel .math-kernel-intro { margin:4px 0 15px;max-width:920px; }
+.math-kernel-visual { border:1px solid #274255;border-radius:13px;overflow:hidden;color:#edf8ff;background:linear-gradient(133deg,#07121d,#0b1925 57%,#08131d); }
+.math-kernel-stage-heading { display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:15px 18px 0;color:#b2c8d3;font-size:11px;font-weight:650;letter-spacing:.065em;text-transform:uppercase; }
+.math-kernel-legend { display:flex;gap:14px;text-transform:none;letter-spacing:0;color:var(--kernel-muted); }
+.math-kernel-legend span { display:inline-flex;align-items:center;gap:6px; }
+.math-kernel-legend i { display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--kernel-aqua); }
+.math-kernel-legend span:nth-child(2) i { background:var(--kernel-gold); }
+.math-kernel canvas { display:block;width:100%; }
+#mathKernelStage { height:480px; }
+.math-kernel-controls { display:grid;grid-template-columns:auto minmax(130px,1fr) minmax(125px,.7fr) minmax(185px,1fr);gap:15px;align-items:center;padding:16px 18px;background:#0b1824;border-top:1px solid #20394a; }
+.math-kernel-buttons { display:flex;gap:8px;flex-wrap:wrap; }
+.math-kernel .math-kernel-buttons button { white-space:nowrap; }
+.math-kernel .math-kernel-controls .math-kernel-control { min-width:0; }
+.math-kernel .math-kernel-control > label:first-child { color:#d7e7ed;font-size:12px;display:flex;flex-direction:row;align-items:center;justify-content:space-between;gap:8px;margin-bottom:9px; }
+.math-kernel .math-kernel-control output { color:var(--kernel-aqua);font:600 12px ui-monospace,monospace; }
+.math-kernel .math-kernel-control input[type=range] { display:block;width:100%;height:20px;accent-color:var(--kernel-aqua);padding:0;border:0;background:transparent;cursor:pointer; }
+.math-kernel .math-kernel-control select { width:100%;border:1px solid #375265;border-radius:7px;color:#f1faff;padding:9px 10px;background:#132a38;font-size:12px;min-width:0; }
+.math-kernel .math-kernel-controls label.math-kernel-check { display:flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:8px;color:#b9cad2;font-size:11px;font-weight:450;cursor:pointer;margin-top:6px; }
+.math-kernel .math-kernel-check input[type=checkbox] { width:14px;min-width:14px;height:14px;margin:0;padding:0;accent-color:var(--kernel-aqua); }
+.math-kernel-details { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:12px; }
+.math-kernel-detail { background:var(--theme-surface,#f5f7fc);border:1px solid var(--line,#e1e6f1);border-radius:11px;padding:14px;min-width:0;overflow:hidden; }
+.math-kernel-detail h3 { margin:0 0 11px;font-size:12px;color:var(--math-accent,#315ed5);letter-spacing:.055em;font-weight:750;text-transform:uppercase; }
+.math-kernel-equation { font:19px/1.4 Georgia,serif;margin:0 0 7px;color:var(--ink,#14223d); }
+#mathKernelCurve,#mathKernelSpectrum { height:140px; }
+.math-kernel-fine { color:var(--muted,#687b96);font-size:11px;line-height:1.7;margin:7px 0 0; }
+#mathKernelPoint { font-family:ui-monospace,monospace;color:var(--math-accent,#315ed5); }
+.math-kernel-map { margin:0 0 7px;padding:11px 12px;border:1px solid var(--line,#e1e6f1);border-radius:9px;background:var(--theme-input,#fff);color:var(--ink,#14223d);font:12px/1.55 ui-monospace,monospace;white-space:pre-wrap; }
+.math-kernel .math-kernel-disclaimer { margin:13px 1px 0; }
+@media(max-width:1150px) { .math-kernel-controls { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:740px) { .math-kernel-details { grid-template-columns:1fr; } #mathKernelStage { height:630px; } }
+@media(max-width:460px) { .math-kernel-stage-heading{padding:12px 12px 0;} .math-kernel-controls{gap:14px;padding:13px;grid-template-columns:1fr;} #mathKernelStage { height:590px; } }
+@media(prefers-reduced-motion:reduce) { .math-kernel button { transition:none; } }

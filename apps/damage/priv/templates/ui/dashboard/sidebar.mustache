@@ -3,7 +3,7 @@
   <div class="dashboard-sidebar-brand">
     <a class="dashboard-brand" href="#execution-tab" data-dashboard-home title="DamageBDD workspace">
       <img src="{{logo_image}}" width="36" height="36" alt="" />
-      <span class="dashboard-brand-copy"><strong>DamageBDD</strong><span>Verification workspace</span></span>
+      <span class="dashboard-brand-copy"><strong>{{brand_name}}</strong><span>{{brand_tagline}}</span></span>
     </a>
     <button id="dashboard-nav-close" class="dashboard-icon-button dashboard-nav-close" type="button" aria-label="Close navigation"><svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m6 6 12 12M6 18 18 6"/></svg></button>
   </div>
@@ -14,6 +14,11 @@
         <li>
           <a id="dashboard-link-execution" href="#execution-tab" data-dashboard-panel="execution-tab" data-nav-title="Workspace" data-nav-group="Verification" data-nav-description="Describe, review and run behaviours" title="Workspace" aria-current="page">
             <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 9v12"/></svg><span class="dashboard-nav-label">Workspace</span>
+          </a>
+        </li>
+        <li>
+          <a id="dashboard-link-agents" href="#agents-tab" data-dashboard-panel="agents-tab" data-nav-title="Agents" data-nav-group="Workspace" data-nav-description="Describe, review and supervise bounded agent tasks" title="Agents">
+            <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="4" y="7" width="16" height="13" rx="3"/><path d="M12 7V3M8 12h1m6 0h1M8 16h8"/></svg><span class="dashboard-nav-label">Agents</span>
           </a>
         </li>
         <li>
@@ -62,6 +67,11 @@
           </a>
         </li>
         <li>
+          <a href="/themes" title="Themes marketplace">
+            <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="8" cy="9" r="1"/><circle cx="15" cy="8" r="1"/><path d="M5 14h6l2 5"/></svg><span class="dashboard-nav-label">Themes</span>
+          </a>
+        </li>
+        <li>
           <a id="dashboard-link-ecai-jobs" href="#ecai-jobs-tab" data-dashboard-panel="ecai-jobs-tab" data-nav-title="NFTs" data-nav-group="Assets" data-nav-description="Browse verification and ECAI job assets" title="NFTs">
             <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m12 3 9 5v8l-9 5-9-5V8l9-5ZM3 8l9 5 9-5M12 13v8"/></svg><span class="dashboard-nav-label">NFTs</span>
           </a>
@@ -72,6 +82,11 @@
     <section class="dashboard-nav-group" aria-labelledby="dashboard-group-node">
       <h2 id="dashboard-group-node" class="dashboard-nav-heading">Node administration</h2>
       <ul class="dashboard-nav-list">
+        <li>
+          <a href="/dashboard/node/themes" title="Theme studio and node branding">
+            <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="8" cy="9" r="1"/><circle cx="15" cy="8" r="1"/><path d="M5 14h6l2 5"/></svg><span class="dashboard-nav-label">Themes &amp; branding</span>
+          </a>
+        </li>
         <li>
           <a id="dashboard-link-node-settings" href="/dashboard/node/settings" title="Node settings" aria-label="Node settings: DamageBDD, ECAI, Nosternity, ERM and BOP">
             <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="3"/><path d="m9 3-1 3-3 1-2 3 2 2-1 3 3 3 3-1 2 2 3-2 1-3 3-1v-4l-3-1-1-3-3-1-3 2Z"/></svg><span class="dashboard-nav-label">Node settings</span>
@@ -90,6 +105,11 @@
         <li>
           <a id="dashboard-link-node-channels" href="#node-channels-tab" data-dashboard-panel="node-channels-tab" data-nav-title="CLN channels" data-nav-group="Node administration" data-nav-description="Manage node Lightning channels" title="CLN channels">
             <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="5" cy="12" r="3"/><circle cx="19" cy="5" r="3"/><circle cx="19" cy="19" r="3"/><path d="m8 11 8-5M8 13l8 5"/></svg><span class="dashboard-nav-label">CLN channels</span>
+          </a>
+        </li>
+        <li>
+          <a id="dashboard-link-node-bunker" href="#node-bunker-tab" data-dashboard-panel="node-bunker-tab" data-nav-title="Nostr bunker" data-nav-group="Node administration" data-nav-description="Verify bunker custody, signing and handoff evidence" title="Nostr bunker">
+            <svg class="dashboard-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 3 3 7v5c0 5 9 9 9 9s9-4 9-9V7Z"/><path d="m8 12 3 3 5-6"/></svg><span class="dashboard-nav-label">Nostr bunker</span>
           </a>
         </li>
         <li>

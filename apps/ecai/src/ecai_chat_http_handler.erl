@@ -120,7 +120,9 @@ to_json(Req, State = #{action := chat}) ->
         jsx:encode(#{
             status => <<"ok">>,
             service => <<"ecai_chat">>,
-            endpoint => <<"/ecai/chat">>
+            endpoint => <<"/ecai/chat">>,
+            retrieval => #{index_selection => true, matching => bool_prefix,
+                           scope => public_only}
         }),
     {Body, Req, State}.
 
@@ -155,8 +157,20 @@ handle_chat_json(Raw, Req, State) ->
                         State
                     );
                 _ ->
-                    Resp = ask_ecai(SessionID, UserID, Message),
-                    reply_json(200, Resp, Req, State)
+                    Selection = case maps:find(<<"indexes">>, Json) of
+                        error -> all;
+                        {ok, <<"all">>} -> all;
+                        {ok, Value} -> Value
+                    end,
+                    %% Anonymous/chat session IDs are client supplied. Never
+                    %% grant owner-funded access from these identifiers.
+                    case ecai_knowledge:authorize_indexes(undefined, Selection) of
+                        {ok, Canonical} ->
+                            Resp = ask_ecai(SessionID, UserID, Message, Canonical),
+                            reply_json(200, Resp, Req, State);
+                        {error, _} ->
+                            reply_json(400, #{status => <<"error">>, error => <<"invalid_index_selection">>}, Req, State)
+                    end
             end;
         _ ->
             reply_json(
@@ -176,10 +190,13 @@ handle_chat_json(Raw, Req, State) ->
             )
     end.
 
-ask_ecai(SessionID, UserID, Message) ->
-    case
-        ecai_otp_compat:catch_value(fun() -> ecai_chat:get_reply(SessionID, UserID, Message) end)
-    of
+ask_ecai(SessionID, UserID, Message, Indexes) ->
+    case ecai_otp_compat:catch_value(fun() -> ecai_chat:get_reply(SessionID, UserID,
+        Message, #{indexes => Indexes, include_retrieval_meta => true}) end) of
+        {ok, Reply, SearchMeta} when is_map(SearchMeta) ->
+            #{status => <<"ok">>, reply => to_bin(Reply), session_id => SessionID,
+              user_id => UserID, retrieval => SearchMeta,
+              selection => maps:get(selection, SearchMeta, #{})};
         {ok, Reply} when is_binary(Reply) ->
             #{
                 status => <<"ok">>,

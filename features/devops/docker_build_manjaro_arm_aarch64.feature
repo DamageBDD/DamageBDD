@@ -6,11 +6,28 @@
 Feature: Publish DamageBDD for Manjaro ARM aarch64
   Scenario: Build and verify the manjaro-arm-aarch64 installation release
     Given the build release discovery is configured
-    When I build an image from Dockerfile at "Qme2zQxE18bXrzNYE6zJYAY7kH8vC9myCHzbcDvnHbqRSR" as tag "damagebdd/manjaro-arm-builder:aarch64-v2" with params "--platform linux/arm64 --build-arg 'PACMAN_DISABLE_SANDBOX=1' --build-arg 'REPO_URL=https://github.com/DamageBDD/DamageBDD.git' --build-arg 'REPO_REF=develop'"
+    When I build an image from Dockerfile at "QmPDhitshHU1fdbfDBFxkJYz9VDDxfCTMcUT6WTX71H4Ds" as tag "damagebdd/manjaro-arm-builder:aarch64-v2" with params "--platform linux/arm64 --build-arg 'PACMAN_DISABLE_SANDBOX=1' --build-arg 'REPO_URL=https://github.com/DamageBDD/DamageBDD.git' --build-arg 'REPO_REF=develop'"
     Then I run docker image tagged "damagebdd/manjaro-arm-builder:aarch64-v2"
     """
     set -eux
     cd /opt/workspace
+
+    # Some builder layers leave $HOME/.cache unwritable by the damage user.
+    # Move disposable caches only; retain HOME and the voice SDK install prefixes.
+    # This private cache stays with this container, outside the checkout/package.
+    [ "$(id -u)" -ne 0 ] || {
+        echo "[damagebdd] Refusing a root release build; use the damage user." >&2
+        exit 1
+    }
+    XDG_CACHE_HOME=$(mktemp -d /tmp/damagebdd-build-cache.XXXXXXXX)
+    CCACHE_DIR="$XDG_CACHE_HOME/ccache"
+    export XDG_CACHE_HOME CCACHE_DIR
+    mkdir -p "$CCACHE_DIR" "$XDG_CACHE_HOME/erm-native-voice"
+    for CACHE_PATH in "$XDG_CACHE_HOME" "$CCACHE_DIR" "$XDG_CACHE_HOME/erm-native-voice"; do
+        CACHE_PROBE=$(mktemp "$CACHE_PATH/.write-check.XXXXXXXX")
+        rm -f "$CACHE_PROBE"
+    done
+    printf '%s\n' "[damagebdd] writable build cache: $XDG_CACHE_HOME"
 
     command -v flock >/dev/null 2>&1 || {
         echo "Builder requires flock (util-linux)" >&2
@@ -96,7 +113,43 @@ Feature: Publish DamageBDD for Manjaro ARM aarch64
     done
     [ -n "$PACKAGE" ] || { echo "No aarch64 damage package found" >&2; exit 1; }
 
+    # Release integrity gate: a package that cannot install its systemd unit
+    # must never be uploaded to IPFS or minted as an installable release.
+    # Package-owned vendor units belong under /usr/lib, not /etc overrides.
     LISTING=$(tar -tf "$PACKAGE")
+    UNIT_PATH=$(printf '%s\n' "$LISTING" | awk '
+        /^\.?\/?usr\/lib\/systemd\/system\/damage\.service$/ { print }
+    ')
+    [ "$(printf '%s\n' "$UNIT_PATH" | sed '/^$/d' | wc -l)" -eq 1 ] || {
+        echo "Missing or duplicated vendor systemd unit in package: usr/lib/systemd/system/damage.service" >&2
+        exit 1
+    }
+    UNIT_SOURCE=/opt/workspace/apps/damage/priv/pkg/damage.service
+    [ -s "$UNIT_SOURCE" ] || {
+        echo "Canonical repository unit missing: $UNIT_SOURCE" >&2
+        exit 1
+    }
+    tar -xOf "$PACKAGE" "$UNIT_PATH" | cmp - "$UNIT_SOURCE" || {
+        echo "Packaged systemd unit differs from the canonical source" >&2
+        exit 1
+    }
+    echo "[damagebdd] Verified vendor systemd unit: $UNIT_PATH"
+
+    # 20-systemd.sh is executed by package installation. Verify the old
+    # hard-coded /etc unit requirement is absent before publication.
+    HOOK_PATH=$(printf '%s\n' "$LISTING" | awk '
+        /^\.?\/?opt\/damage\/postinst\.d\/20-systemd\.sh$/ { print }
+    ')
+    [ "$(printf '%s\n' "$HOOK_PATH" | sed '/^$/d' | wc -l)" -eq 1 ] || {
+        echo "Missing or duplicated post-install systemd hook in package" >&2
+        exit 1
+    }
+    if tar -xOf "$PACKAGE" "$HOOK_PATH" | grep -Fq '/etc/systemd/system/damage.service'; then
+        echo "Post-install hook still requires /etc/systemd/system/damage.service" >&2
+        echo "Update 20-systemd.sh to use the packaged vendor unit in /usr/lib/systemd/system." >&2
+        exit 1
+    fi
+
     BEAM_PATH=$(printf '%s\n' "$LISTING" | awk '/(^|\/)erts-[^/]+\/bin\/beam\.smp$/ {print; exit}')
     [ -n "$BEAM_PATH" ] || {
         echo "Production package does not contain bundled ERTS" >&2

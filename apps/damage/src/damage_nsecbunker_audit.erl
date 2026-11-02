@@ -4,7 +4,19 @@
 %%--------------------------------------------------------------------
 -module(damage_nsecbunker_audit).
 
--export([record/1, canonical_line/1]).
+-export([record/1, canonical_line/1, transport_line/1]).
+
+%% A separate schema-2 completion row correlates the encrypted transport with
+%% the decision row. Never include ciphertext, response bodies or private keys.
+transport_line(Fields) ->
+    Keys = [requester_pubkey, request_id, method, decision, bunker_pubkey,
+        request_event_id, response_event_id, signed_event_id],
+    iolist_to_binary([
+        <<"{\"schema_version\":2,\"phase\":\"response_signed\",">>,
+        kv_int(<<"ts_unix">>, maps:get(ts_unix, Fields, 0)),
+        [[<<",">>, kv_bin(atom_to_binary(K, utf8), maps:get(K, Fields, <<>>))] || K <- Keys],
+        <<"}\n">>
+    ]).
 
 -spec record(map()) -> map().
 record(Fields) ->
@@ -91,5 +103,7 @@ json_escape(<<$\r, Rest/binary>>, Acc) ->
     json_escape(Rest, [<<"\\r">> | Acc]);
 json_escape(<<$\t, Rest/binary>>, Acc) ->
     json_escape(Rest, [<<"\\t">> | Acc]);
+json_escape(<<C, Rest/binary>>, Acc) when C < 32 ->
+    json_escape(Rest, [iolist_to_binary(io_lib:format("\\u~4.16.0b", [C])) | Acc]);
 json_escape(<<C, Rest/binary>>, Acc) ->
     json_escape(Rest, [<<C>> | Acc]).

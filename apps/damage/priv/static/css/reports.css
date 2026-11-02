@@ -8,21 +8,21 @@ pre code.language-gherkin.report {
   font-family: 'Fira Code', monospace;
 }
 .gherkin-line {
-  color: #aaa;
+  color: var(--theme-muted, #aaa);
   font-style: italic;
 }
 
 .gherkin-success {
-  color: #00ff88;
+  color: var(--theme-success, #00ff88);
   font-weight: bold;
 }
 
 .gherkin-fail {
-  color: #ff5555;
+  color: var(--theme-danger, #ff5555);
   font-weight: bold;
 }
 .gherkin-skip {
-  color: #ffff55;
+  color: var(--theme-warning, #ffff55);
   font-weight: bold;
 }
 /*  html report table */
@@ -45,7 +45,7 @@ pre code.language-gherkin.report {
   max-width: 100%;
   overflow-wrap: anywhere; /* allow breaking long hashes/links */
   text-decoration: none;
-  color: #c1d7f5;
+  color: var(--theme-text, #c1d7f5);
 }
 
 .report-table td a:hover {
@@ -90,8 +90,8 @@ pre code.language-gherkin.report {
   font-size: 12px;
   padding: 6px 10px;
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: var(--theme-surface-alt, rgba(0, 0, 0, 0.25));
+  border: 1px solid var(--theme-border, rgba(255, 255, 255, 0.10));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -224,11 +224,11 @@ pre code.language-gherkin.report {
 
 .activity-link {
   text-decoration: none;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.25);
+  border-bottom: 1px solid var(--theme-border, rgba(255, 255, 255, 0.25));
 }
 
 .activity-link:hover {
-  border-bottom-color: rgba(255, 255, 255, 0.7);
+  border-bottom-color: var(--theme-link, rgba(255, 255, 255, 0.7));
 }
 
 .activity-pager {
@@ -351,8 +351,8 @@ pre code.language-gherkin.report {
   gap: 8px;
   padding: 10px;
   border-radius: 10px;
-  border: 1px solid rgba(255,255,255,.10);
-  background: rgba(0,0,0,.25);
+  border: 1px solid var(--theme-border, rgba(255,255,255,.10));
+  background: var(--theme-surface-alt, rgba(0,0,0,.25));
   min-height: 54px;
 }
 
@@ -362,24 +362,24 @@ pre code.language-gherkin.report {
   gap: 8px;
   padding: 8px 10px;
   border-radius: 999px;
-  border: 1px solid rgba(255,255,255,.10);
-  background: rgba(255,255,255,.06);
-  color: #cfd6e4;
+  border: 1px solid var(--theme-border, rgba(255,255,255,.10));
+  background: var(--theme-surface, rgba(255,255,255,.06));
+  color: var(--theme-text, #cfd6e4);
   cursor: pointer;
   user-select: none;
   max-width: 100%;
 }
 
 .addr-tag:hover{
-  border-color: rgba(255,255,255,.18);
-  background: rgba(255,255,255,.08);
+  border-color: var(--theme-link, rgba(255,255,255,.18));
+  background: var(--theme-accent-soft, rgba(255,255,255,.08));
 }
 
 .addr-tag[aria-pressed="true"]{
-  border-color: rgba(0,191,255,.55);
-  background: rgba(0,191,255,.12);
-  color: #ffffff;
-  box-shadow: 0 0 0 2px rgba(0,191,255,.12) inset;
+  border-color: var(--theme-link, rgba(0,191,255,.55));
+  background: var(--theme-accent-soft, rgba(0,191,255,.12));
+  color: var(--theme-text, #ffffff);
+  box-shadow: 0 0 0 2px var(--theme-shadow, rgba(0,191,255,.12)) inset;
 }
 
 .addr-tag__label{
@@ -410,7 +410,7 @@ pre code.language-gherkin.report {
 
 .addr-tag__x:hover{
   opacity: 1;
-  background: rgba(255,255,255,.08);
+  background: var(--theme-accent-soft, rgba(255,255,255,.08));
 }
 
 .addr-add{
@@ -423,16 +423,16 @@ pre code.language-gherkin.report {
   width: 100%;
   padding: .75rem .85rem;
   border-radius: 10px;
-  border: 1px solid rgba(255,255,255,.12);
-  background: rgba(0,0,0,.25);
-  color: #eee;
+  border: 1px solid var(--theme-control-border, rgba(255,255,255,.12));
+  background: var(--theme-input, rgba(0,0,0,.25));
+  color: var(--theme-text, #eee);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 /* invalid input */
 .invalid{
-  outline: 2px solid rgba(255, 85, 85, .75);
-  border-color: rgba(255, 85, 85, .55) !important;
+  outline: 2px solid var(--theme-danger, rgba(255, 85, 85, .75));
+  border-color: var(--theme-danger, rgba(255, 85, 85, .55)) !important;
 }
 
 /* -----------------------------------
@@ -535,11 +535,11 @@ pre code.language-gherkin.report {
 .damage-dashboard .run-history .activity-left { flex: 0 0 130px; }
 .damage-dashboard .run-history .activity-time { font-size: 11px; }
 .damage-dashboard .run-history .activity-title { font-size: 15px; color: var(--ws-text); }
-.damage-dashboard .history-status { font-size: 11px; border-radius: 5px; padding: 3px 8px; border: 1px solid #3c4959; color: #d2dbe8; width: fit-content; }
-.damage-dashboard .history-status.passed { color: #c9efb3; background: #213628; border-color: #395d3c; }
-.damage-dashboard .history-status.failed { color: #ffc5c5; background: #40292d; border-color: #68434b; }
+.damage-dashboard .history-status { font-size: 11px; border-radius: 5px; padding: 3px 8px; border: 1px solid var(--theme-border, #3c4959); color: var(--theme-text, #d2dbe8); width: fit-content; }
+.damage-dashboard .history-status.passed { color: var(--theme-success, #c9efb3); background: var(--theme-surface, #213628); border-color: var(--theme-border, #395d3c); }
+.damage-dashboard .history-status.failed { color: var(--theme-danger, #ffc5c5); background: var(--theme-surface, #40292d); border-color: var(--theme-border, #68434b); }
 .damage-dashboard .history-run-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
-.damage-dashboard .history-run-tags span { background: #202f41; border-radius: 4px; color: #bcd5f5; padding: 2px 6px; font: 11px/1.4 ui-monospace, monospace; }
+.damage-dashboard .history-run-tags span { background: var(--theme-surface, #202f41); border-radius: 4px; color: var(--theme-text, #bcd5f5); padding: 2px 6px; font: 11px/1.4 ui-monospace, monospace; }
 .damage-dashboard .run-history .activity-meta { margin-top: 10px; }
 .damage-dashboard .activity-details summary { cursor: pointer; color: var(--ws-muted); font-size: 12px; }
 .damage-dashboard .history-run-details { display: grid; grid-template-columns: minmax(80px, 140px) minmax(0, 1fr); gap: 4px 10px; font-size: 12px; margin: 12px 0 0; }

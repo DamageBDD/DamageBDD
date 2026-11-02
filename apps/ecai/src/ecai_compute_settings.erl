@@ -6,13 +6,18 @@
     start_link/0, start_link/1,
     snapshot/1,
     put_policy/2,
+    put_compute_budget/2,
+    put_mint_policy/2,
     put_provider/3,
+    prepare_provider/2,
+    import_aws_provider/4, remove_aws_provider/2,
     provider/2,
     mark_verified/3,
     quote/1,
     reserve/3,
     cancel_reservation/2,
-    request_mint/5
+    request_mint/5,
+    validate_mint_options/2
 ]).
 -export([
     init/1,
@@ -31,16 +36,78 @@ start_link() -> start_link(#{}).
 start_link(Opts) -> gen_server:start_link({local, ?MODULE}, ?MODULE, Opts, []).
 snapshot(Owner) -> gen_server:call(?MODULE, {snapshot, Owner}, 30000).
 put_policy(Owner, Policy) -> gen_server:call(?MODULE, {policy, Owner, Policy}, 30000).
+put_compute_budget(Owner, Budget) ->
+    gen_server:call(?MODULE, {compute_budget, Owner, Budget}, 30000).
+put_mint_policy(Owner, Policy) ->
+    gen_server:call(?MODULE, {mint_policy, Owner, Policy}, 30000).
 put_provider(Owner, Provider, Config) ->
     gen_server:call(?MODULE, {provider, Owner, Provider, Config}, 30000).
+prepare_provider(Owner, Provider) ->
+    gen_server:call(?MODULE, {prepare_provider, Owner, Provider}, 30000).
 provider(Owner, Provider) -> gen_server:call(?MODULE, {get_provider, Owner, Provider}, 30000).
+%% Atomic compare-and-swap for stack import/removal; never overwrite edits made
+%% after a deployment plan was reviewed, or change account budget/mint policy.
+import_aws_provider(Owner, Expected, Config, External) ->
+    gen_server:call(?MODULE, {import_aws_provider, Owner, Expected, Config, External}, 30000).
+remove_aws_provider(Owner, Expected) ->
+    gen_server:call(?MODULE, {remove_aws_provider, Owner, Expected}, 30000).
 mark_verified(Owner, Provider, Digest) ->
     gen_server:call(?MODULE, {verified, Owner, Provider, Digest}, 30000).
 quote(Spec) -> quote_spec(Spec).
 reserve(Owner, Key, Spec) -> gen_server:call(?MODULE, {reserve, Owner, Key, Spec}, 30000).
 cancel_reservation(Owner, Id) -> gen_server:call(?MODULE, {cancel, Owner, Id}, 30000).
-request_mint(Owner, JobId, Metadata, Recipient, FeeCapCents) ->
-    gen_server:call(?MODULE, {mint, Owner, JobId, Metadata, Recipient, FeeCapCents}, 30000).
+request_mint(Owner, JobId, Metadata, Recipient, FeeCapCents) when is_map(Metadata) ->
+    case validate_mint_options(
+        maps:get(<<"requested_copies">>, Metadata, 1),
+        maps:get(<<"requested_metadata">>, Metadata, #{})
+    ) of
+        {ok, Copies, Requested} ->
+            Normalized = Metadata#{<<"requested_copies">> => Copies, <<"requested_metadata">> => Requested},
+            gen_server:call(?MODULE, {mint, Owner, JobId, Normalized, Recipient, FeeCapCents}, 30000);
+        Error -> Error
+    end;
+request_mint(_, _, _, _, _) -> {error, invalid_mint_metadata}.
+
+%% This limit bounds a review request; it is not a contract-enforced edition cap.
+validate_mint_options(Copies, _) when not is_integer(Copies); Copies < 1; Copies > 1000 ->
+    {error, invalid_mint_copies};
+validate_mint_options(Copies, Fields) when is_map(Fields) ->
+    Limits = #{<<"title">> => 256, <<"description">> => 4096,
+        <<"collection">> => 256, <<"external_url">> => 2048,
+        <<"license">> => 256, <<"creator_note">> => 2048, <<"tags">> => 64},
+    Valid = maps:fold(fun(K, V, Acc) ->
+        Acc andalso maps:is_key(K, Limits) andalso valid_mint_field(K, V, Limits)
+    end, true, Fields),
+    case Valid of
+        true -> {ok, Copies, Fields};
+        false -> {error, invalid_mint_metadata}
+    end;
+validate_mint_options(_, _) -> {error, invalid_mint_metadata}.
+
+valid_mint_field(<<"tags">>, Tags, _) when is_list(Tags), length(Tags) =< 24 ->
+    lists:all(fun(T) -> valid_mint_text(T, 64) end, Tags);
+valid_mint_field(<<"tags">>, _, _) -> false;
+valid_mint_field(<<"external_url">>, Value, _) ->
+    valid_mint_text(Value, 2048) andalso valid_mint_url(Value);
+valid_mint_field(Key, Value, Limits) ->
+    valid_mint_text(Value, maps:get(Key, Limits)).
+
+valid_mint_text(Value, Limit) when is_binary(Value), byte_size(Value) =< Limit ->
+    try unicode:characters_to_binary(Value, utf8, utf8) of
+        Value -> binary:match(Value, <<0>>) =:= nomatch;
+        _ -> false
+    catch _:_ -> false end;
+valid_mint_text(_, _) -> false.
+
+valid_mint_url(<<>>) -> true;
+valid_mint_url(Value) ->
+    try uri_string:parse(Value) of
+        #{scheme := Scheme, host := Host} = Uri ->
+            (Scheme =:= <<"https">> orelse Scheme =:= <<"http">>) andalso
+            is_binary(Host) andalso byte_size(Host) > 0 andalso
+            not maps:is_key(userinfo, Uri);
+        _ -> false
+    catch _:_ -> false end.
 
 init(Opts) ->
     DefaultPath = filename:join(ecai_paths:index_state_dir(), "compute_settings.dets"),
@@ -68,6 +135,34 @@ handle_call({get_provider, Owner, Name}, _From, State) ->
         {ok, Value} -> reply({ok, Value}, State);
         error -> reply({error, not_configured}, State)
     end;
+%% Merge only the selected policy domain inside the serialized store process.
+%% Never echo an old browser snapshot of the other domain back into the store.
+handle_call({compute_budget, Owner, Input}, From, State) when is_map(Input) ->
+    Keys = [<<"remote_enabled">>, <<"monthly_cents">>, <<"per_job_cents">>],
+    case lists:sort(maps:keys(Input)) =:= lists:sort(Keys) of
+        false -> reply({error, invalid_compute_budget}, State);
+        true ->
+            Old = account(State#st.table, Owner),
+            Budget = maps:merge(maps:get(<<"budget">>, Old), Input),
+            handle_call({policy, Owner, #{<<"budget">> => Budget,
+                <<"mint">> => maps:get(<<"mint">>, Old)}}, From, State)
+    end;
+handle_call({compute_budget, _, _}, _From, State) ->
+    reply({error, invalid_compute_budget}, State);
+handle_call({mint_policy, Owner, Input}, From, State) when is_map(Input) ->
+    Keys = [<<"enabled">>, <<"recipient">>, <<"chain">>, <<"monthly_cents">>],
+    case lists:sort(maps:keys(Input)) =:= lists:sort(Keys) of
+        false -> reply({error, invalid_mint_policy}, State);
+        true ->
+            Old = account(State#st.table, Owner),
+            Budget = (maps:get(<<"budget">>, Old))#{
+                <<"mint_monthly_cents">> => maps:get(<<"monthly_cents">>, Input)},
+            Mint = maps:without([<<"monthly_cents">>], Input),
+            handle_call({policy, Owner, #{<<"budget">> => Budget,
+                <<"mint">> => Mint}}, From, State)
+    end;
+handle_call({mint_policy, _, _}, _From, State) ->
+    reply({error, invalid_mint_policy}, State);
 handle_call({policy, Owner, Input}, _From, State) ->
     T = State#st.table,
     Old = account(T, Owner),
@@ -90,6 +185,40 @@ handle_call({policy, Owner, Input}, _From, State) ->
         Error ->
             reply(Error, State)
     end;
+%% Prepare a stable, account-scoped external ID before the customer creates
+%% an AWS role. This does not configure a provider or grant cloud access.
+handle_call({prepare_provider, Owner, <<"aws_batch">>}, _From, State) ->
+    T = State#st.table,
+    Account = account(T, Owner),
+    Providers = maps:get(<<"providers">>, Account, #{}),
+    Setup = maps:get(<<"provider_setup">>, Account, #{}),
+    Saved = maps:get(<<"aws_batch">>, Providers, #{}),
+    External = provider_external_id(Saved, Setup),
+    Updated = Account#{
+        <<"provider_setup">> => Setup#{<<"aws_batch_external_id">> => External}
+    },
+    reply(save(T, {account, Owner}, Updated, {ok, #{<<"external_id">> => External}}), State);
+handle_call({prepare_provider, _Owner, _Name}, _From, State) ->
+    reply({error, unsupported_provider}, State);
+handle_call({import_aws_provider, Owner, Expected, Config, External}, From, State) ->
+    Account = account(State#st.table, Owner),
+    Previous = maps:get(<<"aws_batch">>, maps:get(<<"providers">>, Account), absent),
+    Setup = maps:get(<<"provider_setup">>, Account, #{}),
+    Saved = case Previous of absent -> #{}; _ -> Previous end,
+    case ecai_aws_setup:fingerprint(Previous) =:= Expected andalso
+            provider_external_id(Saved, Setup) =:= External of
+        true -> handle_call({provider, Owner, <<"aws_batch">>, Config}, From, State);
+        false -> reply({error, provider_changed_since_plan}, State)
+    end;
+handle_call({remove_aws_provider, Owner, Expected}, _From, State) ->
+    Account = account(State#st.table, Owner),
+    Providers = maps:get(<<"providers">>, Account),
+    Previous = maps:get(<<"aws_batch">>, Providers, absent),
+    case ecai_aws_setup:fingerprint(Previous) =:= Expected of
+        true -> reply(save(State#st.table, {account, Owner},
+            Account#{<<"providers">> := maps:remove(<<"aws_batch">>, Providers)}, {ok, removed}), State);
+        false -> reply({ok, unchanged}, State)
+    end;
 handle_call({provider, Owner, Name, Input}, _From, State) ->
     T = State#st.table,
     Conf = account(T, Owner),
@@ -98,12 +227,11 @@ handle_call({provider, Owner, Name, Input}, _From, State) ->
         {ok, Config} ->
             %% Preserve a non-secret external id for an existing AWS connection.
             Prev = maps:get(Name, Ps, #{}),
+            Setup = maps:get(<<"provider_setup">>, Conf, #{}),
             External =
                 case Name of
                     <<"aws_batch">> ->
-                        maps:get(
-                            <<"external_id">>, Prev, binary:encode_hex(crypto:strong_rand_bytes(24))
-                        );
+                        provider_external_id(Prev, Setup);
                     _ ->
                         undefined
                 end,
@@ -238,7 +366,7 @@ handle_call({mint, Owner, JobId, Metadata, Recipient, FeeCap}, _From, State) ->
     case dets:lookup(T, Key) of
         [{Key, E}] ->
             case
-                maps:get(<<"manifest_sha256">>, E) =:= Sha andalso
+                same_mint_metadata(maps:get(<<"metadata">>, E, #{}), Metadata) andalso
                     maps:get(<<"recipient">>, E) =:= Recipient andalso
                     maps:get(<<"fee_cap_cents">>, E) =:= FeeCap
             of
@@ -256,6 +384,9 @@ handle_call({mint, Owner, JobId, Metadata, Recipient, FeeCap}, _From, State) ->
                         <<"recipient">> => Recipient,
                         <<"manifest_sha256">> => Sha,
                         <<"metadata">> => Metadata,
+                        <<"copies">> => maps:get(<<"requested_copies">>, Metadata, 1),
+                        <<"requested_metadata">> => maps:get(<<"requested_metadata">>, Metadata, #{}),
+                        %% One total cap for this request, NOT a per-copy charge.
                         <<"fee_cap_cents">> => FeeCap,
                         <<"month">> => month_utc(),
                         <<"created_at_ms">> => erlang:system_time(millisecond)
@@ -283,6 +414,35 @@ save(T, Key, Value, Response) ->
             end;
         Error ->
             {error, {write_failed, Error}}
+    end.
+
+new_external_id() -> binary:encode_hex(crypto:strong_rand_bytes(24)).
+provider_external_id(Provider, Setup) ->
+    case maps:find(<<"external_id">>, Provider) of
+        {ok, External} -> External;
+        error ->
+            case maps:find(<<"aws_batch_external_id">>, Setup) of
+                {ok, Prepared} -> Prepared;
+                error -> new_external_id()
+            end
+    end.
+
+%% This is a nonsecret identifier used in a trust policy, not a credential.
+%% The operator explicitly configures the IAM *role* whose AWS credentials
+%% are used by the ECAI coordinator; never suggest trusting an AWS wildcard.
+coordinator_principal() ->
+    Value = application:get_env(ecai, compute_aws_coordinator_role_arn, undefined),
+    Role =
+        case Value of
+            Bin when is_binary(Bin) -> Bin;
+            Str when is_list(Str) ->
+                try unicode:characters_to_binary(Str)
+                catch _:_ -> <<>> end;
+            _ -> <<>>
+        end,
+    case text_ok(Role, <<"^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9_+=,.@/-]+$">>) of
+        true -> Role;
+        false -> null
     end.
 
 account(T, Owner) ->
@@ -327,6 +487,8 @@ account_snapshot(T, Owner, Account) ->
         T
     ),
     Account#{
+        <<"provider_setup">> => maps:get(<<"provider_setup">>, Account, #{}),
+        <<"connection_hints">> => #{<<"aws_coordinator_role_arn">> => coordinator_principal()},
         <<"period_utc">> => month_utc(),
         <<"reserved_compute_cents">> => maps:get(compute, Totals),
         <<"reserved_mint_cents">> => maps:get(mint, Totals),
@@ -407,10 +569,9 @@ validate_provider(<<"aws_batch">>, Input) when is_map(Input) ->
             text_ok(Arn, <<"^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9_+=,.@/-]+$">>) andalso
             lengths(Input, Fields) andalso
             text_ok(maps:get(<<"region">>, Input, <<>>), <<"^[a-z0-9-]+$">>) andalso
-            lists:all(
-                fun(K) -> text_ok(maps:get(K, Input, <<>>), <<"^[A-Za-z0-9._/-]+$">>) end,
-                [<<"job_queue">>, <<"job_definition">>]
-            ) andalso
+            text_ok(maps:get(<<"job_queue">>, Input, <<>>), <<"^[A-Za-z0-9._/-]+$">>) andalso
+            %% Automatic imports pin the exact approved definition revision.
+            text_ok(maps:get(<<"job_definition">>, Input, <<>>), <<"^[A-Za-z0-9._/-]+(:[1-9][0-9]*)?$">>) andalso
             text_ok(maps:get(<<"bucket">>, Input, <<>>), <<"^[a-z0-9.-]+$">>)
     of
         true -> {ok, Input};
@@ -556,3 +717,8 @@ mint_check(Mint, Sha, Recipient, Fee, Budget, Current) ->
                 true -> ok
             end
     end.
+
+%% Older requests have implicit one-copy/empty descriptive metadata defaults.
+same_mint_metadata(Old, New) ->
+    Old#{<<"requested_copies">> => maps:get(<<"requested_copies">>, Old, 1),
+         <<"requested_metadata">> => maps:get(<<"requested_metadata">>, Old, #{})} =:= New.

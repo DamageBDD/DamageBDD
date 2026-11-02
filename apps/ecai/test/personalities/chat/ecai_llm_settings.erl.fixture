@@ -1,0 +1,5 @@
+%% Isolated chat test: retain the configured-router call and exercise the
+%% local Ollama fallback. No production configuration is read in this fixture.
+-module(ecai_llm_settings).
+-export([route_chat/0]).
+route_chat() -> false.

@@ -29,6 +29,7 @@ get_trails() ->
     
     Trails =
         [
+            {"/api/themes/css", damage_theme_http, #{action => css}},
             {"/bop/", cowboy_static, {priv_file, bop, "static/bop.html"}},
             {"/bop/ws/auth", lightning_auth_ws, #{}},
             {"/bop/ws/", bop_ws, #{}}

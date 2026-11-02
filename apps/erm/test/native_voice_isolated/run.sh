@@ -16,6 +16,7 @@ c++ -std=c++17 -pthread -Wall -Wextra -Werror -I"$native_tests/sdk" \
     "$native_root/apps/erm/c_src/erm_native_voice.cpp" -o "$NATIVE_TEST_TMP/native_worker"
 for f in "$native_tests"/*.erl.src; do cp "$f" "$NATIVE_TEST_TMP/$(basename "$f" .src)"; done
 erlc -Werror -o "$NATIVE_TEST_TMP" "$native_root/apps/erm/src/erm_native_voice.erl" \
+    "$native_root/apps/erm/src/erm_voice_calibration.erl" \
     "$native_root/apps/erm/src/erm_voice_boundary.erl" \
     "$native_root/apps/erm/src/erm_voice_acoustics.erl" \
     "$native_root/apps/erm/src/erm_voice_tune.erl" "$NATIVE_TEST_TMP"/*.erl

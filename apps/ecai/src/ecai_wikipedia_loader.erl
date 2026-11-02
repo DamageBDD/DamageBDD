@@ -518,6 +518,7 @@ default_index(Json, Opts) when is_map(Json), is_map(Opts) ->
     ok = ecai_search:upsert_record(Ctx, DocId, Rec),
     Abstract = maps:get(<<"abstract">>, Json, <<>>),
     ok = ecai_search:index_text(Ctx, DocId, <<"abstract">>, Abstract, 120),
+    ok = ecai_source_retrieval:index_text(Ctx, DocId, Rec),
     ok = notify_record(Opts, DocId, Rec, Abstract),
     ok.
 
@@ -591,7 +592,15 @@ wiki_to_search_record(J) ->
         categories => Categories,
         ecai_source => maps:get(<<"ecai_source">>, J, #{})
     },
-    {PageId, Data}.
+    SourceFields = maps:from_list([
+        {Atom, Value} || {Bin, Atom} <- [
+            {<<"source_text">>, source_text}, {<<"source_sha256">>, source_sha256},
+            {<<"source_bytes">>, source_bytes}, {<<"source_complete">>, source_complete},
+            {<<"source_representation">>, source_representation},
+            {<<"source_index_token_limit">>, source_index_token_limit}],
+        {ok, Value} <- [maps:find(Bin, J)]
+    ]),
+    {PageId, maps:merge(Data, SourceFields)}.
 
 %% ---------------- Helpers ----------------
 

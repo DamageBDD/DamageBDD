@@ -1,0 +1,178 @@
+@compiler >= 6
+
+include "String.aes"
+include "./core/IAEX141NFTReceiver.aes"
+
+// Lightning settlement is verified OFF CHAIN by the trusted minter. A payment
+// hash here is a unique receipt binding, NOT a Lightning proof or preimage.
+contract ECAIPersonalityNFT =
+    datatype event
+        = Transfer(address, address, int)
+        | Approval(address, address, int, string)
+        | ApprovalForAll(address, address, string)
+        | Mint(address, int)
+        | CollectionRegistered(bytes(32), int)
+        | OrderMinted(bytes(32), bytes(32), int)
+        | MinterChanged(address)
+
+    datatype metadata_type = URL | OBJECT_ID | MAP
+    datatype metadata = MetadataIdentifier(string) | MetadataMap(map(string, string))
+    record meta_info =
+        { name: string, symbol: string, base_url: option(string), metadata_type: metadata_type }
+    record collection =
+        { package_hash: bytes(32), manifest_uri: string, edition_limit: int, issued: int }
+    record receipt =
+        { token_id: int, collection_key: bytes(32), recipient: address,
+          payment_hash: bytes(32), price_sats: int, minted_height: int }
+    record state =
+        { admin: address, minter: address, info: meta_info,
+          collections: map(bytes(32), collection), receipts: map(bytes(32), receipt),
+          payment_orders: map(bytes(32), bytes(32)), token_orders: map(int, bytes(32)),
+          owners: map(int, address), balances: map(address, int),
+          approvals: map(int, address), operators: map(address, map(address, bool)),
+          supply: int }
+
+    entrypoint init(name: string, symbol: string, minter: address) =
+        require(String.length(name) > 0 && String.length(symbol) > 0, "EMPTY_NAME_OR_SYMBOL")
+        { admin = Contract.creator, minter = minter,
+          info = { name = name, symbol = symbol, base_url = None, metadata_type = URL },
+          collections = {}, receipts = {}, payment_orders = {}, token_orders = {},
+          owners = {}, balances = {}, approvals = {}, operators = {}, supply = 0 }
+
+    entrypoint protocol_version() : string = "ecai-personality-nft/1"
+    entrypoint minter() : address = state.minter
+    entrypoint admin() : address = state.admin
+    // The custom mint API deliberately does not advertise the standard
+    // 'mintable' extension, whose unrestricted metadata signature we do not expose.
+    entrypoint aex141_extensions() : list(string) = ["ecai_personality_receipts_v1"]
+    entrypoint meta_info() : meta_info = state.info
+    entrypoint total_supply() : int = state.supply
+    entrypoint balance(account: address) : option(int) = Map.lookup(account, state.balances)
+    entrypoint owner(token_id: int) : option(address) = Map.lookup(token_id, state.owners)
+
+    entrypoint metadata(token_id: int) : option(metadata) =
+        switch(Map.lookup(token_id, state.token_orders))
+            None => None
+            Some(order_key) =>
+                let r = state.receipts[order_key]
+                Some(MetadataIdentifier(state.collections[r.collection_key].manifest_uri))
+
+    stateful entrypoint set_minter(next: address) =
+        require(Call.caller == state.admin, "ONLY_ADMIN")
+        put(state{minter = next})
+        Chain.event(MinterChanged(next))
+
+    // Immutable registration: repeating an identical registration is harmless;
+    // changing a cap, URI, or package commitment always aborts.
+    stateful entrypoint register_collection(key: bytes(32), package_hash: bytes(32), manifest_uri: string, edition_limit: int) =
+        require(Call.caller == state.admin, "ONLY_ADMIN")
+        require(edition_limit > 0, "INVALID_EDITION_LIMIT")
+        require(String.length(manifest_uri) > 0, "EMPTY_MANIFEST_URI")
+        switch(Map.lookup(key, state.collections))
+            Some(c) =>
+                require(c.package_hash == package_hash && c.manifest_uri == manifest_uri && c.edition_limit == edition_limit, "COLLECTION_BINDING_CONFLICT")
+            None =>
+                put(state{collections[key] = {package_hash = package_hash, manifest_uri = manifest_uri, edition_limit = edition_limit, issued = 0}})
+                Chain.event(CollectionRegistered(key, edition_limit))
+
+    entrypoint collection_info(key: bytes(32)) : option(bytes(32) * string * int * int) =
+        switch(Map.lookup(key, state.collections))
+            None => None
+            Some(c) => Some((c.package_hash, c.manifest_uri, c.edition_limit, c.issued))
+
+    // Flat tuple supports strict adapter validation independent of record encodings.
+    entrypoint receipt_for_order(order_key: bytes(32)) : option(int * bytes(32) * address * bytes(32) * string * int * bytes(32) * int * int * int) =
+        switch(Map.lookup(order_key, state.receipts))
+            None => None
+            Some(r) =>
+                let c = state.collections[r.collection_key]
+                Some((r.token_id, r.collection_key, r.recipient, c.package_hash, c.manifest_uri, c.edition_limit, r.payment_hash, r.price_sats, r.minted_height, Chain.block_height))
+
+    entrypoint order_for_payment(payment_hash: bytes(32)) : option(bytes(32)) =
+        Map.lookup(payment_hash, state.payment_orders)
+
+    stateful entrypoint mint_paid(order_key: bytes(32), collection_key: bytes(32), to: address, payment_hash: bytes(32), price_sats: int, data: option(string)) : int =
+        require(Call.caller == state.minter, "ONLY_MINTER")
+        require(price_sats > 0, "INVALID_PRICE")
+        switch(Map.lookup(order_key, state.receipts))
+            Some(r) =>
+                // Check idempotency BEFORE cap so the last edition remains retryable.
+                require(r.collection_key == collection_key && r.recipient == to && r.payment_hash == payment_hash && r.price_sats == price_sats, "ORDER_BINDING_CONFLICT")
+                r.token_id
+            None =>
+                require(!Map.member(payment_hash, state.payment_orders), "PAYMENT_ALREADY_USED")
+                let c = switch(Map.lookup(collection_key, state.collections))
+                    None => abort("COLLECTION_NOT_REGISTERED")
+                    Some(v) => v
+                require(c.issued < c.edition_limit, "EDITION_LIMIT_REACHED")
+                let id = state.supply + 1
+                let r = {token_id = id, collection_key = collection_key, recipient = to, payment_hash = payment_hash, price_sats = price_sats, minted_height = Chain.block_height}
+                put(state{collections[collection_key] = c{issued = c.issued + 1},
+                          receipts[order_key] = r, payment_orders[payment_hash] = order_key,
+                          token_orders[id] = order_key, owners[id] = to,
+                          balances[to = 0] @b = b + 1, supply = id})
+                require_receiver(None, to, id, data)
+                Chain.event(Mint(to, id))
+                Chain.event(OrderMinted(order_key, payment_hash, id))
+                id
+
+    stateful entrypoint transfer(to: address, token_id: int, data: option(string)) =
+        let from = require_authorized(token_id)
+        move_token(from, to, token_id)
+        require_receiver(Some(from), to, token_id, data)
+        Chain.event(Transfer(from, to, token_id))
+
+    stateful entrypoint transfer_to_contract(token_id: int) =
+        require(Address.is_contract(Call.caller), "CALLER_MUST_BE_A_CONTRACT")
+        let from = require_authorized(token_id)
+        move_token(from, Call.caller, token_id)
+        Chain.event(Transfer(from, Call.caller, token_id))
+
+    stateful entrypoint approve(approved: address, token_id: int, enabled: bool) =
+        let holder = require_owner(token_id)
+        require(Call.caller == holder || is_approved_for_all(holder, Call.caller), "ONLY_OWNER_OR_OPERATOR")
+        if(enabled)
+            put(state{approvals[token_id] = approved})
+        else
+            put(state{approvals = Map.delete(token_id, state.approvals)})
+        Chain.event(Approval(holder, approved, token_id, bool_string(enabled)))
+
+    stateful entrypoint approve_all(operator: address, enabled: bool) =
+        put(state{operators @ops = ops{[Call.caller = {}] @os = os{[operator] = enabled}}})
+        Chain.event(ApprovalForAll(Call.caller, operator, bool_string(enabled)))
+
+    entrypoint get_approved(token_id: int) : option(address) =
+        let _ = require_owner(token_id)
+        Map.lookup(token_id, state.approvals)
+
+    entrypoint is_approved(token_id: int, approved: address) : bool =
+        get_approved(token_id) == Some(approved)
+
+    entrypoint is_approved_for_all(holder: address, operator: address) : bool =
+        Map.lookup_default(operator, Map.lookup_default(holder, state.operators, {}), false)
+
+    function require_owner(token_id: int) : address =
+        switch(owner(token_id))
+            None => abort("TOKEN_NOT_EXISTS")
+            Some(holder) => holder
+
+    function require_authorized(token_id: int) : address =
+        let holder = require_owner(token_id)
+        require(Call.caller == holder || is_approved(token_id, Call.caller) || is_approved_for_all(holder, Call.caller), "ONLY_OWNER_APPROVED_OR_OPERATOR")
+        holder
+
+    stateful function move_token(from: address, to: address, token_id: int) =
+        require(from != to, "SENDER_MUST_NOT_BE_RECEIVER")
+        put(state{approvals = Map.delete(token_id, state.approvals),
+                  balances[from] @b = b - 1, balances[to = 0] @b = b + 1,
+                  owners[token_id] = to})
+
+    function require_receiver(from: option(address), to: address, token_id: int, data: option(string)) =
+        if(Address.is_contract(to))
+            let receiver = Address.to_contract(to)
+            switch(receiver.on_aex141_received(from, token_id, data, protected = true) : option(bool))
+                Some(true) => ()
+                _ => abort("SAFE_TRANSFER_FAILED")
+
+    function bool_string(v: bool) : string =
+        if(v) "true" else "false"

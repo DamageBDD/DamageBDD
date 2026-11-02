@@ -258,7 +258,7 @@ collect_disk_index(Spec, AdapterResult) ->
     %% below replaces it with content hashes and optional CIDs.
     ExtraPaths = [
         filename:join([BaseDir, "docstore", "ecai_docstore.dets"])
-    ],
+    ] ++ filelib:wildcard(filename:join([BaseDir, "sources", "*.bin"])),
     Existing = [Path || Path <- SegmentPaths ++ ExtraPaths, filelib:is_regular(Path)],
     case SegmentPaths of
         [] -> artifact_error({no_published_segments, BaseDirBin});
@@ -271,7 +271,10 @@ collect_disk_index(Spec, AdapterResult) ->
     ),
     Logical = #{
         mode => searchable_disk,
-        segment_count => length(SegmentPaths)
+        segment_count => length(SegmentPaths),
+        source_retrieval => #{storage => content_addressed_blobs,
+            digest => sha256, completeness => per_record_descriptor,
+            legacy_records_may_be_partial => true}
     },
     {Counts, Files, Logical}.
 

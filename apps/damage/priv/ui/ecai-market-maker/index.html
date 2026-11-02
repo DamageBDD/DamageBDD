@@ -17,7 +17,8 @@
       <div><p class="eyebrow">GEOMETRIC LIQUIDITY ENGINE / COINSTORE</p><h1>DamageToken <span>/</span> Bitcoin</h1><p class="subtext">Inventory-aware quotes, elliptic-curve decision fingerprints, and auditable mark-to-market performance.</p></div>
       <div class="commit"><span class="subtle">P-256 STATE COMMITMENT</span><code id="audit-tip">Awaiting first market observation</code><span class="subtle" id="event-count">0 events</span></div>
     </section>
-    <div id="banner" class="banner" role="status">No market data yet. The dashboard only plots observations received from your configured ECAI worker.</div>
+    <div id="banner" class="banner" role="status">Waiting for live order-book status. Historical price candles are displayed separately and never enable paper execution.</div>
+    <div id="cache-state" class="banner" role="status">Loading persistent price history…</div>
     <section class="stats">
       <article><span>DAMAGE / USDT</span><strong id="damage-price">—</strong><small>Coinstore order-book mid</small></article>
       <article><span>BTC / USDT</span><strong id="btc-price">—</strong><small>Coinstore ticker</small></article>
@@ -28,9 +29,12 @@
     </section>
     <section class="charts">
       <article class="panel">
-        <div class="panel-head"><div><p class="eyebrow">RELATIVE MARKET PERFORMANCE</p><h2>DAMAGE vs BTC</h2></div><span class="panel-tag">INDEXED TO 100</span></div>
+        <div class="panel-head"><div><p class="eyebrow">RELATIVE MARKET PERFORMANCE</p><h2>DAMAGE vs BTC</h2></div><label class="panel-tag" for="history-period">CANDLE PERIOD
+          <select id="history-period"><option value="60min">1 hour</option><option value="1day">1 day</option></select>
+        </label></div>
         <div class="legend"><span><i class="dot damage"></i>DAMAGEUSDT</span><span><i class="dot btc"></i>BTCUSDT</span></div>
-        <div class="plot"><canvas id="market-chart" aria-label="DAMAGE and BTC relative price movement"></canvas><div id="market-empty" class="empty">Collecting real Coinstore samples…</div></div>
+        <p id="market-source" class="subtle">Historical close prices · indexed to 100 at the first shared timestamp</p>
+        <div class="plot"><canvas id="market-chart" aria-label="DAMAGE and BTC relative price movement"></canvas><div id="market-empty" class="empty">No aligned closed candles cached for this period yet.</div></div>
       </article>
       <article class="panel">
         <div class="panel-head"><div><p class="eyebrow">PAPER PERFORMANCE / USDT</p><h2>Market maker vs BTC</h2></div><span class="panel-tag">MARK-TO-MARKET</span></div>

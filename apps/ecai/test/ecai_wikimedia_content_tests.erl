@@ -157,3 +157,23 @@ remove_tree(Path) ->
         _ ->
             ok
     end.
+
+complete_dump_field_is_retained_independently_of_excerpt_test() ->
+    Body = <<"Opening. ",(binary:copy(<<"body token ">>,2000))/binary," tailneedle">>,
+    Source = #{<<"page_id">> => 11,<<"title">> => <<"Fixture">>,<<"namespace">> => 0,
+               <<"opening_text">> => <<"Opening.">>,<<"text">> => Body},
+    V = #{rank => 1,page_id => 11,title => <<"Fixture">>,pageviews => 1,active_months => 1},
+    {ok,D} = ecai_wikimedia_content:normalize_document(Source,V,runtime_fixture(),<<"Fixture">>),
+    ?assertEqual(<<"Opening.">>,maps:get(<<"abstract">>,D)),
+    ?assertEqual(Body,maps:get(<<"source_text">>,D)),
+    ?assertEqual(true,maps:get(<<"source_complete">>,D)),
+    ?assertEqual(byte_size(Body),maps:get(<<"source_bytes">>,D)),
+    ?assertEqual(ecai_index_job_codec:id_hex(crypto:hash(sha256,Body)),maps:get(<<"source_sha256">>,D)).
+
+opening_only_source_is_explicitly_partial_test() ->
+    Source = #{<<"page_id">> => 12,<<"title">> => <<"Partial">>,<<"namespace">> => 0,
+               <<"opening_text">> => <<"Only the opening is supplied">>},
+    V = #{rank => 1,page_id => 12,title => <<"Partial">>,pageviews => 1,active_months => 1},
+    {ok,D} = ecai_wikimedia_content:normalize_document(Source,V,runtime_fixture(),<<"Partial">>),
+    ?assertEqual(false,maps:get(<<"source_complete">>,D)),
+    ?assertEqual(<<"cirrus_excerpt">>,maps:get(<<"source_representation">>,D)).

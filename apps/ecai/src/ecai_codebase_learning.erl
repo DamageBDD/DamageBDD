@@ -36,6 +36,17 @@
     incidents/2,
     events/2,
     events/3,
+    release_memory_status/0,
+    release_changes/0,
+    release_manual/0,
+    release_manual/1,
+    release_manual/2,
+    release_diff/2,
+    breaking_changes/0,
+    config_changes/0,
+    mark_deployed/2,
+    write_release_manual/0,
+    write_release_manual/1,
     release_candidate/0,
     release_candidate/1,
     release_candidate_tags/0,
@@ -71,6 +82,7 @@ status() ->
         health_monitor => safe_call(fun ecai_health_monitor:status/0),
         log_bridge => safe_call(fun damage_ecai_log_bridge:status/0),
         log_learning => safe_call(fun ecai_log_learning:status/0),
+        release_memory => safe_call(fun ecai_release_memory:status/0),
         snapshot_path => snapshot_path()
     }.
 
@@ -127,6 +139,9 @@ durability() ->
         log_learning => checkpoint_summary(
             ecai_learning_store:get_checkpoint(ecai_log_learning)
         ),
+        release_memory => checkpoint_summary(
+            ecai_learning_store:get_checkpoint(release_memory)
+        ),
         store => safe_call(fun ecai_learning_store:status/0),
         integration => safe_call(fun ecai_patch_integration:status/0)
     }.
@@ -144,6 +159,26 @@ incidents(App, Module) -> ecai_log_learning:incidents(App, Module).
 
 events(Type, Id) -> ecai_learning_store:events(Type, Id).
 events(Type, Id, Limit) -> ecai_learning_store:events(Type, Id, Limit).
+
+release_memory_status() -> ecai_release_memory:status().
+release_changes() -> ecai_release_memory:changes().
+release_manual() -> ecai_release_memory:manual().
+release_manual(Environment) -> ecai_release_memory:manual(Environment).
+release_manual(Base, Head) -> ecai_release_memory:manual_between(Base, Head).
+release_diff(Base, Head) -> ecai_release_memory:analyse_range(Base, Head).
+breaking_changes() ->
+    case release_manual() of
+        {ok, Manual} -> {ok, maps:get(breaking_changes, Manual, [])};
+        {error, _} = Error -> Error
+    end.
+config_changes() ->
+    case release_manual() of
+        {ok, Manual} -> {ok, maps:get(config_changes, Manual, [])};
+        {error, _} = Error -> Error
+    end.
+mark_deployed(Environment, Ref) -> ecai_release_memory:mark_deployed(Environment, Ref).
+write_release_manual() -> ecai_release_memory:write_manual().
+write_release_manual(Environment) -> ecai_release_memory:write_manual(Environment).
 
 release_candidate() -> ecai_release_candidate:propose().
 release_candidate(Opts) when is_map(Opts) -> ecai_release_candidate:propose(Opts).

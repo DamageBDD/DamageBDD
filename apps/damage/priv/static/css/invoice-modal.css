@@ -91,33 +91,33 @@
 /* Base style (not selected) */
 #invoice-modal [data-token-tabs] [role="tab"]{
   background: transparent !important;
-  color: rgba(255,255,255,0.78) !important;
+  color: var(--theme-text, rgba(255,255,255,0.78)) !important;
   box-shadow: none !important;
 }
 
 /* Active tab */
 #invoice-modal [data-token-tabs] [role="tab"][aria-selected="true"]{
-  background: rgba(0, 140, 255, 0.35) !important;
-  color: #fff !important;
-  box-shadow: 0 6px 16px rgba(0,0,0,0.25) !important;
+  background: var(--theme-accent-soft, rgba(0, 140, 255, 0.35)) !important;
+  color: var(--theme-text, #fff) !important;
+  box-shadow: 0 6px 16px var(--theme-shadow, rgba(0,0,0,0.25)) !important;
 }
 
 /* Ensure default marker DOES NOT look active unless it's actually selected */
 #invoice-modal [data-token-tabs] [role="tab"][data-tabby-default]:not([aria-selected="true"]){
   background: transparent !important;
-  color: rgba(255,255,255,0.78) !important;
+  color: var(--theme-text, rgba(255,255,255,0.78)) !important;
   box-shadow: none !important;
 }
 
 /* Hover should not mimic "selected" */
 #invoice-modal [data-token-tabs] [role="tab"]:hover{
-  background: rgba(255,255,255,0.06) !important;
-  color: rgba(255,255,255,0.92) !important;
+  background: var(--theme-accent-soft, rgba(255,255,255,0.06)) !important;
+  color: var(--theme-text, rgba(255,255,255,0.92)) !important;
 }
 #invoice-price-hint{
   margin-top: .35rem;
   font-size: .9rem;
-  color: rgba(255,255,255,0.8);
+  color: var(--theme-muted, rgba(255,255,255,0.8));
 }
 
 /* make the icon a real button cell, not overlay */
@@ -239,10 +239,10 @@
 /* === Invoice Detail Expand === */
 details {
     margin-top: 1rem;
-    background-color: #2a2a3d;
+    background-color: var(--theme-surface, #2a2a3d);
     padding: 0.75rem;
     border-radius: 6px;
-    color: #ddd;
+    color: var(--theme-text, #ddd);
 }
 
 summary {
@@ -254,8 +254,8 @@ textarea#lightning-invoice-input {
     font-family: monospace;
     font-size: 0.85rem;
     resize: none;
-    background-color: #1a1a1a;
-    color: #eee;
+    background-color: var(--theme-input, #1a1a1a);
+    color: var(--theme-text, #eee);
     padding: 1rem;
     border-radius: 6px;
     border: none;

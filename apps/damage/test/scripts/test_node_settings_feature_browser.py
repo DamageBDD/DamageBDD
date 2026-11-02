@@ -61,7 +61,7 @@ class FeatureSettingsBrowserTests(unittest.TestCase):
         payload = {**(fixture or FIXTURE), 'app': app}
         self.page.evaluate('(data) => { window.fetch = async () => ({ok:true, status:200, json: async () => data}); }', payload)
         self.page.add_script_tag(content=(PRIV / 'js' / 'damage-config-editor.js').read_text())
-        label = 'DamageBDD' if app == 'damage' else 'BOP'
+        label = {'damage': 'DamageBDD', 'ecai': 'ECAI', 'bop': 'BOP'}.get(app, app)
         self.page.locator('#settings-app-name').filter(has_text=label).wait_for()
 
     def test_tax_settings_group_and_restart_warning(self):
@@ -159,6 +159,73 @@ class FeatureSettingsBrowserTests(unittest.TestCase):
         self.assertIn('{{^tax_enabled}}', tab)
         self.assertIn('href="#tax-settings-heading"', tab)
         self.assertIn('{{#tax_enabled}}', tab)
+
+    def test_market_maker_enable_and_advanced_numeric_controls(self):
+        fixture = {
+            'version': 'market-fixture', 'pending_restart': [],
+            'market_maker': {'enabled': False, 'running': False,
+                             'state': 'disabled', 'mode': 'paper',
+                             'execution_enabled': False, 'error': None},
+            'groups': [{'id': 'marketplace', 'label': 'Marketplace & rewards',
+                        'description': 'Market maker and index rewards'}],
+            'fields': [
+                {'name': 'market_maker_enabled', 'group': 'marketplace',
+                 'label': 'Enable ECAI paper market maker', 'type': 'boolean',
+                 'apply': 'hot', 'source': 'default', 'value': False,
+                 'overridden': False},
+                {'name': 'market_maker_base_half_spread_bps', 'group': 'marketplace',
+                 'label': 'Base half spread (bps)', 'type': 'number',
+                 'min': 0.1, 'max': 1500, 'apply': 'hot', 'source': 'default',
+                 'value': 30, 'overridden': False},
+                {'name': 'market_maker_levels', 'group': 'marketplace',
+                 'label': 'Quote levels', 'type': 'integer', 'min': 1,
+                 'max': 16, 'apply': 'hot', 'source': 'default',
+                 'value': 4, 'overridden': False},
+            ],
+            'discovered': [
+                {'name': 'market_maker_accounts', 'group': 'marketplace',
+                 'restriction': 'protected'},
+                {'name': 'marketplace_enabled', 'group': 'marketplace',
+                 'restriction': 'unmodeled'},
+            ]
+        }
+        self.render('ecai', fixture=fixture)
+        self.assertTrue(self.page.locator('#setting-market_maker_enabled').is_visible())
+        self.assertFalse(self.page.locator('#setting-market_maker_base_half_spread_bps').is_visible())
+        self.assertIn('Disabled', self.page.locator('.settings-market-runtime').inner_text())
+        self.assertEqual('/ecai/market-maker',
+            self.page.locator('.settings-market-note a').get_attribute('href'))
+        self.assertEqual(0, self.page.locator('#setting-marketplace_enabled').count())
+        self.page.locator('.settings-market-advanced summary').click()
+        control = self.page.locator('#setting-market_maker_base_half_spread_bps')
+        self.assertEqual('any', control.get_attribute('step'))
+        control.fill('40.5')
+        self.page.locator('#setting-market_maker_enabled').check()
+        self.assertTrue(self.page.locator('#settings-save').is_enabled())
+        self.page.evaluate("""() => {
+          window.__marketPosts = [];
+          const original = window.fetch;
+          window.fetch = async (url, options = {}) => {
+            if (options.method === 'POST') {
+              window.__marketPosts.push(JSON.parse(options.body));
+              return {ok: true, status: 200, json: async () => ({})};
+            }
+            return original(url, options);
+          };
+        }""")
+        self.page.locator('#settings-save').click()
+        self.page.locator('#settings-notice').filter(has_text='reconciling').wait_for()
+        post = self.page.evaluate('window.__marketPosts[0]')
+        self.assertEqual('save', post['action'])
+        self.assertEqual('market-fixture', post['version'])
+        self.assertEqual(True, post['changes']['market_maker_enabled'])
+        self.assertEqual(40.5, post['changes']['market_maker_base_half_spread_bps'])
+        self.page.locator('#settings-search').fill('market_maker_levels')
+        self.assertTrue(self.page.locator('#setting-market_maker_levels').is_visible())
+        self.page.locator('#settings-search').fill('market_maker_accounts')
+        self.assertEqual(0, self.page.locator('#setting-market_maker_accounts').count())
+        self.assertEqual('Protected',
+            self.page.locator('.settings-discovered-status.protected').inner_text())
 
     def test_groups_and_five_apps(self):
         self.render()

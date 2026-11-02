@@ -33,6 +33,12 @@
     log_incidents/0,
     log_incidents/1,
     log_incidents/2,
+    put_release_change/2,
+    get_release_change/1,
+    release_changes/0,
+    put_release_baseline/2,
+    get_release_baseline/1,
+    release_baselines/0,
     put_checkpoint/2,
     get_checkpoint/1,
     delete_checkpoint/1,
@@ -144,6 +150,22 @@ log_incidents(Limit) when is_integer(Limit), Limit > 0 ->
     gen_server:call(?SERVER, {log_incidents, Limit}, infinity).
 log_incidents(App, Module) when is_atom(App), is_atom(Module) ->
     gen_server:call(?SERVER, {log_incidents, App, Module}, infinity).
+
+put_release_change(Commit, Change) when is_map(Change) ->
+    CommitBin = to_binary(Commit),
+    gen_server:call(?SERVER, {put, {release_change, CommitBin}, Change}, infinity).
+get_release_change(Commit) ->
+    gen_server:call(?SERVER, {get, {release_change, to_binary(Commit)}}).
+release_changes() ->
+    gen_server:call(?SERVER, release_changes, infinity).
+
+put_release_baseline(Environment, Baseline) when is_map(Baseline) ->
+    Name = to_binary(Environment),
+    gen_server:call(?SERVER, {put, {release_baseline, Name}, Baseline}, infinity).
+get_release_baseline(Environment) ->
+    gen_server:call(?SERVER, {get, {release_baseline, to_binary(Environment)}}).
+release_baselines() ->
+    gen_server:call(?SERVER, release_baselines, infinity).
 
 put_checkpoint(Name, Checkpoint) when is_atom(Name), is_map(Checkpoint) ->
     gen_server:call(?SERVER, {put_checkpoint, Name, Checkpoint}, infinity).
@@ -277,6 +299,10 @@ handle_call({log_incidents, Limit}, _From, State) ->
     {reply, lists:sublist(Incidents, Limit), State};
 handle_call({log_incidents, App, Module}, _From, State) ->
     {reply, collect_log_incidents(State#state.tab, {App, Module}), State};
+handle_call(release_changes, _From, State) ->
+    {reply, collect_release_changes(State#state.tab), State};
+handle_call(release_baselines, _From, State) ->
+    {reply, collect_release_baselines(State#state.tab), State};
 handle_call({events, Type, Id, Limit}, _From, State) ->
     {reply, collect_events(State#state.tab, Type, Id, Limit), State};
 handle_call(snapshot_data, _From, State) ->
@@ -433,6 +459,38 @@ collect_events(Tab, Type, Id, Limit) ->
     Sorted = lists:reverse(lists:keysort(1, Events)),
     [Event || {_Seq, Event} <- lists:sublist(Sorted, Limit)].
 
+
+collect_release_changes(Tab) ->
+    Changes = dets:foldl(
+        fun
+            ({{release_change, Commit}, Change}, Acc) when is_map(Change) ->
+                [Change#{commit => Commit} | Acc];
+            (_, Acc) ->
+                Acc
+        end,
+        [],
+        Tab
+    ),
+    lists:sort(
+        fun(A, B) ->
+            {maps:get(authored_at, A, <<>>), maps:get(commit, A, <<>>)} =<
+                {maps:get(authored_at, B, <<>>), maps:get(commit, B, <<>>)}
+        end,
+        Changes
+    ).
+
+collect_release_baselines(Tab) ->
+    dets:foldl(
+        fun
+            ({{release_baseline, Name}, Baseline}, Acc) when is_map(Baseline) ->
+                Acc#{Name => Baseline};
+            (_, Acc) ->
+                Acc
+        end,
+        #{},
+        Tab
+    ).
+
 collect_repairs(Tab, Filter) ->
     lists:reverse(
         dets:foldl(
@@ -531,6 +589,19 @@ build_snapshot_data(Tab) ->
                 Acc#{log_incidents => [ThinIncident#{fingerprint => Fingerprint} | Incidents0]};
             ({{log_incident, _Fingerprint}, _MalformedIncident}, Acc) ->
                 Acc;
+            ({{release_change, Commit}, Change}, Acc) when is_map(Change) ->
+                Release0 = maps:get(release_memory, Acc, #{}),
+                Count = maps:get(change_count, Release0, 0) + 1,
+                Latest0 = maps:get(latest, Release0, #{}),
+                Latest = latest_release_snapshot(
+                    Latest0,
+                    (maps:with([authored_at, subject, evidence_sha256], Change))#{commit => Commit}
+                ),
+                Acc#{release_memory => Release0#{change_count => Count, latest => Latest}};
+            ({{release_baseline, Name}, Baseline}, Acc) when is_map(Baseline) ->
+                Release0 = maps:get(release_memory, Acc, #{}),
+                Baselines0 = maps:get(baselines, Release0, #{}),
+                Acc#{release_memory => Release0#{baselines => Baselines0#{Name => Baseline}}};
             ({{checkpoint, Name}, Checkpoint}, Acc) ->
                 Runtime0 = maps:get(runtime_checkpoints, Acc, #{}),
                 Acc#{runtime_checkpoints => Runtime0#{Name => checkpoint_snapshot(Checkpoint)}};
@@ -547,10 +618,23 @@ build_snapshot_data(Tab) ->
             runtime_checkpoints => #{},
             global_knowledge => #{},
             relation_sets => #{},
-            relation_benchmarks => #{}
+            relation_benchmarks => #{},
+            release_memory => #{change_count => 0, baselines => #{}, latest => #{}}
         },
         Tab
     ).
+
+
+latest_release_snapshot(
+    #{authored_at := ExistingAt, commit := ExistingCommit} = Existing,
+    #{authored_at := CandidateAt, commit := CandidateCommit} = Candidate
+) ->
+    case {CandidateAt, CandidateCommit} >= {ExistingAt, ExistingCommit} of
+        true -> Candidate;
+        false -> Existing
+    end;
+latest_release_snapshot(_Existing, Candidate) ->
+    Candidate.
 
 relation_key_digest(Keys) ->
     Sorted = lists:sort(Keys),

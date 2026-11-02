@@ -797,6 +797,9 @@ requested_provider(any) -> any;
 requested_provider(undefined) -> any;
 requested_provider(Value) -> inference_provider(Value).
 
+inference_provider(anthropic) -> anthropic;
+inference_provider(<<"anthropic">>) -> anthropic;
+inference_provider("anthropic") -> anthropic;
 inference_provider(openai) -> openai;
 inference_provider(ollama) -> ollama;
 inference_provider(<<"openai">>) -> openai;
@@ -840,13 +843,40 @@ finish_cycle(State0) ->
     case GlobalResult of
         ok ->
             ok = refresh_relations(State0),
-            State0#state{ready = true, last_completed_at = now_iso8601()};
+            case refresh_release_memory(State0) of
+                ok ->
+                    State0#state{ready = true, last_completed_at = now_iso8601()};
+                {error, Reason} ->
+                    State0#state{
+                        ready = false,
+                        last_error = {release_memory_failed, Reason},
+                        last_completed_at = now_iso8601()
+                    }
+            end;
         {error, Reason} ->
             State0#state{
                 ready = false,
                 last_error = {finalization_failed, Reason},
                 last_completed_at = now_iso8601()
             }
+    end.
+
+refresh_release_memory(State) ->
+    case application:get_env(ecai, code_release_memory_enabled, true) of
+        false ->
+            ok;
+        true ->
+            case ecai_release_memory:accumulate(State#state.opts) of
+                {ok, Summary} ->
+                    logger:info(
+                        "ECAI release memory refreshed head=~p recorded=~p",
+                        [maps:get(head, Summary, undefined), maps:get(recorded_this_cycle, Summary, 0)]
+                    ),
+                    ok;
+                {error, Reason} ->
+                    logger:error("ECAI release memory refresh failed reason=~p", [Reason]),
+                    {error, Reason}
+            end
     end.
 
 refresh_relations(State) ->
@@ -1010,7 +1040,7 @@ resolve_capacity_reserve(Opts) ->
     end.
 
 ollama_opts(Opts) ->
-    maps:get(ollama, Opts, #{}).
+    ecai_llm_settings:code_options(maps:get(ollama, Opts, #{})).
 
 runtime_policy_status() ->
     case ecai_code_runtime_config:learning_admission() of

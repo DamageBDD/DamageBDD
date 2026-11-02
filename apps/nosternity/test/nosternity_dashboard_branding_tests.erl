@@ -40,7 +40,7 @@ branding_http() ->
         includes(HTML, <<"class=\"node-logo\"">>),
         includes(HTML, <<"https://images.example:8443/logo.png?a=1&amp;b=2">>),
         includes(HTML, <<"rel=\"icon\" href=\"https://icons.example/favicon.ico\"">>),
-        includes(HTML, <<"--green:#006D77">>),
+        includes(HTML, <<"rel=\"stylesheet\" href=\"/api/themes/css?app=nosternity\"">>),
         includes(HTML, <<"content=\"#006D77\"">>),
         includes(HTML, <<"id=\"authTemplate\"">>),
         includes(HTML, <<"data-action=\"nostrLogin\"">>),
@@ -50,8 +50,15 @@ branding_http() ->
             CSP, <<"img-src 'self' data: https://icons.example https://images.example:8443;">>
         ),
         includes(CSP, <<"script-src 'self';">>),
+        includes(CSP, <<"media-src 'self' blob:;">>),
+        ?assertEqual(
+            <<"microphone=(self), on-device-speech-recognition=(self)">>,
+            proplists:get_value(<<"permissions-policy">>, Headers)
+        ),
         ?assertEqual(nomatch, binary:match(CSP, <<"logo.png">>)),
         {200, _, Auth} = get(Port, "/dashboard/fragments/auth"),
+        {200, _, Voice} = get(Port, "/dashboard/fragments/voice-note"),
+        includes(Voice, <<"Hold to talk">>),
         includes(Auth, <<"Create a Sydney &lt;Node&gt; &amp; friends account">>),
         {200, _, Root} = get(Port, "/"),
         ?assertEqual(HTML, Root),

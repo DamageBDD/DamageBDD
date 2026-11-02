@@ -120,6 +120,19 @@
 -define(PEER_BLACKLIST_TTL_CONN, 21600000).
 -define(SECRETS_RETRY_MS, 60000).
 
+%% Invoice creation has a short, bounded budget, unlike long-running payments
+%% and channel operations. Application settings are integer milliseconds.
+-define(INVOICE_CONNECT_TIMEOUT_MS, 5000).
+-define(INVOICE_HTTP_TIMEOUT_MS, 10000).
+-define(INVOICE_CHECKOUT_TIMEOUT_MS, 1000).
+-define(INVOICE_CALL_MARGIN_MS, 1000).
+-define(INVOICE_MAX_RESPONSE_BYTES, 65536).
+
+-ifdef(TEST).
+-export([invoice_request_options/2, cln_invoice_post_json/7]).
+-endif.
+
+
 %% Planning defaults
 -define(DEFAULT_CHANNEL_OPEN_SATS, 200000).
 -define(DEFAULT_RESERVE_SATS, 50000).
@@ -571,12 +584,7 @@ create_invoice(AmountMsats, Description) when
 ->
     {ok, Timestamp} = datestring:format("YmdHMS", erlang:localtime()),
     Label = list_to_binary("asyncmind" ++ Timestamp),
-    poolboy:transaction(?MODULE, fun(Worker) ->
-        gen_server:call(
-            Worker,
-            {create_invoice, AmountMsats, normalize_desc(Description), 3600, Label}
-        )
-    end).
+    create_invoice_request(AmountMsats, Description, 3600, Label).
 
 create_invoice(AmountMsats, Description, Expiry) when
     is_integer(AmountMsats),
@@ -587,12 +595,7 @@ create_invoice(AmountMsats, Description, Expiry) when
 ->
     {ok, Timestamp} = datestring:format("YmdHMS", erlang:localtime()),
     Label = list_to_binary("asyncmind" ++ Timestamp),
-    poolboy:transaction(?MODULE, fun(Worker) ->
-        gen_server:call(
-            Worker,
-            {create_invoice, AmountMsats, normalize_desc(Description), Expiry, Label}
-        )
-    end);
+    create_invoice_request(AmountMsats, Description, Expiry, Label);
 create_invoice(AmountMsats, Description, Label) when
     is_integer(AmountMsats),
     AmountMsats > 0,
@@ -600,12 +603,7 @@ create_invoice(AmountMsats, Description, Label) when
     ((is_binary(Label) andalso Label =/= <<>>) orelse
         (is_list(Label) andalso Label =/= []))
 ->
-    poolboy:transaction(?MODULE, fun(Worker) ->
-        gen_server:call(
-            Worker,
-            {create_invoice, AmountMsats, normalize_desc(Description), 3600, normalize_label(Label)}
-        )
-    end).
+    create_invoice_request(AmountMsats, Description, 3600, Label).
 
 create_invoice(AmountMsats, Description, Expiry, Label) when
     is_integer(AmountMsats),
@@ -616,13 +614,84 @@ create_invoice(AmountMsats, Description, Expiry, Label) when
     ((is_binary(Label) andalso Label =/= <<>>) orelse
         (is_list(Label) andalso Label =/= []))
 ->
-    poolboy:transaction(?MODULE, fun(Worker) ->
-        gen_server:call(
-            Worker,
-            {create_invoice, AmountMsats, normalize_desc(Description), Expiry,
-                normalize_label(Label)}
-        )
-    end).
+    create_invoice_request(AmountMsats, Description, Expiry, Label).
+
+create_invoice_request(AmountMsats, Description, Expiry, Label) ->
+    Options = invoice_options(),
+    Budget = maps:get(connect_timeout, Options) + maps:get(timeout, Options),
+    CheckoutTimeout = invoice_timeout_ms(
+        cln_invoice_checkout_timeout_ms, ?INVOICE_CHECKOUT_TIMEOUT_MS
+    ),
+    poolboy:transaction(
+        ?MODULE,
+        fun(Worker) ->
+            %% Snapshot the budget once, after checkout. A request queued behind
+            %% an older timed-out call must not create an invoice after expiry.
+            Deadline = erlang:monotonic_time(millisecond) + Budget,
+            gen_server:call(
+                Worker,
+                {create_invoice, AmountMsats, normalize_desc(Description), Expiry,
+                    normalize_label(Label), {Deadline, Options}},
+                Budget + ?INVOICE_CALL_MARGIN_MS
+            )
+        end,
+        CheckoutTimeout
+    ).
+
+invoice_options() ->
+    #{
+        connect_timeout => invoice_timeout_ms(
+            cln_invoice_connect_timeout_ms, ?INVOICE_CONNECT_TIMEOUT_MS
+        ),
+        timeout => invoice_timeout_ms(cln_invoice_http_timeout_ms, ?INVOICE_HTTP_TIMEOUT_MS),
+        max_response_bytes => ?INVOICE_MAX_RESPONSE_BYTES,
+        retry => 0
+    }.
+
+invoice_timeout_ms(Key, Default) ->
+    case application:get_env(damage, Key, Default) of
+        Value when is_integer(Value), Value > 0, Value =< 60000 -> Value;
+        _ -> Default
+    end.
+
+%% damage_gun's bounded response path uses one deadline for headers + body.
+%% Keep the connection and response budgets within the remaining call budget.
+invoice_request_options(Deadline, Options) ->
+    Remaining = Deadline - erlang:monotonic_time(millisecond),
+    case Remaining > 1 of
+        true ->
+            Connect = min(maps:get(connect_timeout, Options), Remaining - 1),
+            Http = min(maps:get(timeout, Options), Remaining - Connect),
+            {ok, Options#{connect_timeout => Connect, timeout => Http}};
+        false ->
+            {error, {cln_unavailable, invoice_deadline_expired}}
+    end.
+
+%% Invoice-only transport handling. Do not change the timeout/response
+%% contracts of pay, channel management or other existing CLN operations.
+cln_invoice_post_json(Host, Port, Options0, Rune, ReqMap, Deadline, InvoiceOptions) ->
+    case invoice_request_options(Deadline, InvoiceOptions) of
+        {ok, TimedOptions} ->
+            Options = cln_gun_opts(Host, Port, maps:merge(Options0, TimedOptions)),
+            case damage_gun:post(
+                Host, Port, "/v1/invoice", headers(Rune), jsx:encode(ReqMap),
+                Options#{decode => json, close => true}
+            ) of
+                {ok, #{status := Status, json := Json}} when Status >= 200, Status < 300 ->
+                    Json;
+                {ok, #{status := Status}} ->
+                    {error, {cln_http_status, Status}};
+                {error, #{error := {invalid_json, _}}} ->
+                    {error, invalid_cln_json};
+                {error, Reason} ->
+                    {error, {cln_http_failed, Reason}};
+                _Other ->
+                    {error, invalid_cln_response}
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
 normalize_label(V) when is_binary(V), V =/= <<>> ->
     V;
 normalize_label(V) when is_list(V), V =/= [] ->
@@ -1722,8 +1791,17 @@ handle_call(
 ) ->
     Info = cln_post_json(Host, Port, Options, Rune, "/v1/getinfo", #{}),
     {reply, Info, State};
+handle_call({create_invoice, AmountMsats, Description, Expiry, Label}, From, State) ->
+    %% Accept an old message already in flight during a rolling code reload.
+    InvoiceOptions = invoice_options(),
+    Deadline = erlang:monotonic_time(millisecond) +
+        maps:get(connect_timeout, InvoiceOptions) + maps:get(timeout, InvoiceOptions),
+    handle_call(
+        {create_invoice, AmountMsats, Description, Expiry, Label, {Deadline, InvoiceOptions}},
+        From, State
+    );
 handle_call(
-    {create_invoice, AmountMsats, Description, Expiry, Label},
+    {create_invoice, AmountMsats, Description, Expiry, Label, {Deadline, InvoiceOptions}},
     _From,
     #state{cln_host = Host, cln_port = Port, rune = Rune, options = Options} = State
 ) ->
@@ -1740,7 +1818,9 @@ handle_call(
             false ->
                 BaseReq
         end,
-    Invoice = cln_post_json(Host, Port, Options, Rune, "/v1/invoice", ReqMap),
+    Invoice = cln_invoice_post_json(
+        Host, Port, Options, Rune, ReqMap, Deadline, InvoiceOptions
+    ),
     {reply, Invoice, State};
 handle_call(
     {hold_invoice, Amount, Description, Expiry, CTLV},

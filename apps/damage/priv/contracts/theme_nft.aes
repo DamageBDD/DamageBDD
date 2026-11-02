@@ -1,0 +1,179 @@
+@compiler >= 6
+
+include "String.aes"
+
+contract interface IAEX141Receiver =
+  entrypoint on_aex141_received : (option(address), int, option(string)) => bool
+
+// Exactly the AEX-9 allowance entrypoint used by DamageBDD's token.aes.
+contract interface IDamageToken =
+  stateful entrypoint transfer_allowance : (address, address, int) => unit
+
+contract DamageThemeNFT =
+  datatype metadata_type = URL | OBJECT_ID | MAP
+  datatype metadata = MetadataIdentifier(string) | MetadataMap(map(string, string))
+  record meta_info =
+    { name : string, symbol : string, base_url : option(string), metadata_type : metadata_type }
+  record theme_info =
+    { publisher : address, manifest_cid : string, manifest_sha256 : string,
+      price_damage : int, price_sats : int }
+  datatype event =
+    Transfer(address, address, int)
+    | Approval(address, address, int, string)
+    | ApprovalForAll(address, address, string)
+    | Mint(address, int)
+    | ThemeRegistered(string, string)
+    | ThemePurchased(indexed int, indexed address, string, string)
+  record state =
+    { admin : address, damage_token : address, meta_info : meta_info,
+      token_to_owners : map(int, address), balances : map(address, int),
+      approvals : map(int, address), operators : map(address, map(address, bool)),
+      metadata : map(int, metadata), tokens_theme : map(int, string),
+      themes : map(string, theme_info), settled_sats : map(string, int),
+      total_supply : int, counter : int }
+
+  entrypoint init(damage_token : address) : state =
+    { admin = Contract.creator, damage_token = damage_token,
+      meta_info = { name = "DamageBDD Themes", symbol = "DTHEME", base_url = None, metadata_type = MAP },
+      token_to_owners = {}, balances = {}, approvals = {}, operators = {},
+      metadata = {}, tokens_theme = {}, themes = {}, settled_sats = {},
+      total_supply = 0, counter = 1 }
+
+  entrypoint aex141_extensions() : list(string) = ["mintable", "damagebdd_theme_market"]
+  entrypoint meta_info() : meta_info = state.meta_info
+  entrypoint metadata(token_id : int) : option(metadata) = Map.lookup(token_id, state.metadata)
+  entrypoint total_supply() : int = state.total_supply
+  entrypoint balance(owner : address) : option(int) = Map.lookup(owner, state.balances)
+  entrypoint owner(token_id : int) : option(address) = Map.lookup(token_id, state.token_to_owners)
+  entrypoint theme(key : string) : option(theme_info) = Map.lookup(key, state.themes)
+  entrypoint token_theme(token_id : int) : option(string) = Map.lookup(token_id, state.tokens_theme)
+  entrypoint sats_purchase_token(payment_id : string) : option(int) = Map.lookup(payment_id, state.settled_sats)
+
+  // Only the operator may register new immutable theme versions. Marketplace
+  // customers never get to replace the manifest CID attached to existing NFTs.
+  stateful entrypoint register_theme(key : string, publisher : address, cid : string, sha256 : string, price_damage : int, price_sats : int) =
+    require_admin()
+    require(String.length(key) > 2 && String.length(key) <= 75, "INVALID_THEME_KEY")
+    require(String.length(cid) > 30 && String.length(cid) < 128, "INVALID_CID")
+    require(String.length(sha256) == 64, "INVALID_MANIFEST_HASH")
+    require(price_damage >= 0 && price_sats >= 0, "INVALID_PRICE")
+    require(!Map.member(key, state.themes), "THEME_ALREADY_REGISTERED")
+    put(state{themes[key] = { publisher = publisher, manifest_cid = cid, manifest_sha256 = sha256,
+                              price_damage = price_damage, price_sats = price_sats }})
+    Chain.event(ThemeRegistered(key, cid))
+
+  // Requires an AEX-9 allowance for THIS theme NFT contract. Currency moves
+  // atomically with entitlement; an aborted mint reverts token transfer.
+  stateful entrypoint buy_damage(key : string) : int =
+    let info = require_theme(key)
+    require(info.price_damage > 0, "DAMAGE_PRICE_UNAVAILABLE")
+    let damage : IDamageToken = Address.to_contract(state.damage_token)
+    damage.transfer_allowance(Call.caller, info.publisher, info.price_damage)
+    mint_theme(Call.caller, key, info, "damage")
+
+  // The operator verifies a unique CLN paid invoice BEFORE calling this.
+  // The invoice reference is consumed on-chain, so retries never double-mint.
+  stateful entrypoint mint_sats(to : address, key : string, payment_id : string) : int =
+    require_admin()
+    let info = require_theme(key)
+    require(info.price_sats > 0, "SATS_PRICE_UNAVAILABLE")
+    require(String.length(payment_id) >= 16 && String.length(payment_id) <= 128, "INVALID_PAYMENT_ID")
+    require(!Map.member(payment_id, state.settled_sats), "ALREADY_SETTLED")
+    let token_id = mint_theme(to, key, info, "sats")
+    put(state{settled_sats[payment_id] = token_id})
+    token_id
+
+  stateful entrypoint claim_free(key : string) : int =
+    let info = require_theme(key)
+    require(info.price_damage == 0 && info.price_sats == 0, "THEME_IS_PAID")
+    mint_theme(Call.caller, key, info, "free")
+
+  stateful function mint_theme(to : address, key : string, info : theme_info, currency : string) : int =
+    let token_id = state.counter
+    let md = MetadataMap({ ["name"] = String.concat("DamageBDD Theme #", Int.to_str(token_id)),
+      ["description"] = "Transferable theme installation licence",
+      ["theme_key"] = key, ["manifest_cid"] = info.manifest_cid,
+      ["manifest_sha256"] = info.manifest_sha256, ["currency"] = currency })
+    put(state{ counter = token_id + 1,
+               total_supply = state.total_supply + 1,
+               token_to_owners[token_id] = to,
+               balances[to = 0] @b = b + 1,
+               metadata[token_id] = md,
+               tokens_theme[token_id] = key })
+    switch(invoke_nft_receiver(None, to, token_id, None))
+      (true, false) => abort("SAFE_TRANSFER_FAILED")
+      _ => Chain.event(Mint(to, token_id))
+    Chain.event(ThemePurchased(token_id, to, key, currency))
+    token_id
+
+  stateful entrypoint transfer(to : address, token_id : int, data : option(string)) =
+    let from = require_authorized(token_id)
+    require(from != to, "SENDER_MUST_NOT_BE_RECEIVER")
+    remove_approval(token_id)
+    put(state{ balances[from] @old = old - 1,
+               balances[to = 0] @new = new + 1,
+               token_to_owners[token_id] = to })
+    switch(invoke_nft_receiver(Some(from), to, token_id, data))
+      (true, false) => abort("SAFE_TRANSFER_FAILED")
+      _ => Chain.event(Transfer(from, to, token_id))
+
+  stateful entrypoint transfer_to_contract(token_id : int) =
+    let to = Call.caller
+    require(Address.is_contract(to), "CALLER_MUST_BE_A_CONTRACT")
+    let from = require_authorized(token_id)
+    require(from != to, "SENDER_MUST_NOT_BE_RECEIVER")
+    remove_approval(token_id)
+    put(state{ balances[from] @b = b - 1,
+               balances[to = 0] @nb = nb + 1,
+               token_to_owners[token_id] = to })
+    Chain.event(Transfer(from, to, token_id))
+
+  stateful entrypoint approve(approved : address, token_id : int, enabled : bool) =
+    let current = require_token_owner(token_id)
+    require(Call.caller == current || is_approved_for_all(current, Call.caller), "ONLY_OWNER_OR_OPERATOR_CALL_ALLOWED")
+    if(enabled)
+      put(state{approvals[token_id] = approved})
+    else
+      remove_approval(token_id)
+    Chain.event(Approval(current, approved, token_id, bool_string(enabled)))
+
+  stateful entrypoint approve_all(operator : address, enabled : bool) =
+    let ops = Map.lookup_default(Call.caller, state.operators, {})
+    put(state{operators[Call.caller] = ops{[operator] = enabled}})
+    Chain.event(ApprovalForAll(Call.caller, operator, bool_string(enabled)))
+
+  entrypoint get_approved(token_id : int) : option(address) = Map.lookup(token_id, state.approvals)
+  entrypoint is_approved(token_id : int, approved : address) : bool =
+    switch(Map.lookup(token_id, state.approvals))
+      None => false
+      Some(a) => a == approved
+  entrypoint is_approved_for_all(owner : address, operator : address) : bool =
+    switch(Map.lookup(owner, state.operators))
+      None => false
+      Some(ops) => Map.lookup_default(operator, ops, false)
+
+  function require_admin() = require(Call.caller == state.admin, "ONLY_ADMIN_CALL_ALLOWED")
+  function require_theme(key : string) : theme_info =
+    switch(theme(key))
+      None => abort("THEME_NOT_FOUND")
+      Some(info) => info
+  function require_token_owner(token_id : int) : address =
+    switch(owner(token_id))
+      None => abort("TOKEN_NOT_EXISTS")
+      Some(a) => a
+  function require_authorized(token_id : int) : address =
+    let current = require_token_owner(token_id)
+    require(Call.caller == current || is_approved(token_id, Call.caller) || is_approved_for_all(current, Call.caller), "NOT_AUTHORIZED")
+    current
+  stateful function remove_approval(token_id : int) =
+    if(Map.member(token_id, state.approvals))
+      put(state{approvals = Map.delete(token_id, state.approvals)})
+  function invoke_nft_receiver(from : option(address), to : address, token_id : int, data : option(string)) : (bool * bool) =
+    if(Address.is_contract(to))
+      let receiver : IAEX141Receiver = Address.to_contract(to)
+      switch(receiver.on_aex141_received(from, token_id, data, protected = true) : option(bool))
+        None => (true, false)
+        Some(value) => (true, value)
+    else
+      (false, false)
+  function bool_string(value : bool) : string = if(value) "true" else "false"

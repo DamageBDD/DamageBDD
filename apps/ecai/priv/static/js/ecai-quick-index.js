@@ -1,7 +1,7 @@
 import { TokenManager } from "/ecai/auth-assets/js/wallet-switcher.js";
 
 const $ = id => document.getElementById(id);
-const state = { type: "file", file: null, analysis: null, source: null, busy: false, queued: false, key: "" };
+const state = { type: "file", file: null, analysis: null, source: null, busy: false, queued: false, key: "", jobId: "" };
 
 function currentToken() {
     try { return TokenManager.getToken?.() || ""; } catch (_) { return ""; }
@@ -113,14 +113,14 @@ function planItem(label, value) {
 }
 
 function clearAnalysis(message = "Choose a source, then detect its structure before indexing.") {
-    state.analysis = null; state.source = null; state.queued = false; state.key = "";
+    state.analysis = null; state.source = null; state.queued = false; state.key = ""; state.jobId = ""; if ($("quickIndexViewJob")) $("quickIndexViewJob").hidden = true;
     $("quickIndexQueue").disabled = true;
     const host = $("quickIndexAnalysis"); host.className = "quick-index-analysis"; host.replaceChildren();
     const p = document.createElement("p"); p.className = "quick-index-empty"; p.textContent = message; host.append(p);
 }
 
 function renderAnalysis(result) {
-    state.analysis = result.analysis || null; state.source = result.source || null; state.queued = false; state.key = "";
+    state.analysis = result.analysis || null; state.source = result.source || null; state.queued = false; state.key = ""; state.jobId = ""; if ($("quickIndexViewJob")) $("quickIndexViewJob").hidden = true;
     const a = state.analysis || {};
     const host = $("quickIndexAnalysis");
     host.className = `quick-index-analysis ${a.indexable ? "is-ready" : "is-blocked"}`; host.replaceChildren();
@@ -168,21 +168,24 @@ async function inspect() {
     setBusy(true); setStatus("Inspecting source…");
     try {
         const result = await callQuickIndex("/ecai/quick-index/inspect", false);
-        renderAnalysis(result); setStatus(result.analysis?.indexable ? "Structure detected · ready to index" : "Conversion required", !result.analysis?.indexable);
+        renderAnalysis(result); setStatus(result.analysis?.indexable ? "Inspection complete · no job queued yet" : "Conversion required", !result.analysis?.indexable);
     } catch (error) {
         clearAnalysis("Inspection did not complete."); setStatus(error.message || "Inspection failed", true);
     } finally { setBusy(false); }
 }
 
 async function enqueue() {
-    if (state.busy) return;
+    if (state.busy || state.queued) return;
     if (!state.analysis?.indexable) { await inspect(); if (!state.analysis?.indexable) return; }
     setBusy(true); setStatus("Staging source and creating durable job…");
     try {
         const result = await callQuickIndex("/ecai/quick-index", true);
-        const jobId = result.job?.id || "queued job";
-        setStatus(`Queued ${jobId}${result.cid ? ` · ${result.cid.slice(0, 18)}…` : ""}`);
+        const jobId = result.job?.id;
+        if (!jobId) throw new Error("The server did not return a job ID. Retry this unchanged source with the same request key.");
+        setStatus(`Job queued · ${jobId}${result.cid ? ` · ${result.cid.slice(0, 18)}…` : ""}`);
         state.queued = true;
+        state.jobId = jobId;
+        if ($("quickIndexViewJob")) $("quickIndexViewJob").hidden = false;
         $("quickIndexQueue").disabled = true;
         $("refreshJobs")?.click();
         document.dispatchEvent(new CustomEvent("ecai:quick-index-queued", { detail: { job: result.job, cid: result.cid } }));
@@ -199,7 +202,7 @@ function selectType(type) {
         tab.classList.toggle("is-active", active); tab.setAttribute("aria-selected", String(active));
     }
     for (const pane of document.querySelectorAll("[data-quick-index-pane]")) pane.hidden = pane.dataset.quickIndexPane !== type;
-    clearAnalysis(); setStatus("Ready");
+    clearAnalysis(); setStatus("Inspect a source to review the plan.");
 }
 
 function setFile(file) {
@@ -276,12 +279,12 @@ function installOverviewCta() {
 }
 
 function resetForIdentityChange() {
-    state.file = null; state.analysis = null; state.source = null; state.queued = false; state.key = "";
+    state.file = null; state.analysis = null; state.source = null; state.queued = false; state.key = ""; state.jobId = ""; if ($("quickIndexViewJob")) $("quickIndexViewJob").hidden = true;
     if ($("quickIndexFile")) $("quickIndexFile").value = "";
     if ($("quickIndexUrl")) $("quickIndexUrl").value = "";
     if ($("quickIndexCid")) $("quickIndexCid").value = "";
     if ($("quickIndexFileName")) $("quickIndexFileName").textContent = "Drop a text or structured-text file here, or click to browse";
-    clearAnalysis(); setStatus("Ready");
+    clearAnalysis(); setStatus("Inspect a source to review the plan.");
 }
 
 function init() {
@@ -290,6 +293,9 @@ function init() {
     document.querySelectorAll("[data-quick-index-source]").forEach(tab => tab.addEventListener("click", () => selectType(tab.dataset.quickIndexSource)));
     $("quickIndexInspect").addEventListener("click", () => void inspect());
     $("quickIndexQueue").addEventListener("click", () => void enqueue());
+    $("quickIndexViewJob")?.addEventListener("click", () => {
+        if (state.jobId) document.dispatchEvent(new CustomEvent("ecai:view-index-job", {detail: {id: state.jobId}}));
+    });
     $("quickIndexFile").addEventListener("change", event => setFile(event.target.files?.[0]));
     const drop = $("quickIndexDrop");
     drop.addEventListener("click", () => $("quickIndexFile").click());

@@ -1,4 +1,5 @@
-%% Authenticated composer API; no execution, billing or context-secret access.
+%% Authenticated composer API: no feature execution, L402 challenge, or context-secret access.
+%% Provider inference may be billable under the configured ECAI route.
 -module(damage_bdd_http).
 -export([
     trails/0,
@@ -28,7 +29,7 @@ trails() ->
     ].
 
 init(Req, Opts) -> {cowboy_rest, Req, Opts}.
-is_authorized(Req, State) -> damage_http:is_authorized(Req, State).
+is_authorized(Req, State) -> damage_bdd_access:is_authorized(Req, State).
 allowed_methods(Req, #{action := catalog} = State) -> {[<<"GET">>], Req, State};
 allowed_methods(Req, State) -> {[<<"POST">>], Req, State}.
 content_types_provided(Req, State) ->

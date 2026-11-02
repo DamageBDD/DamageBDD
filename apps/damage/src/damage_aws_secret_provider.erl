@@ -12,6 +12,7 @@
 
 -export([
     fetch_vault_passphrase/2,
+    with_pending_passphrase/3,
     credential_provider/1
 ]).
 
@@ -27,12 +28,29 @@
     {ok, binary(), map()} | {error, term()}.
 fetch_vault_passphrase(Config0, Dependencies0) ->
     Config = damage_nsecbunker_config:normalize(Config0),
-    Dependencies = maps:merge(default_dependencies(), Dependencies0),
+    Dependencies = (maps:merge(default_dependencies(), Dependencies0))#{
+        version_stage => ?VERSION_STAGE},
     case validate_config(Config) of
         ok ->
             fetch_validated(Config, Dependencies, Dependencies0);
         {error, _} = Error ->
             Error
+    end.
+
+%% Maintenance-only callback, used with an isolated encrypted-vault copy.
+%% Runtime fetch_vault_passphrase/2 always forces AWSCURRENT, including when
+%% dependencies are injected. This does not promote versions or write to AWS.
+with_pending_passphrase(Config0, Dependencies0, Fun) when is_function(Fun, 2) ->
+    Config = damage_nsecbunker_config:normalize(Config0),
+    Dependencies = (maps:merge(default_dependencies(), Dependencies0))#{
+        version_stage => <<"AWSPENDING">>},
+    case validate_config(Config) of
+        ok ->
+            case fetch_validated(Config, Dependencies, Dependencies0) of
+                {ok, Passphrase, Metadata} -> Fun(Passphrase, Metadata);
+                {error, _} = Error -> Error
+            end;
+        {error, _} = Error -> Error
     end.
 
 fetch_validated(Config, Dependencies, DependencyOverrides) ->
@@ -319,7 +337,7 @@ get_secret(
             maps:get(secret_id, Config)
         ),
 
-    Stage = <<"AWSCURRENT">>,
+    Stage = maps:get(version_stage, Dependencies, ?VERSION_STAGE),
 
     Input = #{
         <<"SecretId">> => SecretId,

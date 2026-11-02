@@ -73,7 +73,7 @@
     grid.innerHTML = "";
 
     if (!rows.length) {
-      grid.innerHTML = `<div style="color:#9aa3b2; padding:.75rem 0;">No AEX-141 tokens found.</div>`;
+      grid.innerHTML = `<div style="color:var(--theme-muted, #9aa3b2); padding:.75rem 0;">No AEX-141 tokens found.</div>`;
       return;
     }
 
@@ -95,7 +95,7 @@
         thumb.appendChild(img);
       } else {
         const no = document.createElement("div");
-        no.style.color = "#9aa3b2";
+        no.style.color = "var(--theme-muted, #9aa3b2)";
         no.style.fontSize = ".9rem";
         no.textContent = "No image";
         thumb.appendChild(no);

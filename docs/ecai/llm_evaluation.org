@@ -1,0 +1,480 @@
+#+TITLE: ECAI + DamageBDD LLM evaluation — implementation and operator guide
+#+DATE: 2026-10-18
+#+OPTIONS: toc:2 num:nil
+
+* Delivery status and source baseline
+
+This is a reviewable v1 implementation candidate, not a production certification.
+The code is integrated into the supplied application snapshots; the complete
+umbrella build, its dependencies and a running node were not available here.
+
+- ECAI: latest-ecai.tar.gz, supplied for this rebase on 18 October 2026.
+  SHA-256: 73c17008f0af7f292d5b74ef88676358fdbf840d0afa3a240019b9874ce0d490
+- DamageBDD: no newer Damage archive was supplied with this rebase. The Damage
+  changes are retained from the preceding evaluation patch. Its affected-file
+  baseline was reconstructed by reversing that patch against its shipped overlay
+  and verifying every resulting file against the original baseline manifest.
+  The preceding manifest identifies a 14 October 2026 Damage upload with archive
+  SHA-256 1b1a2c603ce3899a693e091d2bbe38dc9331cf7f85e63731257b2070817ddf01;
+  that archive itself was not re-fetched or re-hashed during this rebase.
+
+The ECAI portion is rebased against the exact new upload, not a fetched live Git
+HEAD. The combined patch is checked against that ECAI source plus the reconstructed
+prior Damage affected files; it is not verified against newer Damage code.
+The bundle includes combined and split patches and a scope-aware, read-only
+base-file checker. Do not apply both combined and split patches.
+
+The rebase preserves the mathematical explorer's per-model path route, its
+source-only exploration description and math-samples-explorer-v2 asset versions.
+Console contract and offline integration fixtures now include evaluation without
+removing those mathematical-path features. Evaluation backend behaviour is
+unchanged from the preceding implementation candidate.
+
+No replacement rebar.config or root sys.config.sample is supplied because those
+files were not in these application archives. Merge the application example
+configuration into your existing deployment instead.
+
+Executed validation is recorded separately in VALIDATION.md. Chromium component
+checks use synthetic in-memory API responses. Node checks JavaScript syntax.
+The Erlang lexical/delimiter checks are NOT compilation. Erlang/erlc/rebar3 were
+unavailable and could not be installed with this container's network access.
+Therefore compilation, all included EUnit tests, live authentication, real
+providers, crash/power-loss behaviour and the complete umbrella regression suite
+remain unexecuted. Keep evaluation disabled until those checks pass on your node.
+
+* Requirements from the screenshot
+
+Only the visible text is treated as a requirement. The final collaboration
+bullet is cut off; its unseen continuation is not reconstructed.
+
+| Visible requirement | Implemented mechanism | Boundary / acceptance work still needed |
+|---------------------+-----------------------+------------------------------------------|
+| End-to-end dialogue, financial and other business evaluation | Import, review, immutable suite, target/repetition plan, supervised execution, grading, reporting, export and BDD release gate | Dialogue is fixed role-message replay; trading is a single-decision paper simulator, not a live agent |
+| Quantifiable, reproducible, explainable dimensions and rubrics | Typed checks; pass/fail/indeterminate; anchored human rubric; per-target and per-dimension scorecards; complete planned denominator | A deterministic grader does not make a stochastic provider deterministic or validate wrong gold labels |
+| Dataset design, scenario coverage, annotation guidelines and QC | Required guidelines and case dimensions/groups/splits; immutable versions; reviewer allowlist; signed-in annotation approval; independent rubric votes; agreement counts | Real representative customer data, sampling design and annotator calibration must be supplied; examples are not benchmarks |
+| Useful and discriminative benchmarks | Development/test/holdout partitions; duplicate group/prompt leakage checks; chronological trading split validation; exact paired case comparisons | No semantic near-duplicate detector, public training contamination detector, power study or universal capability ranking |
+| Failure modes and actionable improvement recommendations | Failed check reasons and transcripts, retrieval IDs/recall, slices, interrupted/error outcomes, rule-based recommendations and regression comparison | Recommendations are templates, not a demonstrated root-cause inference system or automatic repair-queue dispatch |
+| Automated, stable, high-frequency workflows | Durable ledger, bounded workers, admission/dispatch policy, per-target serialization, UTC daily reservations, idempotency, CI API and DamageBDD steps | Single-node implementation; no distributed ledger, fleet scheduler, load-test results or new recurring-schedule UI |
+| Cross-team algorithm/product/data collaboration | Business-authored JSON contracts, Gherkin gates, explicit reviewer grants, coverage inspection, reviewer notes, portable receipts | No automatic issue-tracker, chat, email, Git approval or release deployment integrations |
+
+* Responsibilities of the components
+
+DamageBDD supplies its authenticated account boundary, node administrator
+settings, HTTP client, executable Gherkin integration and existing dashboard.
+ECAI supplies the evaluation workspace and supervised evaluation subsystem. The
+reference adapter reuses the actual ecai_terms canonical term pipeline.
+
+The reference adapter is deliberately narrow: imported, account-scoped, frozen
+reference texts are ranked by deterministic lexical term overlap, with stable ID
+tie-breaking. It is NOT a new elliptic-curve inversion scheme, semantic entailment
+oracle or an automatic bridge into every existing ECAI public/private index.
+Stored term versions are checked at retrieval; changing the term version requires
+a new reference snapshot. The configured reference mode is named ecai because it
+uses that real shared pipeline. Keep the unassisted mode as a comparison baseline.
+
+| Module | Responsibility |
+|--------+----------------|
+| ecai_eval_spec / ecai_eval_knowledge | Strict suite normalization, coverage, split checks, reference snapshots, context selection |
+| ecai_eval_policy | Operator policy, account preferences, effective settings |
+| ecai_eval_srv | Serialized durable ledger, ownership, reviews, idempotency, quotas, scheduling, exports |
+| ecai_eval_sup / worker_sup / worker | OTP lifecycle, bounded parallelism, deadlines, terminal receipt handling |
+| ecai_eval_provider | Explicit configured targets, remote consent/transport policy, bounded provider calls |
+| ecai_eval_grader / ecai_eval_trade | Typed assertions, human verdict aggregation, paper risk/replay checks |
+| ecai_eval_stats | Planned-denominator scorecards, slices, paired comparisons, recommendations |
+| ecai_eval_http | Managed-account HTTP endpoints and node-settings proxy |
+| steps_ecai_eval | Real DamageBDD submission, wait and gate steps, plus side-effect-free dry-run recognition |
+
+The native model client adds an evaluation-specific message API. Ollama uses
+native /api/chat. The OpenAI adapter uses the existing Responses API client and
+preserves the role-message array. A service that only implements OpenAI-style
+Chat Completions is not automatically compatible. Native tool execution is not
+implemented: tool checks assess structured proposals in the returned text.
+
+The generic Damage HTTP client gains an opt-in response-byte cap and binary-key
+JSON decoding. Existing callers retain their previous default decoding and
+unbounded response path; regression-test both paths in the full umbrella.
+
+* Dashboard entry points
+
+** ECAI console: LLM evaluation
+
+The new navigation item opens five panels:
+
+1. Runs & results: reviewed suite/split selection, idempotent submission, history,
+   per-target scorecards, release gate, failure explorer, transcript inspection,
+   paired comparison, cancellation and unsigned receipt export.
+2. Datasets & coverage: JSON paste/file import, synthetic examples, immutable
+   source inspection, coverage counts and explicit annotation approval.
+3. Review queue: authorized shared suites and individual human-rubric reviews.
+4. Account settings: this managed account's preferences and effective limits.
+5. Node policy: administrator-only view of the same versioned Damage node fields.
+
+Settings and API responses use text rendering, not HTML interpolation of model
+responses. Component tests exercise account changes, stale requests, conflict
+messages and escaped malicious strings. Those tests do not replace a live XSS,
+CSRF or authorization assessment of the assembled dashboard.
+
+** Damage dashboard
+
+Account settings contains an LLM evaluation preferences card. It uses the same
+/ecai/eval/settings API and account ledger, not a second independent setting store.
+
+Node administration -> ECAI settings contains the LLM evaluation field group.
+The ECAI Node policy tab delegates to that existing versioned settings service.
+Target endpoint addresses and credential references remain in the existing
+operator model-node configuration; neither account form accepts them.
+
+ECAI must be included and running on the node for the account preference card to
+work. The optional Damage listener route reports unavailable rather than
+starting inference or manufacturing defaults when the service is absent.
+
+* Policy and budget semantics
+
+The service starts with eval_enabled=false and eval_allow_remote=false, and no
+allowed target IDs. Installing the patch alone does not authorize model calls.
+A previously authorized pending run can resume after restart when persisted node
+and account policy enable it; this is deliberate, not a fresh request approval.
+
+Account authorization is the intersection of current operator policy and account
+preferences. Remote calls require all of: a configured/allowlisted target, enabled
+node and account, operator remote permission, account remote consent and TLS.
+LAN hosts other than the explicit loopback names/addresses count as remote.
+Explicit verify_none is rejected. The underlying server-side TLS configuration
+is trusted operator input; validate certificates, hostname checks, redirects and
+proxy behaviour in deployment. No account may supply a destination URL.
+
+Node settings (persisted through damage_settings, hot for subsequent scheduling):
+
+| Field | Default | Meaning |
+|-------+---------+---------|
+| eval_enabled | false | Dispatch switch |
+| eval_allow_remote | false | Whether remote inference may be authorized |
+| eval_target_ids | [] | Allowed IDs in existing code_model_nodes / code_ollama_nodes |
+| eval_max_parallel | 2 | Concurrent evaluation workers on this node |
+| eval_max_parallel_per_account | 1 | Concurrent evaluation workers per account |
+| eval_max_queued_runs | 64 | Admission cap for runs with unstarted work |
+| eval_max_account_runs | 100 | Retained runs per account |
+| eval_max_account_suites | 50 | Retained suites per account |
+| eval_max_cases | 100 | Cases accepted in a suite |
+| eval_max_repetitions | 5 | Repetition ceiling |
+| eval_max_run_calls | 500 | Planned case x target x repetition ceiling |
+| eval_daily_calls | 1000 | Account daily reservation ceiling |
+| eval_node_daily_calls | 10000 | Node daily reservation ceiling |
+| eval_max_output_tokens | 2048 | Generation token ceiling per request |
+| eval_max_prompt_bytes | 32768 | Serialized message-body ceiling |
+| eval_max_response_bytes | 131072 | Provider response byte ceiling |
+| eval_timeout_ms | 120000 | Request timeout; worker deadline adds 1000 ms |
+| eval_min_pass_bps | 9500 | New-run floor; 9500 means 95% |
+| eval_min_reviewers | 1 | Distinct approvals / rubric reviewers required at admission |
+| eval_retention_days | 30 | Cleanup age; terminal/retention safeguards still apply |
+
+There are also fixed hard ceilings of 500 retained runs and 500 suites across the
+node. The import body limit is 2 MiB; other JSON write bodies are capped at 64 KiB;
+receipt export is capped at 16 MiB of manifest bytes. These caps are safeguards,
+not evidence that the largest combination performs acceptably. A large run may
+exceed the receipt export cap: use smaller suites; no streaming export is added.
+
+Account preferences are enabled, remote_consent, target_ids, repetitions,
+max_output_tokens, daily_calls, pass_bps, knowledge_mode (none/ecai), retrieval_k.
+New accounts default to disabled, no remote consent and no targets. Node ceilings
+cap generation/repetition/call values; the node pass floor cannot be lowered.
+Per-run overrides may select a subset of account targets and change the run's
+repetitions, token limit, pass threshold or retrieval settings within node bounds.
+Account preferences are defaults, not an additional irrevocable administrative
+policy. Changing them later does not rewrite an admitted run's grading contract.
+
+Admission freezes the selected settings, targets, suite, plan and review minimum.
+Dispatch rechecks current enablement, target access, remote consent, daily calls,
+concurrency and current output ceiling. It does not retroactively rewrite old
+results to apply a new grading threshold. Disabling policy pauses unstarted work;
+it cannot unsend an in-flight request. Use Cancel for explicit cancellation.
+
+A reservation is counted on the UTC day of dispatch, before starting a worker.
+Failures and uncertain calls remain reserved; these are not provider-confirmed
+charges. Quotas are account/node local, not coordinated across a fleet. Provider
+billing, hidden tokens and provider-side processing may differ. This v1 implements
+request/token/byte limits, NOT a monetary spend guarantee. Cost is null unless
+there is authoritative billing data; this implementation does not import it.
+
+Evaluation uses explicit direct calls through the existing client, without the
+inference pool's fallback/retry selection. It shares the pool's configuration
+normalizer, not its in-flight lease counter. Dedicated evaluation targets are
+recommended; the limits here do not control simultaneous learning/repair traffic
+sent to the same server outside this subsystem.
+
+* Dataset and grading contract
+
+Start with the shipped dialogue.json and paper-trading.json examples. They
+contain six and four synthetic cases respectively. Do not publish their scores as
+business performance, scientific validation or financial results.
+
+A source suite requires name, version, description, annotation_guidelines and
+cases. Optional reviewers explicitly grant access to the shared suite and its
+trial evidence. The owner is always an authorized reviewer. References contain
+id/text/title/origin/revision; their labels and assertions remain human-supplied.
+
+Each case includes id, group, domain, dimension, split, messages, checks, and
+optionally query, evidence_ids, rubric and (for trading only) market. Domains are
+dialogue/trading/general; splits are dev/test/holdout. The last input role must be
+user. Multi-turn inputs are fixed histories, not adaptive model conversations.
+
+Checks are exact, contains, not_contains, json_equal, json_range, json_keys,
+citation_ids, tool_allowlist and paper_trade. All checks have an ID and description;
+critical defaults to false and should be set deliberately. JSON paths are object
+key lists, not arbitrary code or executable expressions. json_equal is type-strict.
+There is no arbitrary Erlang evaluator, shell command, generated code execution or
+user-supplied regex evaluator.
+
+A rubric has instruction, pass_anchor, fail_anchor, indeterminate_anchor and
+optional critical. Rubric reviews are pass/fail/indeterminate with evidence notes.
+Without enough authorized, unanimous reviews, a rubric-dependent passing machine
+result remains indeterminate. A human vote cannot waive a failed deterministic
+check. Machine failures remain failures even when a human would like to pass them.
+
+Review votes and annotation approvals are keyed by the real signed-in identity,
+not a JSON reviewer name. Votes are immutable. Correct erroneous labels or change
+rubric anchors through a new suite version; do not edit the old evidence to force
+a release. Trial review views omit other votes, provider metadata and machine
+grades; this is basic identity blinding, not a guarantee that prose cannot reveal
+which model produced it. Owners can inspect full run evidence.
+
+Stored suite source is separately retained for editing. The enriched normalized
+spec contains internal fields and is not itself the source import format. Export
+or copy the source object, edit it and import a new version.
+
+Identical group identifiers or exact role-message arrays across splits are rejected.
+For the same trading symbol, an earlier split's final label tick must precede the
+later split's decision time. There is no near-duplicate, semantic contamination,
+purged cross-validation or train-set membership proof. Holdout is a labeled split,
+not a vault hidden from its owner; freeze promotion protocols outside the tool and
+avoid repeatedly optimizing against a holdout.
+
+The provider receives input messages, selected reference text/IDs and as-of market
+context only. It does not receive expected checks, annotations, reviewer votes,
+rubric anchors or future market tape. A source can still contain an injected
+instruction or an incorrect fact. Neither a hash nor a lexical hit proves truth.
+
+* Score interpretation and release gates
+
+The primary ratio is passed trials / ALL planned trials. Pending, inflight, error,
+uncertain, cancelled and indeterminate outcomes are visible and never relabeled
+as passes. A release gate requires completed pass/fail outcomes, no critical
+failures and the threshold for EVERY selected target. A strong target cannot hide
+another target's failure through an overall average. A zero-case run cannot pass.
+
+Case repetitions are not independent new business examples. The report also
+summarizes whether all repetitions in a declared case group passed and displays a
+descriptive Wilson interval. Declared groups can remain correlated, so this is
+not a population accuracy interval or safety guarantee. Pairwise comparisons use
+the same suite, split and case IDs. Cases pass a pair only when all their repetitions
+pass; incomplete pairs are retained. Different run configurations are returned
+alongside the comparison. The tool does not claim causal improvement, statistical
+significance or equivalence when those configurations differ.
+
+Latency percentiles use observed worker elapsed durations, including local context
+preparation, provider calls and grading, but not queue wait or subsequent human
+review time. Missing latency samples are counted separately. Retrieval recall is
+reference-ID recall against case-declared evidence IDs, not semantic answer recall.
+Citation checks establish allowed/required IDs only; entailment needs a separate
+review or validated semantic grader. The human-review report gives observed pair
+agreement and disagreement counts, not calibrated annotator accuracy or a kappa
+reliability claim.
+
+* Financial evaluation: paper only
+
+The simulator accepts integer fixture units and prices in minor currency units.
+A case pins symbol, decision time, latency, initial cash/position, position/quantity/
+notional caps, short-sale permission, fee/slippage assumptions and an ordered
+bid/ask tape. The model proposes hold, buy or sell with exact symbol/time and, for
+an order, quantity and limit price. Invalid JSON, future decision time, wrong
+symbol, excess positions/notional, forbidden shorts and insufficient paper cash
+fail the relevant contract.
+
+An order can fill on the first eligible future quote after its configured latency,
+only when the slippage-adjusted execution price crosses its limit. The simulator
+applies adverse slippage and fees, marks equity/drawdown, and assumes terminal
+liquidation with closing costs. It reports net P&L, return basis points, drawdown,
+fill information and excess versus a hold baseline. It does not automatically
+reward profit with a correctness pass: paper_trade tests the risk contract;
+additional explicit assertions may test an expected safe action.
+
+There is no market access, exchange credential, wallet mutation or live order path.
+There is also no volume/queue-position/partial-fill model, price impact, borrow or
+funding cost, margin/liquidation engine, portfolio rebalancing, realistic market
+capacity model or multi-period strategy search. Long and short paper outcomes can
+be unrealistic outside these assumptions. Results are not investable alpha,
+proof of economic usefulness or a financial recommendation.
+
+* Durability, storage and security boundaries
+
+The ledger is owned by one gen_server and uses synchronized DETS writes before
+provider dispatch. Pending tasks survive normal restarts. A recorded in-flight
+request whose worker/receipt was lost becomes uncertain instead of automatically
+being issued again. A new explicit run is needed for a deliberate replacement.
+This is conservative no-automatic-retry behaviour, not exactly-once execution
+across a network. A provider may have billed or completed a request after timeout.
+
+The evaluation supervisor uses one_for_all so ledger loss also terminates its
+workers. Cancellation marks a run before killing outstanding workers; dispatched
+work becomes uncertain. Late worker results with stale leases are ignored. Per
+account and node quotas are rebuilt from saved reservations. These mechanisms are
+implemented but their Erlang runtime tests have not been executed in this delivery.
+
+Default store: ecai_paths:index_state_dir()/evaluation/ledger.dets. The operator
+may set eval_store_path in server configuration. The leaf directory is mode 0700
+and file 0600; leaf symlinks are rejected. Trusted parent directories, backups,
+disk availability and the operating-system account are deployment responsibilities.
+DETS opens with repair=false: a store that needs repair or is corrupt fails closed.
+Do not silently repair/drop reservations and assume requests are free to replay.
+A kill -9 / power-loss recovery runbook and storage tests are required before
+production; normal-stop restart tests alone do not establish this property.
+
+This is owner-scoped PLAINTEXT storage, not the private encrypted ECAI vault.
+Node root/storage administrators can read it. Use sanitized data or protected
+volumes under an appropriate data-handling policy. Do not put real secrets,
+customer credentials, account access tokens or exchange keys into cases. Reference
+source labels do not prove rights to transmit private data to a remote provider.
+
+Runs/suites are retained for the configured age subject to terminal-work and
+current/recent reservation safeguards. Pending runs are not silently expired;
+cancel stuck queues. Old unreferenced suites can expire. Account preferences are
+retained; no account-erasure workflow is added. Export before retention cleanup.
+Idempotency keys are scoped to retained runs, so reusing an expired key can create
+a new run. Cleanup writes a cancellation/tombstone state before removing trial
+rows to avoid replaying a partially removed run after an interrupted purge.
+
+HTTP writes require explicit Bearer authentication. GET may use the existing
+managed session cookie. Invalid Bearer credentials do not fall back to a cookie.
+Wallet-only sessions are not authorized. Cross-site browser requests are rejected;
+no new CORS permission is added. All owner IDs come from damage_auth. Shared review
+operations separately check the review grant for the supplied resource owner.
+Node policy updates additionally require the existing authenticated node-admin
+check. The browser never supplies an authoritative owner/admin/reviewer identity.
+These paths need live adversarial authorization tests before deployment.
+
+* Evidence and upgrade limitations
+
+The receipt contains the suite, source references, admitted run/configuration,
+per-trial messages/results/checks/reviews and report. Its exact UTF-8 JSON manifest
+string and SHA-256 digest are exported. Serialization uses stable key order under
+an explicitly local encoding; it is not asserted to implement RFC 8785.
+
+Receipts have signed=false. A self-contained hash detects accidental byte changes,
+not forgery: an attacker can rewrite both fields. Compare a digest received over a
+separately trusted channel to establish correspondence to those bytes. The portable
+verifier does NOT recompute graders or verify a signature. No Merkle anchoring,
+blockchain transaction, NFT mint, post-quantum signature or third-party attestation
+is implemented. Never call this universal model certification.
+
+Model aliases and selected execution configuration fields are recorded. They do
+not attest actual hosted weights, provider runtime, hardware, hidden defaults or
+model identity. Use fixed snapshots where available and preserve operator model
+provenance separately. The grader version is recorded in results, but executable
+BEAM images/dependencies are not frozen inside each job. Drain/cancel pending work,
+complete/export reviews, and archive the application build before upgrading the
+evaluator. Do not assume pending jobs retain identical semantics across arbitrary
+hot code changes, or that temperature zero produces byte-identical model outputs.
+
+* HTTP interface
+
+All paths are under /ecai/eval; successful responses are {ok:true,data:...}.
+The server generally uses 200 for successful reads and writes. Conflicts use 409,
+not-found resources 404, unavailable service/unknown admission result 503, invalid
+contracts/policy 422, excessive request/export sizes 413. Authentication failures
+are 401; non-admin node writes are 403.
+
+| Method | Suffix | Purpose |
+|--------+--------+---------|
+| GET / POST | /settings | Read account/effective policy; save {version,changes} |
+| GET / POST | /admin/settings | Filtered node view; save {version,changes} through damage_settings |
+| GET / POST | /suites | List own suites; import source JSON object |
+| GET | /suites/:id | Own source, normalized spec and annotations |
+| POST | /suites/:id/approve | Immutable signed-in annotation approval {note, optional owner} |
+| GET / POST | /runs | List own runs; submit {suite_id,split,idempotency_key,optional settings} |
+| GET | /runs/:id | Admitted run and current report |
+| GET | /runs/:id/attempts/:task_id | Own trial transcript/grade/reviews |
+| POST | /runs/:id/cancel | Explicit cancellation |
+| GET | /runs/:id/evidence | Unsigned integrity receipt |
+| GET | /review-queue | Authorized suite/trial queue, first 100 items plus total |
+| POST | /review-detail | Authorized {kind,owner,id,optional task_id} |
+| POST | /review | {owner,id,task_id,verdict,note}; reviewer is authenticated identity |
+| POST | /compare | {baseline,candidate,baseline_target,candidate_target} |
+
+Use one idempotency key for retries of the EXACT same submission body. A different
+body with the same retained key is a conflict. An unknown response after a timeout
+must not be “fixed” by generating a new key, which can authorize another paid run.
+
+* Installation and first local smoke run
+
+From the actual DamageBDD umbrella root, first inspect unrelated working changes.
+Run the supplied base-file checker from the delivery bundle. Then:
+
+#+begin_src sh
+git apply --check /path/to/ecai-damage-llm-evaluation-rebased.patch
+git apply /path/to/ecai-damage-llm-evaluation-rebased.patch
+rebar3 compile
+rebar3 eunit --module=ecai_eval_tests,ecai_eval_ledger_tests,steps_ecai_eval_tests
+# Then run the complete existing application/umbrella regression tests.
+rebar3 eunit
+#+end_src
+
+The ledger tests require the existing meck test dependency and refuse to stop an
+already running evaluator. Use an isolated test VM, never a live funded node.
+Also explicitly regression-test damage_gun bounded/unbounded paths,
+ecai_ollama_client, ecai_ollama_pool, dashboard auth, node settings, code-learning
+and repair workflows. Those tests were not executed here.
+
+For local browser/receipt checks:
+
+#+begin_src sh
+python3 apps/ecai/test/test_ecai_eval_receipt.py
+# Requires playwright and a Chromium executable/browser installation.
+ECAI_EVAL_CHROMIUM=/usr/bin/chromium python3 apps/ecai/test/test_ecai_eval_browser.py
+# Production console/math/evaluation modules, synthetic auth/API only.
+CHROMIUM=/usr/bin/chromium python3 apps/ecai/test/math_dashboard/console_browser_test.py
+# Requires Pygments and Node; sanity only, not an Erlang compiler.
+python3 tools/verify_eval_contracts.py
+#+end_src
+
+Merge priv/config/eval.example.config into the existing ecai application settings.
+Configure a dedicated installed Ollama model with ID eval-local; the file's model
+name is intentionally a replacement placeholder. Leave remote inference off.
+Start/restart the application so the new supervisor and routes are installed;
+subsequent evaluation policy changes are hot. The new store directory must be
+writable by the node user.
+
+As an authenticated node administrator, allow eval-local and enable node
+evaluation. As the managed test account, enable evaluation, select eval-local,
+choose one repetition and a small daily cap. Load the dialogue example; inspect
+and explicitly approve it. For a first smoke run use split test and ecai reference
+mode. Observe real output and failures rather than expecting a guaranteed pass.
+Use the development split to exercise the human-review case. Import/approve the
+paper-trading example separately and verify its assumptions before running it.
+
+Compare a none run and an ecai run against the same immutable suite/split/model to
+measure the reference contribution. Keep generation limits, case/repetition
+counts and review policy comparable. These runs demonstrate the workflow; only
+representative, reviewed business cases can support a business acceptance claim.
+
+The sample Damage feature is in
+apps/damage/priv/features/evaluation/reviewed-model.feature. Supply access_token
+through the authenticated runner's server-side context, not the feature file.
+The steps re-resolve that bearer on execution and every wait poll. An expired
+session will fail closed; this patch does not provision long-lived CI credentials.
+Dry-run steps only participate in existing Damage cost estimation and do not run
+inference or certify a gate.
+
+To check an exported receipt:
+
+#+begin_src sh
+python3 tools/verify_ecai_eval_receipt.py receipt.json
+# Only use an expected digest from a separately trusted channel:
+python3 tools/verify_ecai_eval_receipt.py receipt.json --expected-sha256 TRUSTED_HEX_DIGEST
+#+end_src
+
+Before production: compile and run tests in the real umbrella; exercise live
+managed/noncustodial/admin identities, denied cross-account accesses and revocation;
+verify TLS and response caps against real endpoints; run worker/VM crash and disk
+failure experiments; calibrate dataset/rubric quality; load-test chosen limits;
+review privacy/retention; and validate dollar accounting externally when needed.
+The deployment decision must not be based on the synthetic UI screenshots.

@@ -1,4 +1,4 @@
-%% ECAI supplies advisory code knowledge and local JSON generation.
+%% ECAI supplies advisory code knowledge and policy-routed JSON generation.
 %% Deployed DamageBDD signatures, not model assertions, decide validation.
 -module(damage_bdd_generator).
 -export([generate/2, engine/0, build_prompt/3, normalize_reply/1]).
@@ -7,7 +7,7 @@
 engine() ->
     #{
         name => <<"ECAI">>,
-        generator_available => exported(ecai_ollama_client, generate_json, 2),
+        generator_available => damage_bdd_inference:available(),
         knowledge_available => exported(ecai_codebase_learning, module, 2) andalso
             whereis(ecai_learning_store) =/= undefined
     }.
@@ -17,7 +17,7 @@ generate(Intent, Context) ->
     case maps:get(generator_available, engine()) of
         false ->
             {error, ecai_unavailable,
-                <<"ECAI JSON generation is unavailable. Start the ECAI application with ecai_ollama_client installed.">>};
+                <<"BDD inference is unavailable. Start ECAI provider settings and its inference pool, and assign an enabled connection to the bdd role.">>};
         true ->
             Catalog = damage_bdd_catalog:snapshot(Context),
             case maps:get(steps, Catalog) of
@@ -31,11 +31,11 @@ generate(Intent, Context) ->
                     Prompt = build_prompt(Intent, Selected, Cards),
                     Budget = timeout_ms(),
                     Deadline = erlang:monotonic_time(millisecond) + Budget,
-                    attempt(Prompt, Context, Cards, 2, Deadline)
+                    attempt(Prompt, Context, Cards, 2, Deadline, damage_bdd_inference:options())
             end
     end.
 
-attempt(Prompt, Context, Cards, Left, Deadline) ->
+attempt(Prompt, Context, Cards, Left, Deadline, Route) ->
     Remaining = Deadline - erlang:monotonic_time(millisecond),
     case Remaining > 0 of
         false ->
@@ -43,9 +43,9 @@ attempt(Prompt, Context, Cards, Left, Deadline) ->
                 <<"Generation timed out. Shorten the request or check the local model service.">>};
         true ->
             case
-                ecai_ollama_client:generate_json(Prompt, #{timeout => Remaining, temperature => 0})
+                damage_bdd_inference:generate(Prompt, Remaining, Route)
             of
-                {ok, Raw} ->
+                {ok, Raw, Inference} ->
                     case normalize_reply(Raw) of
                         {ok, Reply} ->
                             Feature = maps:get(feature, Reply),
@@ -58,6 +58,7 @@ attempt(Prompt, Context, Cards, Left, Deadline) ->
                                     Complete = maps:get(missing_steps, Reply) =:= [],
                                     {ok, Reply#{
                                         status => <<"ok">>,
+                                        inference => Inference,
                                         validation => Validation,
                                         complete => Complete,
                                         grounding => #{
@@ -76,7 +77,7 @@ attempt(Prompt, Context, Cards, Left, Deadline) ->
                                         <<"\nSTATIC_CHECKS_JSON:\n">>,
                                         jsx:encode(Validation)
                                     ]),
-                                    attempt(Repair, Context, Cards, Left - 1, Deadline)
+                                    attempt(Repair, Context, Cards, Left - 1, Deadline, Route)
                             end;
                         error ->
                             {error, invalid_model_reply,
@@ -84,7 +85,7 @@ attempt(Prompt, Context, Cards, Left, Deadline) ->
                     end;
                 {error, _} ->
                     {error, model_unavailable,
-                        <<"The ECAI model request failed. Check the node's code_ollama configuration and model availability.">>};
+                        <<"The BDD route failed or has no eligible model. Check AI providers, the bdd role, remote-role consent, and the selected provider/model. No provider fallback was attempted.">>};
                 _ ->
                     {error, invalid_model_reply, <<"ECAI returned an unexpected response.">>}
             end

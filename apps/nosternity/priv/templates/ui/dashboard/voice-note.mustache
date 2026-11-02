@@ -1,0 +1,33 @@
+<section class="voice-note" aria-label="Voice note">
+  <div class="voice-settings">
+    <label>Transcription<select data-voice="mode">
+      <option value="auto">On-device when available, otherwise ECAI</option>
+      <option value="server">ECAI / Whisper</option>
+      <option value="browser">Browser speech service (may send audio externally)</option>
+    </select></label>
+    <label>Language<select data-voice="language">
+      <option value="en-AU">English (Australia)</option>
+      <option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="ml-IN">Malayalam</option>
+      <option value="ta-IN">Tamil</option><option value="hi-IN">Hindi</option>
+      <option value="es-ES">Spanish</option><option value="de-DE">German</option>
+      <option value="fr-FR">French</option><option value="ja-JP">Japanese</option>
+    </select></label>
+  </div>
+  <label class="voice-cleanup"><input type="checkbox" data-voice="cleanup" disabled> Polish ECAI transcript with Ollama</label>
+  <p class="caption" data-voice="help">Up to 30 seconds. Stops after a pause. Audio stays in this tab unless ECAI or the browser speech service transcribes it.</p>
+  <div class="voice-controls">
+    <button type="button" class="voice-ptt dark" data-voice="ptt" aria-pressed="false" aria-label="Hold to record a voice note; release to stop">● Hold to talk</button>
+    <button type="button" data-voice="toggle">Tap to record</button>
+    <button type="button" data-voice="cancel" hidden>Discard</button>
+    <output data-voice="time" aria-label="Recording time">0:00</output>
+    <meter data-voice="level" min="0" max="1" value="0" aria-label="Microphone level"></meter>
+  </div>
+  <p data-voice="status" role="status" aria-live="polite">Checking voice support…</p>
+  <div data-voice="review" hidden>
+    <audio data-voice="audio" controls preload="metadata" aria-label="Recorded voice note"></audio>
+    <label>Transcript — review before inserting<textarea data-voice="text" rows="3" maxlength="16000"></textarea></label>
+    <details data-voice="original" hidden><summary>Original transcription</summary><p data-voice="raw"></p></details>
+    <div class="voice-controls"><button type="button" data-voice="insert" disabled>Insert into note</button><button type="button" data-voice="retry" hidden>Retry with ECAI</button></div>
+    <p class="caption">Only the text you insert is included when you sign and publish. The recording is discarded when you close this composer.</p>
+  </div>
+</section>

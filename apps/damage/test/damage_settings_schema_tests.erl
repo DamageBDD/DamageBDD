@@ -167,6 +167,8 @@ tax_controls_are_allowlisted_and_grouped_test() ->
     ?assertEqual(ae_account, maps:get(type, OwnerField)),
     ?assertEqual(restart, maps:get(apply, OwnerField)),
     {ok, Enabled} = damage_settings_schema:field(damage, <<"tax_enabled">>),
+    ?assertEqual(<<"protected">>, damage_settings_catalog:restriction(ecai,
+        <<"market_maker_admin_enabled">>)),
     ?assertEqual(false, maps:get(default, Enabled)),
     ?assertEqual(restart, maps:get(apply, Enabled)),
     {ok, Budget} = damage_settings_schema:field(damage, <<"tax_max_prices_per_backfill">>),
@@ -270,3 +272,34 @@ tax_jurisdiction_country_codes_are_closed_test() ->
             <<"tax_jurisdiction">> => <<"../../etc/passwd">>
         })
     ).
+
+market_maker_controls_and_protection_test() ->
+    {ok, Enabled} = damage_settings_schema:field(ecai, <<"market_maker_enabled">>),
+    ?assertEqual(boolean, maps:get(type, Enabled)),
+    ?assertEqual(<<"marketplace">>, maps:get(group, Enabled)),
+    ?assertEqual(false, maps:get(default, Enabled)),
+    ?assertEqual(hot, maps:get(apply, Enabled)),
+    {ok, Spread} = damage_settings_schema:field(ecai, <<"market_maker_base_half_spread_bps">>),
+    ?assertEqual(number, maps:get(type, Spread)),
+    ?assertEqual(30.0, maps:get(default, Spread)),
+    {ok, Patch} = damage_settings_schema:decode_changes(ecai,
+        #{<<"market_maker_enabled">> => true,
+          <<"market_maker_levels">> => 6,
+          <<"market_maker_base_half_spread_bps">> => 12.5}),
+    ?assertEqual(true, proplists:get_value(market_maker_enabled, Patch)),
+    ?assertEqual(12.5, proplists:get_value(market_maker_base_half_spread_bps, Patch)),
+    ?assertMatch({error, {invalid_value, _, _}},
+        damage_settings_schema:decode_changes(ecai,
+            #{<<"market_maker_base_half_spread_bps">> => <<"12.5">>})),
+    ?assertMatch({error, {invalid_value, _, _}},
+        damage_settings_schema:decode_changes(ecai,
+            #{<<"market_maker_poll_interval_ms">> => 1999})),
+    [?assertMatch({error, {not_editable, _}},
+        damage_settings_schema:decode_changes(ecai, #{Key => true}))
+     || Key <- [<<"market_maker_admin_enabled">>, <<"market_maker_accounts">>,
+                 <<"marketplace_enabled">>, <<"mode">>, <<"execution_enabled">>]],
+    ?assertEqual(ok, damage_settings_schema:validate_effective(
+        #{ecai => maps:from_list(Patch)})),
+    ?assertMatch({error, {invalid_market_maker_settings, _}},
+        damage_settings_schema:validate_effective(
+            #{ecai => #{market_maker_target_inventory_ratio => 0.92}})).

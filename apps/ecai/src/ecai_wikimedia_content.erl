@@ -19,7 +19,7 @@
     normalize_document/4
 ]).
 
--define(SCHEMA, <<"ecai-wikimedia-content/v1">>).
+-define(SCHEMA, <<"ecai-wikimedia-content/v2">>).
 -define(DEFAULT_ABSTRACT_BYTES, 16384).
 -define(DEFAULT_INDEX_CHUNK_LINES, 5000).
 
@@ -337,6 +337,11 @@ normalize_document(Source, Visibility, Runtime, Title0) ->
             ]
         ),
         Abstract = utf8_prefix(Abstract0, maps:get(abstract_max_bytes, Runtime)),
+        %% Retain a complete dump text field independently of the preview.
+        %% An opening/description-only dump explicitly remains partial.
+        {SourceText, Representation, Complete} = retained_text(Source, Abstract0),
+        true = byte_size(SourceText) =< ecai_source_retrieval:max_bytes(),
+        ok = ecai_chunker:validate_utf8(SourceText),
         Wikidata = first_binary(
             Source,
             [<<"wikibase_item">>, <<"wikidata_id">>, <<"wikidata">>],
@@ -355,6 +360,12 @@ normalize_document(Source, Visibility, Runtime, Title0) ->
             <<"url">> => Url,
             <<"identifier">> => PageId,
             <<"abstract">> => Abstract,
+            <<"source_text">> => SourceText,
+            <<"source_sha256">> => ecai_index_job_codec:id_hex(crypto:hash(sha256, SourceText)),
+            <<"source_bytes">> => byte_size(SourceText),
+            <<"source_complete">> => Complete,
+            <<"source_representation">> => Representation,
+            <<"source_index_token_limit">> => 4096,
             <<"in_language">> => #{
                 <<"identifier">> => language_code(maps:get(project, Runtime))
             },
@@ -388,6 +399,16 @@ normalize_document(Source, Visibility, Runtime, Title0) ->
         }}
     catch
         Class:Reason -> {error, {normalize_failed, Class, Reason}}
+    end.
+
+retained_text(Source, Fallback) ->
+    case first_text(Source, [<<"text">>]) of
+        <<>> ->
+            case first_text(Source, [<<"source_text">>]) of
+                <<>> -> {Fallback, <<"cirrus_excerpt">>, false};
+                SourceText -> {SourceText, <<"cirrus_source_text_field">>, true}
+            end;
+        Text -> {Text, <<"cirrus_text_field">>, true}
     end.
 
 -spec finalize_ranked(map(), fun((map()) -> any())) -> {ok, map()} | {error, term()}.

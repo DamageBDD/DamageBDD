@@ -1,0 +1,47 @@
+%% Test-only flow-controlled transport. Compiled only by run.sh into a private
+%% temporary ebin and never shipped as an application module.
+-module(gun).
+-export([open/3,await_up/2,get/4,update_flow/3,close/1]).
+open(Host, Port, Opts) ->
+    {ok, Report} = application:get_env(erm, dj_http_test_report),
+    Report ! {opened, Host, Port, Opts},
+    {ok, Scenario} = application:get_env(erm, dj_http_test_scenario),
+    Owner = self(), Report ! {http_worker, Owner},
+    {ok, spawn(fun() -> loop(Owner, Report, Scenario, undefined, []) end)}.
+await_up(_, _) -> {ok,http}.
+get(P, _, _, #{flow := 1}) -> S=make_ref(), P!{get,S}, S.
+update_flow(P,S,1) -> P!{next,S}, ok.
+close(P) -> P!close, ok.
+loop(Owner, Report, Scenario, Stream, Chunks) ->
+    receive
+        {get,S} ->
+            {Status, Headers, Parts} = response(Scenario),
+            case Status of
+                stall -> loop(Owner,Report,Scenario,S,[]);
+                transport_error -> Owner!{gun_error,self(),S,closed}, loop(Owner,Report,Scenario,S,[]);
+                _ ->
+                    Fin = case Parts of [] -> fin; _ -> nofin end,
+                    Owner!{gun_response,self(),S,Fin,Status,Headers},
+                    Left=send_chunk(Owner,Report,S,Parts),
+                    loop(Owner,Report,Scenario,S,Left)
+            end;
+        {next,S} when S =:= Stream ->
+            Left=send_chunk(Owner,Report,S,Chunks),
+            loop(Owner,Report,Scenario,S,Left);
+        close -> Report!closed, ok
+    end.
+send_chunk(_,_,_,[]) -> [];
+send_chunk(O,R,S,[B|Rest]) ->
+    R!{chunk,byte_size(B)},
+    Fin=case Rest of []->fin; _->nofin end,
+    O!{gun_data,self(),S,Fin,B}, Rest.
+response(normal) -> {200,[],[<<"abc">>,<<"def">>]};
+response(body_limit) -> {200,[],[<<"abcd">>,<<"efgh">>,<<"ijkl">>]};
+response(declared_limit) -> {200,[{<<"content-length">>,<<"999">>}],[<<"a">>]};
+response(compressed) -> {200,[{<<"content-encoding">>,<<"gzip">>}],[<<"a">>]};
+response(invalid_length) -> {200,[{<<"content-length">>,<<"wat">>}],[<<"a">>]};
+response(status) -> {403,[],[]};
+response(external_redirect) -> {302,[{<<"location">>,<<"https://127.0.0.1/private">>}],[]};
+response(redirect_loop) -> {301,[{<<"location">>,<<"/same">>}],[]};
+response(stall) -> {stall,[],[]};
+response(transport_error) -> {transport_error,[],[]}.

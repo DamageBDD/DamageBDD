@@ -1,0 +1,3 @@
+-module(erm_mpv_proc).
+-export([command/2]).
+command(F,A)->whereis(playlist)!{mpv,F,A},{ok,null}.

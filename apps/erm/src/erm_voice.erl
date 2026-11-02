@@ -178,7 +178,9 @@ handle_cast({transcript, Text, Phrases}, S) ->
 handle_cast(reset_boundary, S) ->
     {noreply, S#st{boundary = erm_voice_boundary:new()}};
 handle_cast(reset, S) ->
-    {noreply, (cancel_plan(S))#st{boundary = erm_voice_boundary:new()}};
+    Next=(cancel_plan(S))#st{boundary = erm_voice_boundary:new()},
+    voice_event(#{phase=>work_phase(ok,Next)}),
+    {noreply, Next};
 handle_cast(_, S) ->
     {noreply, S}.
 
@@ -267,6 +269,7 @@ dispatch_boundary(S0) ->
 
 priority_info(Msg, S) ->
     {noreply, Next} = handle_info(Msg, S#st{job = S#st.priority, priority = undefined}),
+    case S#st.job of undefined -> ok; _ -> voice_event(#{phase=>processing}) end,
     {noreply, Next#st{job = S#st.job, priority = Next#st.job}}.
 
 accept(_Text, S = #st{priority = P}) when P =/= undefined ->
@@ -297,6 +300,7 @@ accept(_Text, S) ->
     {{error, busy}, record_result({error, busy}, S)}.
 
 launch(Phase, Input, S = #st{opts = Opts}) ->
+    voice_event(#{phase=>processing}),
     utterance_trace(dispatch, #{stage => Phase, input => Input}, S),
     Parent = self(),
     Ref = make_ref(),
@@ -375,6 +379,7 @@ clear_job(S = #st{job = #{pid := Pid, monitor := Mon, timer := Timer}}) ->
     erlang:cancel_timer(Timer),
     S#st{job = undefined}.
 record_result(Result, S) ->
+    voice_event(#{phase=>work_phase(Result,S)}),
     subsystem_log(notice, "voice command result: ~tp", [Result]),
     %% TTS is optional, including in isolated test VMs.
     case whereis(erm_tts) of
@@ -540,3 +545,11 @@ subsystem_log(Level, Format, Args) ->
     logger:log(Level, Format, Args, #{domain => [erm, voice]}).
 subsystem_log(Level, Format, Args, Meta) ->
     logger:log(Level, Format, Args, Meta#{domain => [erm, voice]}).
+
+voice_event(Data) ->
+    try erm_voice_events:publish(?MODULE, work, Data) catch error:undef -> ok end.
+
+work_phase(_,#st{job=J,priority=P}) when J=/=undefined; P=/=undefined -> processing;
+work_phase({error,cancelled},_) -> idle;
+work_phase({error,_},_) -> error;
+work_phase(_,_) -> idle.
