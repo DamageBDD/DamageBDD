@@ -558,10 +558,6 @@ integer(V, Default) when is_binary(V) ->
     try binary_to_integer(V) catch _:_ -> Default end;
 integer(_, Default) -> Default.
 
-boolean(false) -> false;
-boolean(<<"false">>) -> false;
-boolean(_) -> true.
-
 fetch_registry_transactions() ->
     case registry_call(fun damage_node_registry:contract_id/0) of
         {ok, Contract} when is_binary(Contract), byte_size(Contract) > 3 ->

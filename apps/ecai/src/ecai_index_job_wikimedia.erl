@@ -779,9 +779,11 @@ live_record_fun(Job, Runtime) ->
         case whereis(ecai_wikimedia_search_server) of
             Pid when is_pid(Pid) ->
                 case
-                    catch ecai_wikimedia_search_server:upsert_live_record(
-                        Metadata0, DocId, Record, Abstract
-                    )
+                    ecai_otp_compat:catch_value(fun() ->
+                        ecai_wikimedia_search_server:upsert_live_record(
+                            Metadata0, DocId, Record, Abstract
+                        )
+                    end)
                 of
                     {ok, Size} when is_map(Size) ->
                         put(

@@ -491,7 +491,7 @@ terminate(_,S)->
             true->case maps:get(owned,S) of
                 true->gen_server:stop(P);
                 false->
-                    _=catch stop_owned_preview(P,S),
+                    _=erm_otp_compat:catch_value(fun()->stop_owned_preview(P,S) end),
                     lists:foreach(fun(undefined)->ok;
                         (Id)->gen_server:call(P,{cancel,Id},3000)
                     end,[maps:get(enrolment,S,undefined),maps:get(capture,S)])

@@ -1431,9 +1431,6 @@ first_start_time(Job, _Now) ->
             end
     end.
 
-valid_elapsed(N) when is_integer(N), N >= 0 -> N;
-valid_elapsed(_) -> 0.
-
 legacy_active_ms(Job) ->
     case maps:get(active_elapsed_ms, Job, undefined) of
         N when is_integer(N), N >= 0 -> N;

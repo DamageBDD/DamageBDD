@@ -9,7 +9,8 @@ validate_model(<<"ELS1",Samples:32,N:16,Frames/binary>>)
         Rows=[{R,P,V,K} || <<R:32/float-big,P:32/float-big,V:32/float-big,K:64/binary>> <= Frames],
         true=length(Rows)=:=N,
         lists:foreach(fun({R,P,V,K}) ->
-            true=R>=0 andalso R=<1, true=P=:=0.0 orelse (P>=50 andalso P=<400),
+            %% Both signed zeros represent an unvoiced frame.
+            true=R>=0 andalso R=<1, true=P==0.0 orelse (P>=50 andalso P=<400),
             true=V>=0 andalso V=<1,
             Ks=[F || <<F:32/float-big>> <= K], true=length(Ks)=:=16,
             true=lists:all(fun(F)->abs(F)=<0.970001 end,Ks)

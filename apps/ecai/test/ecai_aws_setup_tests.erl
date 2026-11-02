@@ -32,8 +32,11 @@ owner_policy_test() ->
 sensitive_status_test() ->
     Secret = <<"FAKE_TEST_SECRET">>,
     Report = #{state => Secret, message => Secret, reason => Secret, log => [Secret]},
-    Out = ecai_aws_setup_session:format_status(Report),
-    ?assertEqual(nomatch, binary:match(term_to_binary(Out), Secret)).
+    lists:foreach(fun(Module) ->
+        Out = Module:format_status(Report),
+        ?assertEqual(nomatch, binary:match(term_to_binary(Out), Secret)),
+        ?assertEqual(lists:sort(maps:keys(Report)), lists:sort(maps:keys(Out)))
+    end, [ecai_aws_setup_session, ecai_aws_setup]).
 
 recovery_preserves_at_most_once_probe_fence_test() ->
     O = #{<<"status">> => <<"deploying">>, <<"busy">> => true,

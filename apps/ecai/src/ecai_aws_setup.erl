@@ -8,7 +8,7 @@
 -export([start_link/0, start_link/1, connect/4, disconnect/3, snapshot/1, snapshot/2, operation/2,
          plan/5, action/5, fingerprint/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
-         code_change/3, format_status/1, format_status/2]).
+         code_change/3, format_status/1]).
 
 start_link() -> start_link(#{}).
 start_link(Options) -> gen_server:start_link({local, ?MODULE}, ?MODULE, Options, []).
@@ -461,4 +461,3 @@ terminate(_, S) ->
     dets:close(maps:get(table, S)), ok.
 code_change(_, S, _) -> {ok, S}.
 format_status(Status) when is_map(Status) -> Status#{state => redacted, message => redacted, reason => redacted, log => []}.
-format_status(_, _) -> [{data, [{"State", redacted}]}].

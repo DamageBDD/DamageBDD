@@ -5,14 +5,14 @@
 -behaviour(gen_server).
 -export([start_link/0, connect/4, run/3, runtime/2, close/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2,
-         code_change/3, format_status/1, format_status/2]).
+         code_change/3, format_status/1]).
 
 start_link() -> gen_server:start_link(?MODULE, [], []).
 connect(Pid, Config, Credentials, Region) ->
     gen_server:call(Pid, {connect, Config, Credentials, Region}, 65000).
 run(Pid, Action, Args) -> gen_server:call(Pid, {run, Action, Args}, 65000).
 close(Pid) ->
-    case catch gen_server:stop(Pid, normal, 2000) of
+    case ecai_otp_compat:catch_value(fun() -> gen_server:stop(Pid, normal, 2000) end) of
         ok -> ok;
         _ -> exit(Pid, kill), ok
     end.
@@ -21,7 +21,7 @@ runtime(Action, Args) ->
     case open() of
         {ok, Port} ->
             Result = exchange(Port, Args#{<<"mode">> => <<"runtime">>, <<"action">> => Action}),
-            catch erlang:port_close(Port), Result;
+            ecai_otp_compat:catch_value(fun() -> erlang:port_close(Port) end), Result;
         Error -> Error
     end.
 init([]) ->
@@ -36,7 +36,8 @@ handle_call({connect, Config, Credentials, Region}, _From, #{port := undefined} 
                 <<"credentials">> => Credentials, <<"region">> => Region}),
             case Result of
                 {ok, _} -> {reply, Result, State#{port := Port}};
-                _ -> catch erlang:port_close(Port), {stop, normal, Result, State}
+                _ -> ecai_otp_compat:catch_value(fun() -> erlang:port_close(Port) end),
+                    {stop, normal, Result, State}
             end;
         Error -> {stop, normal, Error, State}
     end;
@@ -57,11 +58,11 @@ handle_info(expire, State) -> {stop, normal, State};
 handle_info({'EXIT', _, _}, State) -> {stop, normal, State};
 handle_info({_Port, {exit_status, _}}, State) -> {stop, normal, State};
 handle_info(_, State) -> {noreply, State}.
-terminate(_, #{port := Port}) when is_port(Port) -> catch erlang:port_close(Port), ok;
+terminate(_, #{port := Port}) when is_port(Port) ->
+    ecai_otp_compat:catch_value(fun() -> erlang:port_close(Port) end), ok;
 terminate(_, _) -> ok.
 code_change(_, State, _) -> {ok, State}.
 format_status(Status) when is_map(Status) -> Status#{state => redacted, message => redacted, reason => redacted, log => []}.
-format_status(_, _) -> [{data, [{"State", redacted}]}].
 
 open() ->
     case ecai_aws_setup_config:python() of
@@ -88,7 +89,11 @@ receive_result(Port, Deadline) ->
                 #{<<"ok">> := false, <<"error">> := Code} when is_binary(Code), byte_size(Code) =< 80 -> {error, Code};
                 _ -> {error, <<"bridge_protocol_error">>}
             catch _:_ -> {error, <<"bridge_protocol_error">>} end;
-        {Port, {data, {noeol, _}}} -> catch erlang:port_close(Port), {error, <<"bridge_output_too_large">>};
+        {Port, {data, {noeol, _}}} ->
+            ecai_otp_compat:catch_value(fun() -> erlang:port_close(Port) end),
+            {error, <<"bridge_output_too_large">>};
         {Port, {exit_status, _}} -> {error, <<"bridge_closed">>};
         {'EXIT', Port, _} -> {error, <<"bridge_closed">>}
-    after Remaining -> catch erlang:port_close(Port), {error, <<"bridge_timeout">>} end.
+    after Remaining ->
+        ecai_otp_compat:catch_value(fun() -> erlang:port_close(Port) end),
+        {error, <<"bridge_timeout">>} end.

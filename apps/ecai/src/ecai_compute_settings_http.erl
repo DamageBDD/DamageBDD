@@ -339,7 +339,7 @@ await_probe(Port, Deadline) ->
         {Port, {exit_status, 0}} -> ok;
         {Port, {exit_status, _}} -> {error, cloud_identity_check_failed}
     after Remain ->
-        catch erlang:port_close(Port),
+        ecai_otp_compat:catch_value(fun() -> erlang:port_close(Port) end),
         {error, cloud_identity_check_timeout}
     end.
 

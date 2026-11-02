@@ -60,7 +60,7 @@ authorize_request(Req, Action, State) ->
     case cowboy_req:header(<<"authorization">>, Req, <<>>) of
         <<"Bearer ecai_ollama_", _/binary>> = Header ->
             <<"Bearer ", Token/binary>> = Header,
-            case catch ecai_ollama_api_keys:authenticate(Token) of
+            case ecai_otp_compat:catch_value(fun() -> ecai_ollama_api_keys:authenticate(Token) end) of
                 {ok, KeyAuth} ->
                     Scope = action_scope(Action),
                     case ecai_ollama_api_keys:has_scope(KeyAuth, Scope) of
