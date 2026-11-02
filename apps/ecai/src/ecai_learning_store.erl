@@ -64,7 +64,12 @@
 -export([collect_repairs/2, collect_log_incidents/2, build_snapshot_data/1]).
 -endif.
 
--record(state, {tab, state_root, file, event_seq = 0}).
+%% Only collection keys are indexed. Graph/source/relation payloads remain on disk.
+%% At most two collection readers share DETS; point reads and writes stay serialized.
+-record(state, {tab, state_root, file, event_seq = 0, index,
+                queries = #{}, pending = [], write_revision = 0}).
+-define(MAX_QUERIES, 32).
+-define(QUERY_WORKERS, 2).
 
 start_link() -> start_link(#{}).
 start_link(Opts) -> gen_server:start_link({local, ?SERVER}, ?MODULE, Opts, []).
@@ -74,40 +79,40 @@ status() -> gen_server:call(?SERVER, status).
 put_analysis(App, Module, Analysis) ->
     gen_server:call(?SERVER, {put, {analysis, App, Module}, Analysis}, infinity).
 get_analysis(App, Module) ->
-    gen_server:call(?SERVER, {get, {analysis, App, Module}}).
+    read({analysis, App, Module}).
 analyses(App) ->
     gen_server:call(?SERVER, {select_prefix, analysis, App}, infinity).
 
 put_graph(App, Graph) -> gen_server:call(?SERVER, {put, {graph, App}, Graph}, infinity).
-get_graph(App) -> gen_server:call(?SERVER, {get, {graph, App}}).
+get_graph(App) -> read({graph, App}).
 
 put_relations(Scope, Relations) when is_atom(Scope), is_list(Relations) ->
     Deduped = ecai_relation:dedupe(Relations),
     Keys = [ecai_relation:key(Relation) || Relation <- Deduped],
     gen_server:call(?SERVER, {put_relations, Scope, Deduped, Keys}, infinity).
 get_relations(Scope) when is_atom(Scope) ->
-    gen_server:call(?SERVER, {get, {relations, Scope}}, infinity).
+    read({relations, Scope}).
 relation_keys(Scope) when is_atom(Scope) ->
-    gen_server:call(?SERVER, {get, {relation_keys, Scope}}, infinity).
+    read({relation_keys, Scope}).
 
 put_relation_benchmark(Scope, Benchmark) when is_atom(Scope), is_map(Benchmark) ->
     gen_server:call(?SERVER, {put, {relation_benchmark, Scope}, Benchmark}, infinity).
 get_relation_benchmark(Scope) when is_atom(Scope) ->
-    gen_server:call(?SERVER, {get, {relation_benchmark, Scope}}, infinity).
+    read({relation_benchmark, Scope}).
 
 put_module_knowledge(App, Module, Card) ->
     gen_server:call(?SERVER, {put, {module_knowledge, App, Module}, Card}, infinity).
 get_module_knowledge(App, Module) ->
-    gen_server:call(?SERVER, {get, {module_knowledge, App, Module}}).
+    read({module_knowledge, App, Module}).
 module_knowledge(App) ->
     gen_server:call(?SERVER, {select_prefix, module_knowledge, App}, infinity).
 
 put_app_knowledge(App, Card) ->
     gen_server:call(?SERVER, {put, {app_knowledge, App}, Card}, infinity).
-get_app_knowledge(App) -> gen_server:call(?SERVER, {get, {app_knowledge, App}}).
+get_app_knowledge(App) -> read({app_knowledge, App}).
 
 put_global_knowledge(Card) -> gen_server:call(?SERVER, {put, global_knowledge, Card}, infinity).
-get_global_knowledge() -> gen_server:call(?SERVER, {get, global_knowledge}).
+get_global_knowledge() -> read(global_knowledge).
 
 put_repair(Fingerprint, FindingVersion, Repair) ->
     Fp = to_binary(Fingerprint),
@@ -129,10 +134,7 @@ compare_and_put_repair(Fingerprint, FindingVersion, Expected, Repair) when
     ).
 
 get_repair(Fingerprint, FindingVersion) ->
-    gen_server:call(
-        ?SERVER,
-        {get, {repair, to_binary(Fingerprint), to_binary(FindingVersion)}}
-    ).
+    read({repair, to_binary(Fingerprint), to_binary(FindingVersion)}).
 repairs() -> gen_server:call(?SERVER, repairs, infinity).
 repairs(Fingerprint) -> gen_server:call(?SERVER, {repairs, to_binary(Fingerprint)}, infinity).
 
@@ -144,7 +146,7 @@ put_log_incident(Fingerprint, Incident) when is_map(Incident) ->
         infinity
     ).
 get_log_incident(Fingerprint) ->
-    gen_server:call(?SERVER, {get, {log_incident, to_binary(Fingerprint)}}).
+    read({log_incident, to_binary(Fingerprint)}).
 log_incidents() -> gen_server:call(?SERVER, log_incidents, infinity).
 log_incidents(Limit) when is_integer(Limit), Limit > 0 ->
     gen_server:call(?SERVER, {log_incidents, Limit}, infinity).
@@ -155,7 +157,7 @@ put_release_change(Commit, Change) when is_map(Change) ->
     CommitBin = to_binary(Commit),
     gen_server:call(?SERVER, {put, {release_change, CommitBin}, Change}, infinity).
 get_release_change(Commit) ->
-    gen_server:call(?SERVER, {get, {release_change, to_binary(Commit)}}).
+    read({release_change, to_binary(Commit)}).
 release_changes() ->
     gen_server:call(?SERVER, release_changes, infinity).
 
@@ -163,14 +165,14 @@ put_release_baseline(Environment, Baseline) when is_map(Baseline) ->
     Name = to_binary(Environment),
     gen_server:call(?SERVER, {put, {release_baseline, Name}, Baseline}, infinity).
 get_release_baseline(Environment) ->
-    gen_server:call(?SERVER, {get, {release_baseline, to_binary(Environment)}}).
+    read({release_baseline, to_binary(Environment)}).
 release_baselines() ->
     gen_server:call(?SERVER, release_baselines, infinity).
 
 put_checkpoint(Name, Checkpoint) when is_atom(Name), is_map(Checkpoint) ->
     gen_server:call(?SERVER, {put_checkpoint, Name, Checkpoint}, infinity).
 get_checkpoint(Name) when is_atom(Name) ->
-    gen_server:call(?SERVER, {get, {checkpoint, Name}}).
+    read({checkpoint, Name}).
 delete_checkpoint(Name) when is_atom(Name) ->
     gen_server:call(?SERVER, {delete, {checkpoint, Name}}, infinity).
 
@@ -178,7 +180,12 @@ events(Type, Id) -> events(Type, Id, ?DEFAULT_EVENT_LIMIT).
 events(Type, Id, Limit) when is_atom(Type), is_integer(Limit), Limit > 0 ->
     gen_server:call(?SERVER, {events, Type, Id, Limit}, infinity).
 
-snapshot_data() -> gen_server:call(?SERVER, snapshot_data, infinity).
+snapshot_data() -> snapshot_data(2).
+snapshot_data(Retries) ->
+    case gen_server:call(?SERVER, snapshot_data, infinity) of
+        {error, learning_store_snapshot_busy} when Retries > 0 -> snapshot_data(Retries - 1);
+        Reply -> Reply
+    end.
 
 init(Opts) ->
     process_flag(trap_exit, true),
@@ -187,8 +194,16 @@ init(Opts) ->
             File = ecai_code_paths:dets_file(Root, "codebase_learning.dets"),
             case dets:open_file(?TABLE, [{file, File}, {type, set}, {auto_save, 10000}]) of
                 {ok, ?TABLE} ->
-                    Seq = load_event_seq(?TABLE),
-                    {ok, #state{tab = ?TABLE, state_root = Root, file = File, event_seq = Seq}};
+                    try
+                        Index = build_index(?TABLE),
+                        Seq = load_event_seq(?TABLE),
+                        {ok, #state{tab = ?TABLE, state_root = Root, file = File,
+                                    event_seq = Seq, index = Index}}
+                    catch
+                        _:_ ->
+                            _ = dets:close(?TABLE),
+                            {stop, learning_store_index_failed}
+                    end;
                 {error, Reason} ->
                     {stop, {cannot_open_learning_store, File, Reason}}
             end;
@@ -209,6 +224,12 @@ handle_call(status, _From, State) ->
             state_root => State#state.state_root,
             file => State#state.file,
             event_seq => State#state.event_seq,
+            write_revision => State#state.write_revision,
+            active_queries => active_queries(State),
+            queued_queries => length(State#state.pending),
+            index_entries => ets:info(State#state.index, size),
+            read_timeout_ms => read_timeout(),
+            query_timeout_ms => query_timeout(),
             table_info => Info
         },
         State};
@@ -220,13 +241,16 @@ handle_call({put_relations, Scope, Relations, Keys}, _From, State) ->
                 {{relation_keys, Scope}, Keys}
             ])
         of
-            ok -> dets:sync(State#state.tab);
+            ok ->
+                index_insert(State#state.index, {relations, Scope}),
+                index_insert(State#state.index, {relation_keys, Scope}),
+                dets:sync(State#state.tab);
             Error -> Error
         end,
-    {reply, Reply, State};
+    {reply, Reply, changed(State)};
 handle_call({put, Key, Value}, _From, State) ->
-    Reply = persist_value(State#state.tab, Key, Value),
-    {reply, Reply, State};
+    Reply = persist_value(State, Key, Value),
+    {reply, Reply, changed(State)};
 handle_call({put_transition, Key, Type, Id, Value0}, _From, State0) ->
     {Reply, State1} = persist_transition(Key, Type, Id, Value0, State0),
     {reply, Reply, State1};
@@ -260,15 +284,17 @@ handle_call({compare_and_put_repair, Fp, Version, Expected, Repair}, _From, Stat
     end;
 handle_call({put_checkpoint, Name, Checkpoint0}, _From, State) ->
     Checkpoint = Checkpoint0#{persisted_at => now_iso8601()},
-    Reply = persist_value(State#state.tab, {checkpoint, Name}, Checkpoint),
-    {reply, Reply, State};
+    Reply = persist_value(State, {checkpoint, Name}, Checkpoint),
+    {reply, Reply, changed(State)};
 handle_call({delete, Key}, _From, State) ->
     Reply =
         case dets:delete(State#state.tab, Key) of
-            ok -> dets:sync(State#state.tab);
+            ok ->
+                index_delete(State#state.index, Key),
+                dets:sync(State#state.tab);
             Error -> Error
         end,
-    {reply, Reply, State};
+    {reply, Reply, changed(State)};
 handle_call({get, Key}, _From, State) ->
     Reply =
         case dets:lookup(State#state.tab, Key) of
@@ -276,44 +302,39 @@ handle_call({get, Key}, _From, State) ->
             [] -> not_found
         end,
     {reply, Reply, State};
-handle_call({select_prefix, Type, App}, _From, State) ->
-    Values = dets:foldl(
-        fun
-            ({{Type0, App0, _Module}, Value}, Acc) when Type0 =:= Type, App0 =:= App ->
-                [Value | Acc];
-            (_, Acc) ->
-                Acc
-        end,
-        [],
-        State#state.tab
-    ),
-    {reply, lists:reverse(Values), State};
-handle_call(repairs, _From, State) ->
-    {reply, collect_repairs(State#state.tab, all), State};
-handle_call({repairs, Fingerprint}, _From, State) ->
-    {reply, collect_repairs(State#state.tab, Fingerprint), State};
-handle_call(log_incidents, _From, State) ->
-    {reply, collect_log_incidents(State#state.tab, all), State};
-handle_call({log_incidents, Limit}, _From, State) ->
-    Incidents = collect_log_incidents(State#state.tab, all),
-    {reply, lists:sublist(Incidents, Limit), State};
-handle_call({log_incidents, App, Module}, _From, State) ->
-    {reply, collect_log_incidents(State#state.tab, {App, Module}), State};
-handle_call(release_changes, _From, State) ->
-    {reply, collect_release_changes(State#state.tab), State};
-handle_call(release_baselines, _From, State) ->
-    {reply, collect_release_baselines(State#state.tab), State};
-handle_call({events, Type, Id, Limit}, _From, State) ->
-    {reply, collect_events(State#state.tab, Type, Id, Limit), State};
-handle_call(snapshot_data, _From, State) ->
-    {reply, build_snapshot_data(State#state.tab), State};
+handle_call({select_prefix, _, _} = Q, From, State) -> enqueue_query(Q, From, State);
+handle_call(repairs = Q, From, State) -> enqueue_query(Q, From, State);
+handle_call({repairs, _} = Q, From, State) -> enqueue_query(Q, From, State);
+handle_call(log_incidents = Q, From, State) -> enqueue_query(Q, From, State);
+handle_call({log_incidents, _} = Q, From, State) -> enqueue_query(Q, From, State);
+handle_call({log_incidents, _, _} = Q, From, State) -> enqueue_query(Q, From, State);
+handle_call(release_changes = Q, From, State) -> enqueue_query(Q, From, State);
+handle_call(release_baselines = Q, From, State) -> enqueue_query(Q, From, State);
+handle_call({events, _, _, _} = Q, From, State) -> enqueue_query(Q, From, State);
+handle_call(snapshot_data = Q, From, State) -> enqueue_query(Q, From, State);
 handle_call(_Request, _From, State) ->
     {reply, {error, unsupported_call}, State}.
 
 handle_cast(_Msg, State) -> {noreply, State}.
+handle_info({query_result, Ref, Result}, State) ->
+    {noreply, finish_query(Ref, Result, State)};
+handle_info({query_timeout, Ref}, State) ->
+    {noreply, finish_query(Ref, {error, learning_store_query_timeout}, State)};
+handle_info({'DOWN', Monitor, process, _Pid, _Reason}, State) ->
+    Matches = [Ref || {Ref, Q} <- maps:to_list(State#state.queries),
+        maps:get(caller_monitor, Q) =:= Monitor orelse
+        case maps:get(worker, Q, undefined) of {_, Monitor} -> true; _ -> false end],
+    New = lists:foldl(fun(Ref, S) ->
+        finish_query(Ref, {error, learning_store_reader_stopped}, S)
+    end, State, Matches),
+    {noreply, New};
 handle_info(_Info, State) -> {noreply, State}.
 
 terminate(_Reason, State) ->
+    maps:foreach(fun(_, Q) ->
+        cancel_query(Q),
+        gen_server:reply(maps:get(from, Q), {error, learning_store_stopping})
+    end, State#state.queries),
     _ = dets:sync(State#state.tab),
     _ = dets:close(State#state.tab),
     ok.
@@ -331,9 +352,12 @@ same_repair_revision(Expected, Current) when is_map(Expected), is_map(Current) -
 same_repair_revision(_, _) ->
     false.
 
-persist_value(Tab, Key, Value) ->
+persist_value(#state{tab = Tab, index = Index}, Key, Value) ->
     case dets:insert(Tab, {Key, Value}) of
-        ok -> dets:sync(Tab);
+        ok ->
+            %% Match DETS visibility even when the subsequent sync fails.
+            index_insert(Index, Key),
+            dets:sync(Tab);
         Error -> Error
     end.
 
@@ -357,7 +381,8 @@ persist_transition(Key, Type, Id, Value0, State0) ->
         ok ->
             %% Insert already changed the in-memory table. Never reuse its
             %% revision if sync fails: stale snapshots must still conflict.
-            State1 = State0#state{event_seq = Seq},
+            [index_insert(State0#state.index, K) || {K, _} <- Objects],
+            State1 = (changed(State0))#state{event_seq = Seq},
             case dets:sync(State0#state.tab) of
                 ok -> {ok, State1};
                 Error -> {Error, State1}
@@ -446,7 +471,7 @@ load_event_seq(Tab) ->
     end.
 
 collect_events(Tab, Type, Id, Limit) ->
-    Events = dets:foldl(
+    Events = fold_records(
         fun
             ({{event, Type0, Id0, Seq}, Event}, Acc) when Type0 =:= Type, Id0 =:= Id ->
                 [{Seq, Event} | Acc];
@@ -461,7 +486,7 @@ collect_events(Tab, Type, Id, Limit) ->
 
 
 collect_release_changes(Tab) ->
-    Changes = dets:foldl(
+    Changes = fold_records(
         fun
             ({{release_change, Commit}, Change}, Acc) when is_map(Change) ->
                 [Change#{commit => Commit} | Acc];
@@ -480,7 +505,7 @@ collect_release_changes(Tab) ->
     ).
 
 collect_release_baselines(Tab) ->
-    dets:foldl(
+    fold_records(
         fun
             ({{release_baseline, Name}, Baseline}, Acc) when is_map(Baseline) ->
                 Acc#{Name => Baseline};
@@ -493,7 +518,7 @@ collect_release_baselines(Tab) ->
 
 collect_repairs(Tab, Filter) ->
     lists:reverse(
-        dets:foldl(
+        fold_records(
             fun
                 ({{repair, Fingerprint, Version}, Repair}, Acc) when is_map(Repair) ->
                     case (Filter =:= all) orelse (Filter =:= Fingerprint) of
@@ -513,7 +538,7 @@ collect_repairs(Tab, Filter) ->
     ).
 
 collect_log_incidents(Tab, Filter) ->
-    Incidents = dets:foldl(
+    Incidents = fold_records(
         fun
             ({{log_incident, Fingerprint}, Incident}, Acc) when is_map(Incident) ->
                 App = maps:get(application, Incident, undefined),
@@ -541,7 +566,7 @@ collect_log_incidents(Tab, Filter) ->
     ).
 
 build_snapshot_data(Tab) ->
-    dets:foldl(
+    fold_records(
         fun
             ({{analysis, App, Module}, Analysis}, Acc) ->
                 Analyses0 = maps:get(analyses, Acc, []),
@@ -700,3 +725,133 @@ to_binary(B) when is_binary(B) -> B;
 to_binary(L) when is_list(L) -> unicode:characters_to_binary(L);
 to_binary(A) when is_atom(A) -> atom_to_binary(A, utf8);
 to_binary(V) -> iolist_to_binary(io_lib:format("~p", [V])).
+
+%% Collection APIs are best-effort listings, not transactions: membership is
+%% captured when a reader starts and values may advance during the listing.
+%% Repair state transitions continue to require the persisted CAS revision.
+%% Snapshots are different: reject a result if ANY store mutation overlapped it.
+%% The public snapshot API retries twice, then fails rather than exporting a mix.
+read(Key) -> gen_server:call(?SERVER, {get, Key}, read_timeout()).
+read_timeout() -> positive_env(learning_store_read_timeout_ms, 30000).
+query_timeout() -> positive_env(learning_store_query_timeout_ms, 60000).
+positive_env(Key, Default) ->
+    case application:get_env(ecai, Key, Default) of
+        N when is_integer(N), N > 0, N =< 3600000 -> N;
+        _ -> Default
+    end.
+
+build_index(Tab) ->
+    Index = ets:new(ecai_learning_collection_keys, [ordered_set, protected, {read_concurrency, true}]),
+    ok = dets:safe_fixtable(Tab, true),
+    try
+        %% Project keys only; never copy huge relation/source values into ETS.
+        index_page(dets:select(Tab, [{{'$1', '_'}, [], ['$1']}], 256), Index),
+        Index
+    after dets:safe_fixtable(Tab, false) end.
+index_page('$end_of_table', _Index) -> ok;
+index_page({Keys, Continuation}, Index) when is_list(Keys) ->
+    [index_insert(Index, K) || K <- Keys],
+    index_page(dets:select(Continuation), Index);
+index_page({error, Reason}, _) -> error({index_read_failed, Reason}).
+
+index_insert(Index, Key) ->
+    [ets:insert(Index, {{Bucket, Key}}) || Bucket <- index_buckets(Key)], ok.
+index_delete(Index, Key) ->
+    [ets:delete(Index, {Bucket, Key}) || Bucket <- index_buckets(Key)], ok.
+index_buckets({analysis, App, _}) -> [{select_prefix, analysis, App}, snapshot_data];
+index_buckets({module_knowledge, App, _}) -> [{select_prefix, module_knowledge, App}, snapshot_data];
+index_buckets({repair, Fp, _}) -> [repairs, {repairs, Fp}, snapshot_data];
+index_buckets({log_incident, _}) -> [log_incidents, snapshot_data];
+index_buckets({event, Type, Id, _}) -> [{events, Type, Id}];
+index_buckets({release_change, _}) -> [release_changes, snapshot_data];
+index_buckets({release_baseline, _}) -> [release_baselines, snapshot_data];
+index_buckets({Type, _}) when Type =:= graph; Type =:= app_knowledge;
+    Type =:= relation_keys; Type =:= relation_benchmark; Type =:= checkpoint -> [snapshot_data];
+index_buckets(global_knowledge) -> [snapshot_data];
+index_buckets(_) -> [].
+
+query_bucket({log_incidents, _}) -> log_incidents;
+query_bucket({log_incidents, _, _}) -> log_incidents;
+query_bucket({events, T, Id, _}) -> {events, T, Id};
+query_bucket(Q) -> Q.
+
+enqueue_query(Request, From = {Caller, _}, State) ->
+    case map_size(State#state.queries) >= ?MAX_QUERIES of
+        true -> {reply, {error, learning_store_busy}, State};
+        false ->
+            Ref = make_ref(),
+            Q = #{request => Request, from => From,
+                  caller_monitor => erlang:monitor(process, Caller),
+                  timer => erlang:send_after(query_timeout(), self(), {query_timeout, Ref})},
+            S = State#state{queries = (State#state.queries)#{Ref => Q},
+                            pending = State#state.pending ++ [Ref]},
+            {noreply, dispatch_queries(S)}
+    end.
+active_queries(State) ->
+    length([ok || Q <- maps:values(State#state.queries), maps:is_key(worker, Q)]).
+dispatch_queries(#state{pending = []} = State) -> State;
+dispatch_queries(State) ->
+    case active_queries(State) < ?QUERY_WORKERS of
+        false -> State;
+        true ->
+            [Ref | Rest] = State#state.pending,
+            Q = maps:get(Ref, State#state.queries),
+            Tab = State#state.tab, Index = State#state.index, Parent = self(),
+            Request = maps:get(request, Q),
+            Worker = spawn_opt(fun() ->
+                Result = try
+                    Bucket = query_bucket(Request),
+                    Keys = ets:select(Index, [{{{Bucket, '$1'}}, [], ['$1']}]),
+                    %% Fold each selected value as it is read. Snapshot thinning
+                    %% must not retain full source/graph payloads for all keys.
+                    query_result(Request, {indexed, Tab, Keys})
+                catch _:_ -> {error, learning_store_query_failed} end,
+                Parent ! {query_result, Ref, Result}
+            end, [link, monitor]),
+            dispatch_queries(State#state{pending = Rest,
+                queries = (State#state.queries)#{Ref := Q#{worker => Worker, revision => State#state.write_revision}}})
+    end.
+finish_query(Ref, Result, State) ->
+    case maps:take(Ref, State#state.queries) of
+        error -> State;
+        {Q, Queries} ->
+            cancel_query(Q),
+            Reply = case Q of
+                #{request := snapshot_data, revision := Revision}
+                  when Revision =/= State#state.write_revision, is_map(Result) ->
+                    {error, learning_store_snapshot_busy};
+                _ -> Result
+            end,
+            gen_server:reply(maps:get(from, Q), Reply),
+            dispatch_queries(State#state{queries = Queries,
+                                        pending = lists:delete(Ref, State#state.pending)})
+    end.
+cancel_query(Q) ->
+    erlang:cancel_timer(maps:get(timer, Q)),
+    erlang:demonitor(maps:get(caller_monitor, Q), [flush]),
+    case maps:get(worker, Q, undefined) of
+        {Pid, Monitor} -> unlink(Pid), exit(Pid, kill), erlang:demonitor(Monitor, [flush]);
+        undefined -> ok
+    end.
+query_result({select_prefix, _, _}, Rows) ->
+    lists:reverse(fold_records(fun({_, V}, Acc) -> [V | Acc] end, [], Rows));
+query_result(repairs, Rows) -> collect_repairs(Rows, all);
+query_result({repairs, Fp}, Rows) -> collect_repairs(Rows, Fp);
+query_result(log_incidents, Rows) -> collect_log_incidents(Rows, all);
+query_result({log_incidents, Limit}, Rows) -> lists:sublist(collect_log_incidents(Rows, all), Limit);
+query_result({log_incidents, App, Module}, Rows) -> collect_log_incidents(Rows, {App, Module});
+query_result(release_changes, Rows) -> collect_release_changes(Rows);
+query_result(release_baselines, Rows) -> collect_release_baselines(Rows);
+query_result({events, Type, Id, Limit}, Rows) -> collect_events(Rows, Type, Id, Limit);
+query_result(snapshot_data, Rows) -> build_snapshot_data(Rows).
+fold_records(Fun, Acc, {indexed, Tab, Keys}) ->
+    lists:foldl(fun(Key, A) ->
+        case dets:lookup(Tab, Key) of
+            Objects when is_list(Objects) -> lists:foldl(Fun, A, Objects);
+            _ -> error(collection_lookup_failed)
+        end
+    end, Acc, Keys);
+fold_records(Fun, Acc, {rows, Rows}) -> lists:foldl(Fun, Acc, Rows);
+fold_records(Fun, Acc, Tab) -> dets:foldl(Fun, Acc, Tab).
+
+changed(State) -> State#state{write_revision = State#state.write_revision + 1}.

@@ -7,7 +7,10 @@
 build() -> build(#{}).
 
 build(Opts) ->
-    Data = ecai_learning_store:snapshot_data(),
+    Data = case ecai_learning_store:snapshot_data() of
+        Value when is_map(Value) -> Value;
+        {error, Why} -> error({learning_snapshot_unavailable, Why})
+    end,
     RepoRoot = repo_root(Opts),
     Git = git_info(RepoRoot),
     PoolIdentity = safe_pool_identity(),
@@ -31,7 +34,10 @@ build(Opts) ->
 write() -> write(#{}).
 
 write(Opts) ->
-    Snapshot = build(Opts),
+    try write_snapshot(Opts, build(Opts))
+    catch error:{learning_snapshot_unavailable, Why} -> {error, Why} end.
+
+write_snapshot(Opts, Snapshot) ->
     case ecai_code_paths:state_root(Opts) of
         {ok, Root} ->
             File = ecai_code_paths:log_file(Root, "codebase_learning.json"),

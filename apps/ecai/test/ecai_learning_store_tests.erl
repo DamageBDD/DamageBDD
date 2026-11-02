@@ -204,3 +204,100 @@ temp_dir(Suffix) ->
     ),
     ok = filelib:ensure_dir(filename:join(Base, ".keep")),
     Base.
+
+%% Keep in sync with the store record. Callback tests exercise asynchronous
+%% replies without relying on wall-clock scheduling of a particular disk.
+-record(state, {tab, state_root, file, event_seq = 0, index, queries = #{}, pending = [], write_revision = 0}).
+
+indexed_queries_do_not_hold_the_store_callback_test() ->
+    Root = temp_dir("indexed-callback"), OldTrap = process_flag(trap_exit, true),
+    {ok, S0} = ecai_learning_store:init(#{state_root => Root}),
+    try
+        From = {self(), make_ref()}, Graph = #{modules => #{}},
+        {reply, ok, S1} = ecai_learning_store:handle_call({put, {graph, damage}, Graph}, From, S0),
+        {reply, ok, S2} = ecai_learning_store:handle_call(
+            {put_transition, {repair, <<"fp">>, <<"v">>}, repair, {<<"fp">>, <<"v">>}, #{status => queued}}, From, S1),
+        %% Populate a large unrelated value. It must not be visited by repairs.
+        {reply, ok, S3} = ecai_learning_store:handle_call(
+            {put, {relations, all}, binary:copy(<<0>>, 1024 * 1024)}, From, S2),
+        Tag = make_ref(),
+        {noreply, S4} = ecai_learning_store:handle_call(repairs, {self(), Tag}, S3),
+        ?assertEqual(1, map_size(S4#state.queries)),
+        %% The collection has not replied/been checked in, yet point reads work.
+        ?assertMatch({reply, {ok, Graph}, _}, ecai_learning_store:handle_call(
+            {get, {graph, damage}}, From, S4)),
+        receive
+            Done = {query_result, _Ref, [Repair]} ->
+                ?assertEqual(<<"fp">>, maps:get(fingerprint, Repair)),
+                {noreply, S5} = ecai_learning_store:handle_info(Done, S4),
+                ?assertEqual(0, map_size(S5#state.queries)),
+                receive {Tag, [Repair]} -> ok after 1000 -> error(no_query_reply) end
+        after 5000 -> error(collection_timed_out)
+        end
+    after
+        ecai_learning_store:terminate(normal, S0),
+        ets:delete(S0#state.index),
+        file:del_dir_r(Root), process_flag(trap_exit, OldTrap)
+    end.
+
+indexed_store_rebuild_and_cas_test_() -> {timeout, 30, fun indexed_store_rebuild_and_cas/0}.
+indexed_store_rebuild_and_cas() ->
+    Root = temp_dir("indexed-restart"),
+    ?assertEqual(undefined, whereis(ecai_learning_store)),
+    try
+        {ok, _} = ecai_learning_store:start_link(#{state_root => Root}),
+        ok = ecai_learning_store:put_repair(<<"fp">>, <<"v1">>, #{status => queued}),
+        {ok, Before} = ecai_learning_store:get_repair(<<"fp">>, <<"v1">>),
+        {ok, After} = ecai_learning_store:compare_and_put_repair(
+            <<"fp">>, <<"v1">>, Before, #{status => validated}),
+        ?assert(maps:get(persist_seq, After) > maps:get(persist_seq, Before)),
+        ?assertEqual({error, conflict}, ecai_learning_store:compare_and_put_repair(
+            <<"fp">>, <<"v1">>, Before, #{status => failed})),
+        ok = ecai_learning_store:put_repair(<<"other">>, <<"v1">>, #{status => queued}),
+        ?assertEqual(2, length(ecai_learning_store:repairs())),
+        [Filtered] = ecai_learning_store:repairs(<<"fp">>),
+        ?assertEqual(validated, maps:get(status, Filtered)),
+        ?assertEqual(1, length(ecai_learning_store:events(repair, {<<"fp">>, <<"v1">>}, 1))),
+        ok = ecai_learning_store:put_checkpoint(example, #{}),
+        ok = ecai_learning_store:delete_checkpoint(example),
+        ?assertEqual(not_found, ecai_learning_store:get_checkpoint(example)),
+        Snapshot = ecai_learning_store:snapshot_data(),
+        ?assertEqual(false, maps:is_key(example, maps:get(runtime_checkpoints, Snapshot))),
+        ok = ecai_learning_store:stop(),
+        {ok, _} = ecai_learning_store:start_link(#{state_root => Root}),
+        ?assertEqual(2, length(ecai_learning_store:repairs())),
+        ?assertEqual(1, length(ecai_learning_store:repairs(<<"fp">>))),
+        ?assertEqual(2, length(ecai_learning_store:events(repair, {<<"fp">>, <<"v1">>}, 10))),
+        #{active_queries := 0, queued_queries := 0} = ecai_learning_store:status()
+    after
+        case whereis(ecai_learning_store) of undefined -> ok; _ -> ecai_learning_store:stop() end,
+        file:del_dir_r(Root)
+    end.
+
+collection_admission_is_bounded_test() ->
+    S = #state{queries = maps:from_list([{I, #{}} || I <- lists:seq(1, 32)])},
+    ?assertEqual({reply, {error, learning_store_busy}, S},
+        ecai_learning_store:handle_call(repairs, {self(), make_ref()}, S)).
+
+concurrent_mutation_rejects_snapshot_test() ->
+    Root = temp_dir("snapshot-fence"), OldTrap = process_flag(trap_exit, true),
+    {ok, S0} = ecai_learning_store:init(#{state_root => Root}),
+    try
+        Tag = make_ref(),
+        {noreply, S1} = ecai_learning_store:handle_call(snapshot_data, {self(), Tag}, S0),
+        {reply, ok, S2} = ecai_learning_store:handle_call(
+            {put, {graph, damage}, #{modules => #{}}}, {self(), make_ref()}, S1),
+        receive
+            Done = {query_result, _, Data} when is_map(Data) ->
+                {noreply, S3} = ecai_learning_store:handle_info(Done, S2),
+                ?assertEqual(0, map_size(S3#state.queries)),
+                receive
+                    {Tag, Reply} -> ?assertEqual({error, learning_store_snapshot_busy}, Reply)
+                after 1000 -> error(no_fenced_reply)
+                end
+        after 5000 -> error(no_snapshot_result)
+        end
+    after
+        ecai_learning_store:terminate(normal, S0), ets:delete(S0#state.index),
+        file:del_dir_r(Root), process_flag(trap_exit, OldTrap)
+    end.
