@@ -397,7 +397,15 @@ verify_export(Path) ->
 public_relay(#{url := U}) -> public_relay(U);
 public_relay(U) ->
     try uri_string:parse(unicode:characters_to_binary(U)) of
-        #{host := H, scheme := S} = P -> uri_string:recompose(maps:with([host, scheme, port], P#{host => H, scheme => S}));
+        #{host := _, scheme := _} = P ->
+            %% recompose/1 requires a path, including for an origin-only URI.
+            %% Keep credentials/path/query out of public reports and never let
+            %% an {error, Reason, Details} tuple reach JSX's timestamp encoder.
+            PublicOrigin = (maps:with([host, scheme, port], P))#{path => <<>>},
+            case uri_string:recompose(PublicOrigin) of
+                Public when is_binary(Public) -> Public;
+                _ -> <<"invalid_relay">>
+            end;
         _ -> <<"invalid_relay">>
     catch _:_ -> <<"invalid_relay">> end.
 
