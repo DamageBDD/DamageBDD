@@ -11,6 +11,21 @@ export function displayStatus(report, seconds, now) {
   if (!report?.status) return 'not_checked';
   return freshness(report, seconds, now) ? report.status : 'stale';
 }
+// Read older reports without rewriting their hashed evidence. Decode only
+// named text fields, never arbitrary arrays such as event kinds.
+export function setupText(value) {
+  if (value == null || value === '' || (Array.isArray(value) && !value.length)) return 'Not configured';
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value) && value.length <= 8192 && value.every(c =>
+    Number.isInteger(c) && c >= 0 && c <= 0x10ffff && !(c >= 0xd800 && c <= 0xdfff))) {
+    return String.fromCodePoint(...value);
+  }
+  return 'Invalid text value';
+}
+export function controlAction(control, state) {
+  if (state === 'stale') return 'Run Check health for a current observation.';
+  return state === 'passed' ? 'No corrective action required for this recorded check.' : control.next_action;
+}
 const root = typeof document === 'undefined' ? null : document.querySelector('[data-bunker-root]');
 if (root) {
   let data = null, timer = null, loading = false, loadFailed = false;
@@ -44,15 +59,15 @@ if (root) {
     ]) { const card = el('article'); card.append(el('h2', title), el('strong', words(status)), el('small', description)); summary.append(card); }
     const tbody = byId('bunker-checks'); tbody.replaceChildren();
     for (const c of controls) { const row = el('tr'); const status = healthy === 'stale' ? 'stale' : c.status;
-      const cell = el('td'); cell.append(badge(status)); row.append(el('td', LABELS[c.id] || words(c.id)), cell, el('td', c.next_action)); tbody.append(row); }
+      const cell = el('td'); cell.append(badge(status)); row.append(el('td', LABELS[c.id] || words(c.id)), cell, el('td', controlAction(c, status))); tbody.append(row); }
     if (!controls.length) { const row = el('tr'); const cell = el('td', 'No checks recorded. Select Check health to begin.'); cell.colSpan = 3; row.append(cell); tbody.append(row); }
     const closing = byId('bunker-closing-checks'); closing.replaceChildren();
     for (const c of data.closure_tasks || []) { const row=el('tr'), cell=el('td'); cell.append(badge(loadFailed?'stale':c.status));
       row.append(el('td',words(c.id)),cell,el('td',c.next_action)); closing.append(row); }
     const setup = health.setup || {}; const config = byId('bunker-setup'); config.replaceChildren();
-    for (const [label, value] of [['Signing public key', setup.signing_public_key], ['AWS secret', setup.aws?.secret_id],
-      ['Region', setup.aws?.region], ['Expected role', setup.aws?.expected_role_name],
-      ['Expected account', setup.aws?.expected_account_id], ['Approved clients', setup.clients?.join('\n')],
+    for (const [label, value] of [['Signing public key', setup.signing_public_key], ['AWS secret', setupText(setup.aws?.secret_id)],
+      ['Region', setupText(setup.aws?.region)], ['Expected role', setupText(setup.aws?.expected_role_name)],
+      ['Expected account', setupText(setup.aws?.expected_account_id)], ['Approved clients', setup.clients?.join('\n')],
       ['Methods', setup.methods?.join(', ')], ['Event kinds', setup.kinds?.join(', ')], ['Relays', setup.relays?.join('\n')]]) {
       config.append(el('dt', label), el('dd', value || 'Not configured')); }
     const exchanges = byId('bunker-exchanges'); exchanges.replaceChildren();

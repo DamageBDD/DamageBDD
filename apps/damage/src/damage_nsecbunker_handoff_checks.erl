@@ -2,7 +2,7 @@
 %% No AWS writes, identity generation, passphrase storage or provider fallback.
 -module(damage_nsecbunker_handoff_checks).
 -include_lib("kernel/include/file.hrl").
--export([snapshot/0, assess/1, fingerprint/1, target/1, check/3,
+-export([snapshot/0, assess/1, fingerprint/1, target/1, check/3, relay_control/2,
     verify_exchange/5, correlate/4, recovery/1, public_error/1]).
 
 snapshot() ->
@@ -74,9 +74,7 @@ assess(S) ->
         <<"The running signer must use the deployed policy; apply approved changes and restart before verifying.">>),
      check(client_allowlist, Clients =/= [] andalso lists:all(fun hex64/1, Clients),
         <<"Configure the approved client public keys.">>),
-     check(relays_subscribed, Relays =/= [] andalso length(Relays) =< 6 andalso
-        lists:all(fun secure_relay/1, Relays) andalso maps:get(subscribed, R, false) =:= true,
-        <<"Configure at most six explicit WSS relays and establish subscriptions.">>),
+     relay_control(Relays, maps:get(subscribed, R, false)),
      check(backend_artifact, executable_artifact(maps:get(backend_artifact,S,#{})),
         <<"Install the regular, executable crypto backend without group/world write permission; its checksum is part of the evidence fingerprint.">>),
      check(vault_permissions, private_regular(maps:get(vault_file, S, #{})),
@@ -86,6 +84,21 @@ assess(S) ->
 
 check(Id, true, Next) -> #{id => Id, status => passed, next_action => Next};
 check(Id, false, Next) -> #{id => Id, status => failed, next_action => Next}.
+
+relay_control(Relays, Subscribed) ->
+    Count = length(Relays),
+    {OK, Reason, Next} = case Count of
+        0 -> {false, no_relays, <<"Configure one to six explicit WSS relays, then establish subscriptions.">>};
+        N when N > 6 -> {false, too_many_relays, iolist_to_binary([
+            integer_to_binary(N), <<" relays configured; this verifier supports at most 6. Reduce the list through the approved release configuration, restart the relay bridge, then run Check health.">>])};
+        _ -> case lists:all(fun secure_relay/1, Relays) of
+            false -> {false, invalid_relay, <<"Every relay must be an explicit WSS address without embedded credentials.">>};
+            true when Subscribed =:= true -> {true, subscribed, <<"Subscriptions observed. Run Verify signing to test each configured relay.">>};
+            true -> {false, not_subscribed, <<"Relay addresses are valid but the bridge has not reported subscriptions. Check bridge connectivity and run Check health again.">>}
+        end
+    end,
+    (check(relays_subscribed, OK, Next))#{reason => Reason,
+        configured_count => Count, max_relays => 6}.
 
 fingerprint(S) -> sha(term_to_binary(maps:with(
     [config, runtime_instance, code_revision, vault_file, provenance_revision, backend_artifact, runtime_policy], S), [deterministic])).

@@ -8,7 +8,7 @@ const base = new URL('../../', import.meta.url);
 const template = await readFile(new URL('priv/templates/ui/dashboard/node_bunker_tab.mustache', base), 'utf8');
 const css = (await readFile(new URL('priv/static/css/dashboard-workspace.css',base),'utf8')) + (await readFile(new URL('priv/static/css/node-bunker.css', base), 'utf8'));
 const js = await readFile(new URL('priv/static/js/node-bunker.js', base), 'utf8');
-const {displayStatus, freshness} = await import(new URL('priv/static/js/node-bunker.js',base));
+const {displayStatus, freshness, setupText, controlAction} = await import(new URL('priv/static/js/node-bunker.js',base));
 const fixture = () => ({busy:false,closure:'outstanding',health_stale:false,evidence:{},health:{
   status:'passed',completed_at:Math.floor(Date.now()/1000),checks:[
     {id:'service_ready',status:'passed',next_action:'Observe the service.'},
@@ -21,6 +21,22 @@ test('UI evidence becomes stale and future timestamps do not pass',()=>{
   assert.equal(freshness({completed_at:200},60,101),false);
   assert.equal(displayStatus({status:'passed',completed_at:100},60,200),'stale');
   assert.equal(displayStatus({},60,200),'not_checked');
+});
+
+test('known text fields decode charlists without modifying report data',()=>{
+  const codes = Array.from('ap-southeast-2', c => c.codePointAt(0));
+  const before = JSON.stringify(codes);
+  assert.equal(setupText(codes), 'ap-southeast-2');
+  assert.equal(JSON.stringify(codes), before);
+  assert.equal(setupText('damage-node-prod'), 'damage-node-prod');
+  assert.equal(setupText([0x1f512]), '🔒');
+  assert.equal(setupText([0xd800]), 'Invalid text value');
+  assert.equal(setupText([null]), 'Invalid text value');
+  assert.equal(setupText({}), 'Invalid text value');
+  assert.equal(setupText([]), 'Not configured');
+  assert.equal(controlAction({next_action:'Repair'}, 'failed'), 'Repair');
+  assert.match(controlAction({next_action:'Repair'}, 'passed'), /No corrective action/);
+  assert.match(controlAction({next_action:'Repair'}, 'stale'), /Check health/);
 });
 
 test('operator workflow, maintenance confirmation, escaping and mobile layout',async()=>{
@@ -64,14 +80,30 @@ test('operator workflow, maintenance confirmation, escaping and mobile layout',a
     await page.waitForFunction(()=>!document.querySelector('[data-bunker-action="restart"]').disabled);
     assert.deepEqual(posts[1].body,{action:'restart',confirmed:true});
     // Inject data into the mock response; all dynamic values must be text.
-    state.health.checks[0].next_action='<img src=x onerror="window.injected=true">';
+    state.health.checks[1].next_action='<img src=x onerror="window.injected=true">';
+    state.health.setup.aws = Object.fromEntries(Object.entries({
+      region:'ap-southeast-2', expected_role_name:'damage-node-prod',
+      expected_account_id:'123456789012', secret_id:'/example/vault-passphrase'
+    }).map(([key,value])=>[key,Array.from(value,c=>c.codePointAt(0))]));
+    state.closure_tasks = [
+      {id:'live_signing',status:'not_checked',next_action:'Run Verify signing.'},
+      {id:'cold_restart',status:'blocked',next_action:'Complete prerequisite checks.'},
+      {id:'backup_restore',status:'stale',next_action:'Repeat recovery.'}
+    ];
     await page.getByRole('button',{name:'Check health',exact:true}).click();
     await page.waitForFunction(()=>document.querySelector('#bunker-checks').textContent.includes('<img'));
     assert.equal(await page.evaluate(()=>window.injected),undefined);
     assert.equal(await page.locator('#bunker-checks img').count(),0);
+    assert.match(await page.locator('#bunker-checks tr').first().textContent(), /No corrective action/);
+    assert.equal(await page.locator('#bunker-closing-checks [data-status="not_checked"]').count(),1);
+    assert.equal(await page.locator('#bunker-closing-checks [data-status="blocked"]').count(),1);
+    assert.equal(await page.locator('#bunker-closing-checks [data-status="stale"]').count(),1);
     if(process.env.BUNKER_QA_DIR){await page.getByRole('button',{name:'Overview',exact:true}).click();await page.screenshot({path:`${process.env.BUNKER_QA_DIR}/bunker-desktop.png`,fullPage:true});}
     await page.setViewportSize({width:390,height:844});
     await page.getByRole('button',{name:'Setup',exact:true}).click();
+    const setup = await page.locator('#bunker-setup').textContent();
+    for(const value of ['ap-southeast-2','damage-node-prod','123456789012','/example/vault-passphrase','1, 30023']) assert.ok(setup.includes(value));
+    assert.ok(!setup.includes('97,112,45'));
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
     await page.getByRole('button',{name:'Recovery & handover',exact:true}).click();
     state.closure='awaiting_acceptance';

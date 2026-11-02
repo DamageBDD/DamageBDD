@@ -129,7 +129,9 @@
   background:#fbe8e5;
   color:#a0362d
 }
-.bunker-badge[data-status=stale] {
+.bunker-badge[data-status=stale],
+.bunker-badge[data-status=blocked],
+.bunker-badge[data-status=verification_required] {
   background:#fff0d2;
   color:#815d10
 }

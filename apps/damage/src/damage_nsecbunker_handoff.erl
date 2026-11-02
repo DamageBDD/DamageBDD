@@ -4,7 +4,8 @@
 -behaviour(gen_server).
 -include_lib("kernel/include/file.hrl").
 -export([start_link/0, child_spec/0, start/1, status/0, accept/3,
-    closure/4, closure_tasks/4, fresh/3, validate_attestation/1, canonical/1, verify_export/1]).
+    closure/4, closure_tasks/4, fresh/3, validate_attestation/1, canonical/1, verify_export/1,
+    public_aws/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 -define(DEADLINE, 1200000).
 
@@ -180,8 +181,7 @@ run(Action) ->
             setup => #{signing_public_key => maps:get(bunker_pubkey_hex, P, <<>>),
                 clients => maps:get(authorized_clients, P, []),
                 methods => maps:get(allowed_methods, P, []), kinds => maps:get(allowed_kinds, P, []),
-                aws => maps:with([region, secret_id, expected_account_id, expected_role_name],
-                    damage_nsecbunker_config:aws_secret(C)),
+                aws => public_aws(damage_nsecbunker_config:aws_secret(C)),
                 relays => [public_relay(U) || U <- maps:get(relays, C, [])]}},
         hash_report(Report)
     catch _:Why -> hash_report(#{schema_version => 1, action => Action,
@@ -228,30 +228,80 @@ technical_tasks(E,Fingerprint,Now) ->
     Recovery=maps:get(recovery,E,#{}), Pending=maps:get(pending,E,#{}),
     SameTarget=fun(X)->maps:get(target,X,undefined)=:=maps:get(target,V,missing) end,
     RecoveryData=maps:get(recovery,Recovery,#{}),
-    [damage_nsecbunker_handoff_checks:check(current_controls,
-        fresh(H,Now,60) andalso good(H), <<"Run Check health; resolve every required control.">>),
-     damage_nsecbunker_handoff_checks:check(live_signing,
+    [technical_task(current_controls,
+        fresh(H,Now,60) andalso good(H), [{H,60}], Now,
+        <<"Run Check health; resolve every required control.">>),
+     technical_task(live_signing,
         good(V) andalso fresh(V,Now,900) andalso maps:get(fingerprint,V,undefined)=:=Fingerprint
             andalso maps:get(exchanges,V,[])=/=[] andalso passed(maps:get(exchanges,V,[]))
             andalso length(maps:get(policy_checks,V,[]))=:=2 andalso passed(maps:get(policy_checks,V,[])),
-        <<"Run Verify signing against the current deployment and all configured relays.">>),
-     damage_nsecbunker_handoff_checks:check(cold_restart,
+        [{V,900}], Now, <<"Run Verify signing against the current deployment and all configured relays.">>),
+     technical_task(cold_restart,
         good(R) andalso SameTarget(R) andalso fresh(R,Now,86400)
             andalso maps:get(runtime_instance,R,undefined)=:=maps:get(runtime_instance,V,missing)
             andalso maps:get(active_secret_version,R,undefined)=:=maps:get(active_secret_version,V,missing),
+        [{R,86400},{V,900}], Now,
         <<"Run Restart & verify after promotion; the current process must have bootstrapped with the tested version.">>),
-     damage_nsecbunker_handoff_checks:check(backup_restore,
+     technical_task(backup_restore,
         good(Recovery) andalso SameTarget(Recovery) andalso fresh(Recovery,Now,86400)
             andalso maps:get(backup_restored,RecoveryData,false)=:=true
             andalso maps:get(restored,maps:get(metadata_restore,RecoveryData,#{}),false)=:=true
             andalso maps:get(wrong_unlock_rejected,RecoveryData,false)=:=true,
+        [{Recovery,86400},{V,900}], Now,
         <<"Run Verify current version & restore to check the encrypted vault and opaque DETS snapshot.">>),
-     damage_nsecbunker_handoff_checks:check(version_promotion,
+     technical_task(version_promotion,
         good(Pending) andalso SameTarget(Pending) andalso fresh(Pending,Now,86400)
             andalso rotation_complete(Pending,Recovery)
             andalso maps:get(active_secret_version,V,undefined)=:=maps:get(version_id,
                 maps:get(secret_provenance,RecoveryData,#{}),missing),
+        [{Pending,86400},{Recovery,86400},{V,900}], Now,
         <<"Prepare a distinct AWSPENDING version, check it, promote that exact version, verify restore, then restart and verify.">>)].
+
+%% The eligibility predicates above are unchanged. These labels explain why an
+%% unmet requirement is outstanding; only 'passed' can satisfy closure/4.
+technical_task(Id, true, _Reports, _Now, Next) ->
+    #{id => Id, status => passed, next_action => Next};
+technical_task(Id, false, [{Primary,TTL}|Dependencies], Now, Next) ->
+    Status = case observation_status(Primary, Now, TTL) of
+        passed ->
+            States = [observation_status(R, Now, T) || {R,T} <- Dependencies],
+            case lists:any(fun(S) -> lists:member(S, [not_checked,failed,blocked]) end, States) of
+                true -> blocked;
+                false -> case lists:member(stale, States) of
+                    true -> stale;
+                    false -> verification_required
+                end
+            end;
+        Other -> Other
+    end,
+    #{id => Id, status => Status, next_action => Next}.
+
+observation_status(Report, Now, TTL) ->
+    case maps:get(status, Report, undefined) of
+        undefined -> not_checked;
+        Status -> case fresh(Report, Now, TTL) of
+            false -> stale;
+            true when Status =:= passed -> passed;
+            true when Status =:= failed ->
+                case maps:get(reason, Report, undefined) of
+                    prerequisites_failed -> blocked;
+                    _ -> failed
+                end;
+            true -> verification_required
+        end
+    end.
+
+%% JSON has no Erlang string type: convert only these known text fields.
+%% Keep the allowlist so credentials and unlock values never enter reports.
+public_aws(Aws) ->
+    maps:map(fun(_, Value) -> public_text(Value) end,
+        maps:with([region, secret_id, expected_account_id, expected_role_name], Aws)).
+public_text(Value) when is_binary(Value); is_list(Value) ->
+    try unicode:characters_to_binary(Value) of
+        Text when is_binary(Text) -> Text;
+        _ -> <<"invalid_text">>
+    catch _:_ -> <<"invalid_text">> end;
+public_text(_) -> <<"invalid_text">>.
 
 rotation_complete(Pending, Recovery) ->
     PM = maps:get(secret_provenance, maps:get(recovery, Pending, #{}), #{}),
