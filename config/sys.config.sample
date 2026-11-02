@@ -1686,8 +1686,7 @@
     ]},
     {mustache, [{templates_dir, "priv/templates"}]},
     {erlexec, [{user, "damage"}, {limit_users, ["damage"]}]},
-    {bcrypt, [{mechanism, "port"}]},
-    {eunit_opts, [exact_execution]}
+    {bcrypt, [{mechanism, "port"}]}
 ].
 
 %% ---------------------------------------------------------------------------
