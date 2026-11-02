@@ -1,23 +1,25 @@
-%% Bounded OTP lifecycle for local inference. One active request per principal,
+%% Bounded OTP lifecycle for policy-routed authoring inference. One active request per principal,
 %% a node-wide concurrency cap, deadline and caller/worker monitoring.
 -module(damage_bdd_service).
 -behaviour(gen_server).
--export([start_link/0, generate/3, cancel/2]).
+-export([start_link/0, generate/3, agent/3, cancel/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 generate(Id, Prompt, Context) ->
     gen_server:call(?MODULE, {generate, Id, Prompt, Context}, timeout_ms() + 5000).
+agent(Id, Prompt, Context) ->
+    gen_server:call(?MODULE, {agent, Id, Prompt, Context}, timeout_ms() + 5000).
 cancel(Id, Principal) -> gen_server:call(?MODULE, {cancel, Id, Principal}).
 init([]) ->
     process_flag(trap_exit, true),
     {ok, #{jobs => #{}}}.
 
 handle_call(
-    {generate, Id, Prompt, #{public_key := Principal} = Context},
+    {Kind, Id, Prompt, #{public_key := Principal} = Context},
     From,
     #{jobs := Jobs} = State
-) ->
+) when Kind =:= generate; Kind =:= agent ->
     Limit =
         case application:get_env(damage, bdd_generation_concurrency, 2) of
             N when is_integer(N), N >= 1, N =< 16 -> N;
@@ -35,7 +37,10 @@ handle_call(
                 fun() ->
                     Result =
                         try
-                            damage_bdd_generator:generate(Prompt, Context)
+                            case Kind of
+                                generate -> damage_bdd_generator:generate(Prompt, Context);
+                                agent -> damage_agent_draft:generate(Prompt, Context)
+                            end
                         catch
                             _:_ ->
                                 {error, generation_failed,

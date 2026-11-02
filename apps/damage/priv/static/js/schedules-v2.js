@@ -1,4 +1,5 @@
 import * as wallet from "./wallet.js";
+import { awaitScheduleOperation, isPendingOperation } from "./schedule-operations.js";
 import { templateCards, templateFields, templateParams, templateDefaults, createPreviewGate } from "./schedule-templates.js";
 
 const API = "/api/schedules/v2";
@@ -19,7 +20,7 @@ export async function updateSchedulesTable() {
     mounted = true;
     await resumeMobileWalletFlow();
   }
-  await Promise.all([loadSchedules(), loadAnalytics(currentRangeDays), loadStatus(), loadTemplates()]);
+  await Promise.all([loadSchedules(), loadAnalytics(currentRangeDays), loadStatus(), loadTemplates(), loadOperations()]);
 }
 
 function findHost() {
@@ -79,6 +80,7 @@ function mount(root) {
         <div id="sv2-chart" class="sv2-chart"></div>
       </div>
 
+      <div id="sv2-operations" aria-live="polite"></div>
       <div class="sv2-list-heading">
         <div><h3>Scheduled verification</h3><span id="sv2-count"></span></div>
       </div>
@@ -152,6 +154,41 @@ async function loadSchedules() {
   }
 }
 
+async function loadOperations() {
+  const panel = host?.querySelector("#sv2-operations");
+  if (!panel) return;
+  try {
+    const response = await apiFetch(`${API}/operations`);
+    const operations = (Array.isArray(response.data) ? response.data : []).filter(op =>
+      op.status === "running" || op.status === "reconciliation_required" ||
+      op.status === "failed" || (op.status === "complete" && op.result?.status === "signing_required")
+    );
+    panel.innerHTML = operations.length ? `<h3>Pending operations & recovery</h3>${operations.slice(0, 20).map(op => `
+      <article class="sv2-schedule">
+        <strong>${escapeHtml(String(op.status).replaceAll("_", " "))}</strong>
+        <p>Stage: ${escapeHtml(op.stage || "queued")} · ${escapeHtml(op.kind || "schedule")}</p>
+        <p><code>${escapeHtml(op.operation_id)}</code>${op.schedule_id ? `<br>Schedule: <code>${escapeHtml(op.schedule_id)}</code>` : ""}</p>
+        ${op.tx_hash ? `<p>Transaction: <code>${escapeHtml(op.tx_hash)}</code></p>` : ""}
+        ${op.error ? `<p>${escapeHtml(op.error)}</p>` : ""}
+        <p>${op.status === "reconciliation_required" ? "A transaction may still confirm. Do not create or fund a replacement until the chain outcome has been checked." : op.status === "running" ? "Processing on the server. Closing this page does not cancel it." : ""}</p>
+        ${(op.status === "running" || op.result?.status === "signing_required") ? `<button type="button" class="sv2-secondary" data-operation="${escapeAttr(op.operation_id)}">Check / continue</button>` : ""}
+      </article>`).join("")}` : "";
+    panel.querySelectorAll("[data-operation]").forEach(btn => btn.addEventListener("click", async () => {
+      setBusy(btn, true);
+      try {
+        const op = await apiFetch(`${API}/operations/${encodeURIComponent(btn.dataset.operation)}`);
+        const final = await maybeSignResponse(op);
+        if (final?.status === "redirect") return;
+        toast(isPendingOperation(final) ? "Still pending. Use Refresh to check the same operation." : "Schedule operation completed.", isPendingOperation(final) ? "info" : "success");
+        await updateSchedulesTable();
+      } catch (e) { toast(e.message, "error"); await loadOperations(); }
+      finally { setBusy(btn, false); }
+    }));
+  } catch (e) {
+    panel.innerHTML = `<p class="sv2-inline-error">Cannot read pending operations: ${escapeHtml(e.message)}</p>`;
+  }
+}
+
 function renderSchedule(s) {
   const status = String(s.status || "unknown");
   const remaining = Number(s.remaining ?? Math.max(0, (s.funded || 0) - (s.spent || 0) - (s.reserved || 0) - (s.refunded || 0)));
@@ -212,6 +249,10 @@ async function mutateSchedule(id, action, btn) {
     const response = await apiFetch(`${API}/${encodeURIComponent(id)}/${path}`, { method: "POST", body: "{}" });
     const final = await maybeSignResponse(response);
     if (final?.status === "redirect") return;
+    if (isPendingOperation(final)) {
+      toast("Operation pending. Check Pending operations before repeating this action.");
+      await updateSchedulesTable(); return;
+    }
     toast(action === "cancel" ? "Schedule cancelled; unlocked balance is returning to the account." : `Schedule ${action} submitted`, "success");
     await updateSchedulesTable();
   } catch (e) { toast(e.message, "error"); }
@@ -463,11 +504,21 @@ function bindCreateForm() {
       // create/sign request is pending. Closing still does not undo a submitted tx.
       form.querySelectorAll("input, textarea, select, button:not([data-close])").forEach(el => { el.disabled = true; });
       const r = await apiFetch(API, {method:"POST", body:JSON.stringify({...accepted.spec, lock_amount: lock})});
-      const final = await maybeSignResponse(r);
+      const final = await maybeSignResponse(r, {
+        keepWaiting: () => form.isConnected,
+        onProgress: op => { if (form.isConnected) error.textContent = `Processing ${op.stage || "queued"}… ${op.operation_id}. Closing does not cancel a submitted transaction.`; }
+      });
       if (final?.status === "redirect") return;
       if (form.isConnected) hideModal();
+      if (isPendingOperation(final)) {
+        toast("Creation pending. Check Pending operations; do not submit a replacement.");
+        await updateSchedulesTable(); return;
+      }
       toast("Schedule created and budget locked.","success"); await updateSchedulesTable();
-    } catch(e) { if (form.isConnected) error.textContent = e.message; else toast(e.message,"error"); }
+    } catch(e) {
+      if (form.isConnected) error.textContent = e.message; else toast(e.message,"error");
+      await loadOperations();
+    }
     finally {
       createBusy = false;
       if (form.isConnected) {
@@ -533,12 +584,15 @@ function renderBudgetPreview(form, r) {
   });
 }
 
-async function maybeSignResponse(response) {
-  let r = response;
+async function maybeSignResponse(response, options = {}) {
+  const observe = value => awaitScheduleOperation(value,
+    id => apiFetch(`${API}/operations/${encodeURIComponent(id)}`), options);
+  let r = await observe(response);
   while (r && r.status === "signing_required") {
     const signed = await signPreparedTx(r.tx, {schedule_id:r.schedule_id, stage:r.stage});
     if (signed === "redirect") return {status: "redirect"};
-    r = await apiFetch(`${API}/tx/submit`, {method:"POST", body:JSON.stringify({schedule_id:r.schedule_id, stage:r.stage, signed_tx:signed})});
+    const submitted = await apiFetch(`${API}/tx/submit`, {method:"POST", body:JSON.stringify({schedule_id:r.schedule_id, stage:r.stage, signed_tx:signed})});
+    r = await observe(submitted);
   }
   return r;
 }
@@ -572,7 +626,8 @@ async function resumeMobileWalletFlow() {
     let r = await apiFetch(`${API}/tx/submit`, {method:"POST", body:JSON.stringify({...pending, tx_hash:txHash})});
     const final = await maybeSignResponse(r);
     if (final?.status === "redirect") return;
-    toast("Schedule transaction confirmed.","success");
+    if (isPendingOperation(final)) toast("Transaction confirmation pending. Check Pending operations.");
+    else toast("Schedule transaction confirmed.","success");
   } catch(e) { toast(e.message,"error"); }
   finally {
     const url = new URL(window.location.href); url.searchParams.delete("schedule_v2_tx_hash"); url.searchParams.delete("schedule_v2_resume"); history.replaceState({},"",url);
@@ -647,7 +702,8 @@ async function apiFetch(url, options={}) {
   const headers = new Headers(options.headers || {}); headers.set("accept","application/json");
   if (options.method && options.method !== "GET") headers.set("content-type","application/json");
   const token = window.TokenManager?.getToken?.(); if (token) headers.set("authorization",`Bearer ${token}`);
-  const res = await fetch(url,{...options,headers,credentials:"include"});
+  const signal = options.signal || (url.includes("/operations/") ? AbortSignal.timeout(30000) : undefined);
+  const res = await fetch(url,{...options,headers,credentials:"include",signal});
   let body={}; try{body=await res.json();}catch(_e){}
   if(!res.ok || body.status === "notok") throw new Error(friendlyError(body.error || body.message || `Request failed (${res.status})`));
   return body;
@@ -657,6 +713,10 @@ async function apiFetch(url, options={}) {
 function friendlyError(value) {
   const raw = String(value || "Request failed");
   const known = {
+    schedule_operation_outcome_unknown: "Request outcome unknown. Check Pending operations before retrying; a transaction may still confirm.",
+    schedule_operation_in_progress: "An account operation is pending or needs reconciliation. Check Pending operations.",
+    pending_schedule_requires_reconciliation: "An earlier draft needs completion or reconciliation. Do not lock another budget.",
+    schedule_service_busy: "Scheduling is busy. Check existing operations before retrying.",
     schedule_v2_contract_not_configured: "Scheduling has not been initialized",
     schedule_v2_contract_not_set: "Scheduling has not been initialized",
     schedule_v2_deploy_failed: "Schedule setup failed",

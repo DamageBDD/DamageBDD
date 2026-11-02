@@ -1,35 +1,32 @@
 -module(damage_agent_http).
 -license("Apache-2.0").
 -export([trails/0,init/2,is_authorized/2,allowed_methods/2,content_types_provided/2,
-         content_types_accepted/2,to_json/2,to_html/2,from_json/2]).
+         content_types_accepted/2,to_json/2,from_json/2]).
 
 trails() -> [trails:trail(Path,?MODULE,#{action => Action},#{}) || {Path,Action} <- [
-    {"/automated-tasks",ui},{"/api/agents/templates",templates},
+    {"/api/agents/templates",templates},{"/api/agents/draft",draft},
+    {"/api/agents/preview",preview},
     {"/api/agents/tasks",tasks},{"/api/agents/tasks/:id",task},
     {"/api/agents/tasks/:id/events",events},{"/api/agents/tasks/:id/command",command},
     {"/api/agents/tasks/:id/learning",learning}]].
 init(Req,Opts) -> {cowboy_rest,Req,Opts}.
-is_authorized(Req,#{action := ui}=State) -> {true,Req,State};
 is_authorized(Req,State) ->
-    case damage_http:is_authorized(Req,State) of
+    case damage_bdd_access:is_authorized(Req,State) of
         {true,R,S=#{public_key := Owner}} ->
             case damage_agent_policy:owner(damage_agent_codec:bin(Owner)) of
                 true -> {true,R,S};
-                false -> {{false,<<"Bearer">>},R,S}
+                false -> stop(403,#{error => forbidden,
+                    message => <<"This authenticated account is not enabled for agents. Ask the node operator to review the agent owner allowlist.">>},R,S)
             end;
         Other -> Other
     end.
 allowed_methods(Req,#{action := tasks}=S) -> {[<<"GET">>,<<"POST">>],Req,S};
+allowed_methods(Req,#{action := A}=S) when A =:= draft; A =:= preview -> {[<<"POST">>],Req,S};
 allowed_methods(Req,#{action := command}=S) -> {[<<"POST">>],Req,S};
 allowed_methods(Req,S) -> {[<<"GET">>],Req,S}.
-content_types_provided(Req,#{action := ui}=S) ->
-    {[{{<<"text">>,<<"html">>,[]},to_html}],Req,S};
 content_types_provided(Req,S) -> {[{{<<"application">>,<<"json">>,[]},to_json}],Req,S}.
 content_types_accepted(Req,S) -> {[{{<<"application">>,<<"json">>,[]},from_json}],Req,S}.
 
-to_html(Req,S) ->
-    {ok,HTML} = file:read_file(filename:join(code:priv_dir(damage),"static/agent-tasks.html")),
-    {HTML,headers(Req),S}.
 to_json(Req,S=#{action := Action}) ->
     try
         O = owner(S), Id = cowboy_req:binding(id,Req,<<>>),
@@ -69,11 +66,25 @@ from_json(Req0,S) ->
                     catch _:_ -> stop(400,#{error => invalid_request},Req,S) end
             end
     end.
-dispatch(M,Req,S=#{action := tasks}) ->
+dispatch(M,Req,S=#{action := preview}) ->
     true = lists:sort(maps:keys(M)) =:= [<<"goal">>,<<"template">>],
+    respond(damage_agent_draft:preview(owner(S),maps:get(<<"template">>,M),maps:get(<<"goal">>,M)),200,Req,S);
+dispatch(M,Req,S=#{action := draft}) ->
+    true = lists:sort(maps:keys(M)) =:= [<<"request_id">>,<<"template">>,<<"user_prompt">>],
+    Prompt = maps:get(<<"user_prompt">>,M), Id = maps:get(<<"request_id">>,M),
+    true = damage_agent_codec:text(Prompt,8000),
+    true = damage_agent_codec:text(Id,64),
+    true = re:run(Id,<<"^[A-Za-z0-9_-]+$">>,[{capture,none}]) =:= match,
+    Template = maps:get(<<"template">>,M),
+    true = is_binary(Template) andalso byte_size(Template) =< 80,
+    Result = try damage_bdd_service:agent(Id,Prompt,#{public_key => owner(S),agent_template => Template})
+             catch exit:_ -> {error,generation_unavailable} end,
+    respond(Result,200,Req,S);
+dispatch(M,Req,S=#{action := tasks}) ->
+    true = lists:sort(maps:keys(maps:remove(<<"policy_hash">>,M))) =:= [<<"goal">>,<<"template">>],
     Key = cowboy_req:header(<<"idempotency-key">>,Req,<<>>),
     respond(damage_agent:start(owner(S),maps:get(<<"template">>,M),
-                              maps:get(<<"goal">>,M),Key),202,Req,S);
+                              maps:get(<<"goal">>,M),Key,maps:get(<<"policy_hash">>,M,undefined)),202,Req,S);
 dispatch(M,Req,S=#{action := command}) ->
     true = lists:all(fun(K) -> lists:member(K,[<<"command">>,<<"proposal_hash">>]) end,maps:keys(M)),
     Command = maps:get(<<"command">>,M),
@@ -81,6 +92,7 @@ dispatch(M,Req,S=#{action := command}) ->
     respond(damage_agent:command(owner(S),cowboy_req:binding(id,Req),Command,
                                  maps:get(<<"proposal_hash">>,M,<<>>)),200,Req,S).
 respond({ok,V},Status,Req,S) -> stop(Status,V,Req,S);
+respond({error,R,Message},_,Req,S) -> stop(error_status(R),#{error => R,message => Message},Req,S);
 respond({error,R},_,Req,S) -> stop(error_status(R),#{error => R},Req,S).
 stop(Code,Body,Req,S) -> {stop,cowboy_req:reply(Code,
     #{<<"content-type">> => <<"application/json">>,<<"cache-control">> => <<"no-store">>,
@@ -100,7 +112,8 @@ csrf_ok(Req) ->
     end,
     Custom andalso case Origin of
         undefined -> Bearer;
-        _ -> is_binary(Expected) andalso Origin =:= Expected
+        _ -> (is_binary(Expected) andalso Origin =:= Expected) orelse
+             lists:member(Origin,damage_agent_policy:env(origins,[]))
     end.
 read_body(Req,Remaining,Acc,Deadline) ->
     Left = Deadline-erlang:monotonic_time(millisecond),
@@ -118,6 +131,12 @@ read_body(Req,Remaining,Acc,Deadline) ->
                 {_,_,R} -> {error,too_large,R}
             end
     end.
+error_status(policy_changed) -> 409;
+error_status(generation_busy) -> 429;
+error_status(generation_timeout) -> 504;
+error_status(generation_unavailable) -> 503;
+error_status(model_unavailable) -> 503;
+error_status(invalid_model_reply) -> 502;
 error_status(not_found) -> 404;
 error_status(forbidden) -> 403;
 error_status(task_quota_exceeded) -> 429;

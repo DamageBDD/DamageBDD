@@ -10,6 +10,7 @@ allowed(<<"GET">>, Path, wallet) ->
         <<"/accounts/balance">>,
         <<"/accounts/wallet">>,
         <<"/ai/bdd/catalog">>,
+        <<"/ai/bdd/routing">>,
         <<"/version">>,
         <<"/ecai/auth/session">>,
         <<"/api/themes/order">>

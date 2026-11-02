@@ -3,14 +3,15 @@
 -author("Steven Joseph <steven@stevenjoseph.in>").
 -behaviour(gen_server).
 -license("Apache-2.0").
--export([start_link/0, start/4, status/2, list/1, command/4, events/2, learning/2,
+-export([start_link/0, start/4, start/5, status/2, list/1, command/4, events/2, learning/2,
          public/1]).
 -export([create_agent/1, fund_agent/2, create_job/2, execute_job/2,
          pause_agent/1, revoke_agent/1, write_receipt/2]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3, handle_continue/2,format_status/1]).
 
 start_link() -> gen_server:start_link({local,?MODULE},?MODULE,[],[]).
-start(O,Template,Goal,Key) -> call({start,O,Template,Goal,Key}).
+start(O,Template,Goal,Key) -> start(O,Template,Goal,Key,undefined).
+start(O,Template,Goal,Key,PolicyHash) -> call({start,O,Template,Goal,Key,PolicyHash}).
 command(O,Id,Cmd,Hash) -> call({command,O,Id,Cmd,Hash}).
 call(R) ->
     try gen_server:call(?MODULE,R,20000)
@@ -44,8 +45,8 @@ handle_continue(recover,S) ->
     end,S,damage_agent_store:all()),
     {noreply,S1}.
 
-handle_call({start,O,Template,Goal,Key},_From,S) ->
-    case damage_agent_policy:template(O,Template) of
+handle_call({start,O,Template,Goal,Key,PolicyHash},_From,S) ->
+    case reviewed_template(O,Template,PolicyHash) of
         {ok,P} ->
             case damage_agent_codec:text(Goal,4096) andalso damage_agent_codec:text(Key,128) of
                 false -> {reply,{error,invalid_task},S};
@@ -209,4 +210,11 @@ behaviour_identity(P) ->
         [Feature] -> #{kind => bdd_feature_sha256, hash =>
             string:lowercase(binary:encode_hex(crypto:hash(sha256,Feature)))};
         _ -> #{kind => agent_policy_sha256, hash => maps:get(hash,P)}
+    end.
+
+reviewed_template(Owner,Template,Expected) ->
+    case damage_agent_policy:template(Owner,Template) of
+        {ok,#{hash := Hash}=P} when Expected =:= undefined; Expected =:= Hash -> {ok,P};
+        {ok,_} -> {error,policy_changed};
+        Error -> Error
     end.

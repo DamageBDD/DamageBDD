@@ -2,7 +2,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 agent_test_() -> {setup,fun setup/0,fun cleanup/1,fun(_) -> [
-    ?_test(owner_isolation()), ?_test(idempotency()), ?_test(complete_and_export()),
+    ?_test(reviewed_policy_must_match()), ?_test(owner_isolation()), ?_test(idempotency()), ?_test(complete_and_export()),
     ?_test(reject_unlisted_skill()), ?_test(no_self_certification()),
     ?_test(approval_is_exact_and_one_shot()), ?_test(cancel_is_not_rollback()),
     ?_test(provider_timeout()), ?_test(dry_run_is_side_effect_free()),
@@ -159,3 +159,11 @@ policy_hash_preserves_types() ->
         {ok,After} = damage_agent_policy:template(owner(),<<"review">>),
         ?assertNotEqual(maps:get(hash,Before),maps:get(hash,After))
     after application:set_env(damage,agentic,Old) end.
+
+reviewed_policy_must_match() ->
+    ?assertEqual({error,policy_changed},damage_agent:start(owner(),<<"review">>,
+        <<"review fixture">>,<<"reviewed-policy-start">>,<<"stale-policy-hash">>)),
+    {ok,P} = damage_agent_policy:template(owner(),<<"review">>),
+    {ok,J} = damage_agent:start(owner(),<<"review">>,<<"review fixture">>,
+        <<"reviewed-policy-start">>,maps:get(hash,P)),
+    wait(maps:get(id,J),completed).

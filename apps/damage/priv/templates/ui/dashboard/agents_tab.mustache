@@ -1,0 +1,49 @@
+<section class="agent-workspace" data-agent-workspace aria-labelledby="agent-workspace-title">
+  <header class="agent-heading"><div><p class="agent-eyebrow">AUTOMATED WORK · VERIFIED BOUNDARIES</p><h1 id="agent-workspace-title">Agents</h1><p>Describe a job. Review its behaviour and limits. Follow the evidence.</p></div><span class="agent-badge">Describe → Review → Start</span></header>
+  <p data-agent="message" class="agent-notice" role="status" aria-live="polite">Sign in to manage your agents.</p>
+  <div class="agent-workspace-grid">
+    <div class="agent-compose">
+      <section class="agent-card">
+        <div class="agent-card-heading"><p class="agent-eyebrow">01 / DESCRIBE</p><h2>What should your agent do?</h2><p class="agent-muted">Only operator-approved templates can run. Drafting never starts work or changes a budget.</p></div>
+        <form data-agent="compose">
+          <label>Your objective<textarea name="prompt" rows="4" maxlength="8000" placeholder="Review the configured code snapshot for correctness. Explain findings with evidence; do not change files or publish anything." required></textarea></label>
+          <div class="agent-examples" aria-label="Example objectives"><button type="button" data-agent-example="review">Review code</button><button type="button" data-agent-example="explain">Explain a review</button><button type="button" data-agent-example="docs">Draft documentation</button><button type="button" data-agent-example="monitor">Monitor behaviour</button></div>
+          <label>Approved template<select name="template"><option value="">Let the model suggest an approved template</option></select></label>
+          <p data-agent="template-summary" class="agent-muted">Loading approved templates…</p>
+          <div class="agent-toolbar"><span data-agent="count" class="agent-muted">0 / 8000 bytes</span><button type="button" data-agent="manual" disabled>Review without AI</button><button type="submit" data-agent="generate" class="agent-primary" disabled>Draft agent BDD</button><button type="button" data-agent="cancel-draft" hidden>Cancel draft</button></div>
+        </form>
+        {{{bdd_routing}}}
+      </section>
+      <section class="agent-card" data-agent="review" hidden>
+        <div class="agent-card-heading"><p class="agent-eyebrow">02 / REVIEW</p><h2>Check the job before starting</h2><p data-agent="draft-provenance" class="agent-muted"></p></div>
+        <div class="agent-card-body">
+          <label>Reviewed objective<textarea data-agent="goal" rows="4" maxlength="4096"></textarea></label>
+          <div data-agent="policy" class="agent-policy"></div>
+          <div data-agent="notes" class="agent-notes"></div>
+          <details open><summary>Launch BDD · acceptance is not completion</summary><pre data-agent="feature" class="agent-code"></pre></details>
+          <p data-agent="validation" class="agent-muted"></p>
+          <div class="agent-toolbar"><button type="button" data-agent="recheck">Check edited objective</button><button type="button" data-agent="download">Export .feature</button></div>
+          <label class="agent-consent"><input data-agent="reviewed" type="checkbox">I reviewed the objective, allowed actions, verification scope and budget. Start this task under those limits.</label>
+          <div class="agent-toolbar"><button type="button" data-agent="start" class="agent-primary" disabled>Start reviewed task</button><span class="agent-muted">No key, budget, permission or automatic approval comes from the model.</span></div>
+        </div>
+      </section>
+    </div>
+    <aside class="agent-card agent-task-list" aria-label="Your agent tasks">
+      <div class="agent-card-heading"><p class="agent-eyebrow">03 / FOLLOW</p><h2>Your tasks <span data-agent="task-count" class="agent-badge">0</span></h2></div>
+      <div class="agent-card-body"><label>Show<select data-agent="filter"><option value="all">All tasks</option><option value="attention">Needs attention</option><option value="active">Active</option><option value="finished">Finished</option></select></label><button type="button" data-agent="refresh">Refresh tasks</button></div>
+      <div data-agent="tasks" class="agent-task-items">No tasks loaded.</div>
+    </aside>
+  </div>
+  <section class="agent-card agent-task-detail" data-agent="detail-section" hidden>
+    <div class="agent-card-heading"><p class="agent-eyebrow">TASK EVIDENCE</p><h2 data-agent="detail-title">Selected task</h2><p data-agent="detail-summary" class="agent-muted"></p></div>
+    <div class="agent-card-body">
+      <div data-agent="budget" class="agent-notice"></div>
+      <p data-agent="receipt-state" class="agent-muted"></p>
+      <div data-agent="controls" class="agent-toolbar"></div>
+      <div class="agent-evidence-grid"><section><h3>Latest output</h3><div data-agent="artifacts">No generated artifact yet.</div></section><section><h3>Activity</h3><div data-agent="events" class="agent-timeline"></div></section></div>
+      <details data-agent="proposal-section"><summary>Exact pending proposal</summary><pre data-agent="proposal" class="agent-code">No pending proposal.</pre></details>
+      <details><summary>Technical details &amp; raw evidence</summary><pre data-agent="detail" class="agent-code"></pre><pre data-agent="raw-events" class="agent-code"></pre></details>
+      <p class="agent-muted">Cancellation is not rollback. Exported ECAI evidence is a private candidate bundle, not automatically approved training data.</p>
+    </div>
+  </section>
+</section>

@@ -560,3 +560,10 @@
   .damage-dashboard #schedules-tab .sv2-template-grid { grid-template-columns: 1fr; }
   .damage-dashboard #schedules-tab .sv2-starters { padding: 14px; }
 }
+
+/* Operation hashes must remain readable on narrow screens. */
+.damage-dashboard #schedules-tab #sv2-operations { display: grid; gap: 12px; }
+.damage-dashboard #schedules-tab #sv2-operations:empty { display: none; }
+.damage-dashboard #schedules-tab #sv2-operations .sv2-schedule { min-width: 0; }
+.damage-dashboard #schedules-tab #sv2-operations p { margin: .5rem 0; overflow-wrap: anywhere; }
+.damage-dashboard #schedules-tab #sv2-operations code { font-size: 11px; white-space: normal; overflow-wrap: anywhere; }

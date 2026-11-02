@@ -85,6 +85,12 @@ descriptor(P) ->
     #{id => maps:get(id,P), policy_hash => maps:get(hash,P),
       description => proplists:get_value(description,T,<<>>),
       accounting => accounting_descriptor(T),
+      planner => atom_to_binary(maps:get(provider,P),utf8),
+      required_actions => proplists:get_value(required_actions,T,[]),
+      limits => #{max_iterations => limit(P,max_iterations,20),
+                  max_llm_calls => limit(P,max_llm_calls,20),
+                  max_wall_seconds => limit(P,max_wall_seconds,3600)},
+      verification => verification_descriptor(proplists:get_value(verifier,T)),
       implementations => maps:get(implementations,P),
       skills => [#{id => K, description => proplists:get_value(description,A,<<>>),
                    effect => proplists:get_value(effect,A,read),
@@ -174,3 +180,10 @@ accounting_descriptor(T) ->
             max_cost_units => proplists:get_value(max_cost_units,A),
             pricing => fixed_per_admitted_invocation}
     end.
+
+verification_descriptor({artifact,Name}) -> #{kind => artifact_integrity, target => Name,
+    scope => <<"Artifact existence and integrity; not semantic correctness">>};
+verification_descriptor({bdd,Id}) -> #{kind => bdd, target => Id,
+    scope => <<"Fresh operator-configured BDD acceptance assertions">>};
+verification_descriptor({adapter,M,_}) -> #{kind => adapter, target => atom_to_binary(M,utf8),
+    scope => <<"Operator-configured verifier; inspect its defined scope">>}.

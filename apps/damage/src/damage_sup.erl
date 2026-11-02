@@ -341,7 +341,7 @@ init([]) ->
             ],
 
     %% 6) finally: append Poolboy pools LAST so their workers prepopulate after price_feed is up
-    AllChildren = Core ++ tax_children() ++ PoolSpecs,
+    AllChildren = Core ++ [damage_agent_sup:child_spec()] ++ tax_children() ++ PoolSpecs,
 
     {ok, {SupFlags, AllChildren}}.
 

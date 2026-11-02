@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 const text = await readFile(new URL('../priv/static/js/agent-tasks.js',import.meta.url),'utf8');
+const workspace = await readFile(new URL('../priv/static/js/agent-workspace.js',import.meta.url),'utf8');
 const {isTerminal,controlsFor,budgetLabel} = await import(`data:text/javascript;base64,${Buffer.from(text).toString('base64')}`);
 test('terminal states cannot dispatch approval or execution commands', () => {
   for (const status of ['completed','failed','cancelled','cancelled_unreconciled','exhausted']) {
@@ -13,14 +14,14 @@ test('approval is visible only for pending approval', () => {
   for (const status of ['planning','executing','waiting','paused','interrupted']) assert(!controlsFor(status).includes('approve'));
 });
 test('model text is not rendered as HTML or Markdown', () => {
-  assert(!text.includes('innerHTML')); assert(!text.includes('insertAdjacentHTML'));
-  assert(text.includes("$('proposal').textContent"));
+  assert(!workspace.includes('innerHTML')); assert(!workspace.includes('insertAdjacentHTML'));
+  assert(workspace.includes("$('proposal').textContent"));
 });
 test('page teardown aborts requests and stops polling', () => {
-  assert(text.includes('controller.abort()')); assert(text.includes('clearTimeout(timer)'));
+  assert(workspace.includes('controller.abort()')); assert(workspace.includes('clearTimeout(timer)'));
 });
 test('task creation retries retain an idempotency key', () => {
-  assert(text.includes('creation.payload !== payload')); assert(text.includes("'idempotency-key':creation.key"));
+  assert(workspace.includes('creation.payload!==fingerprint')); assert(workspace.includes("'idempotency-key':creation.key"));
 });
 
 test('accounting pending is not a terminal success and cannot be cancelled away', () => {
@@ -44,6 +45,6 @@ test('budget labels keep integer base units and separate AE transaction fees', (
   assert.match(label, /AE transaction fees are separate/);
 });
 test('browser cannot set a task monetary ceiling in the creation payload', () => {
-  assert(text.includes('JSON.stringify({template:select.value,goal:goal.value})'));
-  assert(!text.includes('form.elements.max_cost_units'));
+  assert(workspace.includes('{template:draft.template,goal:draft.goal,policy_hash:draft.policy_hash}'));
+  assert(!workspace.includes('form.elements.max_cost_units'));
 });

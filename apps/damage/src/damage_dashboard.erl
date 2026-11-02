@@ -110,7 +110,9 @@ render_full_page(Ctx) ->
     %% Assemble from mustache fragments so you can also SSR each piece independently
     %% page_shell.mustache should call {{{topbar}}}, {{{sidebar}}}, etc. (triple-stache = HTML safe)
     Top = render_tpl(?TPL("topbar.mustache"), Ctx),
-    Exec = render_tpl(?TPL("execution_tab.mustache"), Ctx),
+    Routing = render_tpl(?TPL("bdd_routing.mustache"), Ctx),
+    Exec = render_tpl(?TPL("execution_tab.mustache"), Ctx#{bdd_routing => Routing}),
+    Agents = render_tpl(?TPL("agents_tab.mustache"), Ctx#{bdd_routing => Routing}),
     Activity = render_tpl(?TPL("activity_tab.mustache"), history_context(Ctx)),
     Anal = render_tpl(?TPL("analytics_tab.mustache"), history_context(Ctx)),
     Sched = render_tpl(?TPL("schedules_tab.mustache"), Ctx),
@@ -158,6 +160,7 @@ render_full_page(Ctx) ->
         topbar => Top,
         sidebar => render_tpl(?TPL("sidebar.mustache"), Ctx#{footer => Foot}),
         execution_tab => Exec,
+        agents_tab => Agents,
         activity_tab => Activity,
         analytics_tab => Anal,
         schedules_tab => Sched,
@@ -202,7 +205,11 @@ render_component(sidebar, Ctx) ->
 render_component(tabs, Ctx) ->
     render_component(sidebar, Ctx);
 render_component(execution_tab, Ctx) ->
-    render_tpl(?TPL("execution_tab.mustache"), Ctx);
+    Routing = render_tpl(?TPL("bdd_routing.mustache"), Ctx),
+    render_tpl(?TPL("execution_tab.mustache"), Ctx#{bdd_routing => Routing});
+render_component(agents_tab, Ctx) ->
+    Routing = render_tpl(?TPL("bdd_routing.mustache"), Ctx),
+    render_tpl(?TPL("agents_tab.mustache"), Ctx#{bdd_routing => Routing});
 render_component(activity_tab, Ctx) ->
     render_tpl(?TPL("activity_tab.mustache"), history_context(Ctx));
 render_component(analytics_tab, Ctx) ->

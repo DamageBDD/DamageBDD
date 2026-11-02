@@ -62,6 +62,8 @@ get_trails() ->
             damage_reports,
             damage_run_history_http,
             damage_bdd_http,
+            damage_bdd_routing_http,
+            damage_agent_http,
             lnaddress,
             cowboy_swagger_handler,
             lightning_auth,
