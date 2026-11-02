@@ -42,6 +42,25 @@ profile_test() ->
     after file:del_dir_r(Dir) end.
 
 gates_test_() -> {foreach, fun setup/0, fun cleanup/1, [
+    fun({_,Dir}) -> fun() ->
+        Status=erm_phrase_voice:status(),
+        Owner=filename:join(Dir,"owner.profile"),
+        {ok,Bytes}=file:read_file(Owner),
+        Fingerprint=erm_native_voice:profile_fingerprint(Bytes),
+        ?assertEqual(Fingerprint,maps:get(speaker_profile_fingerprint,Status)),
+        ?assertEqual(<<"configured">>,maps:get(speaker_profile_id,Status)),
+        ?assertEqual(Owner,maps:get(speaker_profile_file,Status)),
+        ?assertEqual(current,maps:get(speaker_profile_disk,Status)),
+        ?assertMatch({ok,_},erm_phrase_codec:load_speaker(Owner,erm_phrase_codec:model_hash(filename:join(Dir,"speaker.onnx")))),
+        ?assertEqual({ok,Fingerprint},erm_phrase_codec:speaker_file_fingerprint(Owner)),
+        {ok,_,Fingerprint}=erm_phrase_codec:load_speaker_with_fingerprint(Owner,
+            erm_phrase_codec:model_hash(filename:join(Dir,"speaker.onnx"))),
+        ok=file:write_file(Owner,term_to_binary((binary_to_term(Bytes,[safe]))#{label=><<"changed">>})),
+        ?assertEqual(changed_restart_required,maps:get(speaker_profile_disk,erm_phrase_voice:status())),
+        ok=erm_phrase_voice:observe_only(false),listen(),
+        inject(0,[1.0,0.0],1500,1),no_command(),
+        ?assertMatch(#{last:={rejected,speaker_profile_changed_restart_required}},erm_phrase_voice:status())
+    end end,
     fun(_) -> fun() ->
         {ok,_}=erm_voice_events:ensure_started(),listen(),
         {Port,E,_,_}=context(),

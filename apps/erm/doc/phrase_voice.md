@@ -242,3 +242,60 @@ then build with the real SDKs and perform live acoustic acceptance. No measured
 recognition accuracy, Steam Deck latency, power use, or battery improvement is
 claimed by this patch. Re-run the existing native-voice tests to protect guided
 speaker enrollment/tuning behavior in your installed version.
+
+
+## Re-enrolment fingerprint correlation (October 2026 multi-voice implementation)
+
+**The current training UI saves named speaker profiles via `erm_voice_profiles`,
+not necessarily `owner.profile`.** A re-enrolled voice is a *new profile ID*
+and the selected voice changes. Native `erm_native_voice` and the phrase backend
+are mutually exclusive, so compare their fingerprints using local logs/status,
+not by expecting both services to be running simultaneously.
+
+Fingerprint events in the voice logger (schematic only):
+
+```text
+erm_voice_profile event=saved backend=phrases fingerprint=sha256:0123456789ABCDEF voice_id=... path=... templates=0
+erm_voice_profile event=loaded backend=phrases fingerprint=sha256:0123456789ABCDEF voice_id=... path=... templates=0
+erm_voice_profile event=verification backend=phrases mode=lab fingerprint=sha256:0123456789ABCDEF voice_id=... capture_id=... score=0.72 threshold=0.7 outcome=pass reason=verified
+```
+
+Read from the running phrase backend:
+
+```erlang
+maps:with([speaker_profile_id, speaker_profile_file,
+    speaker_profile_fingerprint, speaker_profile_disk], erm_phrase_voice:status()).
+maps:get(capture, erm_phrase_lab:status()).
+```
+
+With the standalone native Whisper backend selected instead:
+
+```erlang
+maps:with([enrolled, speaker_profile_file,
+    speaker_profile_fingerprint, speaker_profile_disk], erm_native_voice:status()).
+```
+
+Watch the configured voice log, for example:
+
+```sh
+tail -F /var/log/damage/erm_voice.log | grep --line-buffered erm_voice_profile
+```
+
+The 16 hexadecimal characters are the leading 64 bits of SHA-256 calculated
+from the **exact validated serialized file bytes**, not an electronic signature,
+speech score, password, or proof of physical speaker identity. A token is a
+stable biometric-derived identifier and should remain private in operator logs.
+No waveform, embedding or transcript is logged by this feature.
+
+`current` means the loaded reference still matches its selected speaker file;
+`changed_restart_required` means the file was replaced while the worker kept
+an older reference; `{unavailable, Reason}` indicates the file is missing or
+fails the private-regular-file checks. A stale or unavailable profile **cannot
+pass verification**, and the implementation does not lower the speaker threshold.
+
+Named-voice re-enrolment through the lab reloads the newly selected profile in
+the *same* phrase coordinator. Check that its `event=saved`, subsequent
+`event=loaded`, and `event=verification` have matching `voice_id` and
+`fingerprint`. An external file replacement needs a normal erm restart/reload;
+do not bypass the phrase-bank binding or reactivate command dispatch to mask a
+stale profile.
