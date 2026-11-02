@@ -4,7 +4,7 @@
 export function initLlmSettings({request, canManage}) {
   const $ = id => document.getElementById(id);
   const root = document.querySelector('[data-panel="ai-providers"]');
-  if (!root) return {refresh() {}, reset() {}, accessChanged() {}, setVisible() {}};
+  if (!root) return {refresh() {}, reset() {}, accessChanged() {}, setVisible() {}, poll() {}};
   const roles = [["learning", "Learning"], ["audit", "Audit"], ["patch", "Repair"],
     ["synthesis", "Synthesis"], ["chat", "Chat"], ["bdd", "BDD authoring & AI profiles"]];
   const providers = {ollama: "Ollama", openai: "OpenAI", anthropic: "Claude / Anthropic"};
@@ -17,7 +17,7 @@ export function initLlmSettings({request, canManage}) {
     failure_threshold: "llmFailureThreshold", queue_timeout_ms: "llmQueueTimeout", cluster_attempts: "llmAttempts"};
   const numeric = new Set(["port", "max_inflight", "weight", "timeout_ms", "connect_timeout_ms", "max_output_tokens", "temperature"]);
   let data = null, draft = null, revision = null, selected = 0, dirty = false;
-  let visible = false, granted = false, loading = false, busy = false, epoch = 0, keys = new Map();
+  let visible = false, granted = false, loading = false, busy = false, polling = false, epoch = 0, keys = new Map();
   const el = (tag, cls, value) => {const e = document.createElement(tag); e.className = cls;
     if (value !== undefined) e.textContent = String(value); return e;};
   const text = (id, v) => {$(id).textContent = String(v ?? "—");};
@@ -27,7 +27,8 @@ export function initLlmSettings({request, canManage}) {
     throw new Error("The server did not return a valid provider configuration."); return r.llm_settings;};
   const errorMessage = e => {
     if ([401, 403].includes(e?.status)) return "Sign in with a server-authorized node administrator account.";
-    const code = e?.body?.error;
+    const raw = e?.body?.error;
+    const code = typeof raw === "object" && raw !== null ? raw.code : raw;
     if (e?.status === 409 || code === "stale_revision") return "Another administrator changed these settings. Your non-secret edits are preserved. Refresh, then discard edits to load the new revision.";
     const friendly = {endpoint_not_allowed: "This endpoint is not approved. Declare additional Ollama hosts/ports in server configuration before using them here.",
       remote_role_not_allowed: "Explicitly allow non-loopback processing for every role assigned to an enabled remote connection.",
@@ -35,8 +36,30 @@ export function initLlmSettings({request, canManage}) {
       inherited_credential_endpoint_changed: "Changing a destination requires choosing a new credential source. Inherited credentials cannot move to another endpoint.",
       environment_reference_not_allowed: "That environment-variable reference is not approved by this node.",
       inference_pool_unavailable: "The inference pool is not running. Check the code-security supervisor before saving."};
-    return friendly[code] || (typeof code === "string" ? code.replaceAll("_", " ") : e?.message || "Provider settings are unavailable.");
+    return friendly[code] || (typeof raw === "object" && raw !== null ? diagnostic(raw)
+      : typeof code === "string" ? code.replaceAll("_", " ") : e?.message || "Provider settings are unavailable.");
   };
+  function diagnostic(value) {
+    if (!value) return "none";
+    if (typeof value === "string") return value.replaceAll("_", " ");
+    return [value.code, value.phase, value.reason, value.http_status && `HTTP ${value.http_status}`]
+      .filter(v => typeof v === "string" || typeof v === "number").join(" · ") || "request failed";
+  }
+  const missingDeployment = () => (data?.deployment_connections || [])
+    .filter(c => !draft?.connections.some(n => n.id === c.id));
+  function renderConnectionStatus() {
+    const c = current();
+    const n = data?.pool?.available && data.pool.nodes?.find(n => n.id === c?.id);
+    text("llmConnectionStatus", !c ? "Select a connection." : !n ? "No live pool status for this connection."
+      : `Saved runtime: ${n.health || "unknown"} · ${n.inflight ?? 0}/${n.max_inflight ?? c.max_inflight} busy` +
+        ` · ${n.available_slots ?? 0} available` +
+        (n.saturated ? " · SATURATED (healthy does not mean idle)" : "") +
+        ` · oldest request ${Math.round((n.oldest_inflight_ms || 0) / 1000)} s` +
+        ` · last health error: ${diagnostic(n.last_error)}` +
+        ` · last request error: ${diagnostic(n.last_request_error)}` +
+        (n.last_request_at ? ` · request checked ${n.last_request_at}` : "") +
+        (n.last_checked_at ? ` · catalog checked ${n.last_checked_at}` : ""));
+  }
   function clearKeys() {keys.clear(); $("llmApiKey").value = ""; text("llmKeyState", "No replacement key queued.");}
   function controls() {
     const allowed = granted && canManage() && draft !== null && !busy && !loading;
@@ -44,6 +67,8 @@ export function initLlmSettings({request, canManage}) {
     $("llmSave").disabled = !allowed || !dirty;
     $("llmDiscard").disabled = !allowed || !dirty;
     $("llmRefresh").disabled = busy || loading || !canManage();
+    $("llmImportDeployment").disabled = !allowed || !missingDeployment().length || draft.connections.length >= 32;
+    for (const button of $("llmConnectionList").querySelectorAll("button")) button.disabled = !allowed;
     const c = current();
     const saved = data?.config.connections.find(n => n.id === c?.id);
     $("llmAuthType").querySelector('[value="vault"]').disabled = saved?.auth_type !== "vault";
@@ -68,17 +93,19 @@ export function initLlmSettings({request, canManage}) {
       }
       text("llmKeyState", keys.has(c) ? "A replacement key is queued in this unsaved draft." : "No replacement key queued.");
     }
-    controls();
+    renderConnectionStatus(); controls();
   }
   function renderConnections() {
     const list = $("llmConnectionList"); list.replaceChildren();
     for (const [index, c] of (draft?.connections || []).entries()) {
-      const health = data?.pool?.nodes?.find(n => n.id === c.id);
+      const health = data?.pool?.available && data.pool.nodes?.find(n => n.id === c.id);
       const b = el("button", "llm-connection"); b.type = "button";
       b.setAttribute("aria-pressed", String(index === selected));
       b.append(el("strong", "", c.id || "New connection"), el("small", "", `${providers[c.provider]} · ${c.enabled ? health?.health || "not tested" : "disabled"}`),
         el("small", "", c.default_model || "Choose a model after discovery"));
-      b.addEventListener("click", () => {selected = index; renderConnections(); fillEditor();}); list.append(b);
+      if (health) b.append(el("small", "", `${health.inflight ?? 0}/${health.max_inflight ?? c.max_inflight} busy · ${health.available_slots ?? 0} available${health.saturated ? " · saturated" : ""}`));
+      b.disabled = busy || loading || !granted;
+      b.addEventListener("click", () => {if (busy || loading || !granted) return; selected = index; renderConnections(); fillEditor();}); list.append(b);
     }
     if (!draft?.connections.length) list.append(el("p", "context-hint", "No connections. Add a provider to begin."));
   }
@@ -106,6 +133,16 @@ export function initLlmSettings({request, canManage}) {
   function renderSnapshot() {
     text("llmRevision", `r${data.revision}`); text("llmSource", data.source === "deployment" ? "Inherited deployment configuration" : "Persisted dashboard override");
     text("llmConnectionCount", data.config.connections.length);
+    const omitted = (data.deployment_connections || []).filter(c => !data.config.connections.some(n => n.id === c.id));
+    text("llmDeploymentNotice", data.source === "dashboard"
+      ? `Dashboard settings replace the deployment node list; they are not merged. ${omitted.length ? `Omitted deployment nodes: ${omitted.map(c => c.id).join(", ")}. Import adds them disabled for review.` : "No deployment nodes are omitted."}`
+      : "Using deployment nodes. Saving creates a complete dashboard override.");
+    const nodes = data.pool?.nodes || [];
+    text("llmPoolSummary", data.pool?.available
+      ? `${data.pool.active_leases ?? nodes.reduce((n, c) => n + (c.inflight || 0), 0)} requests in flight · ${nodes.reduce((n, c) => n + (c.available_slots || 0), 0)} slots available · ${data.pool.active_probes || 0} discovery probes. Catalog health does not verify generation.`
+      : "Pool status unavailable; displayed configuration is not a health check.");
+    text("llmPoolCheckedAt", data.pool?.checked_at ? `Status sampled ${data.pool.checked_at}. Request-specific deadlines may override shared defaults.` : "No live sample time reported.");
+    renderConnectionStatus();
     text("llmRuntimeState", data.pool?.available ? (data.pool.revision === data.revision ? "Applied" : "Pending apply") : "Unavailable");
     text("llmRuntimeRevision", data.pool?.available ? `Pool revision r${data.pool.revision}` : "Check the code-security supervisor");
     const profiles = $("llmDamageProfiles"); profiles.replaceChildren();
@@ -136,6 +173,22 @@ export function initLlmSettings({request, canManage}) {
       notice(errorMessage(e), true);
     } finally {if (ticket === epoch) {loading = false; controls();}}
   }
+  async function poll() {
+    if (!visible || document.hidden || busy || loading || polling || !data || !canManage()) return;
+    const ticket = epoch; polling = true;
+    try {
+      const next = unwrap(await request("/ecai/admin/llm/settings"));
+      if (ticket !== epoch || !canManage() || busy || loading || next.revision < data.revision) return;
+      data = next; granted = true; renderSnapshot();
+      if (!dirty && revision !== next.revision) fillDraft();
+      else {renderConnections(); renderConnectionStatus(); controls();}
+      if (revision !== next.revision) notice(`Saved revision r${next.revision}; your draft based on r${revision} is unchanged. Discard edits to reload.`);
+    } catch (e) {
+      if (ticket !== epoch) return;
+      if ([401, 403].includes(e.status)) {reset(); notice(errorMessage(e), true);}
+      else {data.pool = {available: false}; renderSnapshot(); renderConnections(); controls();}
+    } finally {if (ticket === epoch) polling = false;}
+  }
   async function save(event) {
     event.preventDefault();
     if (!granted || !canManage() || busy || !dirty || !$("llmForm").reportValidity()) return;
@@ -161,12 +214,15 @@ export function initLlmSettings({request, canManage}) {
     const ticket = epoch, id = current().id; busy = true; controls(); text("llmProbeResult", "Checking the saved connection…");
     try {
       const result = await request("/ecai/admin/llm/probe", {method: "POST", body: {revision, id}});
-      if (ticket !== epoch || !canManage()) return;
+      if (ticket !== epoch || !canManage() || current()?.id !== id) return;
       if (result?.ok !== true || !Array.isArray(result.probe?.models)) throw new Error("The provider did not return a model list.");
       const models = result.probe.models.filter(m => typeof m === "string");
       const list = $("llmDiscoveredModels"); list.replaceChildren();
       for (const model of models.slice(0, 1000)) {const option = document.createElement("option"); option.value = model; list.append(option);}
-      text("llmProbeResult", `${models.length} model(s) listed in ${result.probe.elapsed_ms} ms. Choose a model above; generation was not tested.`);
+      const missing = result.probe.default_model && result.probe.default_model_available === false;
+      text("llmProbeResult", `${models.length} model(s) listed in ${result.probe.elapsed_ms} ms. ` +
+        (missing ? `Configured default ${result.probe.default_model} is NOT available; this connection cannot pass the pool's model check. ` : "") +
+        "Choose a model above; generation was not tested.");
     } catch (e) {if (ticket === epoch) text("llmProbeResult", `Connection test failed: ${errorMessage(e)}`);}
     finally {if (ticket === epoch) {busy = false; controls();}}
   }
@@ -211,6 +267,15 @@ export function initLlmSettings({request, canManage}) {
     draft.connections.push(defaults(provider, `${provider}-${i}`)); selected = draft.connections.length - 1;
     markDirty(); renderConnections(); renderRoles(); fillEditor();
   });
+  $("llmImportDeployment").addEventListener("click", () => {
+    if (!draft || busy || loading || !granted || !canManage()) return;
+    const missing = missingDeployment().slice(0, 32 - draft.connections.length);
+    for (const c of missing) draft.connections.push({...structuredClone(c), enabled: false});
+    if (!missing.length) return;
+    selected = draft.connections.length - missing.length;
+    markDirty(); renderConnections(); renderRoles(); fillEditor();
+    notice(`Imported ${missing.length} deployment connection(s), disabled and unsaved. Review roles, remote consent and credentials before enabling and saving.`);
+  });
   $("llmRemove").addEventListener("click", () => {
     const c = current(); if (!c || busy || !granted || !window.confirm(`Remove ${c.id} from the registry on the next save? Its vault entries will not be deleted.`)) return;
     keys.delete(c); draft.connections.splice(selected, 1); selected = Math.max(0, selected - 1);
@@ -221,14 +286,14 @@ export function initLlmSettings({request, canManage}) {
   $("llmDiscard").addEventListener("click", () => {if (window.confirm("Discard unsaved provider edits?")) {clearKeys(); refresh(true);}});
   $("llmProbe").addEventListener("click", probe);
   function reset() {
-    epoch++; clearKeys(); data = null; draft = null; revision = null; dirty = false; granted = false; busy = false; loading = false; selected = 0;
+    epoch++; clearKeys(); data = null; draft = null; revision = null; dirty = false; granted = false; busy = false; loading = false; polling = false; selected = 0;
     $("llmConnectionList").replaceChildren(); $("llmRoleRows").replaceChildren(); $("llmRemoteRoles").replaceChildren(); $("llmEditor").hidden = true; $("llmEmpty").hidden = false;
-    for (const id of ["llmRevision", "llmSource", "llmRuntimeState", "llmRuntimeRevision", "llmConnectionCount", "llmDamageProfiles"]) text(id, "Not loaded");
+    for (const id of ["llmRevision", "llmSource", "llmRuntimeState", "llmRuntimeRevision", "llmConnectionCount", "llmDamageProfiles", "llmDeploymentNotice", "llmPoolSummary", "llmPoolCheckedAt", "llmConnectionStatus"]) text(id, "Not loaded");
     controls();
   }
   controls();
-  return {refresh, reset,
+  return {refresh, reset, poll,
     accessChanged() {if (!canManage()) {reset(); notice("Node-administrator access is required.");} else controls();},
-    setVisible(value) {visible = value; if (!value) {epoch++; clearKeys(); busy = false; loading = false;} controls();}
+    setVisible(value) {visible = value; if (!value) {epoch++; clearKeys(); busy = false; loading = false; polling = false;} controls();}
   };
 }

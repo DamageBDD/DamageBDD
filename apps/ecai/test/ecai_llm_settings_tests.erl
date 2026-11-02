@@ -129,3 +129,35 @@ bdd_route_validation_test_() ->
      ?_assertMatch({error,_},ecai_llm_settings:validate(C#{<<"bdd_route">> => Route#{<<"host">> => <<"attacker.invalid">>}},[])),
      ?_assertMatch({error,_},ecai_llm_settings:validate(C#{<<"bdd_route">> => Route#{<<"provider">> => <<"arbitrary">>}},[])),
      ?_assertMatch({error,_},ecai_llm_settings:validate(C#{<<"bdd_route">> => Route#{<<"model">> => binary:copy(<<"x">>,257)}},[]))].
+
+probe_uses_saved_timeouts_and_revision_fence_test() ->
+    C0 = connection(), C = C0#{<<"connect_timeout_ms">> => 18000},
+    Config0 = config(C),
+    Config = Config0#{<<"runtime">> => (maps:get(<<"runtime">>, Config0))#{<<"health_timeout_ms">> => 20000}},
+    S0 = #{base => [], probes => #{}, snapshot => #{revision => 7, config => Config}},
+    {reply, {ok, Opts, Target}, S1} = ecai_llm_settings:handle_call(
+        {probe_options, #{<<"revision">> => 7, <<"id">> => <<"unit-local">>}}, {self(), make_ref()}, S0),
+    ?assertEqual(20000, maps:get(health_timeout, Opts)),
+    ?assertEqual(18000, maps:get(connect_timeout, Opts)),
+    ?assertEqual(<<"fixture-model">>, maps:get(default_model, Target)),
+    ?assertMatch({reply, true, _}, ecai_llm_settings:handle_call({probe_current, 7}, {self(), make_ref()}, S1)),
+    ?assertMatch({reply, false, _}, ecai_llm_settings:handle_call({probe_current, 6}, {self(), make_ref()}, S1)).
+
+inherited_proxy_and_response_cap_are_preserved_test() ->
+    Base = [#{id => <<"unit-local">>, provider => ollama, host => "127.0.0.1", port => 11434,
+              proxy => auto, max_response_bytes => 4096}],
+    {ok, [N]} = ecai_llm_settings:validate(config(connection()), Base),
+    ?assertEqual(auto, maps:get(proxy, N)),
+    ?assertEqual(4096, maps:get(max_response_bytes, N)).
+
+deployment_nodes_are_visible_without_implicit_merge_test() ->
+    Base = [#{id => <<"declared-lan">>, host => "192.0.2.20", port => 11434,
+              enabled => false, api_key_secret => <<"DO-NOT-EXPOSE-REFERENCE">>}],
+    Config = (config(connection()))#{<<"connections">> => []},
+    S = #{base => Base, snapshot => #{revision => 2, source => dashboard, config => Config}},
+    {reply, Public, S} = ecai_llm_settings:handle_call(status, {self(), make_ref()}, S),
+    ?assertEqual([], maps:get(<<"connections">>, maps:get(config, Public))),
+    [Declared] = maps:get(deployment_connections, Public),
+    ?assertEqual(<<"declared-lan">>, maps:get(<<"id">>, Declared)),
+    ?assertEqual(<<"inherited">>, maps:get(<<"auth_type">>, Declared)),
+    ?assertEqual(<<>>, maps:get(<<"credential_ref">>, Declared)).

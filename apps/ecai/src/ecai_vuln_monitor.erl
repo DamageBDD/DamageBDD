@@ -333,6 +333,16 @@ handle_info(scan_next, State0 = #state{queue = [Module | Rest]}) ->
                     [State1#state.app, Module]
                 ),
                 State1;
+            {error, {inference_uncertain, Role, NodeId, ReceiptId, ReceiptStatus} = Reason}
+              when ReceiptStatus =:= uncertain; ReceiptStatus =:= sent; ReceiptStatus =:= claimed ->
+                logger:warning(
+                    "ECAI vulnerability scan blocked by persisted inference receipt "
+                    "app=~p module=~p role=~p node=~p receipt_id=~p receipt_status=~p "
+                    "(no new provider request sent)",
+                    [State1#state.app, Module, Role, NodeId, ReceiptId, ReceiptStatus]
+                ),
+                store_scan_error(Module, Reason, State1),
+                State1#state{last_error = {Module, Reason}};
             {error, Reason} ->
                 logger:error(
                     "ECAI vulnerability scan failed app=~p module=~p reason=~p",

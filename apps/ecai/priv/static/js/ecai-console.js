@@ -3860,6 +3860,7 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
     state.telemetryPoller = setInterval(() => void task(pollJobTelemetry), 7000);
     state.poller = setInterval(() => {
       if (document.hidden || !managedSession()) return;
+      if (state.view === "ai-providers") { void llmSettings?.poll(); return; }
       if (state.view === "code") {
         if (state.codeSection === "model-internals") { modelInternals?.poll(); return; }
         if (state.codeReview?.status === "publishing") task(refreshCode);

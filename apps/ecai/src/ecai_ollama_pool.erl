@@ -5,6 +5,8 @@
     start_link/0,
     start_link/1,
     status/0,
+    inference_receipt/1,
+    approve_inference_retry/3,
     evaluation_configurations/0,
     refresh/0,
     reconfigure/4,
@@ -57,7 +59,10 @@
     receipt_tab = undefined,
     receipt_file = undefined,
     probe_timer = undefined,
-    config_revision = 0
+    config_revision = 0,
+    receipt_counts = #{},
+    lease_started = #{},
+    probes = #{}
 }).
 
 start_link() -> start_link(#{}).
@@ -79,6 +84,19 @@ chat_messages(Role, Messages, Opts) when is_list(Messages), is_map(Opts) ->
     run_native_request(messages, Role, #{messages => Messages}, Opts).
 
 status() -> gen_server:call(?SERVER, status).
+
+%% Trusted BEAM/operator API only. No HTTP route exposes these operations.
+%% Reading never releases a receipt. Approval enables one subsequent claim,
+%% and explicitly accepts that a previous remote execution may have completed.
+-spec inference_receipt(binary()) -> {ok, map()} | {error, term()}.
+inference_receipt(RequestId) ->
+    gen_server:call(?SERVER, {inference_receipt, RequestId}, 30000).
+
+-spec approve_inference_retry(binary(), pos_integer(), atom()) ->
+    {ok, map()} | {error, term()}.
+approve_inference_retry(RequestId, ExpectedAttempt, Acknowledgement) ->
+    gen_server:call(?SERVER,
+        {approve_inference_retry, RequestId, ExpectedAttempt, Acknowledgement}, 30000).
 refresh() -> gen_server:cast(?SERVER, refresh).
 capacity(Role) when is_atom(Role) -> gen_server:call(?SERVER, {capacity, Role}).
 inference_available(Role, Provider, Model, Digest) ->
@@ -149,6 +167,7 @@ init(Opts) ->
                             )
                         ),
                         receipt_tab = ReceiptTab,
+                        receipt_counts = load_receipt_counts(ReceiptTab),
                         config_revision = ecai_llm_settings:revision(),
                         receipt_file = ReceiptFile
                     },
@@ -168,7 +187,8 @@ handle_call({reconfigure, RawNodes, Runtime, Revision, Commit}, _From, State) ->
                                                LeaseId =:= Id]),
                         N#{inflight => Active}
                     end, Candidate),
-                    New = State#state{nodes = Nodes, config_revision = Revision,
+                    maps:foreach(fun(_, P) -> stop_probe(P) end, State#state.probes),
+                    New = State#state{nodes = Nodes, config_revision = Revision, probes = #{},
                         health_interval_ms = maps:get(<<"health_interval_ms">>, Runtime),
                         health_timeout_ms = maps:get(<<"health_timeout_ms">>, Runtime),
                         failure_threshold = maps:get(<<"failure_threshold">>, Runtime)},
@@ -207,18 +227,32 @@ handle_call({checkout, Role, Provider, Model, Exclude}, {Owner, _}, State0) ->
             Lease = lease_map(LeaseRef, Role, Model, Node),
             Monitor = erlang:monitor(process, Owner),
             Leases = (State0#state.leases)#{LeaseRef => {Id, maps:get(config_token, Node), Monitor}},
-            {reply, {ok, Lease}, State0#state{nodes = Nodes, leases = Leases, seq = Seq}}
+            Started = (State0#state.lease_started)#{LeaseRef => erlang:monotonic_time(millisecond)},
+            {reply, {ok, Lease}, State0#state{nodes = Nodes, leases = Leases,
+                                             lease_started = Started, seq = Seq}}
+    end;
+handle_call({inference_receipt, RequestId}, _From, State) ->
+    {reply, inspect_inference_receipt(RequestId, State), State};
+handle_call({approve_inference_retry, RequestId, ExpectedAttempt, Acknowledgement},
+            {Caller, _}, State) ->
+    case valid_receipt_id(RequestId) of
+        true ->
+            receipt_reply(RequestId, fun() ->
+                approve_uncertain_receipt(RequestId, ExpectedAttempt,
+                    Acknowledgement, Caller, State)
+            end, State);
+        false -> {reply, {error, invalid_receipt_id}, State}
     end;
 handle_call({receipt_claim, RequestId, Meta}, _From, State) ->
-    {reply, receipt_claim(RequestId, Meta, State), State};
+    receipt_reply(RequestId, fun() -> receipt_claim(RequestId, Meta, State) end, State);
 handle_call({receipt_sent, RequestId, Meta}, _From, State) ->
-    {reply, receipt_sent(RequestId, Meta, State), State};
+    receipt_reply(RequestId, fun() -> receipt_sent(RequestId, Meta, State) end, State);
 handle_call({receipt_complete, RequestId, Value, ClientMeta}, _From, State) ->
-    {reply, receipt_complete(RequestId, Value, ClientMeta, State), State};
+    receipt_reply(RequestId, fun() -> receipt_complete(RequestId, Value, ClientMeta, State) end, State);
 handle_call({receipt_uncertain, RequestId, Reason}, _From, State) ->
-    {reply, receipt_uncertain(RequestId, Reason, State), State};
+    receipt_reply(RequestId, fun() -> receipt_uncertain(RequestId, Reason, State) end, State);
 handle_call({receipt_release, RequestId}, _From, State) ->
-    {reply, receipt_release(RequestId, State), State};
+    receipt_reply(RequestId, fun() -> receipt_release(RequestId, State) end, State);
 handle_call(_Request, _From, State) ->
     {reply, {error, unsupported_call}, State}.
 
@@ -229,6 +263,14 @@ handle_cast({checkin, LeaseRef, Outcome}, State) ->
     {noreply, checkin_lease(LeaseRef, Outcome, State)};
 handle_cast({release, LeaseRef}, State) ->
     {noreply, release_lease(LeaseRef, State)};
+handle_cast({probe_result, Id, Token, Ref, Result, DurationMs}, State) ->
+    case maps:find(Id, State#state.probes) of
+        {ok, #{ref := Ref, monitor := Monitor}} ->
+            erlang:demonitor(Monitor, [flush]),
+            S = State#state{probes = maps:remove(Id, State#state.probes)},
+            handle_cast({probe_result, Id, Token, Result, DurationMs}, S);
+        _ -> {noreply, State}
+    end;
 handle_cast({probe_result, Id, Token, Result, DurationMs}, State) ->
     case maps:find(Id, State#state.nodes) of
         {ok, #{config_token := Token}} ->
@@ -243,20 +285,20 @@ handle_info(probe_all, State0) ->
     Timer = erlang:send_after(State0#state.health_interval_ms, self(), probe_all),
     handle_info(probe_now, State0#state{probe_timer = Timer});
 handle_info(probe_now, State0) ->
-    maps:foreach(
-        fun(_Id, Node) -> launch_probe(Node, State0#state.health_timeout_ms) end,
-        State0#state.nodes
-    ),
-    {noreply, State0#state{last_probe_at = now_iso8601()}};
+    %% Deduplicate refresh/timer probes for each live configuration.
+    State = maps:fold(fun(_, Node, S) -> launch_probe(Node, S) end,
+                      State0, State0#state.nodes),
+    {noreply, State#state{last_probe_at = now_iso8601()}};
 handle_info({'DOWN', Monitor, process, _Pid, _Reason}, State) ->
     case [Ref || {Ref, {_, _, M}} <- maps:to_list(State#state.leases), M =:= Monitor] of
         [Ref] -> {noreply, release_lease(Ref, State)};
-        _ -> {noreply, State}
+        _ -> {noreply, probe_down(Monitor, State)}
     end;
 handle_info(_Info, State) ->
     {noreply, State}.
 
 terminate(_Reason, State) ->
+    maps:foreach(fun(_, P) -> stop_probe(P) end, State#state.probes),
     case State#state.receipt_tab of
         undefined -> ok;
         Tab -> dets:close(Tab)
@@ -748,6 +790,10 @@ normalize_node(Node0) when is_map(Node0) ->
         inflight => 0,
         failures => 0,
         last_error => undefined,
+        last_request_error => undefined,
+        last_request_at => undefined,
+        probe_verified => false,
+        probe_latency_ms => undefined,
         selections => 0,
         last_selected => 0,
         latency_ema_ms => undefined,
@@ -938,7 +984,8 @@ any_role_model_candidate(Nodes, Role, Provider, Model, Exclude) ->
 
 health_ready(Node) ->
     Health = maps:get(health, Node, unknown),
-    Health =:= healthy orelse Health =:= degraded.
+    Health =:= healthy orelse
+        (Health =:= degraded andalso maps:get(probe_verified, Node, false)).
 
 provider_matches(_Node, any) -> true;
 provider_matches(Node, Provider) -> maps:get(provider, Node, ollama) =:= Provider.
@@ -1039,15 +1086,17 @@ release_lease(LeaseRef, State0) ->
             State0;
         {{Id, _Token, Monitor}, Leases} ->
             erlang:demonitor(Monitor, [flush]),
+            Started = maps:remove(LeaseRef, State0#state.lease_started),
             case maps:find(Id, State0#state.nodes) of
                 error ->
-                    State0#state{leases = Leases};
+                    State0#state{leases = Leases, lease_started = Started};
                 {ok, Node0} ->
                     Inflight = max(0, maps:get(inflight, Node0, 0) - 1),
                     Node = Node0#{inflight => Inflight},
                     State0#state{
                         nodes = (State0#state.nodes)#{Id => Node},
-                        leases = Leases
+                        leases = Leases,
+                        lease_started = Started
                     }
             end
     end.
@@ -1059,15 +1108,18 @@ checkin_lease(LeaseRef, Outcome, State0) ->
             Released = release_lease(LeaseRef, State0),
             case maps:find(Id, Released#state.nodes) of
                 {ok, #{config_token := Token} = N0} ->
-                    N1 = update_latency(N0, maps:get(duration_ms, Outcome, undefined)),
+                    N1 = (update_latency(N0, maps:get(duration_ms, Outcome, undefined)))#{
+                        last_request_at => now_iso8601()},
                     N = case maps:get(ok, Outcome, false) of
-                        true -> N1#{health => healthy, failures => 0, last_error => undefined};
+                        true -> N1#{health => healthy, failures => 0, last_error => undefined,
+                                    last_request_error => undefined, probe_verified => true};
                         false ->
                             F = maps:get(failures, N1, 0) + 1,
                             H = case F >= Released#state.failure_threshold of
                                 true -> down; false -> degraded end,
-                            N1#{health => H, failures => F,
-                                last_error => maps:get(error, Outcome, request_failed)}
+                            Error = maps:get(error, Outcome, request_failed),
+                            N1#{health => H, failures => F, last_error => Error,
+                                last_request_error => ecai_inference_diagnostics:public_error(Error)}
                     end,
                     Released#state{nodes = (Released#state.nodes)#{Id => N}};
                 _ -> Released %% Old endpoint's outcome cannot alter new health.
@@ -1087,30 +1139,50 @@ update_latency(Node, Duration) when is_integer(Duration), Duration >= 0 ->
 update_latency(Node, _) ->
     Node.
 
-launch_probe(#{enabled := false}, _Timeout) -> ok;
-launch_probe(Node, Timeout) ->
-    Parent = self(),
-    Id = maps:get(id, Node),
-    Token = maps:get(config_token, Node),
-    ProbeOpts = maps:merge(
-        maps:get(client_opts, Node, #{}),
-        maps:with([provider, host, port, transport, proxy], Node)
-    ),
-    spawn(fun() ->
-        Started = erlang:monotonic_time(millisecond),
-        Result = try ecai_ollama_client:probe(ProbeOpts#{health_timeout => Timeout})
-                 catch _:_ -> {error, probe_failed} end,
-        Duration = max(0, erlang:monotonic_time(millisecond) - Started),
-        gen_server:cast(Parent, {probe_result, Id, Token, Result, Duration})
-    end),
-    ok.
+launch_probe(#{enabled := false}, State) -> State;
+launch_probe(Node, State) ->
+    Id = maps:get(id, Node), Token = maps:get(config_token, Node),
+    case maps:find(Id, State#state.probes) of
+        {ok, #{token := Token}} -> State;
+        Existing ->
+            case Existing of {ok, Old} -> stop_probe(Old); error -> ok end,
+            Parent = self(), Ref = make_ref(),
+            ProbeOpts = maps:merge(maps:get(client_opts, Node, #{}),
+                                  maps:with([provider, host, port, transport, proxy], Node)),
+            Timeout = State#state.health_timeout_ms,
+            {Pid, Monitor} = spawn_monitor(fun() ->
+                Started = erlang:monotonic_time(millisecond),
+                Result = try ecai_ollama_client:probe(ProbeOpts#{health_timeout => Timeout})
+                         catch _:_ -> {error, probe_failed} end,
+                Duration = max(0, erlang:monotonic_time(millisecond) - Started),
+                gen_server:cast(Parent, {probe_result, Id, Token, Ref, Result, Duration})
+            end),
+            State#state{probes = (State#state.probes)#{Id => #{pid => Pid,
+                monitor => Monitor, ref => Ref, token => Token}}}
+    end.
+stop_probe(#{pid := Pid, monitor := Monitor}) ->
+    exit(Pid, kill), erlang:demonitor(Monitor, [flush]), ok.
+probe_down(Monitor, State) ->
+    lists:foldl(fun({Id, P}, S) ->
+        case maps:get(monitor, P) =:= Monitor of
+            false -> S;
+            true ->
+                S1 = S#state{probes = maps:remove(Id, S#state.probes)},
+                Token = maps:get(token, P),
+                case maps:find(Id, S1#state.nodes) of
+                    {ok, #{config_token := Token}} -> apply_probe(Id, {error, probe_failed}, 0, S1);
+                    _ -> S1
+                end
+        end
+    end, State, maps:to_list(State#state.probes)).
 
 apply_probe(Id, Result, DurationMs, State0) ->
     case maps:find(Id, State0#state.nodes) of
         error ->
             State0;
         {ok, Node0} ->
-            Node1 = update_latency(Node0, DurationMs),
+            %% Catalog latency is not generation latency; do not mix the EMAs.
+            Node1 = Node0#{probe_latency_ms => DurationMs},
             Node =
                 case Result of
                     {ok, #{models := Models0}} ->
@@ -1122,9 +1194,9 @@ apply_probe(Id, Result, DurationMs, State0) ->
                         },
                         case validate_probe_models(Node2) of
                             ok ->
-                                Node2#{health => healthy, last_error => undefined};
+                                Node2#{health => healthy, last_error => undefined, probe_verified => true};
                             {error, ProbeReason} ->
-                                Node2#{health => down, last_error => ProbeReason}
+                                Node2#{health => down, last_error => ProbeReason, probe_verified => false}
                         end;
                     {error, Reason} ->
                         Failures = maps:get(failures, Node1, 0) + 1,
@@ -1179,7 +1251,7 @@ configured_digest_mismatch(Node) ->
 status_map(State) ->
     Nodes = lists:sort(
         fun(A, B) -> maps:get(id, A) =< maps:get(id, B) end,
-        [public_node(N) || N <- maps:values(State#state.nodes)]
+        [public_node(N, State) || N <- maps:values(State#state.nodes)]
     ),
     #{
         nodes => Nodes,
@@ -1192,12 +1264,23 @@ status_map(State) ->
             {Role, role_capacity(Role, State#state.nodes)}
          || Role <- ?ROLES
         ]),
+        available_capacity => maps:from_list([
+            {Role, lists:sum([maps:get(available_slots, N) || N <- Nodes,
+                             lists:member(Role, maps:get(roles, N))])} || Role <- ?ROLES]),
+        runtime => #{health_interval_ms => State#state.health_interval_ms,
+                     health_timeout_ms => State#state.health_timeout_ms,
+                     failure_threshold => State#state.failure_threshold,
+                     queue_timeout_ms => runtime_default(code_model_queue_timeout_ms,
+                         code_ollama_queue_timeout_ms, ?DEFAULT_QUEUE_TIMEOUT_MS),
+                     cluster_attempts => runtime_default(code_model_cluster_attempts,
+                         code_ollama_cluster_attempts, ?DEFAULT_CLUSTER_ATTEMPTS)},
+        active_probes => map_size(State#state.probes),
         active_leases => maps:size(State#state.leases),
         inference_receipts => receipt_status(State),
         last_probe_at => State#state.last_probe_at
     }.
 
-public_node(Node) ->
+public_node(Node, State) ->
     Public = maps:with(
         [
             id,
@@ -1217,6 +1300,9 @@ public_node(Node) ->
             inflight,
             failures,
             last_error,
+            last_request_error,
+            last_request_at,
+            probe_latency_ms,
             selections,
             latency_ema_ms,
             last_checked_at
@@ -1229,7 +1315,19 @@ public_node(Node) ->
             {ok, Auth} -> ClientOpts0#{auth => ecai_ollama_client:public_auth(Auth)};
             error -> ClientOpts0
         end,
+    Id = maps:get(id, Node),
+    Now = erlang:monotonic_time(millisecond),
+    Ages = [max(0, Now - maps:get(Ref, State#state.lease_started, Now)) ||
+        {Ref, {LeaseId, _, _}} <- maps:to_list(State#state.leases), LeaseId =:= Id],
+    Slots = case maps:get(enabled, Node, true) andalso health_ready(Node) of
+        true -> max(0, maps:get(max_inflight, Node) - maps:get(inflight, Node));
+        false -> 0
+    end,
     Public#{
+        last_error => ecai_inference_diagnostics:public_error(maps:get(last_error, Node, undefined)),
+        available_slots => Slots,
+        saturated => maps:get(enabled, Node, true) andalso health_ready(Node) andalso Slots =:= 0,
+        oldest_inflight_ms => case Ages of [] -> 0; _ -> lists:max(Ages) end,
         host => to_binary(maps:get(host, Node)),
         client_options => maps:without([tls_opts], ClientOpts)
     }.
@@ -1270,17 +1368,95 @@ receipt_claim(RequestId, Meta, State) ->
         [{Key, #{status := completed, value := Value} = Receipt}] ->
             {completed, Value, maps:get(client_meta, Receipt, #{})};
         [{Key, #{status := Status} = Receipt}] when
-            Status =:= sent; Status =:= uncertain
+            Status =:= claimed; Status =:= sent; Status =:= uncertain
         ->
+            %% Claim reservation is exclusive too: two callers must not both
+            %% leave receipt_claim/3 before either marks the request sent.
             {blocked, public_receipt(Receipt)};
+        [{Key, #{status := retry_approved} = Receipt}] ->
+            claim_receipt(Tab, Key, Meta, Receipt);
+        [] ->
+            claim_receipt(Tab, Key, Meta, #{});
+        {error, Why} ->
+            {error, {receipt_lookup_failed, receipt_error_tag(Why)}};
         _ ->
-            Receipt = Meta#{
-                status => claimed,
-                claimed_at => now_iso8601()
+            {error, invalid_inference_receipt_state}
+    end.
+
+claim_receipt(Tab, Key, Meta, Previous) ->
+    Receipt = Meta#{
+        status => claimed,
+        attempt => maps:get(attempt, Previous, 1),
+        retry_history => maps:get(retry_history, Previous, []),
+        claimed_at => now_iso8601()
+    },
+    case put_receipt(Tab, Key, Receipt) of
+        ok -> {ok, claimed};
+        {error, _} = Error -> Error
+    end.
+
+inspect_inference_receipt(RequestId, State) ->
+    case valid_receipt_id(RequestId) of
+        false -> {error, invalid_receipt_id};
+        true ->
+            case dets:lookup(State#state.receipt_tab, {inference_receipt, RequestId}) of
+                [{_, Receipt}] when is_map(Receipt) ->
+                    {ok, public_receipt(Receipt#{request_id => RequestId})};
+                [] -> {error, not_found};
+                {error, Why} -> {error, {receipt_lookup_failed, receipt_error_tag(Why)}};
+                _ -> {error, invalid_inference_receipt_state}
+            end
+    end.
+
+valid_receipt_id(Id) when is_binary(Id), byte_size(Id) =:= 64 ->
+    lists:all(fun(C) -> (C >= $0 andalso C =< $9) orelse
+                       (C >= $a andalso C =< $f) end, binary_to_list(Id));
+valid_receipt_id(_) -> false.
+
+approve_uncertain_receipt(_Id, _Attempt, Ack, _Caller, _State)
+  when Ack =/= accept_duplicate_inference_cost ->
+    {error, duplicate_inference_cost_acknowledgement_required};
+approve_uncertain_receipt(_Id, Attempt, _Ack, _Caller, _State)
+  when not is_integer(Attempt); Attempt < 1 ->
+    {error, invalid_expected_attempt};
+approve_uncertain_receipt(Id, ExpectedAttempt, _Ack, Caller, State) ->
+    Tab = State#state.receipt_tab,
+    Key = {inference_receipt, Id},
+    case dets:lookup(Tab, Key) of
+        [{Key, #{status := uncertain} = Receipt}] ->
+            case maps:get(attempt, Receipt, 1) =:= ExpectedAttempt of
+                false -> {error, stale_receipt_attempt};
+                true -> persist_retry_approval(Tab, Key, Receipt, ExpectedAttempt, Caller)
+            end;
+        [{Key, #{status := Status}}] -> {error, {receipt_not_uncertain, Status}};
+        [] -> {error, not_found};
+        {error, Why} -> {error, {receipt_lookup_failed, receipt_error_tag(Why)}};
+        _ -> {error, invalid_inference_receipt_state}
+    end.
+
+persist_retry_approval(Tab, Key, Receipt, Attempt, Caller) ->
+    History = maps:get(retry_history, Receipt, []),
+    case is_list(History) of
+        false -> {error, invalid_receipt_history};
+        true ->
+            Approval = (public_receipt_attempt(Receipt))#{
+                attempt => Attempt,
+                retry_approved_at => now_iso8601(),
+                approved_from_node => atom_to_binary(node(Caller), utf8),
+                approved_from_pid => list_to_binary(pid_to_list(Caller)),
+                duplicate_inference_cost_accepted => true
             },
-            case put_receipt(Tab, Key, Receipt) of
-                ok -> {ok, claimed};
-                {error, _} = Error -> Error
+            Approved = Receipt#{status => retry_approved, attempt => Attempt + 1,
+                retry_history => History ++ [Approval]},
+            case put_receipt(Tab, Key, Approved) of
+                ok -> {ok, public_receipt(Approved)};
+                {error, Why} ->
+                    %% Do not leave a RAM-visible approval after a failed sync.
+                    %% On storage failure, callers must re-inspect, not assume
+                    %% that retrying the approval command is harmless.
+                    ok = dets:insert(Tab, {Key, Receipt}),
+                    _ = dets:sync(Tab),
+                    {error, {retry_approval_not_persisted, receipt_error_tag(Why)}}
             end
     end.
 
@@ -1313,6 +1489,7 @@ receipt_uncertain(RequestId, Reason, State) ->
     Receipt = Existing#{
         status => uncertain,
         error => receipt_error_tag(Reason),
+        error_detail => ecai_inference_diagnostics:public_error(Reason),
         uncertain_at => now_iso8601()
     },
     put_receipt(Tab, Key, Receipt).
@@ -1320,9 +1497,21 @@ receipt_uncertain(RequestId, Reason, State) ->
 receipt_release(RequestId, State) ->
     Tab = State#state.receipt_tab,
     Key = {inference_receipt, RequestId},
-    case dets:delete(Tab, Key) of
-        ok -> dets:sync(Tab);
-        {error, _} = Error -> Error
+    case dets:lookup(Tab, Key) of
+        [{Key, #{retry_history := [_ | _], status := Status} = Receipt}] when
+            Status =:= claimed; Status =:= sent; Status =:= retry_approved ->
+            %% A definitely-not-sent failure may try another endpoint, but
+            %% must not erase the prior uncertain attempt/operator approval.
+            put_receipt(Tab, Key, Receipt#{status => retry_approved});
+        [{Key, #{retry_history := [_ | _]}}] ->
+            {error, receipt_history_must_be_preserved};
+        {error, Why} ->
+            {error, {receipt_lookup_failed, receipt_error_tag(Why)}};
+        _ ->
+            case dets:delete(Tab, Key) of
+                ok -> dets:sync(Tab);
+                {error, _} = Error -> Error
+            end
     end.
 
 receipt_value(Tab, Key, Default) ->
@@ -1341,27 +1530,43 @@ receipt_status(State) ->
     case State#state.receipt_tab of
         undefined ->
             #{enabled => false};
-        Tab ->
-            Counts = dets:foldl(
-                fun
-                    ({{inference_receipt, _}, #{status := Status}}, Acc) ->
-                        Count = maps:get(Status, Acc, 0),
-                        Acc#{Status => Count + 1};
-                    (_, Acc) ->
-                        Acc
-                end,
-                #{},
-                Tab
-            ),
+        _Tab ->
             #{
                 enabled => true,
                 file => to_binary(State#state.receipt_file),
-                statuses => Counts
+                statuses => State#state.receipt_counts
             }
     end.
 
 public_receipt(Receipt) ->
-    maps:without([value, client_meta], Receipt).
+    Base = public_receipt_attempt(Receipt),
+    History = case maps:get(retry_history, Receipt, []) of
+        H when is_list(H) -> H;
+        _ -> []
+    end,
+    Base#{attempt => maps:get(attempt, Receipt, 1),
+        retry_history => [public_receipt_attempt(R) || R <- History, is_map(R)]}.
+
+public_receipt_attempt(Receipt) ->
+    %% Explicit allowlist: never expose cached output, prompts, credentials,
+    %% headers, or raw provider error bodies through the operator API.
+    Base0 = maps:with([request_id, schema, kind, role, provider, node_id, model,
+        prompt_sha256, options_sha256, created_at, claimed_at, sent_at,
+        uncertain_at, completed_at, status, attempt, retry_approved_at,
+        approved_from_node, approved_from_pid, duplicate_inference_cost_accepted], Receipt),
+    Base = case maps:find(error, Receipt) of
+        {ok, E} when is_atom(E) -> Base0#{error => E};
+        _ -> Base0
+    end,
+    case maps:get(error_detail, Receipt, undefined) of
+        D when is_map(D) ->
+            Detail = maps:filter(fun(K, V) ->
+                (lists:member(K, [code, phase, reason]) andalso is_atom(V)) orelse
+                (K =:= http_status andalso is_integer(V) andalso V >= 100 andalso V =< 599)
+            end, D),
+            Base#{error_detail => Detail};
+        _ -> Base
+    end.
 
 safe_client_meta(Meta) when is_map(Meta) ->
     maps:without([auth, headers, request_headers], Meta);
@@ -1532,3 +1737,45 @@ bounded_client_opts(Merged, NodeOpts, #{enforce_node_limits := true}) ->
         end
     end, Merged, [timeout, connect_timeout, max_output_tokens, max_response_bytes]);
 bounded_client_opts(Merged, _, _) -> Merged.
+
+%% Status never scans receipt payloads. Count once on startup and adjust only
+%% the changed receipt, including in-memory DETS changes when sync fails.
+load_receipt_counts(Tab) ->
+    ok = dets:safe_fixtable(Tab, true),
+    try
+        receipt_count_page(dets:select(Tab, [{{{inference_receipt, '_'}, '$1'},
+            [{'is_map', '$1'}, {'is_map_key', status, '$1'}], [{map_get, status, '$1'}]}], 256), #{})
+    after dets:safe_fixtable(Tab, false) end.
+receipt_count_page('$end_of_table', Counts) -> Counts;
+receipt_count_page({Statuses, Continuation}, Counts) when is_list(Statuses) ->
+    Next = lists:foldl(fun(Status, Acc) -> bump_count(receipt_state(Status), 1, Acc) end,
+                      Counts, Statuses),
+    receipt_count_page(dets:select(Continuation), Next);
+receipt_count_page({error, Reason}, _) -> error({receipt_count_failed, Reason}).
+receipt_key_status(Tab, Key) ->
+    case dets:select(Tab, [{{Key, '$1'},
+        [{'is_map', '$1'}, {'is_map_key', status, '$1'}], [{map_get, status, '$1'}]}]) of
+        [Status] -> receipt_state(Status);
+        [] -> absent
+    end.
+receipt_reply(RequestId, Fun, State) ->
+    Key = {inference_receipt, RequestId}, Tab = State#state.receipt_tab,
+    Before = receipt_key_status(Tab, Key),
+    Reply = Fun(),
+    After = receipt_key_status(Tab, Key),
+    Counts = case Before =:= After of
+        true -> State#state.receipt_counts;
+        false -> bump_count(After, 1, bump_count(Before, -1, State#state.receipt_counts))
+    end,
+    {reply, Reply, State#state{receipt_counts = Counts}}.
+receipt_state(S) when S =:= claimed; S =:= sent; S =:= uncertain;
+                      S =:= completed; S =:= retry_approved -> S;
+receipt_state(_) -> unknown.
+bump_count(absent, _, Counts) -> Counts;
+bump_count(Status, Delta, Counts) ->
+    case max(0, maps:get(Status, Counts, 0) + Delta) of
+        0 -> maps:remove(Status, Counts);
+        N -> Counts#{Status => N}
+    end.
+runtime_default(Key, Legacy, Default) ->
+    application:get_env(ecai, Key, application:get_env(ecai, Legacy, Default)).

@@ -861,6 +861,9 @@
             <article class="surface llm-stat"><span>Runtime</span><strong id="llmRuntimeState">Not checked</strong><small id="llmRuntimeRevision">No provider request made</small></article>
             <article class="surface llm-stat"><span>Connections</span><strong id="llmConnectionCount">—</strong><small>Credentials stay on the server</small></article>
           </div>
+          <p id="llmPoolSummary" class="context-hint" role="status">No live pool status.</p>
+          <p id="llmPoolCheckedAt" class="context-hint">No sample time.</p>
+          <p id="llmDeploymentNotice" class="context-hint">Configuration source not loaded.</p>
           <form id="llmForm" autocomplete="off">
             <div class="llm-toolbar"><span id="llmDraftState">No draft</span><div class="inline-actions"><button type="button" id="llmRefresh" class="button button-outline">Refresh</button><button type="button" id="llmDiscard" class="button button-outline" disabled>Discard edits</button><button type="submit" id="llmSave" class="button button-primary" disabled>Save &amp; apply</button></div></div>
             <fieldset id="llmFields" disabled>
@@ -868,10 +871,12 @@
               <div class="llm-workspace">
                 <section class="surface panel-pad"><div class="panel-heading"><div><div class="eyebrow">CONNECTIONS</div><h2>Provider registry</h2></div></div>
                   <div class="llm-add"><label for="llmAddProvider" class="sr-only">New provider</label><select id="llmAddProvider"><option value="ollama">Ollama</option><option value="openai">OpenAI</option><option value="anthropic">Claude / Anthropic</option></select><button type="button" id="llmAdd" class="button button-outline">Add</button></div>
+                  <button type="button" id="llmImportDeployment" class="button button-outline" disabled>Import missing deployment nodes (disabled)</button>
                   <div id="llmConnectionList" class="llm-connection-list" aria-label="Configured connections"></div>
                   <p class="context-hint">A connection is one endpoint and model policy. Several connections can use the same provider.</p>
                 </section>
                 <section class="surface panel-pad"><div class="panel-heading"><h2 id="llmEditorTitle">Connection details</h2><button type="button" id="llmRemove" class="text-button" disabled>Remove</button></div>
+                  <p id="llmConnectionStatus" class="context-hint" role="status">Select a connection.</p>
                   <p id="llmEmpty" class="context-hint">Add or select a connection.</p>
                   <div id="llmEditor" hidden>
                     <div class="llm-field-grid">

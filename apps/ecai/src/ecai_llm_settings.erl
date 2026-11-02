@@ -40,20 +40,32 @@ bdd_status() -> gen_server:call(?MODULE, bdd_status, 5000).
 bdd_options() -> gen_server:call(?MODULE, bdd_options, 5000).
 update_bdd(Body, Actor) -> gen_server:call(?MODULE, {update_bdd, Body, Actor}, 10000).
 probe(Body) ->
-    %% Networking happens outside the registry process, against a saved target.
+    %% Networking runs outside the registry. A probe tests discovery, NOT
+    %% generation, and a changed revision invalidates an in-flight result.
     case gen_server:call(?MODULE, {probe_options, Body}) of
-        {ok, Opts} ->
+        {ok, Opts, Target} ->
             Started = erlang:monotonic_time(millisecond),
-            Result = try ecai_ollama_client:probe(Opts#{health_timeout => 10000,
-                          connect_timeout => 5000, max_response_bytes => 1048576,
-                          response_decode => json_binary})
+            Timeout = maps:get(health_timeout, Opts),
+            ProbeOpts = Opts#{connect_timeout => min(Timeout, maps:get(connect_timeout, Opts, 5000)),
+                             max_response_bytes => 1048576, response_decode => json_binary},
+            BoundedProbe = case maps:get(max_response_bytes, Opts, 1048576) of
+                Max when is_integer(Max), Max > 0 -> ProbeOpts#{max_response_bytes => min(Max, 1048576)};
+                _ -> ProbeOpts
+            end,
+            Result = try ecai_ollama_client:probe(BoundedProbe)
                      catch _:_ -> {error, probe_failed} end,
             Elapsed = erlang:monotonic_time(millisecond) - Started,
-            case Result of
-                {ok, #{models := Models}} ->
-                    {ok, #{models => lists:sort(maps:keys(Models)), elapsed_ms => Elapsed,
-                           generation_tested => false}};
-                {error, Why} -> {error, safe_error(Why)}
+            case gen_server:call(?MODULE, {probe_current, maps:get(revision, Target)}) of
+                false -> {error, stale_revision};
+                true ->
+                    case Result of
+                        {ok, #{models := Models}} ->
+                            Default = maps:get(default_model, Target),
+                            {ok, Target#{models => lists:sort(maps:keys(Models)), elapsed_ms => Elapsed,
+                                default_model_available => maps:is_key(Default, Models),
+                                generation_tested => false}};
+                        {error, Why} -> {error, safe_error(Why)}
+                    end
             end;
         Error -> Error
     end.
@@ -103,7 +115,12 @@ handle_call({update_bdd, Body, Actor}, _From, S) ->
         end
     catch throw:Why -> {reply, {error, Why}, S}; _:_ -> {reply, {error, invalid_bdd_route}, S} end;
 handle_call(status, _From, S) ->
-    {reply, maps:get(snapshot, S), S};
+    Snap = maps:get(snapshot, S),
+    {ok, Deployment} = baseline(maps:get(base, S)),
+    Connections = maps:get(<<"connections">>, maps:get(config, Deployment)),
+    {reply, Snap#{deployment_connections => Connections}, S};
+handle_call({probe_current, Revision}, _From, S) ->
+    {reply, Revision =:= maps:get(revision, maps:get(snapshot, S)), S};
 handle_call({update, Body, Actor}, _From, S) ->
     %% Never include request bodies, credentials, vault errors or stack traces
     %% in logs, responses or gen_server crash formatting.
@@ -125,7 +142,10 @@ handle_call({probe_options, Body}, _From, S) ->
         {ok, Normalized} = ecai_ollama_pool:validate_nodes([Node]),
         N = maps:get(Id, Normalized),
         Opts = maps:merge(maps:get(client_opts, N), maps:with([provider, host, port, transport, proxy], N)),
-        {reply, {ok, Opts}, S#{probes => Ps#{Id => Now}}}
+        Timeout = maps:get(<<"health_timeout_ms">>, maps:get(<<"runtime">>, Config)),
+        Target = #{id => Id, revision => maps:get(revision, Snap),
+                   default_model => maps:get(default_model, N), enabled => maps:get(enabled, N)},
+        {reply, {ok, Opts#{health_timeout => Timeout}, Target}, S#{probes => Ps#{Id => Now}}}
     catch
         throw:Why -> {reply, {error, Why}, S};
         _:_ -> {reply, {error, invalid_probe}, S}
@@ -347,14 +367,21 @@ to_node(C, Base) ->
     Ms = case maps:get(<<"models">>, C) of <<"all">> -> all; M -> M end,
     N0 = maps:merge(Preserved, #{id => Id, provider => P, enabled => maps:get(<<"enabled">>, C),
         host => binary_to_list(maps:get(<<"host">>, C)), port => maps:get(<<"port">>, C),
-        transport => transport(maps:get(<<"transport">>, C)), proxy => direct,
+        transport => transport(maps:get(<<"transport">>, C)),
+        proxy => maps:get(proxy, Preserved, direct),
         roles => [role(R) || R <- maps:get(<<"roles">>, C)], models => Ms,
         default_model => maps:get(<<"default_model">>, C),
         weight => maps:get(<<"weight">>, C), max_inflight => maps:get(<<"max_inflight">>, C),
         timeout => maps:get(<<"timeout_ms">>, C), connect_timeout => maps:get(<<"connect_timeout_ms">>, C),
-        auth => Auth, response_decode => json_binary, max_response_bytes => 8388608, store => false}),
+        auth => Auth, response_decode => json_binary,
+        max_response_bytes => response_limit(Preserved), store => false}),
     N1 = optional_option(temperature, maps:get(<<"temperature">>, C), N0),
     optional_option(max_output_tokens, maps:get(<<"max_output_tokens">>, C), N1).
+response_limit(N) ->
+    case maps:get(max_response_bytes, N, 8388608) of
+        Max when is_integer(Max), Max > 0 -> min(Max, 8388608);
+        _ -> 8388608
+    end.
 optional_option(K, null, N) -> maps:remove(K, N);
 optional_option(K, V, N) -> N#{K => V}.
 inherited_auth(N, P) ->
@@ -501,19 +528,22 @@ pool_status() ->
     try gen_server:call(ecai_ollama_pool, status, 1000) of
         #{nodes := Ns} = P ->
             Fields = [id, provider, enabled, health, default_model, roles, inflight,
-                      max_inflight, selections, latency_ema_ms, last_checked_at],
-            #{available => true, revision => maps:get(config_revision, P, 0),
-              nodes => [maps:with(Fields, N) || N <- Ns]}
-    catch _:_ -> #{available => false} end.
+                      max_inflight, available_slots, saturated, oldest_inflight_ms,
+                      failures, last_error, last_request_error, last_request_at,
+                      selections, latency_ema_ms, probe_latency_ms, last_checked_at],
+            PublicNodes = [(maps:with(Fields, N))#{request_limits => maps:with(
+                [timeout, connect_timeout, max_output_tokens, max_response_bytes],
+                maps:get(client_options, N, #{}))} || N <- Ns],
+            (maps:with([capacity, available_capacity, active_leases, active_probes, runtime], P))#{
+                available => true, revision => maps:get(config_revision, P, 0),
+                checked_at => timestamp(), nodes => PublicNodes,
+                inference_receipts => maps:with([enabled, statuses],
+                                                maps:get(inference_receipts, P, #{}))}
+    catch _:_ -> #{available => false, checked_at => timestamp()} end.
 damage_profiles() ->
     [#{name => bin(Name), shared_registry => proplists:get_value(backend, P) =:= damage_ai_ecai,
        role => bdd} || {Name, P} <- application:get_env(damage, ai_profiles, []), is_list(P)].
-safe_error({Tag, Status}) when is_atom(Tag), is_integer(Status) ->
-    #{code => Tag, http_status => Status};
-safe_error({Tag, _, _}) when is_atom(Tag) -> Tag;
-safe_error({Tag, _}) when is_atom(Tag) -> Tag;
-safe_error(Tag) when is_atom(Tag) -> Tag;
-safe_error(_) -> probe_failed.
+safe_error(Why) -> ecai_inference_diagnostics:public_error(Why).
 exact(M, Keys) -> need(is_map(M) andalso lists:sort(maps:keys(M)) =:= lists:sort(Keys), unexpected_fields).
 need(true, _) -> ok;
 need(false, Why) -> throw(Why).

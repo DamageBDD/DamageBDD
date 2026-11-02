@@ -20,14 +20,14 @@ CONFIG = dict(connections=[CONNECTION], runtime=dict(health_interval_ms=30000,
     remote_roles=[], route_chat=False)
 MOCK = r'''
 window.__admin=true; window.__calls=[]; window.__conflict=false; window.__deny=false;
-window.__defer=false; window.__deferred=null; window.confirm=()=>true;
+window.__statusFail=false; window.__probeMissing=false; window.__defer=false; window.__deferred=null; window.confirm=()=>true;
 window.__snapshot={revision:0,source:'deployment',config:CONFIG,
  pool:{available:true,revision:0,nodes:[{id:'local-inference',health:'healthy'}]},
  damage_profiles:[{name:'Existing OpenAI profile',shared_registry:false},{name:'ECAI text tasks',shared_registry:true}]};
 window.__request=async(path,opts={})=>{
  window.__calls.push({path,opts:structuredClone(opts)});
  if(__deny) throw Object.assign(new Error('Forbidden'),{status:403});
- if(path.endsWith('/probe')) return {ok:true,probe:{models:['installed-code-model','provider-text-model'],elapsed_ms:22,generation_tested:false}};
+ if(path.endsWith('/probe')) return {ok:true,probe:{models:['installed-code-model','provider-text-model'],elapsed_ms:22,generation_tested:false,default_model:__probeMissing?'unavailable-model':'',default_model_available:!__probeMissing}};
  if(path.endsWith('/update')) {
   if(__conflict || opts.body.revision !== __snapshot.revision)
    throw Object.assign(new Error('Conflict'),{status:409,body:{error:'stale_revision'}});
@@ -36,6 +36,7 @@ window.__request=async(path,opts={})=>{
   __snapshot={...__snapshot,config,revision:__snapshot.revision+1,source:'dashboard',pool:{...__snapshot.pool,revision:__snapshot.revision+1}};
   return {ok:true,llm_settings:structuredClone(__snapshot)};
  }
+ if(__statusFail) throw Object.assign(new Error('Unavailable'),{status:503});
  if(__defer) return new Promise(resolve=>{__deferred=()=>resolve({ok:true,llm_settings:structuredClone(__snapshot)});});
  return {ok:true,llm_settings:structuredClone(__snapshot)};
 };
@@ -125,6 +126,50 @@ async def main():
         await page.set_viewport_size({'width':390,'height':844})
         await page.screenshot(path=str(shots/'ecai-llm-settings-mobile.png'),full_page=True)
         assert await page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+        # Live status shows saturation and transport phase, without touching drafts.
+        await page.evaluate("""() => {
+          __snapshot.source='dashboard';
+          __snapshot.deployment_connections=[...structuredClone(__snapshot.config.connections),
+            {...structuredClone(__snapshot.config.connections[0]),id:'razorjack',host:'192.0.2.20',enabled:true}];
+          __snapshot.pool={...__snapshot.pool,active_leases:3,active_probes:1,checked_at:'2026-11-02T10:00:00Z',
+            nodes:__snapshot.config.connections.map(c=>({id:c.id,health:'healthy',inflight:3,max_inflight:3,
+              available_slots:0,saturated:true,oldest_inflight_ms:42000,last_request_error:{code:'ollama_request_failed',phase:'response_body',reason:'timeout'}}))};
+          return settings.poll();
+        }""")
+        assert 'SATURATED' in await page.locator('#llmConnectionStatus').inner_text()
+        assert 'response_body' in await page.locator('#llmConnectionStatus').inner_text()
+        assert 'razorjack' in await page.locator('#llmDeploymentNotice').inner_text()
+        await page.locator('#llmModel').fill('unsaved-poll-model')
+        await page.locator('#llmApiKey').fill('test-key-status-poll-000005')
+        await page.evaluate('settings.poll()')
+        assert await page.locator('#llmModel').input_value()=='unsaved-poll-model'
+        assert await page.locator('#llmApiKey').input_value()=='test-key-status-poll-000005'
+        await page.evaluate('__statusFail=true;settings.poll()')
+        assert 'Unavailable' in await page.locator('#llmRuntimeState').inner_text()
+        assert 'No live pool status' in await page.locator('#llmConnectionStatus').inner_text()
+        assert await page.locator('#llmModel').input_value()=='unsaved-poll-model'
+        await page.evaluate('__statusFail=false')
+        await page.locator('#llmDiscard').click()
+        await page.wait_for_function("!document.getElementById('llmRefresh').disabled")
+        # Import is explicit, disabled, duplicate-free, unsaved, and reversible.
+        updates=await page.evaluate("__calls.filter(c=>c.path.endsWith('/update')).length")
+        await page.locator('#llmImportDeployment').click()
+        assert await page.locator('#llmId').input_value()=='razorjack'
+        assert not await page.locator('#llmEnabled').is_checked()
+        assert await page.locator('#llmImportDeployment').is_disabled()
+        assert await page.evaluate("__calls.filter(c=>c.path.endsWith('/update')).length")==updates
+        await page.locator('#llmDiscard').click()
+        await page.wait_for_function("!document.getElementById('llmRefresh').disabled")
+        assert len(await page.evaluate('__snapshot.config.connections'))==2
+        # A successful catalog listing must not imply the default model exists.
+        await page.evaluate('__probeMissing=true')
+        await page.locator('#llmProbe').click()
+        await page.wait_for_function("document.getElementById('llmProbeResult').textContent.includes('NOT available')")
+        await page.evaluate('__probeMissing=false')
+        # No background requests while the provider panel is hidden.
+        before=await page.evaluate('__calls.length')
+        await page.evaluate('settings.setVisible(false);settings.poll();settings.setVisible(true)')
+        assert await page.evaluate('__calls.length')==before
         # Stale GET after an identity change cannot restore privileged contents.
         await page.evaluate('__defer=true;void settings.refresh()')
         await page.wait_for_function('Boolean(__deferred)')
@@ -148,7 +193,7 @@ async def main():
         harness="""() => {
           const state={view:'overview'}, VIEW_NAMES={'ai-providers':'AI providers & roles',overview:'Overview'};
           const $=id=>document.getElementById(id),put=(id,v)=>{$(id).textContent=v;};
-          const llmSettings=window.settings,modelInternals=null,mathPaths=null,mathKernel=null,math3D=null,agentWorkspace=null,bddRouting=null,evaluation=null,
+          const llmSettings=window.settings,modelInternals=null,mathPaths=null,mathKernel=null,math3D=null,orbital=null,agentWorkspace=null,bddRouting=null,evaluation=null,
             personalities=null,videoStudio=null,marketMaker=null,knowledgeSearch={setVisible(){}};
           const location={hash:''}, history={replaceState(a,b,hash){location.hash=hash;}};
           const closeNav=()=>{},stopStream=()=>{},toast=()=>{},showError=()=>'',refreshView=()=>settings.refresh();
@@ -165,6 +210,6 @@ async def main():
         assert await page.locator('[data-panel="ai-providers"]').is_hidden()
         assert not errors,errors
         await browser.close()
-        print('PASS: inherited configuration, saved-only discovery, disabled onboarding, Claude roles, remote consent, write-only credentials, save/apply, draft preservation, stale conflicts, navigation clearing, XSS, desktop/mobile, identity race, denied access and production shell navigation (simulated API).')
+        print('PASS: inherited configuration, saved-only discovery, disabled onboarding, Claude roles, remote consent, write-only credentials, save/apply, draft preservation, stale conflicts, navigation clearing, XSS, desktop/mobile, identity race, denied access production shell navigation, saturation, sanitized diagnostics, dirty polling, unavailable status, missing-default warning, explicit disabled deployment import and hidden-panel suppression (simulated API).')
 
 if __name__=='__main__': asyncio.run(main())
