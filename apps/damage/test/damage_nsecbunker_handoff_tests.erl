@@ -81,13 +81,13 @@ admin_boundary_test() ->
     ?assertEqual(error,damage_nsecbunker_handoff_http:decode_action(<<"generate_identity">>)).
 
 origin_boundary_test_() ->
-    Base = <<"https://lightning.lodgeit.org">>,
-    [?_assert(damage_nsecbunker_handoff_http:same_origin(Base,<<"https://lightning.lodgeit.org:443">>)),
-     ?_assertNot(damage_nsecbunker_handoff_http:same_origin(Base,<<"http://lightning.lodgeit.org">>)),
-     ?_assertNot(damage_nsecbunker_handoff_http:same_origin(Base,<<"https://lightning.lodgeit.org:444">>)),
+    Base = <<"https://bunker.example.com">>,
+    [?_assert(damage_nsecbunker_handoff_http:same_origin(Base,<<"https://bunker.example.com:443">>)),
+     ?_assertNot(damage_nsecbunker_handoff_http:same_origin(Base,<<"http://bunker.example.com">>)),
+     ?_assertNot(damage_nsecbunker_handoff_http:same_origin(Base,<<"https://bunker.example.com:444">>)),
      ?_assertNot(damage_nsecbunker_handoff_http:same_origin(Base,<<"https://evil.example">>)),
      ?_assertNot(damage_nsecbunker_handoff_http:same_origin(<<"null">>,Base)),
-     ?_assertNot(damage_nsecbunker_handoff_http:same_origin(<<"https://user@lightning.lodgeit.org">>,Base))].
+     ?_assertNot(damage_nsecbunker_handoff_http:same_origin(<<"https://user@bunker.example.com">>,Base))].
 
 audit_completion_is_whitelisted_test() ->
     M = #{ts_unix=>10,request_id=><<"id",1>>,request_event_id=><<"request">>,response_event_id=><<"reply">>,

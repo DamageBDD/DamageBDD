@@ -159,8 +159,37 @@
 }
 .bunker-maintenance {
   display:grid;
-  grid-template-columns:repeat(3,minmax(0,1fr));
+  grid-template-columns:minmax(0,1fr);
   gap:22px
+}
+.bunker-maintenance > div {
+  border-bottom:1px solid var(--bunker-border);
+  padding-bottom:20px
+}
+.bunker-route {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:12px 32px;
+  padding-left:24px;
+  line-height:1.5
+}
+.bunker-workspace a {
+  color:inherit;
+  font-weight:600;
+  text-decoration:underline;
+  text-underline-offset:3px;
+  overflow-wrap:anywhere
+}
+.bunker-guide-link {
+  display:block;
+  margin-top:8px
+}
+.bunker-workspace [tabindex="-1"] {
+  scroll-margin-top:24px
+}
+.bunker-card .bunker-field-help {
+  margin:0 0 24px;
+  font-size:.85rem
 }
 .bunker-maintenance h3 {
   font-size:.95rem
@@ -204,7 +233,8 @@
   opacity:.5;
   cursor:wait
 }
-.bunker-workspace button:focus-visible,.bunker-workspace input:focus-visible {
+.bunker-workspace button:focus-visible,.bunker-workspace input:focus-visible,
+.bunker-workspace a:focus-visible,.bunker-workspace [tabindex="-1"]:focus-visible {
   outline:3px solid #73b5e9;
   outline-offset:3px
 }
@@ -231,6 +261,9 @@
   }
 }
 @media(max-width:480px) {
+  .bunker-route {
+    grid-template-columns:1fr
+  }
   .bunker-config {
     grid-template-columns:1fr
   }
