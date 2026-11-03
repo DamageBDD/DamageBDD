@@ -96,6 +96,40 @@ prevents signing; failure to record completion prevents returning that response.
 
 ## Operator closing sequence
 
+The default view presents **one next action**, its owner and recorded status.
+Use **Checks, commands and evidence** for diagnostics or manual controls. Guide
+links open the relevant detail automatically; the dashboard route stays intact.
+
+1. **Operator preparation:** health, relay signing and the four evidence references.
+2. **One AWS administrator session:** copy/run prepare, check pending, copy/run
+   promotion. Keep the administrator present between these two CLI operations.
+   Remove temporary access and retain its reference after the AWS work.
+3. **Operator closeout:** verify current/restore, restart and verify, review the
+   references, submit acceptance, and export the recorded evidence.
+
+The next action uses recorded server evidence. Copying commands only changes the
+on-screen suggestion; it does not record completion. After a page reload,
+**Already prepared? Check pending** and **Already promoted? Verify restore** resume
+external work without recreating a version. No maintenance starts on page load,
+copy, tab navigation or polling. Restore/restart/pending confirmations remain.
+
+A successful restart already supplies fresh signing evidence. Matching maintenance
+reports use the stable target across restart; the old pending fingerprint need
+not equal the restarted process fingerprint. An observed promotion with expired,
+replaced or non-distinct pending evidence goes to version reconciliation, never an
+automatic repeat of the pending check.
+
+**Refresh health & record acceptance** is one explicit submission. It refreshes
+health, waits for the result, checks that the reviewed signing-report hash is
+unchanged and that the server still permits acceptance, then submits the four
+operator declarations. It stops on any error; it never silently retries acceptance
+or runs other maintenance. If a maintenance report changes while a confirmation
+is open, review the updated evidence before confirming again.
+
+Existing acceptance is displayed as a retained record. Only current server closure
+with a matching report is labelled accepted; historical acceptance never asserts
+current health. A fresh health check remains available without redoing handover.
+
 ### Prepare the handover
 
 Open `/dashboard#node-bunker-tab` with node-admin authority. Have the approved
@@ -116,79 +150,77 @@ job does not change the version under test during this sequence.
 
 ### Run the checks in order
 
-1. **Operator — check health and initial signing.** Select **Check health**, open
-   **Overview**, and resolve each failed control. Then select **Verify signing**
-   and inspect **Evidence**: each configured relay must pass its diagnostic
-   probes. A configured relay is never silently skipped. Preserve the approved
-   signing identity throughout this workflow.
-2. **AWS administrator — prepare a distinct pending version.** In the configured
-   account and region, use [ListSecretVersionIds](https://docs.aws.amazon.com/cli/latest/reference/secretsmanager/list-secret-version-ids.html)
-   for the agreed secret and record the current `AWSCURRENT` version ID. Use the
-   approved secret-handling procedure and [PutSecretValue](https://docs.aws.amazon.com/cli/latest/reference/secretsmanager/put-secret-value.html)
-   with that secret identifier, a new UUID as `ClientRequestToken`, and
-   `VersionStages` explicitly set to `["AWSPENDING"]`. Supply the **existing
-   approved unlock value**, unchanged. Omitting the stage can move `AWSCURRENT`
-   prematurely. Do not enter the value in this dashboard, evidence references,
-   command history or logs. Record the new pending version ID and verify it is
-   different from current. This is a version-stage rehearsal, not a rekey.
-3. **Operator — test pending before promotion.** In **Recovery & handover**,
-   select **Check pending version**, review the confirmation and proceed. Wait
-   for a passing result. Retain its `version_id` and `baseline_version_id` from
-   the displayed evidence or export; in exported JSON they are under
-   `evidence.pending.recovery.secret_provenance`. These must match the new
-   pending version and the old current version respectively. The check opens
-   an isolated encrypted-vault copy and does not change AWS labels. If it fails,
-   resolve the cause before promotion.
-4. **AWS administrator — promote exactly the tested version.** Recheck the
-   version labels against the retained IDs; stop if another change has occurred.
-   Use [UpdateSecretVersionStage](https://docs.aws.amazon.com/cli/latest/reference/secretsmanager/update-secret-version-stage.html)
-   with the agreed `SecretId`, `VersionStage=AWSCURRENT`,
-   `MoveToVersionId` equal to the passing pending `version_id`, and
-   `RemoveFromVersionId` equal to its recorded `baseline_version_id`. Use
-   ListSecretVersionIds again to confirm `AWSCURRENT` is on that exact tested
-   version. Retain the change/audit reference. The bunker performs no promotion.
-   **Do not rerun Check pending version after promotion:** it would replace the
-   earlier result and can no longer prove the pending version was distinct from
-   current. Continue with restore verification.
-5. **Operator — verify current version and restore.** Select **Verify current
-   version & restore** and confirm. Require a passing result and confirm
-   `evidence.recovery.recovery.secret_provenance.version_id` equals the retained
-   tested pending ID. This check freshly retrieves current, restores an isolated
-   encrypted-vault copy and opaque DETS snapshot, checks identity and diagnostic
-   signing, and rejects an incorrect unlock value. It never replaces the live
-   vault. The temporary copies are deleted: **this rehearsal does not create a
-   retained recovery backup**. Confirm the separately retained backup and its
-   custodian through the recovery evidence reference.
-6. **Operator — restart and verify.** During the agreed maintenance window,
-   select **Restart & verify**, review the interruption warning and proceed.
-   Wait for a passing result. This briefly interrupts the live signer, performs
-   fresh AWS bootstrap using the promoted version, and repeats all relay and
-   policy probes. It also records fresh live-signing evidence; an immediate
-   separate Verify signing run is unnecessary. Keep the diagnostic client's
-   rate budget available; the real rate limiter remains enabled.
-7. **Operators — complete independent acceptance evidence.** Run the approved
-   external client's smoke test against the pinned identity, retain its result,
-   and complete the IAM, temporary-access-removal and retained-backup evidence
-   described below. The external-client result is separate from this page's
-   diagnostic client. Remove temporary administrative access only after the
-   administrator has completed the required AWS work.
-8. **Operator — refresh and record acceptance.** Enter all four evidence
-   references. If live-signing evidence is older than 15 minutes, select
-   **Verify signing** again. Then select **Check health**, wait for it to pass,
-   and record acceptance within 60 seconds. The technical Closing checklist
-   rows must all pass and the acceptance button must be enabled. Select
-   **Record handover acceptance**. Acceptance is bound to the current
-   verification report hash and rechecks the running configuration/process
-   immediately before recording. If blocked, follow the linked failed/stale
-   requirement and refresh health again after resolving it.
-9. **Operator — retain the completed record.** Confirm the Handover summary
-   shows **accepted**, an acceptance actor is recorded, and the operator
-   acceptance row is **operator attested**. Select **Export evidence** after
-   acceptance and attach the JSON plus the referenced records to the handover
-   ticket. Retain the signing report hash with that independent record. Optionally
-   run `priv/features/nsecbunker/handoff-acceptance.feature` through the existing
-   DamageBDD runner for its BDD acceptance report. Its assertions only read
-   evidence; they cannot invoke maintenance or create signoff.
+Use **Setup → AWS custody and runtime access** to set the separate administrator
+profile in a Bash shell with AWS CLI v2, jq and Python 3:
+
+```bash
+export BUNKER_ADMIN_PROFILE='your-admin-profile'
+```
+
+Each expandable AWS CLI block has a **Copy** button. Commands are generated from
+the displayed account, region, secret and role; inspect them against the approved
+record. Copying never makes an API mutation or runs AWS. Use the same agreed
+maintenance window and coordinate other writers/rotation.
+
+| Who | Command or dashboard action | Continue when |
+| --- | --- | --- |
+| Operator | **Check health**, then **Verify signing** | Required controls and every relay pass. |
+| AWS administrator | **Setup → Copy inspection commands** | Account, full secret ARN, version labels and role policy references agree with the approved record. |
+| AWS administrator | **Recovery & handover → Prepare → Copy prepare commands**; paste and run in Bash | Output shows distinct baseline and pending IDs. |
+| Operator | **Check pending version** | Passed; recorded baseline/pending IDs match the command output. |
+| AWS administrator | **Promote → Copy promotion commands**; run promptly | AWSCURRENT is on the exact tested ID. Retain the change/audit reference. |
+| Operator | **Verify current version & restore**, then **Restart & verify** | Both pass; restored/restarted IDs match the tested version. |
+| Operator/reviewers | Review the four references; **Refresh health & record acceptance**, **Export evidence** | Acceptance is recorded and its exported report is retained with the references. |
+
+**Prepare** pipes the existing nonempty SecretString from `get-secret-value`
+through jq into `put-secret-value --cli-input-json file:///dev/stdin`. It preserves
+the full string, including newlines. It disables AWS CLI history for the selected
+profile first. Keep debug logging off; do not add `tee`, print the pipeline or
+record secret-bearing command responses. No secret is put in shell arguments,
+temporary files, this page or evidence.
+
+The new version starts with a unique `HANDOFF-<UUID>` label. The command attaches
+AWSPENDING with `update-secret-version-stage` without `--remove-from-version-id`,
+so it fails if another version already holds that label, then removes only its
+own HANDOFF label. It stops for enabled automatic rotation or existing pending
+work. On error, inspect versions and reconcile before retrying; a HANDOFF version
+may remain. It does not move AWSCURRENT, generate a new passphrase or rekey a vault.
+
+**Promote** is available only after a passing pending rehearsal, with current
+passing health and matching target/fingerprint. It embeds the baseline and tested
+version IDs from the report, rechecks their AWS labels, then runs:
+
+```bash
+aws --profile "$BUNKER_ADMIN_PROFILE" --region "$BUNKER_REGION" \
+  secretsmanager update-secret-version-stage --secret-id "$BUNKER_ARN" \
+  --version-stage AWSCURRENT --move-to-version-id "$BUNKER_TESTED" \
+  --remove-from-version-id "$BUNKER_BASELINE"
+```
+
+This excerpt illustrates the mutation; copy the complete dashboard block for its
+configured region, exact IDs and guards. Never substitute whichever version AWS
+happens to label pending. The block checks the rehearsal's 24-hour expiry at
+execution time; keep the administrator host clock correct. It cannot re-observe
+the running deployment, so run it promptly and recopy after a fresh health check
+if delayed. It is not an AWS lock; keep the coordinated maintenance window. A mismatched current label
+causes the conditional promotion to fail. **Do not rerun Check pending version
+after promotion**; preserve its passing result and continue to restore/restart.
+
+Inspection commands list role and resource policy references; they do not prove
+effective IAM permissions. Review policy contents, KMS access and applicable
+boundaries/session/organisation controls before recording IAM acceptance. Remove
+only the identified temporary grants through the approved access process; these
+commands do not guess which administrator principal should be removed.
+
+The restore test deletes its isolated copies. Retain a separate encrypted backup
+and custody record. Restart briefly interrupts signing and also records fresh
+signing evidence. Acceptance submission refreshes health (60-second window);
+signing evidence must be within 15 minutes, maintenance evidence within 24 hours,
+for the same deployment. All backend closure and authorisation checks still apply.
+
+AWS command references: [PutSecretValue](https://docs.aws.amazon.com/cli/latest/reference/secretsmanager/put-secret-value.html),
+[UpdateSecretVersionStage](https://docs.aws.amazon.com/cli/latest/reference/secretsmanager/update-secret-version-stage.html),
+[CLI data protection](https://docs.aws.amazon.com/cli/latest/userguide/data-protection.html).
 
 ### What to put in the four acceptance fields
 
