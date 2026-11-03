@@ -1,12 +1,37 @@
 <section class="workspace-page bunker-workspace" data-bunker-root aria-labelledby="bunker-heading">
   <div class="workspace-heading bunker-heading">
-    <div><p class="bunker-eyebrow">NODE ADMINISTRATION / NOSTR</p><h1 id="bunker-heading">Bunker</h1>
+    <div><p class="bunker-eyebrow">NODE ADMINISTRATION / AWS-HOSTED SIGNING</p><h1 id="bunker-heading">AWS Nostr bunker</h1>
+      <p class="bunker-workflow-outline">Accept operational responsibility for this AWS-hosted Nostr signer, then use this page for ongoing health checks.</p>
       </div>
   </div>
+  <section class="workspace-card bunker-card" id="bunker-handover-context" aria-labelledby="bunker-handover-context-title">
+    <h2 id="bunker-handover-context-title">AWS deployment handover</h2>
+    <dl class="bunker-config">
+      <dt>What</dt><dd>This EC2-hosted Nostr signing service: encrypted vault, AWS Secrets Manager unlock integration, approved clients and relays, and operating and recovery procedures.</dd>
+      <dt>From</dt><dd>The implementation provider — responsible for delivering and configuring the service.</dd>
+      <dt>To</dt><dd>The service owner's designated operations team — responsible for ongoing operation, access management, monitoring and recovery.</dd>
+    </dl>
+    <p><strong>Trust boundary:</strong> this is an online signer. The key is used on the server; security depends on AWS account permissions, host security and trusted operators.</p>
+    <p><strong>Outside this handover:</strong> Bitcoin wallets, Lightning funds, hardware wallets, cold storage and proof of reserves.</p>
+    <p><strong>Your task:</strong> verify the delivered service and record acceptance on behalf of the service owner. Their AWS administrator handles secret-version preparation and promotion; their node admin runs the checks and signs off.</p>
+    <p>Handover is complete when the required checks pass and acceptance is recorded. Sign-off records operational acceptance; it does not transfer signing keys or change access permissions.</p>
+    <p><a href="#bunker-identity-guide" data-bunker-go>Identify this deployment</a> · <a href="#bunker-acceptance-guide" data-bunker-go>Acceptance evidence</a></p>
+  </section>
+  <details class="bunker-workflow-help" id="bunker-background">
+    <summary>What is a Nostr bunker?</summary>
+    <p>Nostr is a protocol for signed messages called events, exchanged through relay servers. A bunker is a remote signer: approved applications request signatures while the private signing key stays with the signer.</p>
+    <p>In this AWS deployment, an encrypted vault on the host holds the Nostr signing key. AWS Secrets Manager supplies its unlock value, and the running signer uses the key to sign. Remote signing keeps that key out of client applications; it does not isolate it from the signer host or remove trust in its administrators.</p>
+    <p>Relays carry requests and responses. This page checks the deployed service, client policy and relay signing, rehearses AWS version promotion and recovery, and records the handover evidence. Passing these checks does not establish control of Bitcoin addresses or reserves.</p>
+    <p>NIPs (Nostr Implementation Possibilities) describe the protocol:
+      <a href="https://github.com/nostr-protocol/nips/blob/master/46.md" target="_blank" rel="noopener noreferrer">NIP-46 · remote signing</a>,
+      <a href="https://github.com/nostr-protocol/nips/blob/master/44.md" target="_blank" rel="noopener noreferrer">NIP-44 · encrypted payloads</a>,
+      <a href="https://github.com/nostr-protocol/nips/blob/master/01.md" target="_blank" rel="noopener noreferrer">NIP-01 · events and relays</a>.</p>
+  </details>
   <section class="bunker-live" aria-label="Current health">
     <div><strong id="bunker-live-status" role="status">Loading…</strong><small id="bunker-live-time">Current health</small></div>
     <button type="button" class="workspace-button" data-bunker-action="health">Check health</button>
   </section>
+  <p class="bunker-workflow-outline">Handover: check → prepare &amp; activate → verify &amp; sign off.</p>
   <section class="workspace-card bunker-card bunker-next-card" id="bunker-next-card" aria-labelledby="bunker-next-title">
     <div class="bunker-next-meta">
       <p class="bunker-eyebrow" id="bunker-next-phase">Handover</p>
@@ -20,20 +45,43 @@
       <button type="button" class="workspace-button" id="bunker-next-alternate" hidden>Continue</button>
     </div>
     <details id="bunker-inline-commands" hidden><summary>View commands</summary>
-      <p>Run in Bash with AWS CLI v2, jq and Python 3. Use an authorised administrator profile.</p>
+      <p>AWS admin: run on your workstation or an approved admin host using your own authorised profile. Requires Bash, AWS CLI v2, jq and Python 3. Copying does not run commands.</p>
       <pre class="bunker-cli"><code>export BUNKER_ADMIN_PROFILE='your-admin-profile'</code></pre>
       <pre class="bunker-cli"><code id="bunker-inline-code"></code></pre>
     </details>
     <p class="bunker-next-footer"><a id="bunker-next-help" href="#bunker-closing-guide" data-bunker-go hidden>Help</a> · <a href="#bunker-acceptance-guide" data-bunker-go>Sign-off</a>
       <small id="bunker-next-progress" aria-live="polite" hidden></small></p>
   </section>
+  <details class="bunker-workflow-help" id="bunker-workflow-help">
+    <summary>How handover works · roles &amp; terms</summary>
+    <h2 id="bunker-workflow-guide" tabindex="-1">Handover workflow</h2>
+    <ol>
+      <li><strong>Check — dashboard node admin.</strong> Run health and signing checks.</li>
+      <li><strong>Prepare &amp; activate — AWS admin + dashboard node admin.</strong> AWS admin runs the prepare commands; node admin tests the candidate. Only after it passes, AWS admin runs the promotion commands for that exact version.</li>
+      <li><strong>Verify &amp; sign off — dashboard node admin.</strong> Test recovery, remove temporary admin access, then confirm the restart and signing test. Attach the four review references and download the report.</li>
+    </ol>
+    <p>One person may hold both roles. The next-action label names the responsible role; it does not confirm your permissions. The service owner's team can complete the handover without developer AWS access.</p>
+    <h3>Version labels</h3>
+    <dl class="bunker-terms">
+      <dt>Candidate · <code>AWSPENDING</code></dt><dd>Version prepared for testing. The active version stays in use.</dd>
+      <dt>Active · <code>AWSCURRENT</code></dt><dd>Version AWS returns by default. Promotion moves this label to the tested candidate; it does not restart the bunker.</dd>
+      <dt>Previous · <code>AWSPREVIOUS</code></dt><dd>Former active version. AWS moves this label automatically when the active version changes.</dd>
+    </dl>
+    <p>This rehearsal copies the existing unlock value into a new version. It does not rotate the passphrase or signing key. After promotion, continue to recovery; do not repeat the pending test.</p>
+    <h3>Who needs access?</h3>
+    <p><strong>Dashboard node admin:</strong> run checks, confirm restart and record acceptance. Dashboard access does not grant AWS permissions.</p>
+    <p><strong>AWS admin:</strong> prepare and promote using a separate, scoped AWS profile. The CLI can run off-node. Installing it on the node does not grant access; keep the bunker runtime role read-only.</p>
+    <p><strong>Service owner:</strong> owns the handover, IAM review, external-client acceptance and recovery custodian. The node admin records their evidence; developers provide implementation support.</p>
+    <p><a href="#bunker-custody-guide" data-bunker-go>AWS access &amp; commands</a> · <a href="#bunker-acceptance-guide" data-bunker-go>Sign-off evidence</a> · <a href="https://docs.aws.amazon.com/secretsmanager/latest/userguide/whats-in-a-secret.html" target="_blank" rel="noopener noreferrer">AWS version labels</a></p>
+    <p>Health shows the latest check. Sign-off records a handover at a point in time; it is not a permanent health guarantee.</p>
+  </details>
     <article class="workspace-card bunker-card" id="bunker-signoff-panel" hidden><h2 id="bunker-acceptance-guide" tabindex="-1">Sign off</h2>
-      <p>Attach the four review references. Submit to refresh health and record sign-off.</p>
+      <p>Accept operational responsibility on behalf of the service owner. Attach the four review references, identifying the delivery provider, accepting operator and recovery custodian in the handover record. Submit to refresh health and record sign-off.</p>
       <form id="bunker-acceptance">
         <label>Effective IAM permissions reviewed<input name="iam_reviewed" required minlength="8" maxlength="256" aria-describedby="bunker-iam-help" placeholder="CHG-2041/iam-review"></label>
         <p id="bunker-iam-help" class="bunker-field-help">IAM review: runtime role, secret policy, KMS and applicable permission limits. Reference the reviewed record.</p>
         <label>Temporary administrator access removed<input name="temporary_admin_removed" required minlength="8" maxlength="256" aria-describedby="bunker-admin-help" placeholder="CHG-2041/admin-removal"></label>
-        <p id="bunker-admin-help" class="bunker-field-help">Reference removal of temporary grants, credentials and sessions. Keep the runtime role.</p>
+        <p id="bunker-admin-help" class="bunker-field-help">Reference removal of temporary grants, credentials and sessions, or a review confirming none remain. Keep the runtime role.</p>
         <h3 id="bunker-external-guide" tabindex="-1">Independent external-client acceptance</h3>
         <label>External client accepted<input name="external_client_accepted" required minlength="8" maxlength="256" aria-describedby="bunker-external-help" placeholder="UAT-2041/external-client"></label>
         <p id="bunker-external-help" class="bunker-field-help">Reference the independent client test: client key, relay, event ID, verified signature and owner acceptance.</p>
@@ -72,7 +120,9 @@
       <h3 id="bunker-identity-guide" tabindex="-1">Deployment and signing identity</h3>
       <p>Compare the signing key with your approved record. Resolve mismatches before continuing.</p>
       <h3 id="bunker-custody-guide" tabindex="-1">AWS custody and runtime access</h3>
-      <p>Use a separate AWS administrator profile. The bunker runtime stays read-only.</p>
+      <p>The service owner's AWS admin can run the commands from their workstation or an approved admin host. Use a separate authorised profile; the bunker runtime stays read-only.</p>
+      <p>For the agreed secret, preparation and promotion need DescribeSecret, ListSecretVersionIds, GetSecretValue, PutSecretValue and UpdateSecretVersionStage. A customer-managed KMS key may also require Decrypt and GenerateDataKey. The inspection block additionally reads IAM and secret policies; ask the AWS administrator to review effective access.</p>
+      <p><a href="https://docs.aws.amazon.com/service-authorization/latest/reference/list_secretsmanager.html" target="_blank" rel="noopener noreferrer">AWS permissions reference</a>. Full account AdministratorAccess is not required. Do not put AWS credentials or the unlock value into this page.</p>
       <pre class="bunker-cli"><code>export BUNKER_ADMIN_PROFILE='your-admin-profile'</code></pre>
       <details><summary>Inspect AWS identity, secret versions and role policies</summary>
         <button type="button" class="workspace-button" data-bunker-copy="inspect" disabled>Copy inspection commands</button>

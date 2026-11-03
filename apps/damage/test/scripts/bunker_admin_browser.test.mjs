@@ -29,7 +29,9 @@ test('operator guide links have focusable destinations and reference inputs have
   ]);
   for (const input of inputs) assert.ok(ids.includes(input[2]), `Missing input instructions ${input[2]}`);
   for (const match of template.matchAll(/<a\b[^>]*href="(https:[^"]+)"[^>]*>/g)) {
-    assert.ok(['console.aws.amazon.com','docs.aws.amazon.com'].includes(new URL(match[1]).hostname));
+    const link = new URL(match[1]);
+    const nip = link.origin === 'https://github.com' && /^\/nostr-protocol\/nips\/blob\/master\/(01|44|46)\.md$/.test(link.pathname) && !link.search && !link.hash;
+    assert.ok(['console.aws.amazon.com','docs.aws.amazon.com'].includes(link.hostname) || nip);
     assert.match(match[0], /rel="noopener noreferrer"/);
   }
 });

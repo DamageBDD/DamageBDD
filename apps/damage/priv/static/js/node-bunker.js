@@ -302,8 +302,7 @@ if (root) {
   function renderNext() {
     const next = handoverView(flowStep());
     byId('bunker-next-phase').textContent = {prepare: 'Handover · Check', admin: 'Handover · Activate', close: 'Handover · Finish'}[next.phase];
-    byId('bunker-next-owner').textContent = next.owner.includes('AWS') ? 'AWS admin' : next.owner === 'Host administrator' ? 'Host admin' : 'You';
-    byId('bunker-next-owner').parentElement.hidden = next.owner === 'Node operator';
+    byId('bunker-next-owner').textContent = next.owner === 'AWS administrator + node operator' ? 'AWS admin + dashboard node admin' : next.owner.includes('AWS') ? 'AWS admin' : next.owner === 'Host administrator' ? 'Host admin' : 'Dashboard node admin';
     byId('bunker-next-status').textContent = ({not_checked:'To do',verification_required:'To do',ready:'Ready',running:'Running',stale:'Recheck',failed:'Needs attention',blocked:'Blocked',accepted:'Complete',recorded:'Recorded'})[next.status] || words(next.status);
     byId('bunker-next-status').dataset.status = next.status;
     byId('bunker-next-title').textContent = next.title;

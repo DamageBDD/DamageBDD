@@ -381,4 +381,14 @@
 .bunker-critical { font-weight:600 }
 .bunker-details { margin-top:20px }
 #bunker-inline-commands { margin-top:12px }
+.bunker-workflow-outline { color:var(--bunker-muted); font-size:.85rem; line-height:1.5; margin:12px 0 }
+.bunker-workflow-help { max-width:760px; margin:12px 0 20px; line-height:1.6; overflow-wrap:anywhere }
+.bunker-workflow-help summary { cursor:pointer; font-weight:600 }
+.bunker-workflow-help h2 { font-size:1.1rem; margin:16px 0 8px }
+.bunker-workflow-help h3 { font-size:1rem; margin:16px 0 8px }
+.bunker-workflow-help p,.bunker-workflow-help li,.bunker-terms dd { color:var(--bunker-muted); font-size:.9rem }
+.bunker-workflow-help ol { padding-left:22px }
+.bunker-workflow-help li { margin:8px 0 }
+.bunker-terms dt { font-weight:600; font-size:.9rem }
+.bunker-terms dd { margin:0 0 12px }
 @media(max-width:480px) { .bunker-live { padding:12px; align-items:flex-start } .bunker-live button { flex-shrink:0 } .bunker-next-card { padding:16px } }

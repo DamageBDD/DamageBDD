@@ -5,6 +5,57 @@ Implementation delivery: 25 October 2026. Patch baseline: the uploaded
 implementation and local validation delivery, not a claim that a live
 instance has passed the new checks.
 
+## Page background
+
+The **AWS Nostr bunker** page records operational handover of the deployed EC2-hosted Nostr signing service
+from its implementation provider to the service owner's designated operations
+team. An always-visible **AWS deployment handover** panel states what is delivered,
+who delivers it and who accepts responsibility. **What is a Nostr bunker?**
+expands the protocol background separately.
+
+The delivered scope is the remote signer, AWS vault-unlock integration, approved
+client/relay configuration, and the procedures and evidence needed to operate
+and recover the service. The receiving team owns ongoing operation, access
+management, monitoring and recovery. Its AWS administrator prepares and promotes
+secret versions; its node administrator runs verification and records acceptance
+on behalf of the service owner. The implementation provider remains the contact
+for software delivery issues.
+
+Acceptance requires passing technical checks and the existing four evidence
+references. The supporting handover record should name the delivery provider,
+accepting operator and recovery custodian; role labels in the UI do not identify
+or authenticate these people. The backend still attributes acceptance to the
+authenticated actor. Sign-off records operational acceptance, not a signing-key
+transfer or an automatic grant/removal of access. Ongoing health checks remain
+available after handover.
+
+### AWS deployment and custody boundary
+
+This handover is specifically for the AWS-hosted online Nostr signer. The host
+holds an encrypted signing-key vault, Secrets Manager supplies the vault unlock
+value, and the running signer uses the key. Remote signing keeps the signing
+key out of client applications; it does not provide isolation from the signer
+host or eliminate trust in AWS account permissions, host security and operators.
+Access to both the encrypted vault and its unlock value is inside this custody
+boundary. The dashboard's checks evaluate the named controls, not absence of
+host compromise or every possible administrator access path.
+
+Bitcoin wallets, Lightning funds, hardware-wallet custody, cold storage and
+proof of reserves are outside this handover. A successful Nostr signature test
+does not establish control of a Bitcoin address or reserves. The page does not
+certify hardware-backed signing or a general self-custody model. These limits
+are deployment-specific; they are not claims about every NIP-46 implementation.
+
+Nostr exchanges signed events through relays. A bunker signs for approved
+applications while retaining the private signing key. In this deployment, the
+key is held in an encrypted vault; AWS Secrets Manager supplies the vault's
+unlock value. The handover verifies this service and its operational evidence.
+
+NIPs (Nostr Implementation Possibilities) describe the protocol:
+[NIP-46: remote signing](https://github.com/nostr-protocol/nips/blob/master/46.md),
+[NIP-44: encrypted payloads](https://github.com/nostr-protocol/nips/blob/master/44.md)
+and [NIP-01: events and relays](https://github.com/nostr-protocol/nips/blob/master/01.md).
+
 ## Scope
 
 The node-admin dashboard has a **Nostr bunker** page with Overview, Setup,
@@ -97,8 +148,9 @@ prevents signing; failure to record completion prevents returning that response.
 ## Compact operator interface
 
 The top health bar shows the last check time and a separate **Check health**
-button. Handover below it shows one short task. **You** is implicit; **AWS admin**
-is shown when a separate administrator must act. Only one health action appears
+button. Handover below it shows one short task and its responsible role:
+**Dashboard node admin**, **AWS admin** or **Host admin**. This is a responsibility
+label, not a permission check. Only one health action appears
 in the default view when the next task is the initial health check.
 
 **View commands** previews the exact current command block beside its copy button.
@@ -111,6 +163,47 @@ Button labels **Test prepared version**, **Test recovery**, **Restart and test**
 and **Download report** map to the same existing actions. No eligibility rule,
 AWS command, permission, confirmation or evidence requirement changed. Failures
 retain their corrective guidance; historical acceptance retains its qualifications.
+
+### Ownership and access
+
+The service owner's team can complete the entire handover without giving the
+developer AWS access. One person can hold both dashboard node-admin access and
+a separate authorised AWS profile; otherwise coordinate one AWS admin session
+around preparation, the dashboard candidate test and promotion. Dashboard admin
+access and AWS access are independent.
+
+| Responsibility | Owner |
+| --- | --- |
+| Prepare candidate and promote the exact tested version | AWS administrator with scoped access to the agreed secret |
+| Health, signing, isolated recovery, confirmed restart and recording acceptance | Dashboard node administrator |
+| IAM review and removal of temporary grants, credentials and sessions | AWS/security administrator |
+| Independent client acceptance | External client owner |
+| Retained encrypted backup and recovery runbook | Named recovery custodian |
+| Final handover accountability | Service owner |
+| Software fixes and implementation support | Developer; no ongoing AWS administration required |
+
+The AWS commands may run on the administrator's workstation or an approved admin
+host. They do not require AWS CLI on the bunker node. Installing CLI confers no
+permissions. Keep the node's runtime role read-only and use a separate scoped
+profile for writes; full account AdministratorAccess is unnecessary.
+Preparation/promotion use secretsmanager:DescribeSecret, ListSecretVersionIds,
+GetSecretValue, PutSecretValue and UpdateSecretVersionStage on the agreed secret.
+Customer-managed KMS encryption may additionally require kms:Decrypt and
+kms:GenerateDataKey on the relevant key. The optional inspection block also
+requires its IAM/resource-policy read permissions. Effective access remains
+subject to key/resource policies, permission boundaries and organisation controls.
+The runtime's existing read policy must allow the tested version stages.
+
+**How handover works · roles & terms** explains the workflow in the dashboard:
+candidate (AWSPENDING), active (AWSCURRENT) and previous (AWSPREVIOUS). A staging
+label is not proof of a successful test. The rehearsal creates a distinct version
+of the existing unlock value; it does not rotate the passphrase or signing key.
+Promotion moves the active label, not the running process. After promotion,
+continue with recovery and restart, without repeating the pending test.
+
+References: [AWS version labels](https://docs.aws.amazon.com/secretsmanager/latest/userguide/whats-in-a-secret.html),
+[Secrets Manager permissions](https://docs.aws.amazon.com/service-authorization/latest/reference/list_secretsmanager.html),
+[KMS permissions](https://docs.aws.amazon.com/secretsmanager/latest/userguide/security-encryption.html).
 
 ## Operator closing sequence
 
