@@ -62,8 +62,17 @@ base_context(Req) ->
         favicon_image => branded(<<"favicon">>, <<"/static/img/favicon.ico">>),
         brand_name => branded(<<"name">>, <<"DamageBDD">>),
         brand_tagline => branded(<<"tagline">>, <<"Verification workspace">>),
-        tax_enabled => application:get_env(damage, tax_enabled, false)
+        tax_enabled => application:get_env(damage, tax_enabled, false),
+        enterprise_billing_enabled => enterprise_billing_enabled()
     }.
+
+%% This is a feature hint for avoiding disabled-service probes, not authority
+%% to access private invoice records. The billing API still authorizes each call.
+enterprise_billing_enabled() ->
+    case application:get_env(damage, enterprise_invoices, []) of
+        Config when is_list(Config) -> proplists:get_value(enabled, Config, false) =:= true;
+        _ -> false
+    end.
 
 logo_image() ->
     case application:get_env(damage, logo_image) of

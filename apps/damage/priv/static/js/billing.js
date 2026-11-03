@@ -58,6 +58,20 @@ function setBillingNavigation(visible) {
     if (group) group.hidden = !visible;
     if (item) item.hidden = !visible;
 }
+function accessStatus(message = "", {retry = false, pending = false} = {}) {
+    const panel = $("billing-access"), text = $("billing-access-message"), button = $("billing-access-retry");
+    if (!panel || !text || !button) return;
+    text.textContent = message;
+    panel.hidden = !message;
+    button.hidden = !retry;
+    button.disabled = pending;
+}
+function accessFailure(error) {
+    if (error.status === 401) return "Your billing session is no longer valid. Sign in again, then retry.";
+    if (error.status === 403) return "This account does not have invoice administrator permission. Ask the node administrator to review access.";
+    if (error.status === 503) return "Billing service unavailable (503). Ask the node administrator to check billing configuration, the operational node identity and private invoice storage. Retry after the service is ready.";
+    return error.message || "Could not connect to billing. Check connectivity and retry.";
+}
 function settlementRewardEnabled() {
     return state.session?.settlement_rewards?.enabled === true;
 }
@@ -91,7 +105,12 @@ async function api(path, {method = "GET", body, pdf = false} = {}) {
         if (!response.ok) {
             const error = new Error(data.message || `Billing request failed (${response.status}).`);
             error.status = response.status;
-            if (response.status === 401 || response.status === 403) clearPrivate();
+            if (response.status === 401 || response.status === 403) {
+                clearPrivate();
+                error.billingEpoch = authEpoch;
+                setBillingNavigation(true);
+                accessStatus(accessFailure(error), {retry: true});
+            }
             throw error;
         }
         return pdf ? data : data.data;
@@ -122,17 +141,31 @@ function clearPrivate() {
     $("billing-customer-filter")?.replaceChildren(new Option("All customers", ""));
     const planForm = $("billing-plan-form");
     if (planForm) {field(planForm, "customer_id").replaceChildren(); field(planForm, "payment_profile").replaceChildren();}
+    ["billing-stat-action", "billing-stat-outstanding", "billing-stat-paid", "billing-stat-rewards"].forEach(id => {if ($(id)) $(id).textContent = "—";});
+    ["billing-stat-outstanding-amount", "billing-role", "billing-clock", "billing-settlement-status", "billing-page-summary", "billing-page-label"].forEach(id => {if ($(id)) $(id).textContent = "";});
+    if ($("billing-detail")) $("billing-detail").hidden = true;
     notice("");
+    accessStatus();
     root.hidden = true; setBillingNavigation(false);
 }
 async function authenticate() {
     clearPrivate();
-    const epoch = authEpoch;
-    if (!accessToken() || window.TokenManager?.getMode?.() === "extension") return;
+    const epoch = authEpoch, token = accessToken();
+    if (!token || window.TokenManager?.getMode?.() === "extension") return;
+    // A generic availability card is safe to navigate to. Private billing
+    // controls stay hidden until /session grants the account a billing role.
+    setBillingNavigation(true);
+    if (root.dataset.billingEnabled === "false") {
+        accessStatus("Enterprise billing is disabled in this node's configuration. Ask the node administrator to enable it through the approved deployment process if needed, then reload this page.");
+        return;
+    }
+    accessStatus("Checking billing access…", {pending: true});
     try {
         const session = await api("/session");
         if (epoch !== authEpoch) return;
+        if (!session || !["node_admin", "invoice_admin"].includes(session.role)) throw new Error("The billing service returned an invalid session. Retry after checking the service.");
         state.session = session;
+        accessStatus();
         root.hidden = false; setBillingNavigation(true);
         $("billing-role").textContent = state.session.role.replaceAll("_", " ");
         $("billing-admins-nav").hidden = !state.session.can_manage_admins;
@@ -144,11 +177,14 @@ async function authenticate() {
             : "Optional AEX-141 settlement rewards are disabled";
         pane("invoices"); await refresh();
     } catch (error) {
-        // The panel is intentionally hidden until billing authorization succeeds.
-        // Keep unauthorized billing controls private, but do not fail silently in
-        // developer tools when session/bootstrap authentication is misconfigured.
-        if (root && !root.hidden) notice(error.message, true);
-        else console.warn("Enterprise billing authentication failed:", error.message);
+        // A response belonging to an earlier login must not change this view.
+        // API authorization failures clear private state and advance the epoch.
+        if (token !== accessToken() || (epoch !== authEpoch && error.billingEpoch !== authEpoch)) return;
+        if (!root.hidden) notice(accessFailure(error), true);
+        else {
+            setBillingNavigation(true);
+            accessStatus(accessFailure(error), {retry: true});
+        }
     }
 }
 function pane(name) {
@@ -595,6 +631,7 @@ function bind() {
     $("billing-admin-form").addEventListener("submit", event => {event.preventDefault(); const form = event.target;
         write(async () => {await api("/admins", {method: "POST", body: {account: field(form, "account").value.trim(), enabled: true}}); form.reset(); await loadAdmins(); notice("Invoice administrator granted.");});});
     $("billing-import").addEventListener("change", event => {const file = event.target.files[0]; write(async () => {try {await importSeed(file);} finally {event.target.value = "";}});});
+    $("billing-access-retry")?.addEventListener("click", authenticate);
     document.addEventListener("auth:changed", authenticate);
     document.addEventListener("damage:panelchange", event => {if (event.detail?.id === "billing-tab" && state.session) refresh().catch(e => notice(e.message, true));});
     setInterval(() => {

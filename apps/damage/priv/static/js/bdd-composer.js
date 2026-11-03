@@ -9,7 +9,11 @@ function boot() {
   if (!root || !editor) return;
   const prompt = byId('bdd-prompt'), generate = byId('bdd-generate');
   const state = { steps: [], engine: false, active: null, sequence: 0,
-    catalogSequence: 0, validationSequence: 0, validationController: null, draft: null, undo: null };
+    catalogSequence: 0, catalogController: null, catalogLoading: false,
+    validationSequence: 0, validationController: null, draft: null, undo: null };
+  const panel = root.closest('[data-dashboard-view]');
+  const visible = () => !root.closest('[hidden]');
+  let catalogNeeded = true, routingNeeded = true;
   const token = () => { try { return window.TokenManager?.getToken(); } catch { return undefined; } };
   const notify = (message, tone = 'info') => {
     const el = byId('bdd-generation-status'); el.textContent = message; el.dataset.tone = tone;
@@ -27,9 +31,15 @@ function boot() {
         headers: apiHeaders(auth), signal: controller.signal,
         ...(body === undefined ? {} : { body: JSON.stringify(body) })
       });
-      if (response.status === 401) throw new Error('Your session has expired. Sign in again to continue.');
+      if (response.status === 401) {
+        const error = new Error('Your session has expired. Sign in again to continue.');
+        error.status = 401; throw error;
+      }
       let data;
-      try { data = await response.json(); } catch { throw new Error(`The node returned an unreadable response (HTTP ${response.status}).`); }
+      try { data = await response.json(); } catch {
+        const error = new Error(`The node returned an unreadable response (HTTP ${response.status}).`);
+        error.status = response.status; throw error;
+      }
       if (!response.ok) {
         const error = new Error(typeof data?.message === 'string' ? data.message : data?.error || `Request failed (HTTP ${response.status}).`);
         error.status = response.status; throw error;
@@ -44,7 +54,19 @@ function boot() {
   const routing = mountBddRouting(root.querySelector('[data-bdd-routing]'), {
     request: (_path, options = {}) => api('routing', options.body, {signal: options.signal})
   });
-  document.addEventListener('damage:bdd-routing-changed', () => { void routing.refresh(); void loadCatalog(); });
+  function refreshRouting() {
+    if (!visible()) { routingNeeded = true; return; }
+    routingNeeded = false;
+    return routing.refresh();
+  }
+  function activate() {
+    if (!visible()) return;
+    if (catalogNeeded) void loadCatalog();
+    if (routingNeeded) void refreshRouting();
+  }
+  document.addEventListener('damage:bdd-routing-changed', () => {
+    invalidateCatalog(); void refreshRouting(); void loadCatalog();
+  });
 
   function controls() {
     const bytes = promptBytes(prompt.value), busy = !!state.active;
@@ -117,12 +139,24 @@ function boot() {
       row.append(info, button); list.append(row);
     }
   }
+  function invalidateCatalog() {
+    state.catalogSequence++; state.catalogController?.abort();
+    state.catalogController = null; state.catalogLoading = false;
+    state.engine = false; state.steps = []; catalogNeeded = true;
+    byId('bdd-step-total').textContent = 'Not loaded';
+    byId('bdd-catalog-status').textContent = 'Open this workspace to load step signatures.';
+    renderSteps(); controls();
+  }
   async function loadCatalog() {
+    if (!visible()) { catalogNeeded = true; return; }
+    if (state.catalogLoading) return;
+    catalogNeeded = false; state.catalogLoading = true;
     const sequence = ++state.catalogSequence;
+    const controller = new AbortController(); state.catalogController = controller;
     state.engine = false; state.steps = []; controls();
     byId('bdd-catalog-status').textContent = 'Loading step signatures…';
     try {
-      const data = await api('catalog');
+      const data = await api('catalog', undefined, {signal: controller.signal});
       if (sequence !== state.catalogSequence) return;
       state.steps = Array.isArray(data.steps) ? data.steps.filter(s => typeof s.template === 'string' && Array.isArray(s.keywords)) : [];
       state.engine = data.engine?.generator_available === true;
@@ -138,7 +172,9 @@ function boot() {
       if (sequence !== state.catalogSequence) return;
       byId('bdd-catalog-status').textContent = 'Step catalog unavailable';
       notify(error.name === 'AbortError' ? 'Step catalog request timed out. Refresh to retry.' : error.message, 'error');
-    } finally { if (sequence === state.catalogSequence) controls(); }
+    } finally { if (sequence === state.catalogSequence) {
+      state.catalogLoading = false; state.catalogController = null; controls();
+    } }
   }
 
   function draftNotes(draft) {
@@ -280,12 +316,16 @@ function boot() {
     byId('bdd-run-status').textContent = running ? 'Running' : 'Request complete';
   });
   document.addEventListener('auth:changed', () => {
-    routing.reset(); void routing.refresh();
+    routing.reset(); routingNeeded = true; invalidateCatalog();
     state.sequence++; state.active?.controller.abort(); clearInterval(state.active?.timer); state.active = null;
     state.draft = null; state.undo = null; byId('bdd-draft-panel').hidden = true; byId('bdd-undo').hidden = true;
-    byId('bdd-elapsed').textContent = ''; dirty(); loadCatalog();
+    byId('bdd-elapsed').textContent = ''; dirty(); activate();
   });
-  stats(); updateReports(); loadCatalog(); void routing.refresh();
+  document.addEventListener('damage:panelchange', event => {
+    if (!panel || event.detail?.id === panel.id) activate();
+  });
+  if (panel) new MutationObserver(activate).observe(panel, {attributes: true, attributeFilter: ['hidden']});
+  stats(); updateReports(); invalidateCatalog(); activate();
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot, { once: true });
 else boot();

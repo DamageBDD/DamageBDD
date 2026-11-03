@@ -9,6 +9,7 @@ export const TAX_KEYS = Object.freeze([
 ]);
 const TAX_SET = new Set(TAX_KEYS);
 const AE_ACCOUNT = /^ak_[1-9A-HJ-NP-Za-km-z]{13,125}$/;
+const editors = new WeakMap();
 
 export function allowedTaxFields(fields) {
   if (!Array.isArray(fields)) return [];
@@ -118,14 +119,30 @@ async function request(method = 'GET', payload = null) {
     ...(payload !== null ? {body: JSON.stringify(payload)} : {})
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw Error(typeof data.error === 'string' ? data.error : `HTTP ${response.status}`);
+  if (!response.ok) {
+    const error = Error(typeof data.error === 'string' ? data.error : `HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
   return data;
+}
+
+function loadFailure(error) {
+  if (error.status === 401 || error.status === 403) {
+    return 'Tax settings access is not authorised. Sign in with an approved administrator account, then select Reload settings.';
+  }
+  if (error.status === 503 || error.message === 'tax_settings_unavailable') {
+    return 'The node settings service is unavailable. Ask the node administrator to check its configuration and service logs, then select Reload settings.';
+  }
+  return 'Could not load tax settings. Check the connection and node settings service, then select Reload settings. Editing remains unavailable until a fresh read succeeds.';
 }
 
 export function initDashboardTaxSettings() {
   if (typeof document === 'undefined') return null;
   const form = document.getElementById('tax-settings-form');
   if (!form) return null;
+  if (editors.has(form)) return editors.get(form);
+  const panel = form.closest('[data-dashboard-view]');
   const fieldsRoot = document.getElementById('tax-settings-fields');
   const status = document.getElementById('tax-settings-status');
   const restart = document.getElementById('tax-settings-restart');
@@ -135,17 +152,20 @@ export function initDashboardTaxSettings() {
   let current = null;
   let controls = new Map();
   let busy = false;
+  let available = false;
+  let attempted = false;
+  let authEpoch = 0;
 
   function notice(message) { status.textContent = message; }
   function setBusy(value) {
     busy = value;
-    save.disabled = value;
-    discard.disabled = value;
+    save.disabled = value || !available;
+    discard.disabled = value || !available;
     reload.disabled = value;
-    for (const input of controls.values()) input.disabled = value;
+    for (const input of controls.values()) input.disabled = value || !available;
   }
   function updateDirty() {
-    if (!current || busy) return;
+    if (!current || busy || !available) return;
     try {
       const changes = changedTaxSettings(current.fields, controls);
       const dirty = Object.keys(changes).length > 0;
@@ -165,6 +185,7 @@ export function initDashboardTaxSettings() {
     const fields = allowedTaxFields(data.fields);
     if (fields.length !== TAX_KEYS.length) throw Error('incomplete_tax_settings_response');
     current = {...data, fields};
+    available = true;
     controls = new Map();
     const cards = [];
     for (const field of fields) {
@@ -184,16 +205,25 @@ export function initDashboardTaxSettings() {
     discard.disabled = true;
   }
   async function refresh() {
+    if (busy) return;
+    const epoch = authEpoch;
+    attempted = true;
+    available = false;
     setBusy(true);
-    try { display(await request()); }
-    catch (error) { notice(`Could not load tax settings: ${error.message}`); }
-    finally { setBusy(false); save.disabled = true; discard.disabled = true; }
+    try {
+      const data = await request();
+      if (epoch === authEpoch) display(data);
+    } catch (error) {
+      if (epoch === authEpoch) { available = false; notice(loadFailure(error)); }
+    } finally {
+      if (epoch === authEpoch) { setBusy(false); save.disabled = true; discard.disabled = true; }
+    }
   }
   reload.addEventListener('click', () => void refresh());
-  discard.addEventListener('click', () => { if (current) display(current); });
+  discard.addEventListener('click', () => { if (current && available && !busy) display(current); });
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (!current || busy) return;
+    if (!current || busy || !available) return;
     let changes;
     try {
       changes = changedTaxSettings(current.fields, controls);
@@ -204,20 +234,62 @@ export function initDashboardTaxSettings() {
         controls.get('tax_cln_owner').value.trim();
       if (enabled && !AE_ACCOUNT.test(owner)) throw Error('Set a valid CLN tax owner before enabling reporting');
     } catch (error) { notice(error.message); return; }
+    const epoch = authEpoch;
     setBusy(true);
+    let failure = null;
     try {
       const updated = await request('POST', {action: 'save', version: current.version, changes});
+      if (epoch !== authEpoch) return;
       display(updated);
       notice((updated.restart_required === true || (updated.pending_restart || []).length > 0) ?
         'Tax settings saved. Restart DamageBDD to apply lifecycle changes.' :
         'Tax settings saved. Hot settings apply to subsequent runs.');
     } catch (error) {
-      notice(`Tax settings not saved: ${error.message}`);
-      if (error.message === 'config_changed_reload_required') notice('Configuration changed elsewhere; reload settings and retry.');
-    } finally { setBusy(false); if (current) updateDirty(); }
+      if (epoch !== authEpoch) return;
+      if (!error.status || error.status >= 500 || [401, 403, 409].includes(error.status)) available = false;
+      failure = error.message === 'config_changed_reload_required' ?
+        'Configuration changed elsewhere; select Reload settings before editing again.' :
+        !available ? 'Save was not confirmed. Reload settings to check the recorded values before trying again.' :
+        `Tax settings not saved: ${error.message}`;
+    } finally {
+      if (epoch === authEpoch) {
+        setBusy(false);
+        if (current) updateDirty();
+        if (failure) notice(failure);
+      }
+    }
   });
-  void refresh();
-  return {refresh};
+  function activate() {
+    if (!attempted && !form.closest('[hidden]') && !document.hidden) void refresh();
+  }
+  if (panel) {
+    document.addEventListener('damage:panelchange', event => {
+      if (event.detail?.id === panel.id) activate();
+    });
+    new MutationObserver(activate).observe(panel, {attributes: true, attributeFilter: ['hidden']});
+  }
+  document.addEventListener('visibilitychange', activate);
+  document.addEventListener('auth:changed', () => {
+    // Retire reads and writes from the previous session, including their
+    // finally handlers, before starting a new session's request.
+    authEpoch++;
+    current = null;
+    controls = new Map();
+    available = false;
+    attempted = false;
+    fieldsRoot.replaceChildren();
+    restart.hidden = true;
+    restart.textContent = '';
+    setBusy(false);
+    notice('Open this section to load tax settings.');
+    activate();
+  });
+  setBusy(false);
+  notice('Open this section to load tax settings.');
+  const editor = {refresh};
+  editors.set(form, editor);
+  activate();
+  return editor;
 }
 
 if (typeof document !== 'undefined') {

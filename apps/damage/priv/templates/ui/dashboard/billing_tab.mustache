@@ -1,5 +1,10 @@
 <p data-wallet-only-note hidden></p>
-<section id="enterprise-billing" class="billing" aria-labelledby="billing-title" hidden>
+<section id="billing-access" class="workspace-card" aria-labelledby="billing-access-title" hidden>
+  <h2 id="billing-access-title">Billing availability</h2>
+  <p id="billing-access-message" role="status" aria-live="polite"></p>
+  <button type="button" id="billing-access-retry" class="workspace-button">Retry billing connection</button>
+</section>
+<section id="enterprise-billing" class="billing" aria-labelledby="billing-title" data-billing-enabled="{{#enterprise_billing_enabled}}true{{/enterprise_billing_enabled}}{{^enterprise_billing_enabled}}false{{/enterprise_billing_enabled}}" hidden>
   <header class="billing-header">
     <div><p class="billing-eyebrow">ENTERPRISE BILLING</p><h2 id="billing-title">Invoices &amp; retainers</h2>
       <p class="billing-muted">Recurring services, private records, controlled delivery.</p></div>

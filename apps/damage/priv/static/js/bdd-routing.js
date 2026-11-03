@@ -3,6 +3,13 @@ export function routeLabel(data) {
   const r = data?.route || {};
   return `${r.provider === 'any' ? 'Automatic BDD pool' : r.provider || 'Unavailable'} · ${r.model || 'connection default'}${Number.isInteger(data?.revision) ? ` · r${data.revision}` : ''}`;
 }
+export function routingError(error) {
+  if (error?.status === 401) return 'Your session has expired. Sign in again, then refresh routing.';
+  if (error?.status === 403) return 'This account is not authorised to inspect or change the BDD route.';
+  if (error?.status === 503) return 'BDD routing is unavailable. Ask the node administrator to check the routing service, configuration and storage, then select Refresh. The current route has not been verified.';
+  if (error?.name === 'AbortError' || error?.name === 'TimeoutError') return 'Routing could not be verified before the request ended. Select Refresh to retry.';
+  return error?.message || 'Routing could not be verified. Select Refresh to retry.';
+}
 export function mountBddRouting(root, {request, onChange = () => {}}) {
   if (!root) return {refresh:async()=>{}, reset(){}, dispose(){}};
   const $ = n => root.querySelector(`[data-route="${n}"]`), form = $('form');
@@ -22,7 +29,9 @@ export function mountBddRouting(root, {request, onChange = () => {}}) {
         ? `BDD connections: ${data.connections.map(n=>`${n.id} (${n.provider} · ${n.default_model})`).join('; ')}.`
         : 'No enabled connection has the bdd role. An administrator must assign one before generating.';
       message(data.can_manage ? 'Node-wide preference. Keys, destinations and remote-role permissions remain in AI providers & roles.' : 'Read-only. Only an authorised node administrator can change the route.');
-    } catch(e) { if(ticket===epoch && e.name!=='AbortError') { snapshot=null; $('summary').textContent='Unavailable'; message(e.message,true); } }
+    } catch(e) { if(ticket===epoch && !disposed) {
+      snapshot=null; $('summary').textContent='Unavailable'; $('candidates').textContent=''; message(routingError(e),true);
+    } }
     finally { if(ticket===epoch){busy=false;controls();} }
   }
   form.addEventListener('submit',async e=>{
@@ -35,10 +44,16 @@ export function mountBddRouting(root, {request, onChange = () => {}}) {
       if(ticket!==epoch || disposed) return;
       busy=false; await refresh(); onChange();
       document.dispatchEvent(new CustomEvent('damage:bdd-routing-changed'));
-    } catch(error) {if(ticket===epoch && error.name!=='AbortError') message(error.status===409 ? 'Settings changed elsewhere. Refresh before saving; your selection has not been applied.' : error.message,true);}
+    } catch(error) {if(ticket===epoch && !disposed) {
+      // A failed response cannot confirm whether the write was applied. Require
+      // a fresh read before another save, while retaining the visible selection.
+      snapshot=null; $('summary').textContent='Not verified'; $('candidates').textContent='';
+      message(error.status===409 ? 'Settings changed elsewhere. Refresh before saving; your selection has not been applied.' : routingError(error) + ' Refresh before another save.',true);
+    }}
     finally {if(ticket===epoch){busy=false;controls();}}
   },{signal:life.signal});
   $('refresh').addEventListener('click',()=>void refresh(),{signal:life.signal});
   function reset(){epoch++;requests.abort();requests=new AbortController();busy=false;snapshot=null;$('summary').textContent='Not loaded';$('candidates').textContent='';form.reset();message('Sign in to inspect routing.');controls();}
+  controls();
   return {refresh,reset,dispose(){disposed=true;epoch++;life.abort();reset();}};
 }
