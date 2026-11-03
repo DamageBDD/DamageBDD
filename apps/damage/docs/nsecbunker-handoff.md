@@ -94,6 +94,24 @@ service account. Audit directories must exist and the audit log must be writable
 Audit writes are now synchronized and fail closed: failure to record a decision
 prevents signing; failure to record completion prevents returning that response.
 
+## Compact operator interface
+
+The top health bar shows the last check time and a separate **Check health**
+button. Handover below it shows one short task. **You** is implicit; **AWS admin**
+is shown when a separate administrator must act. Only one health action appears
+in the default view when the next task is the initial health check.
+
+**View commands** previews the exact current command block beside its copy button.
+**Help** opens the relevant detail. **Advanced details** contains manual controls,
+configuration and evidence. **Sign-off** opens the four reference fields inline,
+without opening diagnostics. **Sign off** still refreshes health, rechecks the
+reviewed report and requires backend eligibility before recording acceptance.
+
+Button labels **Test prepared version**, **Test recovery**, **Restart and test**
+and **Download report** map to the same existing actions. No eligibility rule,
+AWS command, permission, confirmation or evidence requirement changed. Failures
+retain their corrective guidance; historical acceptance retains its qualifications.
+
 ## Operator closing sequence
 
 The default view presents **one next action**, its owner and recorded status.

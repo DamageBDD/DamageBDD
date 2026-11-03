@@ -1,32 +1,55 @@
 <section class="workspace-page bunker-workspace" data-bunker-root aria-labelledby="bunker-heading">
   <div class="workspace-heading bunker-heading">
-    <div><p class="bunker-eyebrow">NODE ADMINISTRATION / NOSTR</p><h1 id="bunker-heading">Close bunker handover</h1>
-      <p>One administrator session. Follow the next action, then retain the accepted evidence.</p></div>
+    <div><p class="bunker-eyebrow">NODE ADMINISTRATION / NOSTR</p><h1 id="bunker-heading">Bunker</h1>
+      </div>
   </div>
-  <ol class="bunker-phase-route" aria-label="Handover phases">
-    <li><span aria-hidden="true">1</span>Operator preparation</li>
-    <li><span aria-hidden="true">2</span>AWS administrator session</li>
-    <li><span aria-hidden="true">3</span>Operator closeout</li>
-  </ol>
+  <section class="bunker-live" aria-label="Current health">
+    <div><strong id="bunker-live-status" role="status">Loading…</strong><small id="bunker-live-time">Current health</small></div>
+    <button type="button" class="workspace-button" data-bunker-action="health">Check health</button>
+  </section>
   <section class="workspace-card bunker-card bunker-next-card" id="bunker-next-card" aria-labelledby="bunker-next-title">
     <div class="bunker-next-meta">
-      <p class="bunker-eyebrow" id="bunker-next-phase">Operator preparation</p>
+      <p class="bunker-eyebrow" id="bunker-next-phase">Handover</p>
       <span class="bunker-badge" id="bunker-next-status">Loading</span>
     </div>
-    <p class="bunker-next-owner">Who acts: <strong id="bunker-next-owner">Node operator</strong></p>
-    <h2 id="bunker-next-title" tabindex="-1">Find the next required action</h2>
-    <p id="bunker-next-description">Reading the recorded checks for this deployment.</p>
+    <p class="bunker-next-owner"><strong id="bunker-next-owner">You</strong></p>
+    <h2 id="bunker-next-title" tabindex="-1">Handover</h2>
+    <p id="bunker-next-description">Loading progress…</p>
     <div class="bunker-actions bunker-next-actions">
       <button type="button" class="workspace-button bunker-primary" id="bunker-next-action" disabled>Loading…</button>
       <button type="button" class="workspace-button" id="bunker-next-alternate" hidden>Continue</button>
     </div>
-    <p class="bunker-next-footer"><a id="bunker-next-help" href="#bunker-closing-guide" data-bunker-go hidden>Open supporting details</a>
-      <small id="bunker-next-progress" aria-live="polite">No action runs until you select it.</small></p>
+    <details id="bunker-inline-commands" hidden><summary>View commands</summary>
+      <p>Run in Bash with AWS CLI v2, jq and Python 3. Use an authorised administrator profile.</p>
+      <pre class="bunker-cli"><code>export BUNKER_ADMIN_PROFILE='your-admin-profile'</code></pre>
+      <pre class="bunker-cli"><code id="bunker-inline-code"></code></pre>
+    </details>
+    <p class="bunker-next-footer"><a id="bunker-next-help" href="#bunker-closing-guide" data-bunker-go hidden>Help</a> · <a href="#bunker-acceptance-guide" data-bunker-go>Sign-off</a>
+      <small id="bunker-next-progress" aria-live="polite" hidden></small></p>
   </section>
-  <p class="bunker-reference-shortcut"><a href="#bunker-acceptance-guide" data-bunker-go>Prepare acceptance references</a> · Keep the AWS administrator present for prepare, the pending check and promotion.</p>
+    <article class="workspace-card bunker-card" id="bunker-signoff-panel" hidden><h2 id="bunker-acceptance-guide" tabindex="-1">Sign off</h2>
+      <p>Attach the four review references. Submit to refresh health and record sign-off.</p>
+      <form id="bunker-acceptance">
+        <label>Effective IAM permissions reviewed<input name="iam_reviewed" required minlength="8" maxlength="256" aria-describedby="bunker-iam-help" placeholder="CHG-2041/iam-review"></label>
+        <p id="bunker-iam-help" class="bunker-field-help">IAM review: runtime role, secret policy, KMS and applicable permission limits. Reference the reviewed record.</p>
+        <label>Temporary administrator access removed<input name="temporary_admin_removed" required minlength="8" maxlength="256" aria-describedby="bunker-admin-help" placeholder="CHG-2041/admin-removal"></label>
+        <p id="bunker-admin-help" class="bunker-field-help">Reference removal of temporary grants, credentials and sessions. Keep the runtime role.</p>
+        <h3 id="bunker-external-guide" tabindex="-1">Independent external-client acceptance</h3>
+        <label>External client accepted<input name="external_client_accepted" required minlength="8" maxlength="256" aria-describedby="bunker-external-help" placeholder="UAT-2041/external-client"></label>
+        <p id="bunker-external-help" class="bunker-field-help">Reference the independent client test: client key, relay, event ID, verified signature and owner acceptance.</p>
+        <h3 id="bunker-backup-guide" tabindex="-1">Retained backup and recovery custodian</h3>
+        <label>Recovery custodian and retained backup confirmed<input name="recovery_custodian_confirmed" required minlength="8" maxlength="256" aria-describedby="bunker-backup-help" placeholder="OPS-2041/recovery-custody"></label>
+        <p id="bunker-backup-help" class="bunker-field-help">Reference the retained encrypted backup, integrity check, recovery runbook and named custodian. Test copies are deleted.</p>
+        <p>Sign-off refreshes health and checks that the reviewed report is unchanged.</p>
+        <button type="submit" class="workspace-button bunker-primary" id="bunker-accept">Sign off</button>
+      </form>
+      <p id="bunker-acceptance-state"></p>
+      <p>Keep the report and supporting records in the handover ticket.</p>
+      <button type="button" class="workspace-button" data-bunker-export>Export handover evidence</button>
+    </article>
   <p id="bunker-message" role="status" aria-live="polite">Loading recorded evidence…</p>
   <details id="bunker-details" class="bunker-details">
-    <summary>Checks, commands and evidence</summary>
+    <summary>Advanced details</summary>
     <div class="bunker-actions bunker-detail-actions"><button type="button" class="workspace-button" data-bunker-action="health">Check health</button>
       <button type="button" class="workspace-button" data-bunker-action="verify">Verify signing</button></div>
   <div class="bunker-summary" id="bunker-summary" aria-label="Verification summary"></div>
@@ -37,126 +60,72 @@
     <button type="button" data-bunker-tab="recovery" aria-pressed="false">Recovery &amp; handover</button>
   </nav>
   <section data-bunker-pane="overview">
-    <article class="workspace-card bunker-card"><h2 id="bunker-health-guide" tabindex="-1">1. Check health and resolve controls</h2>
-      <p><strong>Operator:</strong> review <a href="#bunker-setup-guide" data-bunker-go>Setup</a>, then select <strong>Check health</strong> above. Resolve each failed control through the approved deployment process and check again. Continue to <a href="#bunker-signing-guide" data-bunker-go>live signing</a> when every required control passes.</p>
-      <p>Results describe the named controls at the recorded time. Run a fresh check after deployment or policy changes.</p>
+    <article class="workspace-card bunker-card"><h2 id="bunker-health-guide" tabindex="-1">Health checks</h2>
+      <p>Run a health check. Failed controls show the next action.</p>
       <div class="bunker-scroll"><table><thead><tr><th>Control</th><th>Result</th><th>Next action</th></tr></thead><tbody id="bunker-checks"></tbody></table></div>
     </article>
   </section>
   <section data-bunker-pane="setup" hidden>
-    <article class="workspace-card bunker-card"><h2 id="bunker-setup-guide" tabindex="-1">Commissioning checklist</h2>
-      <ol class="bunker-steps">
-        <li><strong>Confirm deployment and identity.</strong> Compare the signing public key below with your independently recorded key.</li>
-        <li><strong>Connect AWS custody.</strong> Configure the agreed secret ARN, region, account and EC2 role through your approved release configuration. This page never accepts a passphrase or nsec.</li>
-        <li><strong>Connect relays.</strong> Configure one to six explicit WSS relay addresses. Verify signing checks every configured relay separately; extra relays are not silently skipped.</li>
-        <li><strong>Confirm clients and policy.</strong> The diagnostic client is the existing damage_nostr identity and must already be authorised. No client is added automatically.</li>
-        <li><strong>Verify and hand over.</strong> Complete signing, restart and recovery checks, then attach operator acceptance references.</li>
-      </ol>
+    <article class="workspace-card bunker-card"><h2 id="bunker-setup-guide" tabindex="-1">Settings</h2>
+      <p>Apply configuration changes through your release process.</p>
       <dl id="bunker-setup" class="bunker-config"></dl>
       <h3 id="bunker-identity-guide" tabindex="-1">Deployment and signing identity</h3>
-      <p>Compare the signing public key above with the independently approved handover record. If it differs, stop and ask the deployment owner to resolve the identity mismatch. Apply approved configuration changes through the release process, then restart the service and check health.</p>
+      <p>Compare the signing key with your approved record. Resolve mismatches before continuing.</p>
       <h3 id="bunker-custody-guide" tabindex="-1">AWS custody and runtime access</h3>
-      <p><strong>AWS administrator:</strong> use Bash with AWS CLI v2, jq and Python 3 in your approved maintenance window. Set your separate administrator profile once:</p>
+      <p>Use a separate AWS administrator profile. The bunker runtime stays read-only.</p>
       <pre class="bunker-cli"><code>export BUNKER_ADMIN_PROFILE='your-admin-profile'</code></pre>
-      <p>Review the account and secret below before running. Coordinate other secret writers and rotation. Copying commands does not execute them.</p>
       <details><summary>Inspect AWS identity, secret versions and role policies</summary>
         <button type="button" class="workspace-button" data-bunker-copy="inspect" disabled>Copy inspection commands</button>
         <pre class="bunker-cli"><code id="bunker-cli-inspect">Loading AWS configuration…</code></pre>
       </details>
-      <p>These commands collect policy references; review the policy documents, KMS access, boundaries and organisation controls before recording IAM acceptance. Keep version-write access on the administrator profile.</p>
-      <p><strong>Operator:</strong> use production AWS custody and the existing encrypted vault. Remove the local <code>nsecbunker_vault_passphrase</code> entry through the approved procedure. If pending retrieval is denied by a version-stage policy, ask the administrator to review it; this page does not broaden permissions.</p>
       <h3 id="bunker-relay-guide" tabindex="-1">Relays, clients and policy</h3>
-      <p>Use one to six explicit <code>wss://</code> relay URLs without credentials, query strings or fragments. If seven are configured, have the deployment owner reduce the list to at most six, deploy it and restart before checking again. Every configured relay must subscribe and pass the individual signing checks.</p>
-      <p>Confirm the existing <code>damage_nostr</code> diagnostic public key is approved. The agreed methods are <code>connect, ping, get_public_key, sign_event</code>, with event kind <code>30023</code> and publishing disabled. Resolve policy mismatches in the release configuration; this workflow never adds a client automatically.</p>
+      <p>Use 1–6 WSS relays and approved clients. Allow connect, ping, get_public_key and sign_event for kind 30023; keep publishing disabled.</p>
       <h3 id="bunker-files-guide" tabindex="-1">Host files</h3>
-      <p>Ask the host administrator to confirm that the encrypted vault and writable audit file are regular, private files owned by the service account. The crypto backend must be a regular executable without group/world write access. Apply the approved ownership and permissions, then check health again.</p>
-      <p><a href="#bunker-health-guide" data-bunker-go>Return to Check health</a> · <a href="#bunker-closing-guide" data-bunker-go>Open handover steps</a></p>
+      <p>Vault and audit files must be private and owned by the service account. The crypto backend must be executable and not writable by group or others.</p>
     </article>
   </section>
   <section data-bunker-pane="evidence" hidden>
-    <article class="workspace-card bunker-card"><div class="bunker-row"><h2 id="bunker-signing-guide" tabindex="-1">2. Verify live signing</h2><button type="button" class="workspace-button" id="bunker-export" data-bunker-export>Export evidence</button></div>
-      <p><strong>Operator:</strong> after <a href="#bunker-health-guide" data-bunker-go>health passes</a>, select <strong>Verify signing</strong> above and wait for completion. Every configured relay must pass ping, public-key, allowed-signing and denied-policy probes. If a probe fails, resolve its relay, client or policy issue in <a href="#bunker-relay-guide" data-bunker-go>Setup</a> and rerun verification.</p>
-      <p>Each probe checks the transport signatures, response correlation, exact signed payload and matching audit records. Signed diagnostic articles are not published by this workflow.</p>
-      <p>On success, continue to <a href="#bunker-pending-guide" data-bunker-go>prepare and check the pending version</a>. This diagnostic does not replace the <a href="#bunker-external-guide" data-bunker-go>independent external-client acceptance</a>.</p>
+    <article class="workspace-card bunker-card"><div class="bunker-row"><h2 id="bunker-signing-guide" tabindex="-1">Signing tests</h2>
+      <button type="button" class="workspace-button" id="bunker-export" data-bunker-export>Export evidence</button></div><p>Test every relay and signing policy. Independent client acceptance is separate.</p>
       <div class="bunker-scroll"><table><thead><tr><th>Relay</th><th>Probe</th><th>Result</th><th>Correlation</th></tr></thead><tbody id="bunker-exchanges"></tbody></table></div>
       <details><summary>Report details</summary><pre id="bunker-report-detail"></pre></details>
     </article>
   </section>
   <section data-bunker-pane="recovery" hidden>
     <article class="workspace-card bunker-card"><h2 id="bunker-closing-guide" tabindex="-1">Close the handover</h2>
-      <p>Agree a maintenance window with the service owner. The AWS administrator prepares and promotes the secret version; the node operator runs the checks below. Collect the <a href="#bunker-acceptance-guide" data-bunker-go>four acceptance references</a> before the final health check.</p>
-      <ol class="bunker-route">
-        <li><a href="#bunker-health-guide" data-bunker-go>Check health</a></li>
-        <li><a href="#bunker-signing-guide" data-bunker-go>Verify signing</a></li>
-        <li><a href="#bunker-pending-guide" data-bunker-go>Prepare and check pending version</a></li>
-        <li><a href="#bunker-restore-guide" data-bunker-go>Promote and verify restore</a></li>
-        <li><a href="#bunker-restart-guide" data-bunker-go>Restart and verify</a></li>
-        <li><a href="#bunker-acceptance-guide" data-bunker-go>Record acceptance and export</a></li>
-      </ol>
+      <p>All technical checks must pass before sign-off.</p>
       <h3>Closing checklist</h3>
-      <p>Not checked means no result is recorded. Blocked means prerequisite evidence is missing or failed. Stale results need a fresh check; verification required means the evidence does not match the current handover requirements. Automated requirements must pass; operator declarations are recorded separately.</p>
+      <p>Only passed checks count toward completion.</p>
       <div class="bunker-scroll"><table><thead><tr><th>Requirement</th><th>Result</th><th>Next action</th></tr></thead><tbody id="bunker-closing-checks"></tbody></table></div></article>
-    <article class="workspace-card bunker-card"><h2>Controlled verification</h2>
+    <article class="workspace-card bunker-card"><h2>Manual tests</h2>
       <div class="bunker-maintenance">
-        <div><h3 id="bunker-pending-guide" tabindex="-1">3. Prepare and check the pending version</h3>
-          <p><strong>AWS administrator:</strong> run this block in the <a href="#bunker-custody-guide" data-bunker-go>administrator shell</a>. It copies the existing unlock value into a distinct version and attaches AWSPENDING only if it is free. It stops for an existing pending version or enabled rotation.</p>
+        <div><h3 id="bunker-pending-guide" tabindex="-1">Prepare version</h3>
+      <p>AWS admin: prepare the version, then run the test below. Copying commands does not execute them.</p>
           <details><summary>AWS CLI — prepare AWSPENDING</summary>
             <button type="button" class="workspace-button" data-bunker-copy="pending" disabled>Copy prepare commands</button>
             <pre class="bunker-cli"><code id="bunker-cli-pending">Loading AWS configuration…</code></pre>
           </details>
-          <p>Keep AWS CLI debug logging off. The block disables local CLI history for that profile and pipes the secret directly between commands. If it fails, inspect versions before retrying; a HANDOFF label may remain.</p>
-          <p><strong>Operator:</strong> after the command succeeds, run the check below. Require a passed result and matching baseline/pending IDs.</p>
-          <button type="button" class="workspace-button" data-bunker-action="pending">Check pending version</button>
-          <p><strong>After promotion, do not rerun this step.</strong> It would replace the passing pending evidence. Continue to restore. If the rehearsal expires or is replaced, arrange a new distinct pending version and repeat from this step.</p>
+          <button type="button" class="workspace-button" data-bunker-action="pending">Check pending version</button><p class="bunker-critical">After promotion, continue to recovery. Do not repeat the pending test.</p>
         </div>
-        <div><h3 id="bunker-restore-guide" tabindex="-1">4. Promote the tested version and verify restore</h3>
-          <p><strong>AWS administrator:</strong> after the pending check passes, copy this block. It uses the recorded baseline and tested IDs and stops if AWS labels have changed. Run it promptly during the same maintenance window; retain the change/audit reference.</p>
+        <div><h3 id="bunker-restore-guide" tabindex="-1">Activate and recover</h3>
+      <p>AWS admin: promote the tested version. Then test recovery below.</p>
           <details><summary>AWS CLI — promote the tested version</summary>
             <button type="button" class="workspace-button" data-bunker-copy="promote" disabled>Copy promotion commands</button>
             <pre class="bunker-cli"><code id="bunker-cli-promote">Complete the pending rehearsal first.</code></pre>
           </details>
-          <p><strong>Operator:</strong> after AWSCURRENT is on the tested ID, run the restore check below, then <a href="#bunker-restart-guide" data-bunker-go>Restart &amp; verify</a>.</p>
-          <button type="button" class="workspace-button" data-bunker-action="recovery">Verify current version &amp; restore</button>
-          <p>The check restores an encrypted vault and opaque DETS snapshot into isolated copies and rejects a wrong unlock value. It leaves the live vault intact. Temporary copies are removed; arrange a <a href="#bunker-backup-guide" data-bunker-go>separately retained recovery backup</a>.</p>
+          <button type="button" class="workspace-button" data-bunker-action="recovery">Verify current version &amp; restore</button><p>Tests an isolated restore. Keep a separate retained backup.</p>
         </div>
-        <div><h3 id="bunker-restart-guide" tabindex="-1">5. Restart under the runtime role</h3>
-          <ol class="bunker-steps">
-            <li><strong>Operator:</strong> after promotion and restore pass, confirm the maintenance window. Signing will be briefly unavailable.</li>
-            <li>Select <strong>Restart &amp; verify</strong>, review the confirmation and proceed. Wait for fresh AWS bootstrap and all relay/policy checks to pass. The active restarted version below must match the tested and restored version.</li>
-            <li>If restart fails, inspect the recorded reason and service logs with the host administrator. Restore service through the approved recovery procedure before retrying. Continue to <a href="#bunker-acceptance-guide" data-bunker-go>operator acceptance</a> only when all technical requirements pass.</li>
-          </ol>
+        <div><h3 id="bunker-restart-guide" tabindex="-1">Restart test</h3>
+      <p>Remove temporary admin access first. Restart briefly interrupts signing and runs fresh signing tests.</p>
           <button type="button" class="workspace-button" data-bunker-action="restart">Restart &amp; verify</button>
-          <p>This also records fresh signing evidence. Repeat Verify signing only if that evidence has expired; it cannot substitute for a restart.</p>
         </div>
       </div>
-      <p>Complete these steps in order. <strong>Restart &amp; verify</strong> records fresh signing evidence. Refresh <strong>Check health</strong> immediately before recording acceptance; repeat signing verification if its evidence has expired.</p>
       <div id="bunker-maintenance-results"></div>
       <h3 id="bunker-versions-guide" tabindex="-1">Recorded version IDs</h3>
-      <p>Use these report values to reconcile the AWS change. They are recorded observations, not a live AWS version listing. A matching ID alone does not satisfy the closing checklist.</p>
+      <p>Recorded version IDs; compare with AWS if a test fails.</p>
       <dl id="bunker-version-evidence" class="bunker-config"></dl>
-      <p><a href="#bunker-restore-guide" data-bunker-go>Return to promotion and restore</a> · <a href="#bunker-restart-guide" data-bunker-go>Continue to restart</a></p>
     </article>
-    <article class="workspace-card bunker-card"><h2 id="bunker-acceptance-guide" tabindex="-1">6. Record operator acceptance and export</h2>
-      <p>These are attributed operator declarations, separate from automated checks. Reference the supporting ticket, audit record or signed acceptance. Do not enter credentials.</p>
-      <p>Prepare all four references below. Use a ticket ID or stable URL of 8–256 characters: letters, numbers, spaces and <code>._:/#@-</code>. For a URL with other characters, use its ticket ID instead. The supporting record should identify the reviewer, time, deployment and relevant evidence.</p>
-      <form id="bunker-acceptance">
-        <label>Effective IAM permissions reviewed<input name="iam_reviewed" required minlength="8" maxlength="256" aria-describedby="bunker-iam-help" placeholder="CHG-2041/iam-review"></label>
-        <p id="bunker-iam-help" class="bunker-field-help">AWS reviewer: confirm the runtime role, secret/resource policy, relevant KMS access and applicable boundaries/organisation controls. Record effective access to the agreed secret and absence of version-write authority. Review in <a href="https://console.aws.amazon.com/iam/" target="_blank" rel="noopener noreferrer">IAM</a> with <a href="https://docs.aws.amazon.com/secretsmanager/latest/userguide/auth-and-access_iam-policies.html" target="_blank" rel="noopener noreferrer">AWS access guidance</a>; a green custody check alone is not an IAM review.</p>
-        <label>Temporary administrator access removed<input name="temporary_admin_removed" required minlength="8" maxlength="256" aria-describedby="bunker-admin-help" placeholder="CHG-2041/admin-removal"></label>
-        <p id="bunker-admin-help" class="bunker-field-help">Administrator: remove temporary handover grants and credentials using the approved access process, address any active temporary sessions, and retain the change/audit reference showing who removed access and when. Preserve the approved runtime role.</p>
-        <h3 id="bunker-external-guide" tabindex="-1">Independent external-client acceptance</h3>
-        <label>External client accepted<input name="external_client_accepted" required minlength="8" maxlength="256" aria-describedby="bunker-external-help" placeholder="UAT-2041/external-client"></label>
-        <p id="bunker-external-help" class="bunker-field-help">Client owner: use the independently approved external client with the pinned bunker public key and agreed relays. Request an allowed kind-30023 event, verify the returned signature and exact payload, and retain the client public key, relay, time, event ID and owner's acceptance. Keep the request within the agreed policy; this page's diagnostic client does not count as that external acceptance.</p>
-        <h3 id="bunker-backup-guide" tabindex="-1">Retained backup and recovery custodian</h3>
-        <label>Recovery custodian and retained backup confirmed<input name="recovery_custodian_confirmed" required minlength="8" maxlength="256" aria-describedby="bunker-backup-help" placeholder="OPS-2041/recovery-custody"></label>
-        <p id="bunker-backup-help" class="bunker-field-help">Recovery owner: confirm a separately retained encrypted-vault backup and the required metadata backup, their location/identifier, date, integrity evidence, retention and access controls, plus the named custodian and recovery runbook. Confirm the approved AWS recovery-access path. Reference that record; the isolated restore test does not retain a backup or establish custody.</p>
-        <p>With references ready, submit below. This refreshes health and records acceptance only while all checks pass and the reviewed signing report is unchanged. Signing evidence must be within 15 minutes; pending, restore and restart evidence within 24 hours and for the current deployment. If submission is disabled, follow the unresolved <a href="#bunker-closing-guide" data-bunker-go>closing checklist</a> links.</p>
-        <button type="submit" class="workspace-button bunker-primary" id="bunker-accept">Refresh health &amp; record acceptance</button>
-      </form>
-      <p id="bunker-acceptance-state"></p>
-      <p>After acceptance is recorded, export the evidence and attach the JSON plus its verification report hash to the handover ticket with all four supporting records. Confirm the Handover summary shows <strong>accepted</strong>. Later health checks remain time-bound; historical acceptance does not certify current health.</p>
-      <button type="button" class="workspace-button" data-bunker-export>Export handover evidence</button>
-    </article>
+
   </section>
   </details>
   <dialog id="bunker-confirm"><form method="dialog"><h2 id="bunker-confirm-title">Confirm maintenance</h2>

@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {nextHandoverStep} from '../../priv/static/js/node-bunker.js';
+import {nextHandoverStep, handoverView} from '../../priv/static/js/node-bunker.js';
 
 const NOW = 1800000000;
 const BASELINE = '10000000-0000-4000-8000-000000000001';
@@ -212,4 +212,16 @@ test('incomplete server task data never implies acceptance eligibility', () => {
     assert.notEqual(result.kind, 'export');
     assert.ok(!/acceptance-ready|ready-to-accept/.test(result.id || ''));
   }
+});
+
+test('compact copy preserves actions and failure guidance', () => {
+  for (const id of ['refresh','busy','storage','health','signing','prepare','pending','promotion_health','promote','restore','restart','acceptance','reconcile','checklist','config','export']) {
+    const original={id,kind:'run',action:'example',status:'ready',title:'Long title',description:'Long description',label:'Long label',help:'help',alternate:{kind:'guide'}};
+    const view=handoverView(original);
+    assert.equal(view.kind,original.kind);assert.equal(view.action,original.action);assert.equal(view.help,original.help);assert.deepEqual(view.alternate,original.alternate);
+    assert.ok(view.description.length < 130);
+    const failed=handoverView({...original,status:'failed',description:'Fix the configured relay.'});
+    assert.equal(failed.description,'Fix the configured relay.');
+  }
+  assert.equal(handoverView({id:'export',status:'recorded',description:'Earlier report; not current health.'}).description,'Earlier report; not current health.');
 });

@@ -65,7 +65,7 @@ test('guided navigation, explicit actions, acceptance/export and mobile layout',
     ['cold_restart','bunker-restart-guide','recovery'],
     ['backup_restore','bunker-restore-guide','recovery'],
     ['version_promotion','bunker-pending-guide','recovery'],
-    ['operator_acceptance','bunker-acceptance-guide','recovery']
+    ['operator_acceptance','bunker-acceptance-guide',null]
   ];
   state.closure_tasks = guides.map(([id])=>({id,status:'not_checked',next_action:'Complete the required check.'}));
   const server=createServer(async(req,res)=>{
@@ -107,7 +107,7 @@ test('guided navigation, explicit actions, acceptance/export and mobile layout',
     for(const [id,target,pane] of guides) {
       await page.getByRole('button',{name:'Recovery & handover',exact:true}).click();
       await page.locator('#bunker-closing-checks tr').filter({has:page.getByRole('cell',{name:id.replaceAll('_',' '),exact:true})}).locator('[data-bunker-go]').click();
-      assert.equal(await page.locator(`[data-bunker-pane="${pane}"]`).isVisible(),true);
+      if (pane) assert.equal(await page.locator(`[data-bunker-pane="${pane}"]`).isVisible(),true);
       assert.equal(await page.evaluate(()=>document.activeElement.id),target);
       assert.equal(new URL(page.url()).hash,'#node-bunker-tab');
     }
@@ -170,7 +170,7 @@ test('guided navigation, explicit actions, acceptance/export and mobile layout',
     assert.ok(!setup.includes('97,112,45'));
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
     await page.getByRole('button',{name:'Recovery & handover',exact:true}).click();
-    await page.locator('.bunker-route a[href="#bunker-acceptance-guide"]').click();
+    await page.locator('.bunker-next-footer a[href="#bunker-acceptance-guide"]').click();
     assert.equal(await page.evaluate(()=>document.activeElement.id),'bunker-acceptance-guide');
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
     const references={
@@ -195,7 +195,7 @@ test('guided navigation, explicit actions, acceptance/export and mobile layout',
     assert.equal(await acceptedRow.getByRole('link',{name:'Export the completed handover',exact:true}).count(),1);
     const beforeExport=posts.length;
     const downloaded=page.waitForEvent('download');
-    await page.locator('#bunker-details').getByRole('button',{name:'Export handover evidence',exact:true}).click();
+    await page.locator('#bunker-signoff-panel').getByRole('button',{name:'Export handover evidence',exact:true}).click();
     const download=await downloaded;
     assert.equal(download.suggestedFilename(),'bunker-handoff-evidence.json');
     const exported=JSON.parse(await readFile(await download.path(),'utf8'));
@@ -411,10 +411,10 @@ test('single guided handover resumes from evidence and refreshes health before a
     const main=page.locator('#bunker-next-action');
     const expectNext=async label=>page.waitForFunction(value=>{
       const button=document.querySelector('#bunker-next-action');return !button.disabled && button.textContent===value;
-    },label);
+    },({'Refresh status':'Retry','Check pending version':'Test prepared version','Verify current version & restore':'Test recovery','Restart & verify':'Restart and test','Review acceptance':'Complete handover','Export handover evidence':'Download report'})[label]||label);
     const run=async(action,confirm=false)=>{
       const nextPost=page.waitForResponse(response=>response.url().endsWith('/api/admin/bunker') && response.request().method()==='POST');
-      await main.click();
+      await (action === 'health' ? page.locator('.bunker-live button') : main).click();
       if(confirm) {await page.locator('#bunker-confirm').waitFor({state:'visible'});await page.getByRole('button',{name:'Proceed',exact:true}).click();}
       await nextPost;
       await page.waitForFunction(()=>!document.querySelector('#bunker-next-action').disabled);
@@ -425,10 +425,12 @@ test('single guided handover resumes from evidence and refreshes health before a
     await expectNext('Check health');
     assert.equal(await page.locator('#bunker-details').getAttribute('open'),null);
     assert.equal(posts.length,0,'Opening the guided page is observation only');
+    assert.equal(await main.isVisible(),false,'Initial health has one visible action');
+    assert.equal(await page.locator('.bunker-live button').isVisible(),true);
     if(process.env.BUNKER_QA_DIR) await page.screenshot({path:`${process.env.BUNKER_QA_DIR}/guided-desktop.png`,fullPage:true});
     await run('health');await expectNext('Verify signing');
     await run('verify');await expectNext('Verify signing');
-    assert.equal(await page.locator('#bunker-next-status').textContent(),'failed');
+    assert.equal(await page.locator('#bunker-next-status').textContent(),'Needs attention');
     assert.equal(posts.some(post=>post.action==='pending'),false,'Failed signing must not advance to AWS maintenance');
     failVerify=false;await run('verify');await expectNext('Copy prepare commands');
     await page.setViewportSize({width:390,height:844});
@@ -437,7 +439,7 @@ test('single guided handover resumes from evidence and refreshes health before a
     const beforePrepare=posts.length;await main.click();await expectNext('Check pending version');
     assert.equal(posts.length,beforePrepare,'Copying prepare commands must not execute a check');
     assert.equal(state.evidence.pending,undefined,'Copying cannot create rehearsal evidence');
-    assert.match(await page.locator('#bunker-next-description').textContent(),/copying does not/);
+    assert.match(await page.locator('#bunker-next-description').textContent(),/after the prepare commands succeed/);
     await main.click();await page.locator('#bunker-confirm').waitFor({state:'visible'});
     await page.getByRole('button',{name:'Cancel',exact:true}).click();
     assert.equal(posts.length,beforePrepare,'Cancelled maintenance must not POST');
@@ -459,14 +461,15 @@ test('single guided handover resumes from evidence and refreshes health before a
     await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));
     await page.waitForFunction(()=>document.querySelector('#bunker-summary').textContent.includes('stale'));
     await expectNext('Review acceptance');await main.click();
-    assert.equal(await page.locator('#bunker-details').getAttribute('open'),'');
+    assert.equal(await page.locator('#bunker-details').getAttribute('open'),null,'Sign-off opens inline without exposing diagnostics');
+    assert.equal(await page.locator('#bunker-signoff-panel').isVisible(),true);
     assert.equal(await page.evaluate(()=>document.activeElement.id),'bunker-acceptance-guide');
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
     const references={iam_reviewed:'CHG-2041/iam-review',temporary_admin_removed:'CHG-2041/admin-removal',
       external_client_accepted:'UAT-2041/external-client',recovery_custodian_confirmed:'OPS-2041/recovery-custody'};
     for(const [name,value] of Object.entries(references)) await page.locator(`input[name="${name}"]`).fill(value);
     assert.equal(posts.some(post=>post.action==='accept'),false);
-    assert.equal(await page.locator('#bunker-accept').textContent(),'Refresh health & record acceptance');
+    assert.equal(await page.locator('#bunker-accept').textContent(),'Sign off');
     const reviewedHash=state.evidence.verify.sha256;
     changeReportOnHealth=true;const beforeChanged=posts.length;
     await page.locator('#bunker-accept').click();

@@ -246,6 +246,32 @@ export function nextHandoverStep(data, context = {}, now = Date.now() / 1000) {
     'Set BUNKER_ADMIN_PROFILE in the administrator shell, then run the prepare commands. Stay together for pending verification and promotion.',
     'copy', 'pending', 'Copy prepare commands', 'bunker-pending-guide', {kind: 'run', action: 'pending', label: 'Already prepared? Check pending'});
 }
+// Presentation stays separate from evidence eligibility.
+export function handoverView(step) {
+  const copy = {
+    refresh: ['Connection lost', 'Reconnect to load the latest result.', 'Retry'],
+    busy: ['Checking…', 'You can leave this page and return later.', 'Checking…'],
+    storage: ['Evidence could not be saved', 'Fix storage access, then retry the health check.', 'Check health'],
+    health: ['Check health', 'Check the signer, AWS access and relays.', 'Check health'],
+    signing: ['Test signing', 'Test every configured relay.', 'Verify signing'],
+    prepare: ['Prepare a test version', 'Run these commands, then test the prepared version.', 'Copy prepare commands'],
+    pending: ['Test the prepared version', 'Run after the prepare commands succeed.', 'Test prepared version'],
+    promotion_health: ['Refresh health', 'A fresh check is needed before promotion.', 'Check health'],
+    promote: ['Activate the tested version', 'Run these commands, then test recovery.', 'Copy promotion commands'],
+    restore: ['Test recovery', 'Run after promotion succeeds. The live vault stays in place.', 'Test recovery'],
+    restart: ['Restart and test', 'Remove temporary admin access first. Signing pauses briefly.', 'Restart and test'],
+    acceptance: ['Complete handover', 'Add the four review references and sign off.', 'Complete handover'],
+    reconcile: ['Check AWS versions', 'Compare recorded IDs with AWS. Do not repeat the pending test after promotion.', 'Review versions'],
+    checklist: ['A check needs attention', 'Open the failed check for its next action.', 'View checks'],
+    config: ['Check AWS settings', 'Confirm account, region, secret and runtime role.', 'Open settings'],
+    export: ['Handover recorded', 'Download the report for your handover ticket.', 'Download report']
+  }[step.id];
+  if (!copy) return step;
+  let [title, description, label] = copy;
+  if (step.status === 'failed') { title = step.title; description = step.description; }
+  if (step.id === 'export' && step.status !== 'accepted') description = step.description;
+  return {...step, title, description, label};
+}
 const root = typeof document === 'undefined' ? null : document.querySelector('[data-bunker-root]');
 if (root) {
   let data = null, timer = null, loading = false, loadFailed = false;
@@ -256,7 +282,7 @@ if (root) {
   const words = v => String(v ?? 'not_checked').replaceAll('_', ' ');
   const badge = state => { const n = el('span', words(state), 'bunker-badge'); n.dataset.status = state; return n; };
   const time = r => r?.completed_at ? new Date(r.completed_at * 1000).toLocaleString() : 'Not checked';
-  const message = (text, error = false) => { byId('bunker-message').textContent = text; byId('bunker-message').classList.toggle('bunker-error', error); };
+  const message = (text, error = false) => { byId('bunker-message').hidden = !error && /^(Recorded evidence loaded|Health evidence is stale)/.test(text); byId('bunker-message').textContent = text; byId('bunker-message').classList.toggle('bunker-error', error); };
   const guideLink = (id, title) => { const a = el('a', title, 'bunker-guide-link'); a.href = `#${id}`; a.dataset.bunkerGo = ''; return a; };
   function showPane(name) {
     for (const t of root.querySelectorAll('[data-bunker-tab]')) t.setAttribute('aria-pressed', String(t.dataset.bunkerTab === name));
@@ -268,24 +294,38 @@ if (root) {
     for (let parent = target.parentElement; parent && parent !== root; parent = parent.parentElement) {
       if (parent.tagName === 'DETAILS') parent.open = true;
     }
+    const signoff = target.closest('#bunker-signoff-panel'); if (signoff) signoff.hidden = false;
     const pane = target.closest('[data-bunker-pane]'); if (pane) showPane(pane.dataset.bunkerPane);
     target.focus({preventScroll: true}); target.scrollIntoView({block: 'start'});
   }
   function flowStep() { return nextHandoverStep(data, {...flowHints, loading, loadFailed}); }
   function renderNext() {
-    const next = flowStep();
-    byId('bunker-next-phase').textContent = {prepare: '1 · Operator preparation', admin: '2 · AWS administrator session', close: '3 · Operator closeout'}[next.phase];
-    byId('bunker-next-owner').textContent = next.owner;
-    byId('bunker-next-status').textContent = words(next.status);
+    const next = handoverView(flowStep());
+    byId('bunker-next-phase').textContent = {prepare: 'Handover · Check', admin: 'Handover · Activate', close: 'Handover · Finish'}[next.phase];
+    byId('bunker-next-owner').textContent = next.owner.includes('AWS') ? 'AWS admin' : next.owner === 'Host administrator' ? 'Host admin' : 'You';
+    byId('bunker-next-owner').parentElement.hidden = next.owner === 'Node operator';
+    byId('bunker-next-status').textContent = ({not_checked:'To do',verification_required:'To do',ready:'Ready',running:'Running',stale:'Recheck',failed:'Needs attention',blocked:'Blocked',accepted:'Complete',recorded:'Recorded'})[next.status] || words(next.status);
     byId('bunker-next-status').dataset.status = next.status;
     byId('bunker-next-title').textContent = next.title;
     byId('bunker-next-description').textContent = next.description;
     byId('bunker-next-action').textContent = next.label;
     byId('bunker-next-action').disabled = next.kind === 'none';
+    byId('bunker-next-action').hidden = next.id === 'health';
+    const healthButton = root.querySelector('.bunker-live [data-bunker-action]');
+    healthButton.disabled = !data || loading || !!data.busy || loadFailed;
+    healthButton.classList.toggle('bunker-primary', next.id === 'health');
     const alternate = byId('bunker-next-alternate'); alternate.hidden = !next.alternate;
     alternate.textContent = next.alternate?.label || '';
     const help = byId('bunker-next-help'); help.hidden = !next.help;
-    if (next.help) { help.href = `#${next.help}`; help.textContent = 'Instructions and evidence'; }
+    if (next.help) { help.href = `#${next.help}`; help.textContent = 'Help'; }
+    const health = data?.health || {}, recent = !loadFailed && freshness(health, 60);
+    byId('bunker-live-status').textContent = loadFailed ? 'Health unavailable' : !health.completed_at ? 'Health not checked' : !recent ? 'Health check due' : health.status === 'passed' ? 'Healthy' : 'Needs attention';
+    byId('bunker-live-status').dataset.status = recent ? health.status : 'stale';
+    byId('bunker-live-time').textContent = health.completed_at ? `Checked ${time(health)}` : 'Run a health check to begin';
+    const inline = byId('bunker-inline-commands');
+    const command = next.kind === 'copy' && !loadFailed ? awsAdminCommands(data)[next.action] : '';
+    inline.hidden = !command;
+    if (byId('bunker-inline-code').textContent !== (command || '')) byId('bunker-inline-code').textContent = command || '';
     const passed = (Array.isArray(data?.closure_tasks) ? data.closure_tasks : []).filter(task => task.id !== 'operator_acceptance' && task.status === 'passed').length;
     byId('bunker-next-progress').textContent = data ? `${passed} of 5 technical requirements currently passed · ${data.acceptance ? 'Acceptance record retained' : 'Operator acceptance still required'}` : 'Loading recorded progress…';
   }

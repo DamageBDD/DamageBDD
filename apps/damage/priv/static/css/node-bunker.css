@@ -366,3 +366,19 @@
   .bunker-next-card { padding:18px }
   .bunker-next-actions { flex-direction:column; align-items:stretch }
 }
+
+.bunker-live { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px 20px; border:1px solid var(--bunker-border); border-radius:10px; margin:16px 0 }
+.bunker-live small { display:block; margin-top:4px; color:var(--bunker-muted); font-size:.8rem }
+#bunker-live-status[data-status=passed] { color:#299574 }
+#bunker-live-status[data-status=failed] { color:#d76c62 }
+.bunker-next-card { max-width:760px; margin-top:16px; padding:20px }
+.bunker-next-owner { margin:0!important; font-size:.8rem; color:var(--bunker-muted) }
+.bunker-next-meta { margin-bottom:12px }
+.bunker-next-card h2 { font-size:1.3rem; margin:8px 0 }
+.bunker-next-card p { margin:8px 0 }
+.bunker-next-footer { margin-bottom:0!important }
+#bunker-next-alternate { background:transparent; border-color:transparent; text-decoration:underline; font-weight:normal }
+.bunker-critical { font-weight:600 }
+.bunker-details { margin-top:20px }
+#bunker-inline-commands { margin-top:12px }
+@media(max-width:480px) { .bunker-live { padding:12px; align-items:flex-start } .bunker-live button { flex-shrink:0 } .bunker-next-card { padding:16px } }
