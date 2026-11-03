@@ -76,19 +76,43 @@
     <p>Health shows the latest check. Sign-off records a handover at a point in time; it is not a permanent health guarantee.</p>
   </details>
     <article class="workspace-card bunker-card" id="bunker-signoff-panel" hidden><h2 id="bunker-acceptance-guide" tabindex="-1">Sign off</h2>
-      <p>Accept operational responsibility on behalf of the service owner. Attach the four review references, identifying the delivery provider, accepting operator and recovery custodian in the handover record. Submit to refresh health and record sign-off.</p>
+      <p>You are recording the service owner's acceptance of the AWS-hosted Nostr signer delivered by the implementation provider.</p>
+      <ol>
+        <li>Collect the four confirmations below in a handover ticket or review document.</li>
+        <li>Enter references to those records. Examples are placeholders, not completed evidence.</li>
+        <li>After technical checks pass, select <strong>Sign off</strong> and export the evidence to your handover ticket.</li>
+      </ol>
+      <p>One ticket can cover all four fields if it contains each confirmation. Name the delivery provider, accepting operator and recovery custodian in that record.</p>
+      <details><summary>What is recorded automatically?</summary>
+        <p>The service records your authenticated identity, acceptance time and the signing report hash. The report supplies technical check results. You supply references to the human reviews; the dashboard does not independently verify their contents or discover retained backups.</p>
+        <p>Use 8–256 characters: letters, numbers, spaces and <code>._:/#@-</code>. Use a ticket or document ID if its URL contains other characters. Do not enter credentials, private keys, unlock values or signed download URLs.</p>
+      </details>
       <form id="bunker-acceptance">
-        <label>Effective IAM permissions reviewed<input name="iam_reviewed" required minlength="8" maxlength="256" aria-describedby="bunker-iam-help" placeholder="CHG-2041/iam-review"></label>
-        <p id="bunker-iam-help" class="bunker-field-help">IAM review: runtime role, secret policy, KMS and applicable permission limits. Reference the reviewed record.</p>
-        <label>Temporary administrator access removed<input name="temporary_admin_removed" required minlength="8" maxlength="256" aria-describedby="bunker-admin-help" placeholder="CHG-2041/admin-removal"></label>
-        <p id="bunker-admin-help" class="bunker-field-help">Reference removal of temporary grants, credentials and sessions, or a review confirming none remain. Keep the runtime role.</p>
+        <label>Effective IAM permissions reviewed<input name="iam_reviewed" required minlength="8" maxlength="256" aria-describedby="bunker-iam-help" placeholder="Example: CHG-2041/iam-review"></label>
+        <p id="bunker-iam-help" class="bunker-field-help">Ask the AWS/security administrator for the review record covering the runtime role, secret policy, KMS and permission limits. Enter its reference; a successful secret read alone is not an IAM review.</p>
+        <label>Temporary administrator access removed<input name="temporary_admin_removed" required minlength="8" maxlength="256" aria-describedby="bunker-admin-help" placeholder="Example: CHG-2041/admin-removal"></label>
+        <p id="bunker-admin-help" class="bunker-field-help">Ask the AWS administrator for the removal record, or an access review confirming no temporary grants, credentials or sessions remain. Enter its reference. Keep the runtime role.</p>
         <h3 id="bunker-external-guide" tabindex="-1">Independent external-client acceptance</h3>
-        <label>External client accepted<input name="external_client_accepted" required minlength="8" maxlength="256" aria-describedby="bunker-external-help" placeholder="UAT-2041/external-client"></label>
-        <p id="bunker-external-help" class="bunker-field-help">Reference the independent client test: client key, relay, event ID, verified signature and owner acceptance.</p>
+        <label>External client accepted<input name="external_client_accepted" required minlength="8" maxlength="256" aria-describedby="bunker-external-help" placeholder="Example: UAT-2041/external-client"></label>
+        <p id="bunker-external-help" class="bunker-field-help">Ask the external client owner for their accepted test record: client key, relay, event ID, verified signature and test time. Enter its reference. The dashboard diagnostic test does not replace their acceptance.</p>
         <h3 id="bunker-backup-guide" tabindex="-1">Retained backup and recovery custodian</h3>
-        <label>Recovery custodian and retained backup confirmed<input name="recovery_custodian_confirmed" required minlength="8" maxlength="256" aria-describedby="bunker-backup-help" placeholder="OPS-2041/recovery-custody"></label>
-        <p id="bunker-backup-help" class="bunker-field-help">Reference the retained encrypted backup, integrity check, recovery runbook and named custodian. Test copies are deleted.</p>
-        <p>Sign-off refreshes health and checks that the reviewed report is unchanged.</p>
+        <label>Recovery custodian and retained backup confirmed<input name="recovery_custodian_confirmed" required minlength="8" maxlength="256" aria-describedby="bunker-backup-help" placeholder="Example: OPS-2041/recovery-custody"></label>
+        <p id="bunker-backup-help" class="bunker-field-help">Ask the node/backup administrator for the backup record and named custodian's confirmation. Enter that record's reference, not just a filesystem path. The recovery test deletes its temporary copies; it does not retain a backup.</p>
+        <details><summary>Where do I get the backup location?</summary>
+          <p>Use the actual retained backup's inventory record: a protected storage path, S3 object and version, or AWS Backup recovery-point identifier. The live vault path is not a backup location.</p>
+          <p>If no retained backup exists, ask the administrator to create one through the approved backup process before signing off. Use a consistent snapshot/export for metadata; do not copy an actively written DETS file.</p>
+          <details><summary>Administrator: locate the live source files</summary>
+            <p>Run in the existing node's Erlang console. These read-only expressions show source paths only; they do not create a backup or print the unlock value.</p>
+            <pre class="bunker-cli"><code>%% Encrypted signing vault:
+maps:get(vault_path, damage_nsecbunker_config:load()).
+
+%% Secrets metadata store:
+secrets:secrets_dets_path().</code></pre>
+          </details>
+          <p>The backup record must identify the retained location/version, backup time, checksum or integrity evidence, retention, restore procedure and named custodian. Confirm the recovery process can obtain authorised access to the matching AWS unlock secret without storing that value in the ticket.</p>
+        </details>
+        <p>Sign-off refreshes health, checks that the reviewed report is unchanged, and records your declaration. It does not create a backup, remove administrator access or transfer keys.</p>
+        <p>If Sign off is unavailable, complete the <a href="#bunker-closing-guide" data-bunker-go>remaining technical checks</a> first.</p>
         <button type="submit" class="workspace-button bunker-primary" id="bunker-accept">Sign off</button>
       </form>
       <p id="bunker-acceptance-state"></p>

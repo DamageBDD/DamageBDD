@@ -335,6 +335,21 @@ AWS command references: [PutSecretValue](https://docs.aws.amazon.com/cli/latest/
 
 ### What to put in the four acceptance fields
 
+Sign-off is the receiving operator's declaration on behalf of the service owner
+that the delivered AWS-hosted Nostr signer is accepted. Collect the four human
+confirmations, enter their record references, complete the technical checks,
+then sign off and retain the exported evidence with the handover record. One
+ticket may cover all four fields if it contains all four confirmations and names
+the delivery provider, accepting operator and recovery custodian.
+
+The UI marks placeholder examples explicitly. The backend automatically records
+the authenticated actor, acceptance time and signing-report hash; it does not
+verify the referenced documents or automatically assert the human reviews.
+The AWS/security administrator supplies the IAM review and temporary-access
+removal evidence. The independent client owner supplies client acceptance.
+The backup administrator and named recovery custodian supply backup evidence.
+Existing technical observations can support those records but do not replace them.
+
 Each entry is a reference to an existing reviewed record, not a credential or
 an assertion manufactured by the dashboard. Use 8–256 ASCII characters: letters,
 digits, spaces and `. _ : / # @ -`. Query strings, `nsec1` and AWS access-key
@@ -348,6 +363,35 @@ with actual evidence.
 | Temporary administrator access removed | Temporary grant or principal, who removed it, removal time and supporting access-review/audit record after the AWS work. | `CHANGE-2026-001/admin-removal` |
 | External client accepted | Approved client public key, pinned signer key, test time, tested operation and independently verified result accepted by its operator. | `ACCEPTANCE-2026-001/client-test` |
 | Recovery custodian and retained backup confirmed | Named custodian, protected backup inventory/version and retention/access/recovery record for the actual retained backup. The dashboard's temporary restore copy is not that backup. | `RECOVERY-2026-001/backup-register` |
+
+### Finding the retained backup
+
+The dashboard has no retained-backup inventory. Its recovery check copies the
+encrypted vault and snapshots opaque metadata into temporary files, tests the
+isolated restore, then deletes those files. A passing rehearsal is not evidence
+that an off-node retained backup exists.
+
+Ask the node/backup administrator for an existing backup inventory record. That
+record should identify a protected storage path, S3 object/version or AWS Backup
+recovery point, together with backup time, integrity evidence, retention, restore
+procedure and the named custodian. If there is no retained backup, create one
+through the approved backup process before acceptance. Use a consistent snapshot
+or supported export for metadata, not a raw copy of an actively written DETS file.
+
+To identify the live source files, run these read-only expressions in the existing
+node's Erlang console:
+
+```erlang
+maps:get(vault_path, damage_nsecbunker_config:load()).
+secrets:secrets_dets_path().
+```
+
+These return source paths, not backup destinations. They neither make a backup
+nor print the unlock value. Recovery must also have authorised access to the
+matching AWS unlock secret; never include that value in the handover ticket.
+Enter the backup record's reference in the sign-off form, rather than only a
+path. No backup creation, IAM change, automatic reference population or new
+acceptance claim is implemented by this explanatory UI change.
 
 If pending/restore evidence expires, is replaced, or no longer matches the
 deployment, coordinate a new distinct pending version and repeat the ordered
