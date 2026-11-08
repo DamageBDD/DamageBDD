@@ -37,6 +37,10 @@
             {eval_target_ids, []},
             %% Managed-account mathematical jobs; local bounded computation only.
             {math_dashboard_enabled, true},
+            %% Account-isolated synthetic pre-dispatch logistics; no external spend.
+            {supply_chain_enabled, true},
+            {supply_chain_public_enabled, true},
+            {supply_chain_curve_addresses, false},
             %% Durable, account-scoped dashboard conversation history. Search
             %% uses the canonical ECAI term pipeline in a separate private store.
             {conversation_history_enabled, true},
@@ -48,6 +52,11 @@
             %% workload identity and reviewed digest-pinned image before enabling.
             {aws_setup_enabled, false},
             {aws_setup_probe_enabled, false},
+            %% Startup-managed, checked environment under the node data root.
+            %% Installation runs only when aws_setup_enabled=true. An explicit
+            %% aws_setup_python path is respected and checked, never modified.
+            {aws_setup_python, auto},
+            {aws_setup_runtime_auto_install, true},
             %% Native Ollama-compatible inference gateway. Authentication stays
             %% enabled by default even though the ECAI listener defaults to loopback.
             {ollama_api_enabled, true},

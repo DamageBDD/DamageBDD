@@ -1,0 +1,48 @@
+<section class="view sc-workspace" data-panel="supply-chain" aria-labelledby="scTitle" hidden>
+  <div class="page-intro page-intro-actions">
+    <div><div class="eyebrow">APPLICATIONS / SUPPLY CHAIN</div><h1 id="scTitle">Recovery Lab</h1><p>Break a delivery network. Retrieve a recovery. Check every constraint.</p></div>
+    <span class="sc-badge">SYNTHETIC · PRE-DISPATCH</span>
+  </div>
+  <div id="scAccess" class="surface panel-pad"><p><strong>Public demo · no sign-in required.</strong> Your temporary recovery workspace is separate from other visitors and expires after 30 minutes of inactivity or a server restart. It is shared by tabs in this browser. Sign in to use your saved account workspace; demo cases are not transferred.</p><button id="scSignIn" class="button button-outline" type="button">Sign in for saved workspaces</button></div>
+  <div id="scWorkspace">
+    <div class="sc-setup surface">
+      <div><strong>Fresh-food distribution</strong><small>2 depots · 24 shops · 6 vehicles · 48 starting orders</small></div>
+      <label>Scenario seed<input id="scSeed" type="number" min="1" max="999999" step="1" value="42"></label>
+      <label class="sc-check"><input id="scKeepCases" type="checkbox" checked> Retain recovery memory</label>
+      <button id="scReset" class="button button-outline" type="button">Load / reset scenario</button>
+      <span id="scRevision" class="sc-badge">Not loaded</span>
+    </div>
+    <p id="scStatus" class="sc-status" role="status" aria-live="polite">Load a scenario to begin.</p>
+    <div id="scLoaded" hidden>
+      <nav class="sc-tabs" aria-label="Recovery Lab views">
+        <button type="button" data-sc-tab="network" aria-pressed="true">Network &amp; recovery</button>
+        <button type="button" data-sc-tab="memory" aria-pressed="false">Recovery memory <span id="scMemoryCount">0</span></button>
+        <button type="button" data-sc-tab="benchmark" aria-pressed="false">Benchmark</button>
+        <button type="button" data-sc-tab="evidence" aria-pressed="false">Evidence &amp; history</button>
+      </nav>
+      <div data-sc-pane="network">
+        <div class="sc-metrics" id="scMetrics"></div>
+        <div class="sc-actions surface">
+          <div class="sc-action-group"><span class="sc-step">01</span><strong>Disrupt</strong><button id="scBridge" class="button button-outline" type="button">Close central bridge</button><label class="sr-only" for="scVehicle">Vehicle to disrupt</label><select id="scVehicle"></select><button id="scDisable" class="button button-outline" type="button">Toggle availability</button><button id="scUrgent" class="button button-outline" type="button">+ Urgent order</button></div>
+          <div class="sc-action-group"><span class="sc-step">02</span><strong>Recover</strong><button type="button" class="button button-outline" data-sc-plan="cold">Plan from scratch</button><button type="button" class="button button-outline" data-sc-plan="warm">Warm-start repair</button><button id="scRecover" type="button" class="button button-primary" data-sc-plan="ecai">Retrieve + repair</button></div>
+        </div>
+        <div class="sc-main-grid">
+          <section class="surface sc-map-panel" aria-labelledby="scNetworkTitle">
+            <div class="sc-panel-heading"><div><h2 id="scNetworkTitle">Delivery network</h2><p id="scImpact">No disruptions.</p></div><label>Show route<select id="scRoute"><option value="all">All vehicles</option></select></label></div>
+            <div class="sc-map-wrap"><svg id="scMap" viewBox="0 0 900 445" role="group" aria-label="Delivery network. Select a road to close or reopen it, or a shop to inspect its orders."></svg><div id="scMapEmpty" hidden>No scenario loaded.</div></div>
+            <div class="sc-legend"><span><i class="sc-key sc-key-depot"></i>Depot</span><span><i class="sc-key sc-key-shop"></i>Shop</span><span><i class="sc-key sc-key-closed"></i>Closed road</span><label class="sc-check"><input id="scGhost" type="checkbox" checked> Show approved routes as dashed lines</label></div>
+            <div class="sc-playback"><button id="scPlay" type="button" class="button button-outline" aria-label="Play read-only delivery forecast">Play preview</button><label class="sr-only" for="scClock">Forecast time in simulated minutes</label><input id="scClock" type="range" min="0" max="240" step="1" value="0"><output id="scClockLabel" for="scClock">t + 0 min</output></div>
+            <p class="sc-footnote">Read-only forecast. Road closures last the planning horizon. All changes are pre-dispatch; playback does not execute deliveries or consume stock.</p>
+          </section>
+          <aside class="surface sc-decision" aria-labelledby="scDecisionTitle"><div class="eyebrow">03 / VERIFY &amp; APPROVE</div><h2 id="scDecisionTitle">Recovery evidence</h2><span id="scSource" class="sc-badge">Baseline</span><p id="scValidation"></p><dl id="scDecisionFacts"></dl><button id="scApprove" type="button" class="button button-primary">Approve simulated plan</button><p class="sc-footnote">Approval is revision-checked and revalidated. It is not a live dispatch instruction.</p><details><summary>Rejected fragments / unserved orders</summary><div id="scRejected"></div></details><hr><h3>Selected shop or order</h3><div id="scSelection">Select a shop on the map.</div></aside>
+        </div>
+        <section class="surface sc-panel-pad"><div class="sc-panel-heading"><h2>Delivery timeline</h2><span class="sc-footnote">Travel · loading / waiting · service · deadline</span></div><div id="scTimeline" class="sc-timeline"></div></section>
+        <div class="sc-secondary-grid"><section class="surface sc-panel-pad"><h2>Stock allocation</h2><p class="sc-footnote">Reserved by the displayed plan; physical stock is unchanged.</p><div id="scInventory"></div></section><section class="surface sc-panel-pad"><h2>Recovery policy</h2><p>Protect order priority first, then serve more orders. Balance travel time against changes to approved assignments.</p><label for="scStability">Assignment-change penalty (travel-minute equivalents)</label><div class="sc-policy"><input id="scStability" type="number" min="0" max="100" value="8"><button id="scPolicy" type="button" class="button button-outline">Apply policy</button></div><p class="sc-footnote">Capacity, refrigeration, stock, shelf life and deadlines remain hard constraints. A feasible partial plan is allowed. Global optimality is not claimed.</p></section></div>
+        <section class="surface sc-panel-pad"><div class="sc-panel-heading"><h2>Orders &amp; assignments</h2><label>View<select id="scOrderFilter"><option value="all">All orders</option><option value="unserved">Unserved</option><option value="changed">Changed assignments</option></select></label></div><div id="scOrders" class="sc-table-wrap"></div></section>
+      </div>
+      <div data-sc-pane="memory" hidden><section class="surface sc-panel-pad"><h2>Validated recovery cases</h2><p>Workspace-local case memory uses the existing ECAI canonical term pipeline, postings and exact state digests. Exact hits are revalidated; related cases seed a bounded repair. A curve address, when enabled on the node, identifies content; it does not solve routes or prove their truth.</p><p id="scMemoryMeta" class="sc-footnote"></p><div id="scCases" class="sc-table-wrap"></div><pre id="scCaseDetail" class="code-display">Select a case to inspect its integrity and outcome.</pre><p class="sc-footnote">Up to 64 cases are retained per workspace; guest memory expires with the demo session. Reset the same seed with “Retain recovery memory” checked to demonstrate repeat retrieval. Uncheck it before resetting to clear your case memory.</p></section></div>
+      <div data-sc-pane="benchmark" hidden><section class="surface sc-panel-pad"><div class="sc-panel-heading"><div><h2>Compare measured recovery paths</h2><p>One snapshot. One validator. Four modes.</p></div><button id="scBenchmark" type="button" class="button button-primary">Run comparison</button></div><div id="scBenchmarkTable" class="sc-table-wrap"></div><p id="scBenchmarkNote">No benchmark has run. Results are measured, never prefilled.</p><div class="sc-method-grid"><article><h3>Cold</h3><p>Four deterministic insertion starts.</p></article><article><h3>Warm</h3><p>Approved-route seed plus three alternate starts.</p></article><article><h3>Case lookup</h3><p>Linear scan with the same features and ranking as the ECAI index.</p></article><article><h3>ECAI index</h3><p>Exact digest lookup or canonical-term postings, then revalidation / repair.</p></article></div><p class="sc-footnote">Single local trials are not statistical evidence of superiority. Index reconstruction and integrity checks are included. Both retrieval modes may skip search on an exact hit. Benchmark outputs are not added to memory.</p></section></div>
+      <div data-sc-pane="evidence" hidden><section class="surface sc-panel-pad"><div class="sc-panel-heading"><h2>Reproducible decision evidence</h2><button id="scExport" type="button" class="button button-outline">Export evidence JSON</button></div><p>The export includes the scenario, plan, revision, verification results, comparison and recent event history. Its domain-separated SHA-256 digest checks the exact exported manifest bytes; it is not an authenticated signature or proof of operational truth.</p><div id="scChecks"></div><h3>Recent events</h3><div id="scHistory" class="sc-table-wrap"></div></section></div>
+    </div>
+  </div>
+</section>

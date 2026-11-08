@@ -1,3 +1,4 @@
+import {initSupplyChain, isPublicSupplyChainRequest} from "/static/js/ecai-supply-chain.js?v=recovery-lab-public-v2";
 import {mountAgentWorkspace} from "/ecai/agent-assets/js/agent-workspace.js";
 import {mountBddRouting} from "/ecai/agent-assets/js/bdd-routing.js";
 import {initLlmSettings} from "/static/js/ecai-llm-settings.js?v=llm-settings-v1";
@@ -25,6 +26,20 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
 
   const $ = (id) => document.getElementById(id);
   const routes = [
+    {group: "Public Supply Chain", method: "GET", path: "/ecai/supply-chain/public", description: "Temporary guest workspace. No sign-in; same-origin demo cookie."},
+    {group: "Public Supply Chain", method: "GET", path: "/ecai/supply-chain/public/evidence", description: "Export only this guest workspace evidence."},
+    {group: "Public Supply Chain", method: "POST", path: "/ecai/supply-chain/public/reset", description: "Load/reset synthetic guest scenario.", body: {"expected_revision": 0, "seed": 42, "keep_cases": true}},
+    {group: "Public Supply Chain", method: "POST", path: "/ecai/supply-chain/public/event", description: "Disrupt only this guest network.", body: {"expected_revision": 1, "event": {"kind": "road", "id": "bridge-central", "closed": true}}},
+    {group: "Public Supply Chain", method: "POST", path: "/ecai/supply-chain/public/plan", description: "Compute a bounded guest recovery.", body: {"expected_revision": 2, "mode": "ecai"}},
+    {group: "Public Supply Chain", method: "POST", path: "/ecai/supply-chain/public/approve", description: "Approve a simulated guest plan; no live dispatch.", body: {"expected_revision": 2, "plan_id": "<current proposal ID>"}},
+    {group: "Public Supply Chain", method: "POST", path: "/ecai/supply-chain/public/benchmark", description: "Compare guest recovery modes; rate-limited.", body: {"expected_revision": 2}},
+    {group: "Supply Chain", method: "GET", path: "/ecai/supply-chain", description: "Account-scoped Recovery Lab scenario, plans and case memory."},
+    {group: "Supply Chain", method: "GET", path: "/ecai/supply-chain/evidence", description: "Export reproducible synthetic scenario and decision evidence."},
+    {group: "Supply Chain", method: "POST", path: "/ecai/supply-chain/reset", description: "Create a bounded synthetic pre-dispatch scenario. No real-world effects.", body: {expected_revision: 0, seed: 42, keep_cases: true}},
+    {group: "Supply Chain", method: "POST", path: "/ecai/supply-chain/plan", description: "Retrieve, repair and independently validate a simulated plan.", body: {expected_revision: 1, mode: "ecai"}},
+    {group: "Supply Chain", method: "POST", path: "/ecai/supply-chain/event", description: "Change a synthetic network input; invalidate older proposals.", body: {expected_revision: 1, event: {kind: "road", id: "bridge-central", closed: true}}},
+    {group: "Supply Chain", method: "POST", path: "/ecai/supply-chain/approve", description: "Revalidate and approve a simulated plan; never dispatch live vehicles.", body: {expected_revision: 2, plan_id: "<current proposal ID>"}},
+    {group: "Supply Chain", method: "POST", path: "/ecai/supply-chain/benchmark", description: "Measure cold, warm, lookup and ECAI paths against one snapshot.", body: {expected_revision: 2}},
     {group: "AI providers & roles", method: "GET", path: "/ecai/admin/llm/settings", description: "Node-admin provider configuration, runtime revision and redacted diagnostics."},
     {group: "AI providers & roles", method: "POST", path: "/ecai/admin/llm/settings/update", description: "Persist a revision-checked provider configuration. Use Settings → AI providers & roles to build it.", body: {revision: 0, config: {}}},
     {group: "AI providers & roles", method: "POST", path: "/ecai/admin/llm/probe", description: "Discover models for a saved approved connection; no generation request.", body: {revision: 0, id: "local"}},
@@ -163,12 +178,13 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
     ask: { question: "What is known about this topic?", destination: "local" }
   };
   const marketExamples = { claim: { miner_ak: "ak_..." }, submit: { miner_ak: "ak_...", attestation: "attestation", evidence_ref: "" }, pay: { admin_ak: "ak_..." } };
-  const VIEW_NAMES = { agents: "Agents", "ai-providers": "AI providers & roles", account: "Account settings", "node-settings": "Node settings", personalities: "AI personalities", evaluation: "LLM evaluation", math: "Mathematical paths", orbital: "Orbital verification", overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing", compute: "Compute", keys: "API keys" };
+  const VIEW_NAMES = { "supply-chain": "Applications / Supply chain / Recovery Lab", agents: "Agents", "ai-providers": "AI providers & roles", account: "Account settings", "node-settings": "Node settings", personalities: "AI personalities", evaluation: "LLM evaluation", math: "Mathematical paths", orbital: "Applications / Orbital verification", overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing", compute: "Compute", keys: "API keys" };
   let mathPaths = null;
   let mathKernel = null;
   let math3D = null;
   let orbital = null;
   let evaluation = null;
+  let supplyChain = null;
   let personalities = null;
   let videoStudio = null;
   let marketMaker = null;
@@ -651,7 +667,7 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
     const pathname = new URL(path, location.origin).pathname;
     const conversationMethod = ["GET", "POST", "PATCH", "DELETE"].includes(method);
     if (conversationMethod && (pathname === "/ecai/conversations" || pathname.startsWith("/ecai/conversations/") || pathname === "/ecai/projects" || pathname.startsWith("/ecai/projects/"))) return true;
-    return WALLET_PUBLIC_REQUESTS.has(`${method} ${pathname}`);
+    return isPublicSupplyChainRequest(pathname, method) || WALLET_PUBLIC_REQUESTS.has(`${method} ${pathname}`);
   }
   function applyConsoleCapabilities() {
     const wallet = state.authenticated && state.sessionMode === "wallet";
@@ -677,7 +693,7 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
     const tokenChanged = token !== observedToken;
     if (tokenChanged) {
       state.authEpoch++;
-      mathPaths?.reset(); evaluation?.reset(); personalities?.reset();
+      mathPaths?.reset(); evaluation?.reset(); supplyChain?.reset(); personalities?.reset();
       videoStudio?.reset();
       marketMaker?.reset();
       modelInternals?.reset();
@@ -691,7 +707,7 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
     state.email = session?.email || session?.address || "";
     setAuthenticated(Boolean(session), state.email);
     void agentWorkspace?.accessChanged();
-    mathPaths?.accessChanged(); evaluation?.accessChanged(); personalities?.accessChanged();
+    mathPaths?.accessChanged(); evaluation?.accessChanged(); supplyChain?.accessChanged(); personalities?.accessChanged();
     videoStudio?.accountChanged();
     marketMaker?.accessChanged();
     if (tokenChanged) {
@@ -700,6 +716,8 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
       resetChat();
       if (state.view === "chat") void task(refreshChatWorkspace);
     }
+    if (tokenChanged && state.view === "supply-chain")
+      void task(() => supplyChain?.refresh());
     if (tokenChanged && state.view === "video" && state.authenticated)
       void task(() => videoStudio?.refresh());
   }
@@ -714,8 +732,11 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
     if (state.sessionMode === "wallet" && !walletRequestAllowed(path, method))
       throw new Error("Wallet identity is verified, but this operation requires managed email sign-in.");
     const epoch = state.authEpoch;
+    const publicLab = isPublicSupplyChainRequest(path, method);
     const opts = { credentials: "include", mode: "same-origin", redirect: "error", cache: "no-store",
-      method, signal: options.signal, headers: headers(options.headers) };
+      method, signal: options.signal, headers: publicLab
+        ? { Accept: "application/json", "X-ECAI-Lab-Request": "1" }
+        : headers(options.headers) };
     if (Object.prototype.hasOwnProperty.call(options, "body")) {
       opts.headers["Content-Type"] = "application/json";
       opts.body = JSON.stringify(options.body);
@@ -737,6 +758,7 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
     return data;
   }
   function setAuthenticated(on, label = "") {
+    const wasAuthenticated = state.authenticated;
     const newlyAuthenticated = !!on && !state.authenticated;
     state.authenticated = !!on;
     if (on && label) state.email = label;
@@ -764,6 +786,8 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
       if (["code", "network"].includes(state.view)) navigate("overview");
       marketMaker?.reset();
       mathPaths?.reset(); evaluation?.reset(); personalities?.reset();
+      // A guest-to-guest session probe must not abort an in-flight public demo.
+      if (wasAuthenticated) supplyChain?.reset();
       window.EcaiComputeSettings?.clear();
       window.EcaiOllamaKeys?.clear();
       put("codeReviewDetail", "Select a validated repair from the review queue.");
@@ -832,8 +856,9 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
       if (state.view === "network" && state.nodeAdmin) await window.EcaiIndexPool?.refresh();
       if (state.view === "code" && state.nodeAdmin) await refreshCode();
       if (state.view === "math" && managedSession()) await mathPaths?.refresh();
-      evaluation?.accessChanged();
+      evaluation?.accessChanged(); supplyChain?.accessChanged();
       if (state.view === "evaluation" && managedSession()) await evaluation?.refresh();
+      if (state.view === "supply-chain") await supplyChain?.refresh();
       if (state.view === "compute" && managedSession()) await window.EcaiComputeSettings?.refresh();
       if (state.view === "keys" && managedSession()) await window.EcaiOllamaKeys?.refresh();
       const result = await request("/ecai/index-jobs/status", { ignoreAuth: true });
@@ -887,6 +912,7 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
     math3D?.setVisible(view === "math");
     orbital?.setVisible(view === "orbital");
     evaluation?.setVisible(view === "evaluation");
+    supplyChain?.setVisible(view === "supply-chain");
     personalities?.setVisible(view === "personalities");
     videoStudio?.setVisible(view === "video");
     marketMaker?.setVisible(view === "market-maker");
@@ -3618,7 +3644,7 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
       window.EcaiConsoleSettings?.refresh();
       return;
     }
-    if (state.sessionMode === "wallet" && !["overview", "search", "chat", "api", "math", "orbital", "personalities"].includes(state.view)) {
+    if (state.sessionMode === "wallet" && !["overview", "search", "chat", "api", "math", "orbital", "supply-chain", "personalities"].includes(state.view)) {
       applyConsoleCapabilities();
       return;
     }
@@ -3633,6 +3659,7 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
       case "network": await window.EcaiIndexPool?.refresh(); break;
       case "math": await mathPaths?.refresh(); break;
       case "evaluation": await evaluation?.refresh(); break;
+      case "supply-chain": await supplyChain?.refresh(); break;
       case "personalities": await personalities?.refresh(); break;
       case "compute": if (managedSession()) await window.EcaiComputeSettings?.refresh(); else window.EcaiComputeSettings?.clear(); break;
       case "keys": if (managedSession()) await window.EcaiOllamaKeys?.refresh(); else window.EcaiOllamaKeys?.clear(); break;
@@ -3804,7 +3831,7 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
     window.addEventListener("hashchange", () => navigate(location.hash.slice(1)));
     window.addEventListener("beforeunload", () => {
       agentWorkspace?.dispose(); bddRouting?.dispose();
-      knowledgeSearch.dispose(); chatIndexChooser.dispose(); stopStream(); disconnectSocket(); videoStudio?.dispose(); marketMaker?.dispose(); mathPaths?.dispose(); mathKernel?.dispose(); math3D?.dispose(); orbital?.dispose(); evaluation?.dispose(); personalities?.dispose(); clearInterval(state.poller);
+      knowledgeSearch.dispose(); chatIndexChooser.dispose(); stopStream(); disconnectSocket(); videoStudio?.dispose(); marketMaker?.dispose(); mathPaths?.dispose(); mathKernel?.dispose(); math3D?.dispose(); orbital?.dispose(); evaluation?.dispose(); supplyChain?.dispose(); personalities?.dispose(); clearInterval(state.poller);
       clearInterval(state.telemetryPoller); clearInterval(state.clockTicker);
     });
     document.addEventListener("visibilitychange", () => {
@@ -3818,6 +3845,7 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
     window.EcaiComputeSettings?.init({request, toast, openLogin, currentToken});
     window.EcaiOllamaKeys?.init({request, toast, openLogin, currentToken});
     personalities = initPersonalities({request, currentToken, managedSession, openLogin});
+    supplyChain = initSupplyChain({request, currentToken, managedSession, openLogin});
     evaluation = initEvaluation({request, currentToken, managedSession, isAdmin: () => state.nodeAdmin, openLogin});
     mathPaths = initMathPaths({request, currentToken, managedSession, openLogin, toast});
     mathKernel = initMathKernel();

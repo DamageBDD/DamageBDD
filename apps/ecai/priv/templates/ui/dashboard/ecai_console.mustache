@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="/static/css/ecai-model-internals.css?v=model-internals-v1&theme=semantic-v2">
   <link rel="stylesheet" href="/static/css/ecai-console.css?v=personality-conversations-v1-knowledge-v2&index-mint=index-mint-v1&theme=semantic-v2&chat=wide-v2">
   <link rel="stylesheet" href="/static/css/ecai-personalities.css?v=personalities-v1&theme=semantic-v2">
+  <link rel="stylesheet" href="/static/css/ecai-supply-chain.css?v=recovery-lab-v1">
   <link rel="stylesheet" href="/static/css/ecai-eval.css?v=eval-v1&theme=semantic-v2">
   <link rel="stylesheet" href="/static/css/ecai-math-paths.css?v=math-guided-journey-v1&theme=semantic-v2">
   <link rel="stylesheet" href="/static/css/ecai-math-kernel.css?v=elliptic-kernel-v1">
@@ -62,11 +63,15 @@
             <button type="button" data-view="personalities" class="nav-link"><span class="nav-icon" aria-hidden="true">◉</span>AI personalities</button>
             <button type="button" data-view="video" class="nav-link"><span class="nav-icon" aria-hidden="true">▸</span>Video Studio</button>
           </div>
+          <div class="sidebar-group" role="group" aria-labelledby="navApplicationsLabel">
+            <div class="sidebar-label" id="navApplicationsLabel">APPLICATIONS</div>
+            <button type="button" data-view="supply-chain" class="nav-link"><span class="nav-icon" aria-hidden="true">⇄</span>Supply chain · Recovery Lab</button>
+            <button type="button" data-view="orbital" class="nav-link"><span class="nav-icon" aria-hidden="true">◎</span>Orbital verification <small>OTV-001</small></button>
+          </div>
           <details class="sidebar-tools" id="sidebarMoreTools">
             <summary>More tools</summary>
             <button type="button" data-view="evaluation" class="nav-link"><span class="nav-icon" aria-hidden="true">✓</span>LLM evaluation</button>
             <button type="button" data-view="math" class="nav-link"><span class="nav-icon" aria-hidden="true">↝</span>Mathematical paths</button>
-            <button type="button" data-view="orbital" class="nav-link"><span class="nav-icon" aria-hidden="true">◎</span>Orbital verification <small>OTV-001</small></button>
             <button type="button" data-view="marketplace" class="nav-link"><span class="nav-icon" aria-hidden="true">◇</span>Marketplace</button>
             <button type="button" data-view="market-maker" class="nav-link"><span class="nav-icon" aria-hidden="true">◈</span>Market Maker</button>
             <button type="button" data-view="network" class="nav-link" id="indexPoolNav" hidden><span class="nav-icon" aria-hidden="true">ϟ</span>Funded indexing</button>
@@ -779,7 +784,7 @@
               <span class="otv-hero-aside">OPEN TESTBED<br>NOT FLIGHT DATA</span>
             </div>
           </div>
-          <div class="otv-context-bar"><span><span class="otv-live-dot"></span> DETERMINISTIC LOCAL SIMULATOR</span><span>6 INVARIANTS</span><span>96 SYNTHETIC FRAMES</span><span>NO PROPRIETARY DATA</span></div>
+          <div class="otv-context-bar"><span><span class="otv-live-dot"></span> DETERMINISTIC LOCAL SIMULATOR</span><span>6 INVARIANTS</span><span>96 SYNTHETIC FRAMES</span><span>PUBLIC · NO SIGN-IN</span></div>
           <div class="otv-main-grid">
             <section class="otv-card otv-stage-card" aria-labelledby="otvStageTitle">
               <div class="otv-card-head"><div><span class="otv-overline">01 / VISUAL STATE</span><h2 id="otvStageTitle">Orbital transfer demonstrator</h2></div><span class="otv-chip">3D · ORBIT / ZOOM</span></div>
@@ -844,6 +849,7 @@
         </section>
 
         {{{evaluation_panel}}}
+        {{{supply_chain_panel}}}
 
         {{{compute_settings_panel}}}
 
@@ -994,10 +1000,10 @@
   <script src="/ecai/auth-assets/js/micromodal.min.js"></script>
   <script type="module" src="/static/js/ecai-quick-index.js?v=quick-index-v2&index-mint=index-mint-v1"></script>
   <script type="module" src="/static/js/ecai-index-pool.js"></script>
-  <script type="module" src="/static/js/ecai-aws-setup.js?v=automatic-aws-v1"></script>
+  <script type="module" src="/static/js/ecai-aws-setup.js?v=automatic-aws-v1-runtime-v1"></script>
   <script type="module" src="/static/js/ecai-compute-settings.js?v=compute-only-v1&aws-setup=automatic-aws-v1"></script>
   <script type="module" src="/static/js/ecai-keys.js"></script>
   <script type="module" src="/static/js/ecai-index-mint-settings.js?v=index-mint-settings-v1"></script>
-  <script type="module" src="/static/js/ecai-console.js?v=dashboard-agents-v1-llm-settings-v1-model-internals-v1-personality-conversations-v1-personalities-v1-video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-explorer-v2-kernel-v1-eval-v1-source-retrieval-v1-knowledge-v2-compute-only-v1&index-mint=index-mint-v1-sidebar-settings-v1&chat=wide-v2&orbital=otv001-v1"></script>
+  <script type="module" src="/static/js/ecai-console.js?v=dashboard-agents-v1-llm-settings-v1-model-internals-v1-personality-conversations-v1-personalities-v1-video-studio-v4-mm-v1-compute-v2-keys-v1-math-samples-explorer-v2-kernel-v1-eval-v1-source-retrieval-v1-knowledge-v2-compute-only-v1&index-mint=index-mint-v1-sidebar-settings-v1&chat=wide-v2&orbital=otv001-v1&recovery=recovery-lab-public-v2"></script>
 </body>
 </html>

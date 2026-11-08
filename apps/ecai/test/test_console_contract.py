@@ -44,6 +44,7 @@ class ConsoleContractTests(unittest.TestCase):
         cls.html = cls.html.replace('{{{math_paths_panel}}}', (APP/'priv/templates/ui/dashboard/ecai_math_paths.mustache').read_text(encoding='utf-8'))
         cls.html = cls.html.replace('{{{evaluation_panel}}}', (APP/'priv/templates/ui/dashboard/ecai_eval.mustache').read_text(encoding='utf-8'))
         cls.html = cls.html.replace('{{{personalities_panel}}}', (APP/'priv/templates/ui/dashboard/ecai_personalities.mustache').read_text(encoding='utf-8'))
+        cls.html = cls.html.replace('{{{supply_chain_panel}}}', (APP/'priv/templates/ui/dashboard/ecai_supply_chain.mustache').read_text(encoding='utf-8'))
         damage = APP.parent / 'damage/priv/templates/ui/dashboard'
         route = (damage/'bdd_routing.mustache').read_text()
         agents = (damage/'agents_tab.mustache').read_text().replace('{{{bdd_routing}}}', route)
@@ -80,7 +81,7 @@ class ConsoleContractTests(unittest.TestCase):
 
     def test_dashboard_views_have_navigation(self):
         views = {'overview','search','chat','video','indexing','wikimedia',
-                 'personalities','knowledge','marketplace','market-maker','math','evaluation','operations','code','api','network','compute','keys','account','node-settings','ai-providers','agents'}
+                 'personalities','knowledge','marketplace','market-maker','math','evaluation','operations','code','api','network','compute','keys','account','node-settings','ai-providers','agents','supply-chain','orbital'}
         self.assertEqual(set(self.markup.views), views)
         # Compute and Keys are rendered as dashboard fragments into the shell.
         self.assertEqual(set(self.markup.panels), views - {'compute', 'keys'})
@@ -89,8 +90,16 @@ class ConsoleContractTests(unittest.TestCase):
 
     def test_api_catalog_matches_cowboy_routes(self):
         catalog = set(re.findall(r'method:\s*"(GET|POST|SSE|WS)",\s*path:\s*"([^"]+)"', self.js))
-        self.assertEqual(len(catalog), 127)
+        self.assertEqual(len(catalog), 141)
         declared = {
+            ('GET', '/ecai/supply-chain/public'), ('GET', '/ecai/supply-chain/public/evidence'),
+            ('POST', '/ecai/supply-chain/public/reset'), ('POST', '/ecai/supply-chain/public/event'),
+            ('POST', '/ecai/supply-chain/public/plan'), ('POST', '/ecai/supply-chain/public/approve'),
+            ('POST', '/ecai/supply-chain/public/benchmark'),
+            ('GET', '/ecai/supply-chain'), ('GET', '/ecai/supply-chain/evidence'),
+            ('POST', '/ecai/supply-chain/reset'), ('POST', '/ecai/supply-chain/event'),
+            ('POST', '/ecai/supply-chain/plan'), ('POST', '/ecai/supply-chain/approve'),
+            ('POST', '/ecai/supply-chain/benchmark'),
             ('GET', '/ecai/admin/code/model-internals'),
             ('POST', '/ecai/admin/code/model-internals/update'),
             ('POST', '/ecai/admin/code/model-internals/preview'),

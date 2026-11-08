@@ -62,7 +62,10 @@ test('portable process verifier accepts matching synthetic trace, rejects mutati
 test('native ECAI console routes are wired to the OTV-001 panel',()=>{
   const template=readFileSync(new URL('../../priv/templates/ui/dashboard/ecai_console.mustache',import.meta.url),'utf8');
   const consoleJs=readFileSync(new URL('../../priv/static/js/ecai-console.js',import.meta.url),'utf8');
-  assert.match(template,/data-view="orbital"/);
+  const applications=template.split('id="navApplicationsLabel"')[1].split('<details class="sidebar-tools"')[0];
+  assert.match(applications,/data-view="orbital"/);
+  assert.match(applications,/data-view="supply-chain"/);
+  assert.match(template,/PUBLIC · NO SIGN-IN/);
   assert.match(template,/data-panel="orbital"/);
   assert.match(template,/ecai-orbital\.css/);
   assert.match(consoleJs,/orbital\?\.setVisible\(view === "orbital"\)/);
