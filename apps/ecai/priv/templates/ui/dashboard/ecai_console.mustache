@@ -8,6 +8,7 @@
   <meta name="theme-color" content="#101b32">
   <title>{{brand_name}} · Control plane</title>
   {{#has_brand_favicon}}<link rel="icon" href="{{brand_favicon}}">{{/has_brand_favicon}}
+  {{^has_brand_favicon}}<link rel="icon" type="image/svg+xml" href="/static/img/ecai-brain.svg?v=brain-mint-v1">{{/has_brand_favicon}}
   <link rel="stylesheet" href="/static/css/ecai-llm-settings.css?v=llm-settings-v1">
   <link rel="stylesheet" href="/static/css/ecai-model-internals.css?v=model-internals-v1&theme=semantic-v2">
   <link rel="stylesheet" href="/static/css/ecai-console.css?v=personality-conversations-v1-knowledge-v2&index-mint=index-mint-v1&theme=semantic-v2&chat=wide-v2">
@@ -32,6 +33,7 @@
   <link rel="stylesheet" href="/static/css/ecai-aws-setup.css?v=automatic-aws-v1&theme=semantic-v2">
   <link rel="stylesheet" href="/static/css/ecai-sidebar-settings.css?v=sidebar-settings-v1&theme=semantic-v2">
   <link rel="stylesheet" href="/ecai/agent-assets/css/agent-workspace.css?v=dashboard-agents-v1">
+  <link rel="stylesheet" href="/static/css/ecai-brand-brain-mint.css?v=brain-mint-v1">
   <link rel="stylesheet" href="/api/themes/css?app=ecai">
   <link rel="stylesheet" href="/static/css/ecai-energyflex.css?v=energyflex-v1">
 </head>
@@ -40,7 +42,12 @@
     <aside class="console-sidebar" id="consoleSidebar" aria-label="Primary navigation">
       <div class="brand-block">
         {{#has_brand_logo}}<img class="theme-brand-logo" src="{{brand_logo}}" alt="">{{/has_brand_logo}}
-        {{^has_brand_logo}}<div class="brand-symbol" aria-hidden="true">e</div>{{/has_brand_logo}}
+        {{^has_brand_logo}}
+        <div class="brand-symbol ecai-brain-brand" aria-hidden="true" data-ecai-brand="brain-mint-v1">
+          <img class="ecai-brain-brand__image" src="/static/img/ecai-brain.svg?v=brain-mint-v1" width="30" height="30" alt="" decoding="async" draggable="false">
+          <span class="ecai-brain-brand__sheen"></span>
+        </div>
+        {{/has_brand_logo}}
         <div><div class="brand-name">{{brand_name}}</div><div class="brand-caption">{{brand_tagline}}</div></div>
         <button class="icon-button sidebar-close" type="button" id="closeNav" aria-label="Close menu">×</button>
       </div>

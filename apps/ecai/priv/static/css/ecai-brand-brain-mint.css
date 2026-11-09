@@ -1,0 +1,122 @@
+/* ECAI brain mark: original artwork, mint framing, no JavaScript or global theme changes. */
+.console-sidebar .brand-symbol.ecai-brain-brand {
+  --ecai-brand-mint: #85f3d1;
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  flex: 0 0 42px;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  margin: 0;
+  overflow: visible;
+  border: 1px solid rgba(133, 243, 209, 0.36);
+  border-radius: 13px;
+  background: linear-gradient(145deg, #15363b, #101f30);
+  color: var(--ecai-brand-mint);
+  box-shadow: inset 0 1px 0 rgba(218, 255, 244, 0.12), 0 3px 12px rgba(0, 0, 0, 0.14);
+  font-size: 0;
+  line-height: 1;
+}
+
+/* A small, static aura remains after the two entrance breaths finish. */
+.console-sidebar .ecai-brain-brand::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: -4px;
+  border: 1px solid rgba(133, 243, 209, 0.42);
+  border-radius: 17px;
+  box-shadow: 0 0 16px rgba(96, 233, 191, 0.24);
+  opacity: 0.28;
+  transform: scale(0.97);
+  pointer-events: none;
+}
+
+.console-sidebar .ecai-brain-brand__image {
+  position: relative;
+  z-index: 1;
+  display: block;
+  box-sizing: border-box;
+  width: 30px;
+  height: 30px;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  object-fit: contain;
+  /* Do not recolour, distort, or crop the existing ECAI brain artwork. */
+  filter: none;
+  pointer-events: none;
+}
+
+.console-sidebar .ecai-brain-brand__sheen {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.console-sidebar .ecai-brain-brand__sheen::before {
+  content: "";
+  position: absolute;
+  inset: -12px;
+  background: linear-gradient(110deg, transparent 35%, rgba(210, 255, 241, 0.19) 50%, transparent 65%);
+  opacity: 0;
+  transform: translateX(-140%);
+}
+
+/* Motion is opt-in through the OS preference. Entrance stops after 3.6 seconds. */
+@media (prefers-reduced-motion: no-preference) {
+  .console-sidebar .ecai-brain-brand::before {
+    animation: ecai-brand-mint-breathe 1.8s ease-in-out 2;
+  }
+  .console-sidebar .brand-block:focus-within .ecai-brain-brand__sheen::before {
+    animation: ecai-brand-mint-sheen 700ms ease-out 1;
+  }
+}
+
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .console-sidebar .brand-block:hover .ecai-brain-brand__sheen::before {
+    animation: ecai-brand-mint-sheen 700ms ease-out 1;
+  }
+}
+
+@keyframes ecai-brand-mint-breathe {
+  0%, 100% { opacity: 0.28; transform: scale(0.97); }
+  50% { opacity: 0.65; transform: scale(1.035); }
+}
+
+@keyframes ecai-brand-mint-sheen {
+  0% { opacity: 0; transform: translateX(-140%); }
+  25%, 70% { opacity: 1; }
+  100% { opacity: 0; transform: translateX(140%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .console-sidebar .ecai-brain-brand,
+  .console-sidebar .ecai-brain-brand::before,
+  .console-sidebar .ecai-brain-brand__sheen::before {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .console-sidebar .brand-symbol.ecai-brain-brand {
+    background: Canvas;
+    border-color: CanvasText;
+    box-shadow: none;
+  }
+  .console-sidebar .ecai-brain-brand::before,
+  .console-sidebar .ecai-brain-brand__sheen {
+    display: none;
+  }
+}
