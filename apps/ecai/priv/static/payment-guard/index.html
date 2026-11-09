@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en-AU"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>Agent Payment Guard · ECAI</title><link rel="stylesheet" href="../css/ecai-payment-guard.css?v=payment-guard-v1"><link rel="stylesheet" href="standalone.css"></head><body><main>        <!-- PAYMENT_GUARD_PUBLIC_PANEL_V1: synthetic, no credentials, no payment routes -->
+        <section class="view payment-guard" id="paymentGuard" data-panel="payment-guard" aria-labelledby="pgTitle" hidden>
+          <div class="pg-shell">
+            <header class="pg-hero">
+              <div>
+                <p class="pg-eyebrow"><span class="pg-dot"></span> AGENTS &amp; TRUST · INTERACTIVE LAB</p>
+                <h1 id="pgTitle">Agent Payment<br>Guard<span>.</span></h1>
+                <p class="pg-lead">Let agents propose.<br><em>Let policy decide.</em></p>
+                <p class="pg-intro">An invoice. An agent proposal. One final checkpoint.<br>See what reaches the ledger—and what never should.</p>
+                <div class="pg-badges"><span>↗ Public demo</span><span>No account needed</span><span>Fictional AUD · no real funds</span></div>
+              </div>
+              <div class="pg-hero-art">
+                <svg viewBox="0 0 240 210" aria-hidden="true" class="pg-shield"><defs><radialGradient id="pgHalo"><stop stop-color="#9fe870" stop-opacity=".16"/><stop offset="1" stop-color="#9fe870" stop-opacity="0"/></radialGradient></defs><circle cx="120" cy="100" r="98" fill="url(#pgHalo)"/><ellipse cx="120" cy="100" rx="105" ry="65" transform="rotate(-28 120 100)" fill="none" stroke="#447d7c"/><ellipse cx="120" cy="100" rx="75" ry="96" transform="rotate(26 120 100)" fill="none" stroke="#39534e" stroke-dasharray="4 6"/><path d="M120 40 L167 58 V98 Q166 141 120 163 Q74 141 73 98 V58 Z" fill="#16342b" stroke="#b0f279" stroke-width="2"/><path d="m98 100 15 15 30-35" fill="none" stroke="#b0f279" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="211" cy="67" r="4" fill="#53cec6"/><circle cx="41" cy="145" r="3" fill="#b0f279"/></svg>
+                <button type="button" class="pg-btn" data-pg="tour-open">Take a guided tour ↗</button>
+                <button type="button" class="pg-btn pg-subtle" data-pg="present">Presentation mode ⛶</button>
+              </div>
+            </header>
+            <div class="pg-steps" aria-label="How to use this demo">
+              <div><b>01</b><p><strong>Pick a situation</strong><span>Try a valid payment or a deliberate fault.</span></p></div>
+              <div><b>02</b><p><strong>Compare the outcomes</strong><span>Same proposal. With and without a gate.</span></p></div>
+              <div><b>03</b><p><strong>Inspect the ledger</strong><span>Replay decisions. Export the evidence.</span></p></div>
+            </div>
+            <div class="pg-heading"><div><p class="pg-eyebrow">YOUR EXPERIMENT</p><h2>What lands in accounts payable?</h2></div><button type="button" class="pg-text-btn" data-pg="reset">Reset the reference example ↺</button></div>
+            <div class="pg-scenarios" data-pg="scenarios" role="group" aria-label="Payment scenarios"></div>
+            <div class="pg-controls">
+              <label>Per-payment limit <strong data-pg="limit-value">A$5,000</strong><input data-pg="limit" type="range" min="500" max="10000" step="100" value="5000"><small>Policy for the sandbox—not a real account setting.</small></label>
+              <label>Approval clock<select data-pg="clock"><option value="0">Now · reference time</option><option value="15">Advance 15 minutes · expiry boundary</option><option value="30">Advance 30 minutes</option><option value="60">Advance 60 minutes</option></select><small>Approvals are rechecked at execution time.</small></label>
+              <button type="button" class="pg-btn pg-primary" data-pg="run">Compare payment paths →</button>
+            </div>
+            <p data-pg="message" class="pg-message" role="status" aria-live="polite"></p>
+            <div class="pg-stale" data-pg="stale" role="status" hidden>Settings changed. Previous figures are hidden and export is disabled. Compare again to check the current policy.</div>
+            <div data-pg="results">
+              <div class="pg-metrics">
+                <div class="pg-metric pg-highlight"><span>Unauthorised test outflow avoided</span><strong data-pg="prevented">—</strong><small>Versus this scripted, unguarded fixture.</small></div>
+                <div class="pg-metric"><span>Guarded unauthorised outflow</span><strong data-pg="unsafe">—</strong><small>Actual mock ledger effect.</small></div>
+                <div class="pg-metric"><span>Eligible payment completed</span><strong data-pg="eligible">—</strong><small data-pg="eligible-note">Valid payments must still get through.</small></div>
+                <div class="pg-metric"><span>Local acceptance checks</span><strong data-pg="pass">—</strong><small>Not a remote DamageBDD run.</small></div>
+              </div>
+              <div class="pg-stage pg-card">
+                <div class="pg-heading"><div><p class="pg-eyebrow">FOLLOW THE DECISION · SCRIPTED CANDIDATE</p><h2>Permission is not in the prompt.</h2></div><span class="pg-pill" data-pg="decision-badge">READY</span></div>
+                <div class="pg-pipeline" data-pg="pipeline">
+                  <article class="pg-node" data-pg-stage="0"><span class="pg-node-icon">▤</span><small>01 · UNTRUSTED INPUT</small><h3>Invoice received</h3><p data-pg="invoice-summary"></p><span class="pg-mini-badge pg-amber">Content ≠ authority</span></article>
+                  <span class="pg-connector" aria-hidden="true">→</span>
+                  <article class="pg-node" data-pg-stage="1"><span class="pg-node-icon">✧</span><small>02 · PROPOSAL FIXTURE</small><h3>Agent proposes</h3><p data-pg="proposal-summary"></p><span class="pg-mini-badge">No live model call</span></article>
+                  <span class="pg-connector" aria-hidden="true">→</span>
+                  <article class="pg-node pg-gate" data-pg-stage="2"><span class="pg-node-icon">◇</span><small>03 · FINAL POLICY GATE</small><h3 data-pg="gate-title">Check before debit</h3><p data-pg="gate-summary"></p><span class="pg-mini-badge">Current state, every time</span></article>
+                  <span class="pg-connector" aria-hidden="true">→</span>
+                  <article class="pg-node" data-pg-stage="3"><span class="pg-node-icon">▥</span><small>04 · MOCK LEDGER</small><h3 data-pg="ledger-title">No hidden side effect</h3><p data-pg="ledger-summary"></p><span class="pg-mini-badge">Fictional funds only</span></article>
+                </div>
+                <div class="pg-playback"><button type="button" class="pg-btn" data-pg="play">▶ Replay decision</button><input type="range" data-pg="position" min="0" max="3" value="3" step="1" aria-label="Decision replay position"><span data-pg="stage-label">04 · Ledger outcome</span></div>
+                <p class="pg-caption" data-pg="replay-caption">Playback explains a completed local run; it does not execute additional payments.</p>
+              </div>
+              <div class="pg-heading"><div><p class="pg-eyebrow">SAME INPUT · THREE EXPLICIT PATHS</p><h2>Inspect what actually moved.</h2></div><span class="pg-pill">Controlled comparison</span></div>
+              <div class="pg-lanes" data-pg="lanes"></div>
+              <p class="pg-caption">The conventional guard and ECAI workspace use the same deterministic gate. Matching outcomes are shown honestly; this is not evidence of a unique AI advantage or a measured model failure rate.</p>
+              <div class="pg-two">
+                <section class="pg-card"><div class="pg-heading"><div><p class="pg-eyebrow">UNTRUSTED vs TRUSTED</p><h2>The evidence behind the decision</h2></div></div><div class="pg-source-note"><span class="pg-mini-badge pg-amber">Invoice text · untrusted fixture</span><blockquote data-pg="invoice-text"></blockquote></div><div class="pg-records" data-pg="records"></div><p class="pg-caption">Exact local fixture lookup, not native ECAI index retrieval. Approver identities are simulated, not cryptographically authenticated people.</p></section>
+                <section class="pg-card"><div class="pg-heading"><div><p class="pg-eyebrow">CHECKED AT EXECUTION</p><h2>Why the gate decided</h2></div></div><label class="pg-attempt-label">Inspect request <select data-pg="attempt"></select></label><div class="pg-checks" data-pg="checks"></div></section>
+              </div>
+              <section class="pg-card pg-ledger"><div class="pg-heading"><div><p class="pg-eyebrow">OBSERVED SIDE EFFECTS</p><h2>The mock ledger is the answer.</h2></div><label>Ledger path<select data-pg="ledger-path"><option value="guarded">ECAI workspace + guard</option><option value="conventional">Conventional rule guard</option><option value="unguarded">Scripted proposal, no gate</option></select></label></div><div class="pg-ledger-totals" data-pg="ledger-totals"></div><div class="pg-table-wrap"><table><caption class="pg-sr-only">Executed mock transfers for the selected path</caption><thead><tr><th>Receipt</th><th>Invoice</th><th>Beneficiary</th><th>Debit (AUD)</th><th>Balance (AUD)</th></tr></thead><tbody data-pg="ledger-rows"></tbody></table></div><p class="pg-caption" data-pg="ledger-note"></p></section>
+              <section class="pg-card pg-evidence"><div><p class="pg-eyebrow">TAKE THE EVIDENCE WITH YOU</p><h2>Don’t trust the badge. Replay the result.</h2><p>Export the versioned fixture, proposals, checks and ledger. A separate Python verifier reconstructs every result.</p><div class="pg-actions"><button type="button" class="pg-btn pg-primary" data-pg="export">Export evidence ↓</button><button type="button" class="pg-btn" data-pg="suite">Run all 10 scenarios</button><button type="button" class="pg-btn" data-pg="tamper">Try a forged approval</button></div><p data-pg="challenge-result" class="pg-message" role="status"></p></div><div class="pg-acceptance" data-pg="acceptance"></div></section>
+              <details class="pg-details"><summary>Scope, assumptions &amp; independent verification</summary><div><p><strong>Browser-local synthetic demonstration.</strong> No real agent, bank, wallet, card, payment provider or external beneficiary is connected. Candidates are scripted. Anyone controlling the browser can edit this sandbox; it is not a production security boundary.</p><p>Each comparison starts fresh isolated mock ledgers. Retries happen inside a single run; replay never debits again.</p><p>The final-gate pattern, integer-cent ledger and same-instance check-and-debit are executable here. Distributed transaction locking, durable idempotency, real identity approval and live payment integration are not implemented.</p><p>A SHA-256 checksum binds the exported bytes to the included digest; it is not a signature, trusted provenance or proof of real savings. The verifier checks against the known fixture version and recomputes outcomes—even after an attacker rehashes a changed report.</p><p><strong>From your repository root:</strong></p><pre>python3 apps/ecai/tools/verify_payment_guard.py payment-guard.evidence.json</pre><p>Local acceptance checks are not a DamageBDD backend execution. See the included operator documentation for the integration boundary and test commands.</p></div></details>
+            </div>
+            <footer class="pg-footer"><span>ECAI · AGENT PAYMENT GUARD</span><span>Propose. Check. Execute. Verify.</span></footer>
+          </div>
+          <dialog class="pg-tour" data-pg="tour" aria-labelledby="pgTourTitle"><form method="dialog"><button class="pg-tour-close" aria-label="Close guided tour">×</button></form><p class="pg-eyebrow" data-pg="tour-counter">01 OF 04</p><h2 id="pgTourTitle" data-pg="tour-title"></h2><p data-pg="tour-text"></p><div class="pg-actions"><button class="pg-btn" data-pg="tour-back" type="button">Back</button><button class="pg-btn pg-primary" data-pg="tour-next" type="button">Next →</button></div></dialog>
+        </section>
+</main><script type="module" src="../js/payment-guard-standalone.js?v=payment-guard-v1"></script></body></html>
