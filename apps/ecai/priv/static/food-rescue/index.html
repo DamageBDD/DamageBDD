@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>Food Rescue &amp; Recall | ECAI</title><link rel="stylesheet" href="../css/ecai-food-rescue.css?v=food-rescue-v1"><link rel="stylesheet" href="standalone.css?v=food-rescue-v1"></head><body><main>        <!-- FOOD_RESCUE_PUBLIC_PANEL_V1: bounded local synthetic demo; no privileged API -->
+        <section class="view fr-app" data-panel="food-rescue" id="foodRescue" hidden aria-labelledby="frTitle">
+          <div class="fr-hero">
+            <div>
+              <div class="fr-kicker"><span class="fr-live-dot"></span> FOOD RESCUE &amp; RECALL · INTERACTIVE LAB</div>
+              <h1 id="frTitle">Good food.<br><em>Better destinations.</em></h1>
+              <p class="fr-intro">Save what can be delivered. Hold what cannot be verified.<br>Six lots. Two vans. One morning to make a difference.</p>
+              <div class="fr-badges"><span>Public demo</span><span>No account needed</span><span>Synthetic data</span></div>
+            </div>
+            <div class="fr-hero-side">
+              <svg viewBox="0 0 220 160" class="fr-emblem" aria-hidden="true"><ellipse cx="110" cy="84" rx="91" ry="57"/><ellipse cx="110" cy="84" rx="64" ry="68" transform="rotate(35 110 84)"/><path class="fr-leaf" d="M110 118C65 108 66 54 119 40c4 42-4 66-9 78Z"/><path d="m94 138 16-37 20-27"/><circle cx="183" cy="54" r="5"/><circle cx="41" cy="120" r="3"/></svg>
+              <button type="button" class="fr-btn fr-quiet" data-fr="tour-open">Take a guided tour ↗</button>
+              <button type="button" class="fr-btn fr-quiet" data-fr="present" aria-pressed="false">Presentation mode ⛶</button>
+            </div>
+          </div>
+          <div class="fr-how" aria-label="How to use this demo">
+            <div><span>01</span><p><strong>Pick a situation</strong>Start with the morning or introduce a disruption.</p></div>
+            <div><span>02</span><p><strong>Compare the plans</strong>Same stock. Same vans. Different assignments.</p></div>
+            <div><span>03</span><p><strong>Replay &amp; challenge</strong>Follow each lot. Inspect holds. Export the evidence.</p></div>
+          </div>
+          <div class="fr-section-head"><div><div class="fr-kicker">YOUR EXPERIMENT</div><h2>What changed this morning?</h2></div><button class="fr-text-btn" type="button" data-fr="reset">Reset reference example ↺</button></div>
+          <div class="fr-scenarios" data-fr="scenarios" aria-label="Choose a demo scenario"></div>
+          <div class="fr-controls">
+            <label>Capacity per van <strong data-fr="capacity-label">160 kg</strong><input type="range" data-fr="capacity" min="80" max="180" step="10" value="160"><small>Whole lots only. The same limit applies to both plans.</small></label>
+            <label>Dispatch delay<select data-fr="delay"><option value="0">On time · 09:00 start</option><option value="5">5 minutes late</option><option value="10">10 minutes late</option><option value="15">15 minutes late</option><option value="20">20 minutes late</option><option value="25">25 minutes late</option><option value="30">30 minutes late</option></select><small>Expiry clocks do not pause while you wait.</small></label>
+            <button type="button" class="fr-btn fr-primary" data-fr="run">Compare rescue plans →</button>
+          </div>
+          <p class="fr-message" data-fr="message" role="status" aria-live="polite"></p>
+          <div class="fr-stale" data-fr="stale" hidden>Inputs changed. Previous results are no longer current. Compare the plans again.<button class="fr-btn fr-quiet" type="button" data-fr="stale-check">Check the previous plan</button></div>
+          <div class="fr-results" data-fr="results">
+            <div class="fr-section-head fr-compact"><div class="fr-kicker">END-OF-WINDOW OUTCOME · RESCUE PLAN</div><span class="fr-muted">Only eligible deliveries count as rescued.</span></div>
+            <div class="fr-metrics">
+              <article class="fr-metric fr-metric-lead"><span>Eligible food delivered</span><strong data-fr="rescued">—</strong><small data-fr="total">of 400 kg available</small></article>
+              <article class="fr-metric"><span>Compared with simple dispatch</span><strong data-fr="uplift">—</strong><small>Additional eligible kilograms delivered</small></article>
+              <article class="fr-metric"><span>Quarantined / unverifiable</span><strong data-fr="held">—</strong><small data-fr="held-note">Held stock is not counted as saved.</small></article>
+              <article class="fr-metric"><span>Unmet recipient demand</span><strong data-fr="unmet">—</strong><small>No invented stock or inflated deliveries.</small></article>
+            </div>
+            <div class="fr-stage-grid">
+              <article class="fr-card fr-map-card">
+                <div class="fr-section-head"><div><div class="fr-kicker">THE NEIGHBOURHOOD · SCHEMATIC</div><h2>Follow the food</h2></div><output class="fr-clock" data-fr="clock">09:00</output></div>
+                <div class="fr-map-toolbar"><label>Viewing <select data-fr="path"><option value="rescue">Rescue plan · bounded exact</option><option value="baseline">Simple dispatch · expiry first</option></select></label><span class="fr-small" data-fr="map-state">Six lots at the hub</span></div>
+                <div class="fr-map-wrap" data-fr="map"></div>
+                <div class="fr-playback"><button type="button" class="fr-btn fr-quiet" data-fr="play" aria-pressed="false">▶ Play</button><input type="range" data-fr="position" aria-label="Replay minute" min="0" max="270" value="0" step="1"><button type="button" class="fr-text-btn" data-fr="next">Next event →</button></div>
+                <div class="fr-map-legend"><span><i class="fr-dot fr-green"></i>Eligible delivery</span><span><i class="fr-dot fr-blue"></i>In transit</span><span><i class="fr-dot fr-red"></i>Held</span><span><i class="fr-dot fr-amber"></i>Unverifiable</span></div>
+                <p class="fr-caption">Click a recipient to see its stock. Vans use open routes and return to the hub. This is a fictional map, not live tracking.</p>
+              </article>
+              <aside class="fr-card fr-dispatch">
+                <div class="fr-kicker">DISPATCH DESK</div><h2>Every destination matters.</h2>
+                <div class="fr-recipient-list" data-fr="recipients"></div>
+                <div class="fr-rule-note"><strong>Keep the distinction.</strong><p>Delivered, held and unknown are different states. A missing sensor log never becomes a green tick.</p></div>
+                <div class="fr-mini-counts" data-fr="live-counts"></div>
+                <button type="button" class="fr-text-btn" data-fr="show-all">Show all lots ↗</button>
+              </aside>
+            </div>
+            <div class="fr-section-head"><div><div class="fr-kicker">LOT-LEVEL TRACEABILITY</div><h2>Nothing disappears between stops.</h2></div><span class="fr-pill" data-fr="lot-filter">All six lots · replay state</span></div>
+            <div class="fr-lots" data-fr="lots"></div>
+            <div class="fr-lower-grid">
+              <article class="fr-card">
+                <div class="fr-section-head"><div><div class="fr-kicker">A FAIR COMPARISON</div><h2>Rescue more. Show the work.</h2></div></div>
+                <div data-fr="comparison" class="fr-comparison"></div>
+                <p class="fr-caption">The baseline uses first-expiry-first-out and the earliest feasible arrival. The rescue planner searches all permitted whole-lot assignments in this small fixed timetable. Both use the same release checks. A stronger conventional optimiser can match the result.</p>
+                <details class="fr-details"><summary>What does “exact” mean here?</summary><p>Six lots, six scheduled trips, fixed routes and known demand. The planner maximises eligible kilograms, then minimises kilogram-minutes to arrival, then round-trip travel time. It is not a general vehicle-routing optimum, a new AI benchmark or a forecast of real-world savings.</p><p>Late recalls are withheld from planning and introduced during execution. A plan optimal before a recall may not remain optimal afterwards; this demo traces and holds the affected stock, rather than silently re-planning with future knowledge.</p></details>
+              </article>
+              <article class="fr-card fr-recall-card">
+                <div class="fr-section-head"><div><div class="fr-kicker">RECALL RESPONSE</div><h2>One batch. Every affected lot.</h2></div><span class="fr-pill" data-fr="recall-badge">No active recall</span></div>
+                <div data-fr="recall" class="fr-recall-tree"></div>
+                <p class="fr-caption">Recipient holds are simulated ledger states, not confirmations from real recipients. Held food is not automatically declared spoiled.</p>
+              </article>
+            </div>
+            <article class="fr-card fr-verification">
+              <div class="fr-section-head"><div><div class="fr-kicker">VERIFICATION WORKBENCH · LOCAL EXECUTION</div><h2>Do not trust the green tick. Inspect it.</h2></div><strong class="fr-check-total" data-fr="pass">—</strong></div>
+              <div class="fr-checks" data-fr="checks"></div>
+              <div class="fr-actions"><button type="button" class="fr-btn fr-primary" data-fr="export">Export replay evidence ↓</button><button type="button" class="fr-btn fr-quiet" data-fr="challenge">Try releasing recalled stock</button><button type="button" class="fr-btn fr-quiet" data-fr="suite">Run all 8 scenarios</button></div>
+              <p class="fr-challenge-result" data-fr="challenge-result" role="status"></p>
+              <details class="fr-details"><summary>Inspect delivery events &amp; release checks</summary><div class="fr-table-wrap"><table><caption>Observed synthetic ledger effects for the selected plan</caption><thead><tr><th>Time</th><th>Event</th><th>Lot</th><th>Mass</th><th>Location</th></tr></thead><tbody data-fr="ledger"></tbody></table></div><div data-fr="gates" class="fr-gates"></div></details>
+              <details class="fr-details"><summary>Inspect the timetable and model assumptions</summary><div class="fr-table-wrap"><table><caption>Fixed service timetable; routes are recomputed after a closure</caption><thead><tr><th>Trip</th><th>Van</th><th>Recipient</th><th>Depart</th><th>Arrive</th><th>Return</th></tr></thead><tbody data-fr="timetable"></tbody></table></div><p>Stock is indivisible. No split deliveries, re-stocking or live traffic. Fictional cold-storage rules require three recorded readings at or below 5°C. These values are invented for testing, not operating guidance for any food product. Sensor readings have no real provenance.</p></details>
+              <p class="fr-caption">Export includes inputs, assignments, checks, event history and a SHA-256 checksum. The separate Python verifier reconstructs the synthetic run. A checksum is not a signature or proof of real-world food condition.</p>
+            </article>
+          </div>
+          <footer class="fr-footer"><strong>ECAI Food Rescue &amp; Recall</strong><p>Browser-local synthetic demonstration. No account, model inference, live sensors or real deliveries. No native ECAI index retrieval or remote DamageBDD execution is claimed. This is not food-safety certification.</p></footer>
+          <dialog class="fr-tour" data-fr="tour" aria-labelledby="frTourTitle"><div class="fr-kicker" data-fr="tour-counter">01 OF 04</div><h2 id="frTourTitle" data-fr="tour-title"></h2><p data-fr="tour-text"></p><div class="fr-actions"><button type="button" class="fr-btn fr-quiet" data-fr="tour-close">Close</button><button type="button" class="fr-btn fr-primary" data-fr="tour-next">Next →</button></div></dialog>
+        </section>
+</main><script type="module" src="../js/food-rescue-standalone.js?v=food-rescue-v1"></script></body></html>

@@ -1,3 +1,5 @@
+// FOOD_RESCUE_PUBLIC_V1
+import {initFoodRescue} from "/static/js/ecai-food-rescue.js?v=food-rescue-v1";
 // PAYMENT_GUARD_PUBLIC_V1
 import {initPaymentGuard} from "/static/js/ecai-payment-guard.js?v=payment-guard-v1";
 // ENERGYFLEX_PUBLIC_V1
@@ -184,7 +186,8 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
   const marketExamples = { claim: { miner_ak: "ak_..." }, submit: { miner_ak: "ak_...", attestation: "attestation", evidence_ref: "" }, pay: { admin_ak: "ak_..." } };
   let energyFlex = null;
   let paymentGuard = null;
-  const VIEW_NAMES = { "payment-guard": "Agent Payment Guard", energyflex: "EnergyFlex", "supply-chain": "Applications / Supply chain / Recovery Lab", agents: "Agents", "ai-providers": "AI providers & roles", account: "Account settings", "node-settings": "Node settings", personalities: "AI personalities", evaluation: "LLM evaluation", math: "Mathematical paths", orbital: "Applications / Orbital verification", overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing", compute: "Compute", keys: "API keys" };
+  let foodRescue = null;
+  const VIEW_NAMES = { "food-rescue": "Food Rescue & Recall", "payment-guard": "Agent Payment Guard", energyflex: "EnergyFlex", "supply-chain": "Applications / Supply chain / Recovery Lab", agents: "Agents", "ai-providers": "AI providers & roles", account: "Account settings", "node-settings": "Node settings", personalities: "AI personalities", evaluation: "LLM evaluation", math: "Mathematical paths", orbital: "Applications / Orbital verification", overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing", compute: "Compute", keys: "API keys" };
   let mathPaths = null;
   let mathKernel = null;
   let math3D = null;
@@ -905,6 +908,7 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
     }
     energyFlex?.setVisible(view === "energyflex");
     paymentGuard?.setVisible(view === "payment-guard");
+    foodRescue?.setVisible(view === "food-rescue");
     put("viewBreadcrumb", internalsVisible ? "Code learning & repair / Model Internals" : VIEW_NAMES[view]);
     const fragment = internalsVisible ? "code/model-internals" : view;
     if (location.hash !== `#${fragment}`) history.replaceState(null, "", `#${fragment}`);
@@ -3648,6 +3652,8 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
 
   async function refreshView() {
     // Local synthetic demo: return before session-gated or remote work.
+    if (state.view === "food-rescue") { foodRescue?.refresh(); return; }
+    // Local synthetic demo: return before session-gated or remote work.
     if (state.view === "payment-guard") { paymentGuard?.refresh(); return; }
     // Local synthetic demo: return before session-gated or remote work.
     if (state.view === "energyflex") { energyFlex?.refresh(); return; }
@@ -3842,6 +3848,7 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
     $("apiCopyResponse").addEventListener("click", copyResponse);
     window.addEventListener("hashchange", () => navigate(location.hash.slice(1)));
     window.addEventListener("beforeunload", () => {
+      foodRescue?.dispose();
       paymentGuard?.dispose();
       energyFlex?.dispose();
       agentWorkspace?.dispose(); bddRouting?.dispose();
@@ -3855,6 +3862,7 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
   }
   function init() {
     if (!$("ecaiConsole")) return;
+    foodRescue = initFoodRescue();
     paymentGuard = initPaymentGuard();
     energyFlex = initEnergyFlex();
     window.EcaiIndexPool?.init({request, toast, openLogin, currentToken});
