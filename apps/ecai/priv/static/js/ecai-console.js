@@ -1,3 +1,5 @@
+// ENERGYFLEX_PUBLIC_V1
+import {initEnergyFlex} from "/static/js/ecai-energyflex.js?v=energyflex-v1";
 import {initSupplyChain, isPublicSupplyChainRequest} from "/static/js/ecai-supply-chain.js?v=recovery-lab-public-v2";
 import {mountAgentWorkspace} from "/ecai/agent-assets/js/agent-workspace.js";
 import {mountBddRouting} from "/ecai/agent-assets/js/bdd-routing.js";
@@ -178,7 +180,8 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
     ask: { question: "What is known about this topic?", destination: "local" }
   };
   const marketExamples = { claim: { miner_ak: "ak_..." }, submit: { miner_ak: "ak_...", attestation: "attestation", evidence_ref: "" }, pay: { admin_ak: "ak_..." } };
-  const VIEW_NAMES = { "supply-chain": "Applications / Supply chain / Recovery Lab", agents: "Agents", "ai-providers": "AI providers & roles", account: "Account settings", "node-settings": "Node settings", personalities: "AI personalities", evaluation: "LLM evaluation", math: "Mathematical paths", orbital: "Applications / Orbital verification", overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing", compute: "Compute", keys: "API keys" };
+  let energyFlex = null;
+  const VIEW_NAMES = { energyflex: "EnergyFlex", "supply-chain": "Applications / Supply chain / Recovery Lab", agents: "Agents", "ai-providers": "AI providers & roles", account: "Account settings", "node-settings": "Node settings", personalities: "AI personalities", evaluation: "LLM evaluation", math: "Mathematical paths", orbital: "Applications / Orbital verification", overview: "Overview", search: "Knowledge search", chat: "Conversation", indexing: "Index jobs", wikimedia: "Wikimedia", knowledge: "Knowledge & privacy", marketplace: "Marketplace", "market-maker": "Market Maker", video: "Video Studio", operations: "Operations", code: "Code learning & repair", api: "API explorer", network: "Funded indexing", compute: "Compute", keys: "API keys" };
   let mathPaths = null;
   let mathKernel = null;
   let math3D = null;
@@ -897,6 +900,7 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
       const selected = tab.dataset.codeSection === codeSection;
       tab.setAttribute("aria-selected", String(selected)); tab.tabIndex = selected ? 0 : -1;
     }
+    energyFlex?.setVisible(view === "energyflex");
     put("viewBreadcrumb", internalsVisible ? "Code learning & repair / Model Internals" : VIEW_NAMES[view]);
     const fragment = internalsVisible ? "code/model-internals" : view;
     if (location.hash !== `#${fragment}`) history.replaceState(null, "", `#${fragment}`);
@@ -3639,6 +3643,8 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
   }
 
   async function refreshView() {
+    // Local synthetic demo: return before session-gated or remote work.
+    if (state.view === "energyflex") { energyFlex?.refresh(); return; }
     // Settings launchers are read-only and available even in guest/wallet sessions.
     if (["account", "node-settings"].includes(state.view)) {
       window.EcaiConsoleSettings?.refresh();
@@ -3830,6 +3836,7 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
     $("apiCopyResponse").addEventListener("click", copyResponse);
     window.addEventListener("hashchange", () => navigate(location.hash.slice(1)));
     window.addEventListener("beforeunload", () => {
+      energyFlex?.dispose();
       agentWorkspace?.dispose(); bddRouting?.dispose();
       knowledgeSearch.dispose(); chatIndexChooser.dispose(); stopStream(); disconnectSocket(); videoStudio?.dispose(); marketMaker?.dispose(); mathPaths?.dispose(); mathKernel?.dispose(); math3D?.dispose(); orbital?.dispose(); evaluation?.dispose(); supplyChain?.dispose(); personalities?.dispose(); clearInterval(state.poller);
       clearInterval(state.telemetryPoller); clearInterval(state.clockTicker);
@@ -3841,6 +3848,7 @@ import {initOrbitalVerification} from "/static/js/ecai-orbital.js?v=otv001-v1";
   }
   function init() {
     if (!$("ecaiConsole")) return;
+    energyFlex = initEnergyFlex();
     window.EcaiIndexPool?.init({request, toast, openLogin, currentToken});
     window.EcaiComputeSettings?.init({request, toast, openLogin, currentToken});
     window.EcaiOllamaKeys?.init({request, toast, openLogin, currentToken});

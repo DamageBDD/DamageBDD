@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><meta name="description" content="Explore a public, synthetic energy scheduling demo. No sign-in, live devices or paid computation."><meta name="theme-color" content="#0b1419"><title>EnergyFlex · ECAI public energy lab</title><link rel="stylesheet" href="../css/ecai-energyflex.css?v=energyflex-v1"><link rel="stylesheet" href="./standalone.css?v=energyflex-v1"></head><body><main>        <!-- ENERGYFLEX_PUBLIC_PANEL_V1: intentionally not data-ecai-managed -->
+        <section class="view energyflex" id="energyFlex" data-panel="energyflex" aria-labelledby="efTitle" hidden>
+          <div class="ef-hero">
+            <div class="ef-hero-copy">
+              <div class="ef-eyebrow"><span class="ef-live-dot" aria-hidden="true"></span> ENERGY &amp; GRID · INTERACTIVE LAB</div>
+              <h1 id="efTitle">EnergyFlex<span class="ef-title-dot">.</span></h1>
+              <p class="ef-lead">Charge on time. <em>Spend less.</em><br>Stay within the limit.</p>
+              <p class="ef-intro">Three vehicles. One building. Six hours to find a better charging plan. Change the conditions and check every decision.</p>
+              <div class="ef-badges"><span>↗ Public demo</span><span>No account needed</span><span>Synthetic data</span></div>
+            </div>
+            <div class="ef-hero-aside">
+              <div class="ef-orbit" aria-hidden="true"><span class="ef-bolt">ϟ</span><i></i><b></b></div>
+              <div class="ef-hero-actions"><button class="ef-btn ef-quiet" type="button" data-ef="tour-open">Take a guided tour ↗</button><button class="ef-btn ef-quiet" type="button" data-ef="present">Presentation mode ⛶</button></div>
+            </div>
+          </div>
+
+          <div class="ef-how" aria-label="How to use this demo">
+            <div><span>01</span><p><strong>Pick a situation</strong>Start with the evening commute or introduce a disruption.</p></div>
+            <div><span>02</span><p><strong>Compare the plans</strong>Same vehicles, same energy. Check cost and constraints.</p></div>
+            <div><span>03</span><p><strong>Replay &amp; challenge</strong>Watch the charging, change a limit, then export the evidence.</p></div>
+          </div>
+
+          <div class="ef-section-heading"><div><div class="ef-eyebrow">YOUR EXPERIMENT</div><h2>What happens tonight?</h2></div><button type="button" class="ef-text-btn" data-ef="reset">Reset to the reference example ↺</button></div>
+          <div class="ef-presets" data-ef="presets" aria-label="Choose a synthetic scenario"></div>
+          <div class="ef-control-bar">
+            <label class="ef-capacity-label" for="efCapacity"><span>Site power limit <strong data-ef="capacity-value">18 kW</strong></span><input id="efCapacity" data-ef="capacity" type="range" min="10" max="26" step="1" value="18"><small>The building and all chargers share this limit.</small></label>
+            <label for="efDeparture">Vehicle A leaves at<select id="efDeparture" data-ef="departure"><option value="2">19:00 · early departure</option><option value="3" selected>20:00 · reference</option><option value="4">21:00 · extra flexibility</option></select></label>
+            <button type="button" class="ef-btn ef-primary" data-ef="run">Compare charging plans <span aria-hidden="true">→</span></button>
+          </div>
+          <div class="ef-message" data-ef="message" role="status" aria-live="polite" aria-atomic="true"></div>
+          <div class="ef-stale" data-ef="stale" role="status" hidden></div>
+
+          <div class="ef-kpis" aria-label="Current comparison results">
+            <article class="ef-kpi ef-kpi-savings"><span>Savings vs charging early</span><strong data-ef="saving">—</strong><small data-ef="saving-note">Run a comparison to see the difference.</small></article>
+            <article class="ef-kpi"><span>Optimised variable cost</span><strong data-ef="cost">—</strong><small>Building + charging · six-hour total</small></article>
+            <article class="ef-kpi"><span>Energy delivered on time</span><strong data-ef="energy">—</strong><small>Required grid-side energy · not battery %</small></article>
+            <article class="ef-kpi"><span>Constraint verification</span><strong data-ef="passed">—</strong><small data-ef="passed-note">Local check · not a backend run</small></article>
+          </div>
+
+          <div class="ef-main-grid">
+            <article class="ef-card ef-live-card">
+              <div class="ef-card-heading"><div><div class="ef-eyebrow">THE SITE · ILLUSTRATIVE VIEW</div><h2>Follow the energy</h2></div><span class="ef-time" data-ef="clock">17:00</span></div>
+              <div class="ef-replay-toolbar"><label for="efPlan">Viewing<select id="efPlan" data-ef="plan"><option value="optimal">Optimised plan</option><option value="earliest">Charge early</option><option value="tariff">Tariff-aware baseline</option></select></label><span class="ef-small" data-ef="scene-status">Ready to explore</span></div>
+              <div class="ef-scene" data-ef="scene" role="img" aria-label="Illustration of the building and three electric vehicles"></div>
+              <div class="ef-replay"><button class="ef-btn ef-quiet" type="button" data-ef="play" aria-label="Play the six-hour charging replay">▶ Play</button><label class="ef-sr-only" for="efReplay">Replay hour, from 17:00 to 23:00</label><input id="efReplay" data-ef="replay" type="range" min="0" max="6" step="1" value="0"><output for="efReplay" data-ef="replay-label">17:00</output></div>
+              <div class="ef-vehicle-cards" data-ef="vehicles"></div>
+            </article>
+            <article class="ef-card">
+              <div class="ef-card-heading"><div><div class="ef-eyebrow">LOAD &amp; TARIFFS</div><h2>Stay below the line</h2></div><span class="ef-pill" data-ef="peak">—</span></div>
+              <p class="ef-card-note">Filled bars show the selected plan. Outlines show charging early. The dashed line is your site limit.</p>
+              <div class="ef-chart" data-ef="chart" role="img" aria-label="Hourly load and electricity tariff chart"></div>
+              <div class="ef-legend"><span><i class="ef-key ef-key-base"></i>Building</span><span><i class="ef-key ef-key-charge"></i>Charging</span><span><i class="ef-key ef-key-early"></i>Charge early</span><span><i class="ef-key ef-key-price"></i>Tariff</span></div>
+              <details class="ef-details"><summary>Read the exact hourly data</summary><div class="ef-table-scroll" data-ef="hourly"></div></details>
+            </article>
+          </div>
+
+          <article class="ef-card ef-timeline-card">
+            <div class="ef-card-heading"><div><div class="ef-eyebrow">CHARGING TIMELINE</div><h2>A place for every charging hour</h2></div><span class="ef-small">Each filled cell = 7 kWh delivered</span></div>
+            <div class="ef-table-scroll" data-ef="timeline"></div>
+            <p class="ef-card-note">Each vehicle needs two one-hour charging slots. Hatched cells are after departure. Click a time in the chart to inspect it.</p>
+          </article>
+
+          <div class="ef-bottom-grid">
+            <article class="ef-card">
+              <div class="ef-card-heading"><div><div class="ef-eyebrow">SAME TASK · FAIR COMPARISON</div><h2>Let the numbers speak</h2></div></div>
+              <div class="ef-table-scroll" data-ef="comparison"></div>
+              <div class="ef-comparison-note" data-ef="comparison-note"></div>
+              <p class="ef-card-note" data-ef="search-note"></p>
+            </article>
+            <article class="ef-card ef-verification">
+              <div class="ef-card-heading"><div><div class="ef-eyebrow">CHECK THE PLAN, NOT THE PROMISE</div><h2>Verification desk</h2></div><span class="ef-pill">Local execution</span></div>
+              <div data-ef="checks" class="ef-checks"></div>
+              <div class="ef-test-actions"><button type="button" class="ef-btn ef-quiet" data-ef="squeeze">Lower the limit to 16 kW</button><button type="button" class="ef-btn ef-quiet" data-ef="tamper">Test a duplicate charging hour</button></div>
+              <div class="ef-test-result" data-ef="test-result" role="status" aria-live="polite" hidden></div>
+            </article>
+          </div>
+
+          <div class="ef-evidence-bar"><div><strong>Don’t just watch it. Check it.</strong><p>Export inputs, all three plans, recalculated metrics and a SHA-256 checksum for an external replay.</p></div><button type="button" class="ef-btn ef-primary" data-ef="export">Export evidence ↓</button></div>
+          <details class="ef-details ef-method"><summary>What this demo proves — and what it does not</summary><div class="ef-method-grid"><div><h3>A fully specified small problem</h3><p>One-hour slots, fixed 7 kW chargers, 14 kWh per vehicle, arrival/departure windows and a shared site limit. The exact optimiser evaluates every assignment in this discrete model. A separate checker recalculates constraints and costs.</p><h3>Compare against competent alternatives</h3><p>“Charge early” prioritises the earliest departure while respecting capacity. “Tariff-aware” tries the cheapest available hours, also prioritising departures. A tie with the exact optimum is reported honestly.</p></div><div><h3>Synthetic, not a field trial</h3><p>Prices are invented AUD tariffs, not live market or retail data. Costs exclude fixed charges, losses, taxes and grid dynamics. This is a teaching and verification demo, not an electricity bill forecast or device controller.</p><h3>Execution and trust boundary</h3><p>This public release runs conventional scheduling and local checks inside the ECAI dashboard. It does not call native ECAI retrieval, an LLM or the DamageBDD backend. A checksum is not a signature, a sensor attestation or proof of real-world savings.</p></div></div><p class="ef-card-note">External checker, after installing the bundle: <code>python3 apps/ecai/tools/verify_energyflex.py ENERGYFLEX.evidence.json</code>. Use HTTPS or localhost for browser checksum export.</p></details>
+          <footer class="ef-footer"><span>ECAI / ENERGYFLEX</span><span>Public by design. Bounded by constraints.</span></footer>
+          <dialog class="ef-tour" data-ef="tour" aria-labelledby="efTourTitle"><form method="dialog"><button type="submit" class="ef-tour-close" aria-label="Close guided tour">×</button></form><div class="ef-eyebrow" data-ef="tour-counter"></div><h2 id="efTourTitle" data-ef="tour-title"></h2><p data-ef="tour-copy"></p><div class="ef-tour-buttons"><button type="button" class="ef-btn ef-quiet" data-ef="tour-prev">Back</button><button type="button" class="ef-btn ef-primary" data-ef="tour-next">Next →</button></div></dialog>
+        </section>
+        <!-- /ENERGYFLEX_PUBLIC_PANEL_V1 -->
+</main><noscript>This demo needs JavaScript for local calculations. No sign-in or backend execution is required.</noscript><script type="module" src="../js/energyflex-standalone.js?v=energyflex-v1"></script></body></html>
