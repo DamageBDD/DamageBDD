@@ -31,6 +31,10 @@
     inspect_module/3
 ]).
 
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -define(DEFAULT_TIMEOUT_MS, 30000).
 -define(CACHE_NS, ecai_source_repository_cache).
 -define(ALLOWED_APPS, [damage, ecai, erm]).
@@ -350,19 +354,25 @@ ensure_mirror(Ctx, Opts) ->
                 false -> {error, {cannot_clone_source_repository, Clone}}
             end;
         true ->
-            _ = run_git_dir(
+            SetOrigin = run_git_dir(
                 Mirror,
                 ["remote", "set-url", "origin", Source],
                 Timeout
             ),
-            Fetch = run_git_dir(
-                Mirror,
-                ["fetch", "--prune", "origin"],
-                Timeout
-            ),
-            case step_ok(Fetch) of
-                true -> ok;
-                false -> {error, {cannot_refresh_source_repository, Fetch}}
+            case step_ok(SetOrigin) of
+                false ->
+                    %% Do not spawn another Git process after a failed setup.
+                    {error, {cannot_set_source_repository_origin, SetOrigin}};
+                true ->
+                    Fetch = run_git_dir(
+                        Mirror,
+                        ["fetch", "--prune", "origin"],
+                        Timeout
+                    ),
+                    case step_ok(Fetch) of
+                        true -> ok;
+                        false -> {error, {cannot_refresh_source_repository, Fetch}}
+                    end
             end
     end.
 
@@ -371,10 +381,14 @@ ensure_commit_present(Ctx, Commit, Opts) ->
     Timeout = command_timeout(Opts),
     Object = binary_to_list(Commit) ++ "^{commit}",
     Check = run_git_dir(Mirror, ["cat-file", "-e", Object], Timeout),
-    case step_ok(Check) of
-        true ->
+    case Check of
+        #{ok := true} ->
             ok;
-        false ->
+        #{ok := false, error := _} ->
+            %% A spawn/timeout/port error is not evidence of a missing object.
+            %% Let the caller defer; do not amplify descriptor pressure.
+            {error, {cannot_check_canonical_commit, Commit, Check}};
+        _ ->
             Source = maps:get(source_root, Ctx),
             %% Fetch the exact object as well as normal refs. This keeps
             %% detached-HEAD development commits usable even before a branch
@@ -711,34 +725,72 @@ run_git_exe(Cwd, Args, Timeout) ->
         false ->
             #{ok => false, error => git_not_found};
         Git ->
-            Port = open_port(
-                {spawn_executable, Git},
-                [
-                    binary,
-                    exit_status,
-                    stderr_to_stdout,
-                    {args, Args},
-                    {cd, Cwd}
-                ]
-            ),
-            collect_port(Port, <<>>, Timeout)
+            with_git_port(
+                fun() ->
+                    open_port(
+                        {spawn_executable, Git},
+                        [binary, exit_status, stderr_to_stdout,
+                         {args, Args}, {cd, Cwd}]
+                    )
+                end,
+                Timeout
+            )
     end.
 
-collect_port(Port, Acc, Timeout) ->
+with_git_port(Open, Timeout) ->
+    %% Catch only port creation here. Return a failed command through the
+    %% existing repository error API instead of killing a supervised caller
+    %% (notably ecai_vuln_monitor on emfile). Never log commands/credentials.
+    Deadline = erlang:monotonic_time(millisecond) + Timeout,
+    Opened = try {ok, Open()} catch error:OpenReason -> {error, OpenReason} end,
+    case Opened of
+        {error, Reason} ->
+            #{ok => false, error => {open_port, Reason}};
+        {ok, Port} ->
+            try
+                collect_port(Port, <<>>, Deadline)
+            after
+                close_git_port(Port)
+            end
+    end.
+
+collect_port(Port, Acc, Deadline) ->
+    %% One monotonic deadline, not an idle timeout refreshed by every byte.
+    case Deadline - erlang:monotonic_time(millisecond) of
+        Remaining when Remaining =< 0 ->
+            #{ok => false, error => timeout, output => Acc};
+        Remaining ->
+            receive
+                {Port, {data, Data}} ->
+                    collect_port(Port, <<Acc/binary, Data/binary>>, Deadline);
+                {Port, {exit_status, 0}} ->
+                    #{ok => true, output => Acc};
+                {Port, {exit_status, Status}} ->
+                    #{ok => false, exit_status => Status, output => Acc};
+                {'EXIT', Port, normal} ->
+                    %% Some callers trap exits. Wait for exit_status too.
+                    collect_port(Port, Acc, Deadline);
+                {'EXIT', Port, Reason} ->
+                    #{ok => false, error => {port_exit, Reason}, output => Acc};
+                {Port, closed} ->
+                    #{ok => false, error => port_closed, output => Acc}
+            after Remaining ->
+                #{ok => false, error => timeout, output => Acc}
+            end
+    end.
+
+close_git_port(Port) ->
+    %% Normal completion usually closes the spawn port already. Also clean
+    %% up after timeout or a collection exception without masking its cause.
+    try unlink(Port) catch error:badarg -> ok end,
+    try port_close(Port) catch error:badarg -> ok end,
+    drain_git_port(Port).
+
+drain_git_port(Port) ->
     receive
-        {Port, {data, Data}} ->
-            collect_port(Port, <<Acc/binary, Data/binary>>, Timeout);
-        {Port, {exit_status, 0}} ->
-            #{ok => true, output => Acc};
-        {Port, {exit_status, Status}} ->
-            #{ok => false, exit_status => Status, output => Acc}
-    after Timeout ->
-        try
-            port_close(Port)
-        catch
-            _:_ -> ok
-        end,
-        #{ok => false, error => timeout, output => Acc}
+        {Port, _} -> drain_git_port(Port);
+        {'EXIT', Port, _} -> drain_git_port(Port)
+    after 0 -> ok
     end.
 
 step_ok(#{ok := true}) -> true;
@@ -781,3 +833,77 @@ to_binary(L) when is_list(L) -> unicode:characters_to_binary(L);
 to_binary(A) when is_atom(A) -> atom_to_binary(A, utf8);
 to_binary(I) when is_integer(I) -> integer_to_binary(I);
 to_binary(V) -> iolist_to_binary(io_lib:format("~p", [V])).
+
+
+-ifdef(TEST).
+
+%% No production fault-injection configuration. These private helpers are
+%% exercised in the EUnit build without exhausting the test VM's descriptors.
+git_port_creation_failure_test() ->
+    lists:foreach(fun(Reason) ->
+        ?assertEqual(#{ok => false, error => {open_port, Reason}},
+            with_git_port(fun() -> erlang:error(Reason) end, 100))
+    end, [emfile, enfile, system_limit, eagain, enoent, eacces]).
+
+git_port_success_result_test() ->
+    Ref = make_ref(),
+    self() ! {Ref, {data, <<"git output">>}},
+    self() ! {Ref, {exit_status, 0}},
+    ?assertEqual(#{ok => true, output => <<"git output">>},
+        with_git_port(fun() -> Ref end, 1000)).
+
+git_port_nonzero_result_test() ->
+    Ref = make_ref(),
+    self() ! {Ref, {data, <<"not a repository">>}},
+    self() ! {Ref, {exit_status, 128}},
+    ?assertEqual(#{ok => false, exit_status => 128, output => <<"not a repository">>},
+        with_git_port(fun() -> Ref end, 1000)).
+
+git_port_abnormal_exit_result_test() ->
+    Ref = make_ref(),
+    self() ! {'EXIT', Ref, epipe},
+    ?assertEqual(#{ok => false, error => {port_exit, epipe}, output => <<>>},
+        with_git_port(fun() -> Ref end, 1000)).
+
+git_port_normal_exit_before_status_test() ->
+    Ref = make_ref(),
+    self() ! {'EXIT', Ref, normal},
+    self() ! {Ref, {exit_status, 0}},
+    ?assertEqual(#{ok => true, output => <<>>},
+        with_git_port(fun() -> Ref end, 1000)).
+
+git_port_closed_result_test() ->
+    Ref = make_ref(),
+    self() ! {Ref, closed},
+    ?assertEqual(#{ok => false, error => port_closed, output => <<>>},
+        with_git_port(fun() -> Ref end, 1000)).
+
+git_port_deadline_does_not_reset_test() ->
+    Ref = make_ref(),
+    self() ! {Ref, {data, <<"still producing output">>}},
+    %% Data already in the mailbox must not extend an expired deadline.
+    ?assertEqual(#{ok => false, error => timeout, output => <<>>},
+        collect_port(Ref, <<>>, erlang:monotonic_time(millisecond) - 1)),
+    drain_git_port(Ref).
+
+git_port_cleanup_preserves_other_messages_test() ->
+    Ref = make_ref(), Other = make_ref(),
+    self() ! {Ref, {exit_status, 0}},
+    self() ! {Ref, {data, <<"late">>}},
+    self() ! {Other, retained},
+    ?assertEqual(#{ok => true, output => <<>>},
+        with_git_port(fun() -> Ref end, 1000)),
+    receive {Other, retained} -> ok after 0 -> ?assert(false) end,
+    receive {Ref, _} -> ?assert(false) after 0 -> ok end.
+
+%% Exercise a real spawned port too. cat waits on stdin until we close it.
+git_port_timeout_closes_real_port_test() ->
+    case os:find_executable("cat") of
+        false -> ok;
+        Cat ->
+            Port = open_port({spawn_executable, Cat}, [binary, exit_status, use_stdio]),
+            ?assertMatch(#{ok := false, error := timeout},
+                with_git_port(fun() -> Port end, 10)),
+            ?assertEqual(undefined, erlang:port_info(Port))
+    end.
+-endif.
