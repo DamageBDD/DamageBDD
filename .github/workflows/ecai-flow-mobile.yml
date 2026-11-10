@@ -1,0 +1,243 @@
+# ECAI Flow v0.1 native build checks. No signing secrets or deployment authority.
+# Requires the existing clients/ecai_flow source and tool/bootstrap.py.
+# Outputs are TEST artifacts, not Play Store / App Store releases.
+name: ECAI Flow - Android and iOS
+
+on:
+  push:
+    branches: [main, master, develop]
+    paths:
+      - 'clients/ecai_flow/**'
+      - '.github/workflows/ecai-flow-mobile.yml'
+  pull_request:
+    paths:
+      - 'clients/ecai_flow/**'
+      - '.github/workflows/ecai-flow-mobile.yml'
+  workflow_dispatch:
+    inputs:
+      flow_api_url:
+        description: 'Public HTTPS API URL; blank uses repository variable FLOW_API_URL'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ecai-flow-mobile-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Keep the local SDK and this pin in sync. This is not a floating stable build.
+  FLUTTER_VERSION: '3.47.5'
+  # The fallback deliberately does NOT connect to a real service.
+  # API URLs are public build configuration, not credentials.
+  FLOW_API_URL: ${{ inputs.flow_api_url || vars.FLOW_API_URL || 'https://example.invalid/ecai/flow/v1' }}
+
+jobs:
+  build:
+    name: Build and test - ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: android
+            runner: ubuntu-24.04
+          - platform: ios
+            runner: macos-15
+    defaults:
+      run:
+        shell: bash
+        working-directory: clients/ecai_flow
+    env:
+      TARGET_PLATFORM: ${{ matrix.platform }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Validate public API configuration
+        run: |
+          python3 - <<'PY'
+          import os
+          from urllib.parse import urlsplit
+          value = os.environ['FLOW_API_URL']
+          try:
+              url = urlsplit(value)
+              port = url.port  # Also rejects malformed port syntax.
+              valid = (
+                  len(value) <= 2048
+                  and not any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in value)
+                  and '\\' not in value
+                  and url.scheme == 'https'
+                  and bool(url.hostname)
+                  and url.username is None and url.password is None
+                  and '?' not in value and '#' not in value
+                  and (port is None or 1 <= port <= 65535)
+                  and url.path.rstrip('/') == '/ecai/flow/v1'
+              )
+          except ValueError:
+              valid = False
+          if not valid:
+              raise SystemExit('FLOW_API_URL must be an HTTPS URL ending /ecai/flow/v1, without credentials, a query or a fragment.')
+          if url.hostname == 'example.invalid':
+              print('::warning::Compile-only endpoint. Set repository variable FLOW_API_URL and rebuild before connecting to a backend.')
+          PY
+
+      - name: Set up Java for Android
+        if: matrix.platform == 'android'
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Select Xcode for iOS
+        if: matrix.platform == 'ios'
+        run: |
+          # macos-15 may default to an older Xcode. Select a documented image version.
+          XCODE_PATH=/Applications/Xcode_26.3.app/Contents/Developer
+          if [[ ! -d "$XCODE_PATH" ]]; then
+            echo '::error::Xcode 26.3 is unavailable. Review the runner image and update this pin.'
+            ls -d /Applications/Xcode*.app
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=$XCODE_PATH" >> "$GITHUB_ENV"
+          DEVELOPER_DIR="$XCODE_PATH" xcodebuild -version
+          # The current client has no CocoaPods plugins; make future plugin support explicit.
+          if ! command -v pod >/dev/null 2>&1; then
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install cocoapods
+          fi
+          pod --version
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Prepare SDK and native host project
+        run: |
+          flutter config --no-analytics
+          if [[ "$TARGET_PLATFORM" == android ]]; then
+            flutter config --jdk-dir="$JAVA_HOME"
+          fi
+          flutter precache --"$TARGET_PLATFORM"
+          flutter --version
+          # Do NOT run flutter create . over the application source.
+          # The existing bootstrap generates hosts in a temp directory and preserves lib/ and test/.
+          python3 tool/bootstrap.py --platforms="$TARGET_PLATFORM"
+          if git ls-files --error-unmatch pubspec.lock >/dev/null 2>&1; then
+            flutter pub get --enforce-lockfile
+            git diff --exit-code -- pubspec.lock
+          else
+            echo '::warning::Commit clients/ecai_flow/pubspec.lock after initial resolution to lock package versions.'
+          fi
+
+      - name: Analyze Dart
+        run: flutter analyze
+
+      - name: Run Flutter tests
+        run: flutter test --coverage --reporter expanded
+
+      - name: Build Android test packages
+        if: matrix.platform == 'android'
+        run: |
+          # Generated Flutter hosts use the runner's temporary DEBUG signing key,
+          # including their default release build type. These are not store releases.
+          flutter build apk --debug \
+            --build-number="$GITHUB_RUN_NUMBER" \
+            --dart-define="FLOW_API_URL=$FLOW_API_URL"
+          flutter build apk --release \
+            --build-number="$GITHUB_RUN_NUMBER" \
+            --dart-define="FLOW_API_URL=$FLOW_API_URL"
+          flutter build appbundle --release \
+            --build-number="$GITHUB_RUN_NUMBER" \
+            --dart-define="FLOW_API_URL=$FLOW_API_URL"
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-debug.apk dist/ecai-flow-debug.apk
+          cp build/app/outputs/flutter-apk/app-release.apk dist/ecai-flow-release-test.apk
+          cp build/app/outputs/bundle/release/*.aab dist/ecai-flow-release-test.aab
+
+      - name: Build iOS simulator and unsigned device packages
+        if: matrix.platform == 'ios'
+        run: |
+          mkdir -p dist
+          flutter build ios --simulator --debug --no-codesign \
+            --build-number="$GITHUB_RUN_NUMBER" \
+            --dart-define="FLOW_API_URL=$FLOW_API_URL"
+          # Tar preserves executable bits and framework symlinks inside the .app.
+          tar -czf dist/ecai-flow-ios-simulator.tar.gz \
+            -C build/ios/iphonesimulator Runner.app
+          flutter build ios --release --no-codesign \
+            --build-number="$GITHUB_RUN_NUMBER" \
+            --dart-define="FLOW_API_URL=$FLOW_API_URL"
+          tar -czf dist/ecai-flow-ios-device-unsigned.tar.gz \
+            -C build/ios/iphoneos Runner.app
+          # Intentionally do not rename an unsigned .app to an "installable IPA".
+
+      - name: Record build inputs and artifact checksums
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, platform, subprocess
+          from pathlib import Path
+          dist = Path('dist')
+          version = subprocess.check_output(['flutter', '--version', '--machine'], text=True)
+          metadata = {
+              'source_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+              'run_id': os.environ['GITHUB_RUN_ID'],
+              'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+              'platform': os.environ['TARGET_PLATFORM'],
+              'runner_arch': platform.machine(),
+              'flutter': json.loads(version),
+              'api_url': os.environ['FLOW_API_URL'],
+              'scope': 'Test builds only; no store publishing or production signing.',
+          }
+          if os.environ['TARGET_PLATFORM'] == 'ios':
+              metadata['xcode'] = subprocess.check_output(['xcodebuild', '-version'], text=True).strip()
+          (dist / 'build-info.json').write_text(json.dumps(metadata, indent=2) + '\n')
+          (dist / 'pubspec.lock').write_bytes(Path('pubspec.lock').read_bytes())
+          lines = []
+          for path in sorted(dist.iterdir()):
+              if path.is_file() and path.name != 'SHA256SUMS':
+                  digest = hashlib.sha256()
+                  with path.open('rb') as stream:
+                      for block in iter(lambda: stream.read(1024 * 1024), b''):
+                          digest.update(block)
+                  lines.append(f'{digest.hexdigest()}  {path.name}')
+          (dist / 'SHA256SUMS').write_text('\n'.join(lines) + '\n')
+          PY
+
+      - name: Upload test build artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ecai-flow-${{ matrix.platform }}-${{ github.run_number }}-${{ github.run_attempt }}
+          path: clients/ecai_flow/dist/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload Flutter coverage when available
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ecai-flow-coverage-${{ matrix.platform }}-${{ github.run_number }}-${{ github.run_attempt }}
+          path: clients/ecai_flow/coverage/lcov.info
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Explain artifact scope
+        run: |
+          {
+            echo '## ECAI Flow native test build'
+            echo
+            echo 'Android: debug APK plus release-mode test APK/AAB; generated hosts use temporary debug signing.'
+            echo 'iOS: simulator app plus unsigned device app. Neither is an App Store / TestFlight IPA.'
+            echo 'Build inputs, the resolved pubspec.lock and SHA256SUMS are included.'
+            echo 'These checks do not run the ECAI/Damage backend or test a physical device.'
+            echo 'If FLOW_API_URL is unset, the app uses example.invalid and cannot load missions.'
+          } >> "$GITHUB_STEP_SUMMARY"
