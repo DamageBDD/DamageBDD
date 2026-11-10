@@ -1,0 +1,6 @@
+## Non-distributed entry point. Do not add -name, -sname or -setcookie.
+## The local GTK C-node can be explicitly enabled through erm_user settings;
+## its private cookie is independent of Damage and must never be copied there.
+-start_epmd false
++K true
++A 4

@@ -42,6 +42,10 @@ TimeoutStopSec=60s
 # Create persistent writable directories owned by User=/Group=.
 StateDirectory=damage
 LogsDirectory=damage
+# Dedicated local IPC endpoint; independent of PrivateTmp and readable by
+# desktop users. Authentication remains mandatory for every framed request.
+RuntimeDirectory=damage-erm
+RuntimeDirectoryMode=0755
 
 # Resource limits.
 LimitNOFILE=65536
@@ -55,7 +59,7 @@ ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true
-ReadWritePaths=/opt/damage /var/lib/damage /var/log/damage
+ReadWritePaths=/opt/damage /var/lib/damage /var/log/damage /run/damage-erm
 
 # Privilege and kernel hardening.
 NoNewPrivileges=true

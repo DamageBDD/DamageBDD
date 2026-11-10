@@ -1,0 +1,67 @@
+#!/bin/sh
+# Non-distributed boot entry for the ERM userspace release.
+# Release operations are handled by systemd; no cookie-based RPC commands.
+set -eu
+action=${1:-foreground}
+case "$action" in
+    foreground|credentials|check) [ "$#" -le 1 ] || { echo 'usage: erm-user [foreground|credentials|check]' >&2; exit 64; } ;;
+    -h|--help|help) echo 'usage: erm-user [foreground|credentials|check]'; exit 0 ;;
+    *) echo 'usage: erm-user [foreground|credentials|check]; use systemctl --user for service control' >&2; exit 64 ;;
+esac
+script=$(readlink -f -- "$0")
+root=$(CDPATH= cd -- "$(dirname -- "$script")/.." && pwd -P)
+erts= vsn= rest=
+# relx writes this metadata without a final newline; read still fills fields
+# but returns EOF. Validate the parsed values rather than treating EOF as fatal.
+IFS=' ' read -r erts vsn rest < "$root/releases/start_erl.data" || true
+case "$erts:$vsn:$rest" in
+    *[!A-Za-z0-9._+:-]*|::*|*::*|*:*:?*) echo 'invalid releases/start_erl.data' >&2; exit 65 ;;
+esac
+[ -n "$erts" ] && [ -n "$vsn" ] && [ -z "$rest" ] || { echo 'invalid releases/start_erl.data' >&2; exit 65; }
+rel="$root/releases/$vsn"
+[ -f "$rel/start.boot" ] && [ -x "$root/erts-$erts/bin/erlexec" ] || {
+    echo 'incomplete erm_user release (bundled ERTS required)' >&2; exit 66;
+}
+# Ignore inherited VM/distribution arguments, including those from a Damage
+# service wrapper or an administrator shell. Desktop policy is in erm_user.
+unset ERL_FLAGS ERL_AFLAGS ERL_ZFLAGS ERL_LIBS ERL_EPMD_ADDRESS
+ROOTDIR="$root"
+BINDIR="$root/erts-$erts/bin"
+EMU=beam
+PROGNAME=erl
+export ROOTDIR BINDIR EMU PROGNAME
+if [ "$action" != foreground ]; then
+    # A fresh, clean VM executes a fixed local entry point. Never accept a
+    # caller-supplied module, function, expression or remote evaluator.
+    case "$action" in
+        credentials) entry=erm_user_credentials ;;
+        check) entry=erm_user_check ;;
+    esac
+    exec "$BINDIR/erlexec" -boot "$rel/start_clean" \
+        -boot_var ERTS_LIB_DIR "$root/lib" -boot_var SYSTEM_LIB_DIR "$root/lib" \
+        -mode interactive -pa "$root"/lib/*/ebin -noshell -noinput \
+        -start_epmd false -run "$entry" main
+fi
+# erlexec captures HOME into OTP's initial -home argument. Bootstrap using a
+# private home so optional local GTK distribution never reads a shared cookie.
+# The application restores desktop HOME before reading config/starting workers;
+# setting an explicit -home here would duplicate erlexec's own home argument.
+runtime=${ERM_USER_RUNTIME_DIR:-${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is required}/erm-user}
+case "$runtime" in /*) ;; *) echo 'runtime directory must be absolute' >&2; exit 73 ;; esac
+umask 077
+[ ! -L "$runtime" ] || { echo 'runtime directory must not be a symlink' >&2; exit 73; }
+mkdir -p -m 0700 -- "$runtime"
+[ "$(stat -c %u -- "$runtime")" = "$(id -u)" ] && \
+[ "$(stat -c %a -- "$runtime")" = 700 ] || {
+    echo 'runtime directory must be private and owned by this user' >&2; exit 73;
+}
+ERM_USER_COOKIE_HOME=$(mktemp -d "$runtime/cookie-home.XXXXXXXX")
+ERM_USER_DESKTOP_HOME=${HOME:?HOME is required}
+case "$ERM_USER_DESKTOP_HOME" in /*) ;; *) echo 'desktop HOME must be absolute' >&2; exit 73 ;; esac
+HOME=$ERM_USER_COOKIE_HOME
+export ERM_USER_COOKIE_HOME ERM_USER_DESKTOP_HOME HOME
+exec "$BINDIR/erlexec" \
+    -boot "$rel/start" -boot_var ERTS_LIB_DIR "$root/lib" \
+    -boot_var SYSTEM_LIB_DIR "$root/lib" -mode embedded \
+    -config "$rel/sys.config" -args_file "$rel/vm.args" \
+    -noshell -noinput

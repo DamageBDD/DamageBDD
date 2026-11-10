@@ -19,6 +19,7 @@
 
 -export([
     start_link/0,
+    start_link/1,
     sync_gtknode4/0,
     start_gtknode4/0,
     stop_gtknode4/0,
@@ -39,6 +40,25 @@
 start_link() ->
     supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
+%% The separate erm_user boot application loads ERM's code without starting
+%% erm.app (whose legacy dependency list starts the system Damage service).
+%% Keep desktop workers under the same supervisor/API while excluding the
+%% login manager, wx pools and embedded HTTP service from the user entry.
+start_link(userspace) ->
+    supervisor:start_link({local, ?SERVER}, ?MODULE, [userspace]).
+
+init([userspace]) ->
+    Hlwm = case application:get_env(erm, userspace_hlwm_enabled, true) of
+        true -> [#{id => hlwm_events,
+                   start => {hlwm_events, start_link, [#{}]},
+                   restart => permanent, shutdown => 5000,
+                   type => worker, modules => [hlwm_events]}];
+        false -> []
+    end,
+    Children = [erm_voice_events:child_spec()] ++ media_specs() ++
+        erm_tts:child_specs() ++ whisper_child_specs() ++ Hlwm ++
+        [optional_services_child_spec()],
+    {ok, {#{strategy => one_for_one, intensity => 10, period => 10}, Children}};
 init([]) ->
     SupFlags = #{
         strategy => one_for_one,
@@ -79,6 +99,9 @@ init([]) ->
     end.
 
 enabled() ->
+    not persistent_term:get({erm, damage_dev_shell}, false) andalso enabled_in_config().
+
+enabled_in_config() ->
     case application:get_env(erm, enabled, true) of
         true ->
             true;

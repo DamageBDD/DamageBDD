@@ -1,0 +1,19 @@
+#!/bin/sh
+# Execute the administrator grant helper with this Damage release's ERTS.
+set -eu
+script=$(readlink -f -- "$0")
+root=$(CDPATH= cd -- "$(dirname -- "$script")/.." && pwd -P)
+erts= vsn= rest=
+IFS=' ' read -r erts vsn rest < "$root/releases/start_erl.data" || true
+case "$erts:$vsn:$rest" in
+    *[!A-Za-z0-9._+:-]*|::*|*::*|*:*:?*) echo 'invalid releases/start_erl.data' >&2; exit 65 ;;
+esac
+[ -n "$erts" ] && [ -n "$vsn" ] && [ -z "$rest" ] || { echo 'invalid release metadata' >&2; exit 65; }
+ROOTDIR=$root
+BINDIR="$root/erts-$erts/bin"
+EMU=beam
+PROGNAME=erl
+export ROOTDIR BINDIR EMU PROGNAME
+unset ERL_FLAGS ERL_AFLAGS ERL_ZFLAGS ERL_LIBS
+[ -x "$BINDIR/escript" ] || { echo 'Damage release has no bundled escript runtime' >&2; exit 66; }
+exec "$BINDIR/escript" "$root/share/damage/erm/erm_bridge_grant.escript" "$@"

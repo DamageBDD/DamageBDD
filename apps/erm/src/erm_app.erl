@@ -84,6 +84,9 @@ display_manager_mode() ->
     end.
 
 enabled() ->
+    not persistent_term:get({erm, damage_dev_shell}, false) andalso enabled_in_config().
+
+enabled_in_config() ->
     case application:get_env(erm, enabled, true) of
         true ->
             true;

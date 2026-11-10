@@ -180,6 +180,9 @@ handle_call(status, _From, S) ->
         pid_file_os_pid => pidfile_status(S#st.path),
         hidden_gui => true,
         video => disabled,
+        %% Plugin discovery only.  Live D-Bus registration must be checked on
+        %% the desktop user's session bus (see erm_mpris:status/0).
+        mpris => erm_mpris:status(),
         healthy => (ManagedAlive andalso SocketAlive) orelse
             (S#st.os_pid =:= undefined andalso SocketAlive),
         last_error => S#st.last_error
@@ -470,7 +473,7 @@ hidden_mpv_command(Mpv, Path) ->
         "--no-terminal",
         "--input-terminal=no",
         "--input-ipc-server=" ++ Path
-    ].
+    ] ++ erm_mpris:mpv_args().
 
 restart_mpv(Reason, S = #st{os_pid = undefined, path = Path}) ->
     case socket_alive(Path) of

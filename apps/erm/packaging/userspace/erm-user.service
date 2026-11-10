@@ -1,0 +1,24 @@
+[Unit]
+Description=ERM userspace desktop runtime
+Documentation=https://damagebdd.com
+PartOf=graphical-session.target
+After=graphical-session-pre.target
+
+[Service]
+Type=simple
+ExecStart=/opt/erm-user/bin/erm-user foreground
+WorkingDirectory=%h
+Environment=ERM_USER_RUNTIME_DIR=%t/erm-user
+RuntimeDirectory=erm-user
+RuntimeDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=true
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+KillMode=control-group
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,12 @@
+{application, erm_user, [
+    {description, "Per-user ERM runtime and capability-scoped Damage client"},
+    {vsn, "0.1.0"},
+    {registered, [erm_user_sup, erm_user_bridge]},
+    {mod, {erm_user_app, []}},
+    {applications, [kernel, stdlib, crypto, jsx, gproc, erlexec]},
+    {env, [{bridge_socket, "/run/damage-erm/bridge.sock"},
+           {bridge_token_file, default}, {bridge_server_user, "damage"},
+           {local_distribution, false}]},
+    {modules, []},
+    {licenses, ["Apache-2.0"]}
+]}.

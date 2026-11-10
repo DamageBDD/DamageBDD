@@ -76,7 +76,7 @@ init([]) ->
                 type => worker,
                 modules => [secrets]
             }
-        ] ++ ecai_logging_specs() ++
+        ] ++ ecai_logging_specs() ++ [damage_erm_bridge:child_spec()] ++
             [
                 #{
                     id => nostr_pool,

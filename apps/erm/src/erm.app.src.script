@@ -1,0 +1,12 @@
+%% The userspace release reuses ERM modules, while Damage remains a separate
+%% authenticated service. Apply this resource change only in the isolated build
+%% profile selected by packaging/userspace/build.sh; ordinary .app generation
+%% preserves the source application's complete dependency contract.
+case os:getenv("ERM_USERSPACE_BUILD") of
+    "1" ->
+        [{application, erm, Properties}] = CONFIG,
+        Dependencies = proplists:get_value(applications, Properties, []),
+        [{application, erm, lists:keystore(applications, 1, Properties,
+            {applications, lists:delete(damage, Dependencies)})}];
+    _ -> CONFIG
+end.
