@@ -101,6 +101,7 @@ get_trails() ->
             damage_bdd_http,
             ecai_auth_http,
             ecai_eval_http,
+            ecai_supply_chain_http,
             ecai_personality_http,
             ecai_math_dashboard_http,
             ecai_video_dashboard_http,

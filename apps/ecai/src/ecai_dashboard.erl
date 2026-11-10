@@ -221,6 +221,7 @@ render_dashboard_page("ecai_console.mustache", Ctx) ->
     MathPaths = render_tpl(?DASH_TPL("ecai_math_paths.mustache"), Ctx),
     Personalities = render_tpl(?DASH_TPL("ecai_personalities.mustache"), Ctx),
     Evaluation = render_tpl(?DASH_TPL("ecai_eval.mustache"), Ctx),
+    SupplyChain = render_tpl(?DASH_TPL("ecai_supply_chain.mustache"), Ctx),
     OllamaKeys = render_tpl(?DASH_TPL("ollama_keys.mustache"), Ctx),
     render_tpl(
         ?DASH_TPL("ecai_console.mustache"),
@@ -232,6 +233,7 @@ render_dashboard_page("ecai_console.mustache", Ctx) ->
             compute_settings_panel => ComputeSettings,
             math_paths_panel => MathPaths,
             evaluation_panel => Evaluation,
+            supply_chain_panel => SupplyChain,
             personalities_panel => Personalities,
             ollama_keys_panel => OllamaKeys
         }

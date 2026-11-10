@@ -53,6 +53,7 @@ init([]) ->
     PoolSpecs0 =
         [#{id => ecai_eval_sup, start => {ecai_eval_sup, start_link, []},
            restart => permanent, shutdown => infinity, type => supervisor}] ++
+        ecai_supply_chain_srv:child_specs() ++
         ecai_personalities:child_specs() ++
         ecai_math_dashboard_srv:child_specs() ++
         conversation_history_specs() ++
