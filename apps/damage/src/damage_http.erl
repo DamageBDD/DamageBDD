@@ -17,7 +17,7 @@
 -export([to_json/2]).
 -export([to_text/2]).
 -export([from_json/2, allowed_methods/2, from_html/2, is_authorized/2]).
--export([trails/0]).
+-export([trails/0, execute_bdd/4]).
 -import(damage_utils, [float_to_full_integer/1, to_bin/1]).
 
 -define(TRAILS_TAG, ["Executing Tests"]).
@@ -26,7 +26,6 @@
 -ifdef(TEST).
 -export([
     effective_context/2,
-    execute_bdd/4,
     normalize_execution_json_context/1,
     execution_context_from_request/2,
     stream_final_body/2
@@ -965,6 +964,8 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
         try
             %% Build and freeze effective context once for both dry and paid runs.
             ContextIn = effective_context(Context0, State),
+            %% Verification approval binds this exact frozen context, not an earlier read.
+            ok = damage_verification_runner:ensure_context(ContextIn, ConfigOverrides),
             FeatureData = maps:get(feature, Context0),
 
             %% --- 1) DRY RUN (force nostream) ----------------------------------------
@@ -987,6 +988,7 @@ execute_bdd(Context0, State, Req0, ConfigOverrides) ->
                         false ->
                             %% Must have a cost in dry-run success
                             Cost = maps:get(cost, DryRes, 0),
+                            ok = damage_verification_runner:ensure_budget(Cost, ConfigOverrides),
 
                             %% Find account id (support public_key or address)
                             AeAccount =

@@ -114,6 +114,7 @@ init([]) ->
                     type => supervisor,
                     modules => [damage_webdriver_sup]
                 },
+                damage_verification_service:child_spec(),
                 #{
                     id => damage_bdd_service,
                     start => {damage_bdd_service, start_link, []},

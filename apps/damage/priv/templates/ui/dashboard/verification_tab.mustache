@@ -1,0 +1,24 @@
+<section class="workspace-page verification-workspace" data-verification-root aria-labelledby="verification-heading">
+  <header class="workspace-heading verification-heading">
+    <div><p class="verification-eyebrow">DAMAGE / VERIFICATION</p>
+      <h1 id="verification-heading">What would you like to check?</h1>
+      <p>Choose a feature. Review its context. Run the checks and keep the evidence.</p></div>
+    <button type="button" class="workspace-button" data-v-refresh>Refresh catalog</button>
+  </header>
+  <p class="verification-message" data-v-message role="status" aria-live="polite"></p>
+  <div class="verification-layout">
+    <aside class="verification-catalog" aria-label="Verification catalog">
+      <label for="verification-search">Find a check</label>
+      <input id="verification-search" type="search" placeholder="Search features or tags" data-v-search autocomplete="off">
+      <div class="verification-cards" data-v-catalog></div>
+    </aside>
+    <section class="workspace-card verification-detail" data-v-detail aria-label="Selected verification">
+      <p class="verification-empty">Choose a check to see what it verifies, which inputs it needs, and what it does not prove.</p>
+    </section>
+  </div>
+  <section class="workspace-card verification-history" aria-labelledby="verification-history-title">
+    <h2 id="verification-history-title">Recent checks</h2>
+    <p>Recent workspace status is node-local. Published DamageBDD reports remain in the existing run history.</p>
+    <div data-v-history></div>
+  </section>
+</section>

@@ -420,42 +420,10 @@ authorize_amount_msat(Owner, LedgerCt, ClientPubHex, AmountMsat) ->
 authorize_amount_msat(Owner, LedgerCt, ClientPubHex, AmountMsat, Height) ->
     case ledger_policy(Owner, LedgerCt, ClientPubHex) of
         {ok, Policy} ->
-            Revoked = maps:get(revoked, Policy, false),
-            MaxSingle = maps:get(max_single_msat, Policy, 0),
-            MaxTotal = maps:get(max_total_msat, Policy, 0),
-            Spent = maps:get(spent_msat, Policy, 0),
-            Expires = maps:get(expires_height, Policy, 0),
-            case Revoked of
-                true ->
-                    {error, <<"REVOKED">>, <<"NWC session is revoked">>};
-                false ->
-                    case MaxSingle > 0 andalso AmountMsat > MaxSingle of
-                        true ->
-                            {error, <<"QUOTA_EXCEEDED">>, <<"amount exceeds max_single_msat">>};
-                        false ->
-                            case MaxTotal > 0 andalso (Spent + AmountMsat) > MaxTotal of
-                                true ->
-                                    {error, <<"QUOTA_EXCEEDED">>,
-                                        <<"amount exceeds max_total_msat">>};
-                                false ->
-                                    case Expires > 0 andalso Height > Expires of
-                                        true ->
-                                            {error, <<"EXPIRED">>, <<"policy expired">>};
-                                        false ->
-                                            case
-                                                ledger_balance_msat(Owner, LedgerCt, ClientPubHex)
-                                            of
-                                                {ok, BalanceMsat} when BalanceMsat >= AmountMsat ->
-                                                    ok;
-                                                {ok, _BalanceMsat} ->
-                                                    {error, <<"INSUFFICIENT_BALANCE">>,
-                                                        <<"balance too low">>};
-                                                {error, Why} ->
-                                                    {error, <<"LEDGER_BALANCE_FAILED">>, fmt(Why)}
-                                            end
-                                    end
-                            end
-                    end
+            case damage_nwc_payment_policy:amount(Policy, AmountMsat, Height) of
+                ok -> damage_nwc_payment_policy:balance(
+                    ledger_balance_msat(Owner, LedgerCt, ClientPubHex), AmountMsat);
+                Error -> Error
             end;
         {error, Why} ->
             {error, <<"LEDGER_POLICY_FAILED">>, fmt(Why)}

@@ -122,6 +122,7 @@ render_full_page(Ctx) ->
     Routing = render_tpl(?TPL("bdd_routing.mustache"), Ctx),
     Exec = render_tpl(?TPL("execution_tab.mustache"), Ctx#{bdd_routing => Routing}),
     Agents = render_tpl(?TPL("agents_tab.mustache"), Ctx#{bdd_routing => Routing}),
+    Verification = render_tpl(?TPL("verification_tab.mustache"), Ctx),
     Activity = render_tpl(?TPL("activity_tab.mustache"), history_context(Ctx)),
     Anal = render_tpl(?TPL("analytics_tab.mustache"), history_context(Ctx)),
     Sched = render_tpl(?TPL("schedules_tab.mustache"), Ctx),
@@ -169,6 +170,7 @@ render_full_page(Ctx) ->
         topbar => Top,
         sidebar => render_tpl(?TPL("sidebar.mustache"), Ctx#{footer => Foot}),
         execution_tab => Exec,
+        verification_tab => Verification,
         agents_tab => Agents,
         activity_tab => Activity,
         analytics_tab => Anal,
@@ -219,6 +221,8 @@ render_component(execution_tab, Ctx) ->
 render_component(agents_tab, Ctx) ->
     Routing = render_tpl(?TPL("bdd_routing.mustache"), Ctx),
     render_tpl(?TPL("agents_tab.mustache"), Ctx#{bdd_routing => Routing});
+render_component(verification_tab, Ctx) ->
+    render_tpl(?TPL("verification_tab.mustache"), Ctx);
 render_component(activity_tab, Ctx) ->
     render_tpl(?TPL("activity_tab.mustache"), history_context(Ctx));
 render_component(analytics_tab, Ctx) ->
