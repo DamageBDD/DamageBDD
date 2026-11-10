@@ -100,6 +100,28 @@ class WizardBrowser(unittest.TestCase):
     def plan(self,page):
         self.connect(page);page.locator('#awsSetupPlan').click()
         page.wait_for_function('!document.getElementById("awsSetupOperation").hidden')
+    def test_local_runtime_progress_gates_credentials_and_readiness(self):
+        page=self.page()
+        page.evaluate("fakeConfig.ready=false;fakeConfig.local_runtime={phase:'installing',ready:false,message:'Installing the bundled requirements.'};fakeConfig.blockers=['Local helper is initializing.']")
+        page.evaluate('EcaiAwsSetup.refresh()')
+        self.assertIn('installing',page.locator('#awsSetupLocalRuntime').inner_text())
+        self.assertTrue(page.locator('#awsSetupCredentialFields').evaluate('(el)=>el.disabled'))
+        self.assertEqual(page.evaluate('apiCalls.filter(c=>c.opts.method==="POST").length'),0)
+        page.evaluate("fakeConfig.ready=true;fakeConfig.blockers=[];fakeConfig.local_runtime={phase:'ready',ready:true,message:'Local checks passed.',versions:{python:'3.13',boto3:'1.43.18',botocore:'1.43.18'}}")
+        page.evaluate('EcaiAwsSetup.refresh()')
+        self.assertIn('boto3 1.43.18',page.locator('#awsSetupLocalRuntime').inner_text())
+        self.assertFalse(page.locator('#awsSetupCredentialFields').evaluate('(el)=>el.disabled'))
+
+    def test_local_runtime_failure_is_visible_and_refresh_is_read_only(self):
+        page=self.page()
+        page.evaluate("fakeConfig.ready=false;fakeConfig.local_runtime={phase:'failed',ready:false,message:'Dependency installation failed. Check network access.',next_check_at_ms:Date.now()+60000};fakeConfig.blockers=['Local helper needs attention.']")
+        page.evaluate('EcaiAwsSetup.refresh()')
+        self.assertIn('Retry after',page.locator('#awsSetupLocalRuntime').inner_text())
+        page.locator('#awsSetupRefresh').click()
+        self.assertEqual(page.evaluate('apiCalls.filter(c=>c.opts.method==="POST").length'),0)
+        page.evaluate('EcaiAwsSetup.clear();window.testToken=null')
+        self.assertIn('Sign in',page.locator('#awsSetupLocalRuntime').inner_text())
+
     def test_initial_page_does_not_send_credentials_or_create_resources(self):
         page=self.page()
         self.assertEqual(page.evaluate('apiCalls.map(c=>c.opts.method||"GET")'),['GET'])

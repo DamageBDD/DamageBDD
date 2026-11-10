@@ -14,7 +14,7 @@ get() ->
 public(Owner) ->
     C = get(),
     #{<<"enabled">> => allowed(Owner), <<"ready">> => allowed(Owner) andalso ready() =:= ok,
-      <<"blockers">> => blockers(), <<"regions">> => maps:get(<<"regions">>, C),
+      <<"blockers">> => blockers(), <<"local_runtime">> => ecai_aws_setup_runtime:public(), <<"regions">> => maps:get(<<"regions">>, C),
       <<"coordinator_role_arn">> => maps:get(<<"coordinator_role_arn">>, C),
       <<"worker_image">> => maps:get(<<"worker_image">>, C),
       <<"probe_enabled">> => maps:get(<<"probe_enabled">>, C),
@@ -38,7 +38,7 @@ blockers() ->
         {valid_command(maps:get(<<"worker_command">>, C)), <<"Configure the approved worker command as a list of binaries.">>},
         {valid_regions(maps:get(<<"regions">>, C)), <<"Configure an allowlist of supported commercial AWS regions.">>},
         {valid_origin(origin()), <<"Configure aws_setup_public_origin as the dashboard's HTTPS origin.">>},
-        {python() =/= false, <<"Install Python 3 and the pinned boto3 requirements in the configured environment.">>}
+        {python() =/= false, maps:get(<<"message">>, ecai_aws_setup_runtime:public())}
     ],
     [Message || {false, Message} <- Checks].
 valid_command(C) when is_list(C), length(C) > 0, length(C) =< 16 ->
@@ -56,13 +56,8 @@ valid_origin(O) ->
         _ -> false
     catch _:_ -> false end.
 origin() -> text(application:get_env(ecai, aws_setup_public_origin, <<>>)).
-python() ->
-    case application:get_env(ecai, aws_setup_python, undefined) of
-        undefined -> os:find_executable("python3");
-        V -> case text(V) of <<"/", _/binary>> = B ->
-                 case filelib:is_regular(binary_to_list(B)) of true -> binary_to_list(B); false -> false end;
-                 _ -> false end
-    end.
+%% Only a successfully checked runtime may receive AWS credential sessions.
+python() -> ecai_aws_setup_runtime:python().
 script() -> filename:join([code:priv_dir(ecai), "aws_setup", "bridge.py"]).
 state_path() -> ecai_paths:normalize(application:get_env(ecai, aws_setup_state_path,
     filename:join(ecai_paths:index_state_dir(), "aws_setup.dets"))).

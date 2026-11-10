@@ -20,6 +20,7 @@
     setup_session_limit: 'A setup session is already active for your account, or the node is at capacity. Discard it or wait for expiry.',
     aws_account_or_region_mismatch: 'These credentials belong to a different AWS account or region than the recorded plan.',
     https_same_origin_required: 'Open the dashboard over HTTPS. The node must trust the exact TLS proxy address, if a proxy is used.',
+    aws_runtime_not_ready: 'The local AWS helper has not passed its automatic environment checks yet.',
     aws_sdk_not_installed: 'The node needs the Python environment and pinned boto3 requirements configured.',
     node_coordinator_identity_mismatch: 'The node’s AWS identity does not match its configured coordinator role. Ask the operator to fix the workload identity.',
     provider_changed_import_not_applied: 'AWS provisioning completed, but the provider connection changed after review. Existing settings were preserved; inspect the stack outputs before connecting manually.',
@@ -79,6 +80,10 @@
     $('awsSetupDownloadTemplate').disabled = !operation?.plan?.template;
   }
   function renderConfig() {
+    const runtime = config?.local_runtime;
+    text('awsSetupLocalRuntime', runtime
+      ? `Local helper: ${runtime.phase}. ${runtime.message || ''}${runtime.versions ? ` Python ${runtime.versions.python} · boto3 ${runtime.versions.boto3} · botocore ${runtime.versions.botocore}` : ''}${runtime.next_check_at_ms && runtime.phase === 'failed' ? ` Retry after ${new Date(runtime.next_check_at_ms).toLocaleTimeString()}.` : ''}`
+      : 'Waiting for local helper health status from this node.');
     const blockers = [...(config?.blockers || [])];
     if (!config?.enabled && !blockers.length) blockers.push('Automatic setup is not enabled for this account. Manual provider setup remains available below.');
     if (location.protocol !== 'https:') blockers.push('Use HTTPS before entering AWS credentials.');
@@ -155,7 +160,10 @@
     clearTimeout(timer); timer = null;
     const panel = $('computePanel');
     if (!initialized || !hooks.currentToken?.() || panel?.hidden || document.hidden) return;
-    if (session || operation?.busy || ['deploying', 'deleting'].includes(operation?.status) || operation?.probe) timer = setTimeout(() => void refresh(), 5000);
+    const activeOperation = session || operation?.busy || ['deploying', 'deleting'].includes(operation?.status) || operation?.probe;
+    const preparingRuntime = ['starting', 'pending', 'checking', 'creating', 'installing', 'verifying', 'waiting_for_lock'].includes(config?.local_runtime?.phase);
+    if (config?.local_runtime || session || activeOperation)
+      timer = setTimeout(() => void refresh(), (activeOperation || preparingRuntime) ? 5000 : 30000);
   }
   async function connect(event) {
     event.preventDefault();
@@ -203,6 +211,7 @@
     clearSecrets();
     for (const id of ['awsSetupAcknowledge','awsSetupReplace','awsSetupRetain','awsSetupProbeConsent']) $(id).checked = false;
     $('awsSetupDeleteName').value = ''; notice(''); renderHistory(); renderConfig(); renderOperation();
+    text('awsSetupLocalRuntime', 'Sign in to view local helper health.');
   }
   function init(apiHooks) {
     if (initialized || !$('awsSetupPanel')) return;
@@ -249,5 +258,5 @@
     document.addEventListener('visibilitychange', () => { if (!document.hidden) void refresh(); else clearTimeout(timer); });
     renderConfig(); updateControls();
   }
-  window.EcaiAwsSetup = {init, refresh, clear, version:'automatic-aws-v1'};
+  window.EcaiAwsSetup = {init, refresh, clear, version:'automatic-aws-v1-runtime-v1'};
 })();

@@ -1061,6 +1061,43 @@
             ]}
         ]},
 
+        %% Compute provider integration TEST PROFILE (no automatic dispatch/mint).
+        %% Setup/probe switches only: every cloud mutation still needs UI approval.
+        {compute_settings_enabled, true},
+        {aws_setup_enabled, true},
+        {aws_setup_probe_enabled, true},
+        %% Nonempty managed-account allowlist; [] would allow ALL managed accounts.
+        {aws_setup_accounts, [<<"ak_REPLACE_WITH_MANAGED_TEST_ACCOUNT">>]},
+        %% Exact public HTTPS origin, with no path or trailing slash.
+        {aws_setup_public_origin, <<"https://ecai.example.com">>},
+        %% This node uses a clear-HTTP upstream. Set ONLY the actual TLS-proxy
+        %% peer IPs; firewall/bind the upstream privately. No trust is assumed here.
+        {aws_setup_trusted_proxy_ips, []},
+        %% Local proxy example: [{127,0,0,1}, {0,0,0,0,0,0,0,1}]
+        %% Auto-initialize/check under ecai_paths:runtime_dir()/python/aws-setup.
+        {aws_setup_python, auto},
+        {aws_setup_runtime_auto_install, true},
+        %% Optional absolute checkout/data location (service-owned, not committed):
+        %% {aws_setup_runtime_dir, "/srv/DamageBDD/.venvs/ecai-aws-setup"},
+        {aws_setup_regions, [<<"ap-southeast-2">>]},
+        %% REQUIRED: real node IAM role + independently obtainable workload identity.
+        {compute_aws_coordinator_role_arn, <<>>},
+        %% REQUIRED: approved Linux/X86_64 image URI ending @sha256:<64 hex chars>.
+        %% For paid probes, include Python/boto3 and /opt/ecai/aws_smoke.py.
+        {aws_setup_worker_image, <<>>},
+        %% REQUIRED: actual worker argv as binaries, e.g. [<<"/opt/ecai/run-index-worker">>].
+        {aws_setup_worker_command, []},
+        %% Synthetic quote-test rates ONLY (from the compute EUnit fixture).
+        %% NOT AWS/GCP prices or invoice caps; replace before real dispatch exists.
+        {compute_price_upper_bounds, #{
+            <<"aws_batch">> => #{vcpu_micro_usd_sec => 18, gib_micro_usd_sec => 2,
+                fixed_micro_usd => 1000, safety_basis_points => 15000},
+            <<"cloud_run">> => #{vcpu_micro_usd_sec => 18, gib_micro_usd_sec => 2,
+                fixed_micro_usd => 1000, safety_basis_points => 15000}
+        }},
+        %% Keep existing DETS paths. Budgets/mint-review policy stay per account
+        %% in the dashboard; sys.config does not enable an unimplemented dispatcher.
+
         %% Durable indexing / WAL
         {index_jobs_enabled, true},
         {index_jobs_dir, "/var/lib/damage/ecai/index-jobs"},

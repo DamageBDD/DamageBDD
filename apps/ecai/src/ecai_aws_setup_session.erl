@@ -66,7 +66,7 @@ format_status(Status) when is_map(Status) -> Status#{state => redacted, message 
 
 open() ->
     case ecai_aws_setup_config:python() of
-        false -> {error, <<"python_not_installed">>};
+        false -> {error, <<"aws_runtime_not_ready">>};
         Python ->
             try open_port({spawn_executable, Python}, [binary, exit_status, use_stdio,
                     {line, 131072}, {args, ["-I", "-u", ecai_aws_setup_config:script()]}]) of

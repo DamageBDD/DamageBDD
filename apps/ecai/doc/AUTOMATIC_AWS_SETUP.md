@@ -32,9 +32,10 @@ do not replace your full configuration with that sample.
 
 Required prerequisites:
 
-- A Linux node with Python 3.11+ and the pinned boto3 dependency installed in an
-  operator-controlled virtual environment. Both the script tree and environment
-  must not be writable by dashboard users.
+- A Linux node with Python 3.11+ and OS venv/ensurepip support. With
+  `aws_setup_python=auto`, startup creates and checks a dedicated environment
+  beneath the node's data directory. Both the script tree and environment must
+  not be writable by dashboard users.
 - An HTTPS public dashboard origin without a path/trailing slash. For TLS
   termination, configure only exact trusted proxy peer IP tuples and keep the
   unencrypted upstream listener private. The proxy must overwrite forwarded
@@ -49,19 +50,26 @@ Required prerequisites:
 - An approved non-empty worker command list. The dashboard cannot override
   the image, template, IAM policy or command.
 
-Install the helper dependency from the repository root:
+The local runtime initializes and checks itself automatically once AWS setup is
+enabled. Replace an old explicit interpreter entry with these settings to select
+managed initialization:
 
-```sh
-python3 -m venv /opt/ecai/aws-setup-venv
-/opt/ecai/aws-setup-venv/bin/pip install \
-  -r apps/ecai/priv/aws_setup/requirements.txt
+```erlang
+{aws_setup_python, auto},
+{aws_setup_runtime_auto_install, true},
 ```
 
-Use paths writable/owned by your deployment account as appropriate. Set
-`aws_setup_python` to the resulting executable, fill the sample placeholders,
-then explicitly enable `aws_setup_enabled`. Initially restrict
-`aws_setup_accounts` to your managed test account. An empty list permits every
-managed account after the global switch is enabled.
+The managed root defaults to `ecai_paths:runtime_dir()/python/aws-setup`.
+Use `aws_setup_runtime_dir` for an absolute service-owned checkout/data path, or
+`aws_setup_wheelhouse` for offline wheel installation. Explicit interpreter paths
+remain supported, but are check-only and never modified automatically.
+See [AWS_SETUP_RUNTIME.md](AWS_SETUP_RUNTIME.md) for lifecycle, health, permissions
+and troubleshooting. No manual activation, pip step or root privileges are needed
+in managed mode once OS prerequisites, write access and dependency access exist.
+
+Fill the other sample placeholders, then explicitly enable `aws_setup_enabled`.
+Initially restrict `aws_setup_accounts` to your managed test account. An empty
+list permits every managed account after the global switch is enabled.
 
 Restart/deploy the ECAI application so the new supervisor and routes are loaded.
 Compilation alone does not update a separate running release's `priv` files.

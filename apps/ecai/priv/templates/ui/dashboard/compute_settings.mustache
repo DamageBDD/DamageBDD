@@ -45,6 +45,7 @@
       <section id="awsSetupPanel" class="aws-setup" aria-labelledby="awsSetupTitle">
         <div class="aws-setup-heading"><div><div class="eyebrow">AUTOMATIC SETUP</div><h3 id="awsSetupTitle">Connect once. Create your AWS environment.</h3></div><span class="status-tag">CloudFormation · CPU / Fargate</span></div>
         <p class="context-hint">ECAI generates the trust ID, network, private bucket, scoped IAM roles, queue and job definitions. Review the exact plan before approving AWS resource creation.</p>
+        <p id="awsSetupLocalRuntime" class="context-hint" role="status" aria-live="polite">Checking local helper environment…</p>
         <div id="awsSetupBlockers" class="aws-setup-warning" role="status">Checking node prerequisites…</div>
         <ol class="aws-setup-steps" aria-label="Automatic setup stages"><li>1 · Connect AWS</li><li>2 · Review plan</li><li>3 · Create &amp; verify</li></ol>
         <div class="aws-setup-columns">
